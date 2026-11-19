@@ -5249,6 +5249,183 @@ rejects the cycle before changing the component.
 CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
 casa-rs rejects a non-finite shape or error before mutation.
 
+## Measures spectral conversions reject or truncate valid vectors
+
+CASA 6.7.6.14 `me.tofrequency` and `me.toradialvelocity` return only the
+first result for a Doppler record whose `m0` contains two velocity values.
+`me.torestfrequency` likewise drops values when either input is a vector.
+Both elements convert successfully in separate scalar calls. This silently
+loses requested scientific results; the C++ helpers contain element loops,
+which also show the intended vector behavior.
+
+With no explicit frame, `me.todoppler('BETA', frequency, '1.42GHz')` rejects
+a BARY frequency vector `[1.3e9, 2.6e9] Hz` with `No MeasFrame direction
+specified for conversion of Frequency`. The same scalar inputs return
+valid Doppler values without a frame. This algebraic conversion does not
+need a direction; the vector path introduces a frame-dependent conversion.
+
+casa-rs preserves every input element and broadcasts a scalar against a
+vector. Its expected values come from independent CASA scalar calls for
+each element, including the approaching source at 2.6 GHz. Original CASA
+vector outputs and failures remain in the fixture alongside those controls.
+Input offsets follow each helper's semantics: `todoppler` reads the raw
+frequency/velocity, while conversions from Doppler resolve its reference
+offset. The correction follows the standing rule to correct scientific
+data loss and behavior that contradicts CASA's evident intent (#1252).
+
+Evidence: `tools/simulation/measures_spectral_oracle.py`,
+`crates/casars-python/python/tests/data/casa_measures_spectral.json`, and
+`test_measures_spectral.py` (the `scalar_controls` cases).
+
+### Cyclic spectral arguments terminate the process
+
+CASA 6.7.6.14 terminates with SIGSEGV for a cyclic dictionary or list passed
+to `me.doppler(v0=...)`, and for a cyclic record passed to `me.todoppler`.
+The first native spectral candidate exposed the same recursion failure in
+shared Python value capture. casa-rs now bounds recursive record and sequence
+capture at 128 levels and raises `ValueError` naming #1252. Capture state is
+restored on failure, so repeated failures and a subsequent valid call work.
+The isolated subprocess regressions run with core files disabled.
+
+## Measures geometry constructors lose values and mislabel units
+
+CASA 6.7.6.14 `baseline` and `uvw` accept three metre quantities as
+Cartesian coordinates or longitude, latitude and length as spherical
+coordinates. Passing the length first, for example
+`baseline('ITRF', '3m', '10deg', '20deg')`, causes the binding to reorder
+the quantities into an invalid sequence and return a zero baseline.
+The angle-first form produces the intended 3 m vector. casa-rs accepts
+either order and refuses incompatible dimensions such as three Hz values,
+which CASA likewise turns into a zero vector. CASA's quantity conformance
+check and angle-first records supply the independent controls.
+
+For `uvw('ITRF', '1m', '2m', '3m', off)` with a valid UVW offset, CASA's
+constructor drops the offset, although `measure(absolute, 'ITRF', off)`
+computes and returns the correct relative value and reference origin.
+casa-rs gives the constructor the same behavior as the generic
+conversion. The fixture retains both CASA results.
+
+CASA's spherical `earthmagnetic('ITRF','3nT','10deg','20deg')`
+constructor stores a vector of magnitude 3e-9 with units labelled nT.
+casa-rs returns the magnitude 3 in nT, checked against CASA's quantity
+conversions and an explicit Cartesian magnetic record. CASA also emits
+metres as the unit for magnetic `addxvalue` outputs. casa-rs returns those
+magnetic components in nT.
+
+## Failed measures geometry calls can expose earlier outputs
+
+After a successful `touvw` or `expand` call, CASA 6.7.6.14 can return
+an empty primary record alongside auxiliary coordinates and rates from
+an earlier call, even on a fresh tool. casa-rs returns empty records for
+all outputs on failure, preserving the tuple layout. For non-geometric
+records such as `earthmagnetic`, CASA's `expand` can temporarily change
+the type to UVW and return zero coordinates in metres labelled with the
+original type. casa-rs refuses the incompatible input.
+
+The inputs, raw outputs and independent controls are in
+`tools/simulation/measures_geometry_oracle.py` and
+`crates/casars-python/python/tests/data/casa_measures_geometry.json`.
+These corrections follow the standing rule on data loss, unit corruption,
+and behavior contradicting evident intent (#1252).
+
+## Magnetic reference changes can corrupt field strength
+
+With a frame of 2020-01-01 UTC at ALMA, CASA 6.7.6.14 converts the
+Cartesian field `[10000, 20000, 30000]` nT from B1950 to APP with a
+magnitude of 22289.454 nT, down from 37416.574 nT. Supplying that same
+Cartesian field in APP and requesting B1950 produces three NaNs.
+In `MCEarthMagnetic` the direct FK4 E-term correction can act on an
+unnormalized magnetic vector, and `MVEarthMagnetic::adjust()` leaves the
+norm unchanged during corrections. The same normalization omission is
+visible in diurnal aberration: converting this field from J2000 to ITRF
+increases its magnitude by 0.009120 nT. An IGRF output uses the ITRF
+coordinates and inherits the same error.
+
+Casa-rs applies the casacore direction corrections to a unit vector,
+then restores the input field strength. The geometry fixture retains
+the raw CASA magnetic outputs and separately captures CASA's direction
+conversion at the same angles. The normalized FK4 controls return
+finite vectors in both directions and preserve the input strength
+(#1252).
+
+## Comet numeric queries can terminate without an epoch
+
+After loading `Ganymede_55437-56293dUTC.tab` with an empty observing frame,
+CASA 6.7.6.14 terminates with SIGSEGV in both `cometdist()` and
+`cometangdiam()`. The binding dereferences the frame's epoch without
+checking whether one was set. This also applies when `done()` empties
+the frame while retaining the active table for the comet queries.
+
+Casa-rs reports the missing epoch and returns the same `-1 AU` or
+`-1 rad` sentinel that CASA uses when the table has no sample at a
+requested epoch. Setting an epoch enables the queries on the retained
+table again. The oracle runs each missing-epoch probe in its own process
+with core files disabled (#1252).
+
+## Direction shifts can use the wrong longitude quadrant
+
+CASA 6.7.6.14 derives the longitude increment for `me.shift` from an
+inverse sine. This confines that increment to ±90° even when the
+requested offset points across either pole or into the other longitude
+quadrant. From longitude 0° on the equator, a 120° eastward shift returns
+longitude 60°. From longitude 0° and latitude 80°, a 20° northward shift
+returns the original direction.
+
+Casa-rs uses both east and meridian components to determine the longitude
+quadrant. For a direction starting at a pole, the local north axis
+is undefined and casa-rs uses CASA's longitude convention. Independent
+CASA direction records at longitude 120° on the equator and longitude 180° at latitude 80° yield separations of 120° and
+20° from the respective starting directions. The fixture retains those
+controls alongside the raw shift results. This follows the standing rule
+for results that contradict the documented operation (#1252).
+[CASA measures documentation](https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html)
+
+## Frame display can discard the coordinate conversion context
+
+In CASA 6.7.6.14, `showframe()` fails to display many radial-velocity
+references even after the epoch, observatory, and direction have all
+been set. For a TOPO velocity of 15.123 km/s at ALMA on
+2011-01-03 17:00 UTC with a J2000 direction of (10°, 20°),
+it reports that the frame epoch is missing. On that same tool,
+`measure(velocity, "LSRK")` returns approximately -12.87952549 km/s.
+
+Casa-rs evaluates the displayed LSRK velocity with the explicit frame,
+using the same native conversion as `measure`. The fixture retains
+CASA's raw display errors and separately records the direct conversion
+for all seven affected references. The missing-frame errors still apply
+when the required epoch or direction is absent.
+
+At the same observatory, CASA's display also reports a missing
+position for LAST and LMST epochs. Casa-rs uses the explicit position
+to display TDB, UT1, and TT. The fixture retains the display errors
+and verifies the derived time scales against CASA's direct conversions
+(#1252).
+
+## Replacing a comet table can leave the previous frame direction cached
+
+In CASA 6.7.6.14, set an epoch and observatory, attach a COMET
+direction, and then call `showframe()` or project a radial velocity.
+Replacing the attached ephemeris updates direct COMET conversion
+immediately. The frame display and velocity projection can still use
+the previous table's direction until `doframe(direction("COMET"))` is
+called again. The supplied B1950 and TOPO controls at ALMA differ by
+more than 230 m/s in the GEO to TOPO velocity projection.
+
+Casa-rs refreshes the computed direction when a new table is attached.
+The recorded fixture retains CASA's stale results and verifies the
+refresh against its results after reattaching the direction (#1252).
+
+## Frame display can report UT1 outside the Earth-orientation table
+
+With the bundled measures snapshot and an explicit UTC epoch in 2030
+or 2100, CASA 6.7.6.14 displays a UT1 value despite missing
+Earth-orientation coverage. Casa-rs displays the raw epoch and the
+available TDB and TT values, and writes `UT1 = unavailable`. This keeps
+the frame visible after `framenow()` when the Earth-orientation table
+does not cover the current date. The fixture retains CASA's exact
+display and uses direct TDB and TT conversions as independent controls
+(#1252).
+
 ## Component spectrum changes can discard data
 
 - Date noted: 2026-11-06

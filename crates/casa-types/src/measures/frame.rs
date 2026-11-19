@@ -84,6 +84,7 @@ pub struct MeasFrame {
     epoch: Option<MEpoch>,
     position: Option<MPosition>,
     direction: Option<MDirection>,
+    direction_distance_m: f64,
     radial_velocity: Option<MRadialVelocity>,
     dut1_seconds: Option<f64>,
     measures: Option<Arc<dyn MeasuresProvider>>,
@@ -123,6 +124,7 @@ impl MeasFrame {
             epoch: None,
             position: None,
             direction: None,
+            direction_distance_m: 0.0,
             radial_velocity: None,
             dut1_seconds: None,
             measures: None,
@@ -149,7 +151,21 @@ impl MeasFrame {
     /// velocity component along the line of sight.
     pub fn with_direction(mut self, direction: MDirection) -> Self {
         self.direction = Some(direction);
+        self.direction_distance_m = 0.0;
+        *self.cache.direction_app.get_mut().unwrap() = None;
+        *self.cache.direction_j2000.get_mut().unwrap() = None;
         self
+    }
+
+    /// Set an evaluated ephemeris direction and its range at the frame epoch.
+    ///
+    /// Consumers can convert independently to geocentric apparent place
+    /// and J2000, applying observer parallax whenever the conversion crosses
+    /// the APP/TOPO boundary.
+    pub fn with_ephemeris_direction(self, direction: MDirection, distance_m: f64) -> Self {
+        let mut frame = self.with_direction(direction);
+        frame.direction_distance_m = distance_m;
+        frame
     }
 
     /// Sets the source radial velocity and returns `self` (builder pattern).
@@ -211,6 +227,16 @@ impl MeasFrame {
     /// Returns the observation direction, if set.
     pub fn direction(&self) -> Option<&MDirection> {
         self.direction.as_ref()
+    }
+
+    pub(crate) fn direction_in(
+        &self,
+        target: super::direction::DirectionRef,
+        what: &'static str,
+    ) -> Result<MDirection, MeasureError> {
+        self.direction()
+            .ok_or(MeasureError::MissingFrameData { what })?
+            .convert_with_parallax(target, self, self.direction_distance_m)
     }
 
     /// Returns the source radial velocity, if set.

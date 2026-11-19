@@ -12,6 +12,9 @@ use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+mod igrf;
+use igrf::{IgrfTable, load_igrf_from};
+
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::{
     EopValues as ProviderEopValues, MeasuresProvider, MeasuresProviderState, NamedSourceDirection,
@@ -23,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tar::Archive;
 
+mod comet;
 mod interp;
 mod observatory;
 mod parser;
@@ -33,8 +37,9 @@ mod spectral_line;
 #[cfg(feature = "update")]
 pub mod update;
 
+pub use comet::{CometDirection, CometTable};
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
-pub use planet::PlanetaryEphemeris;
+pub use planet::{PlanetaryEphemeris, PlanetaryTable};
 pub use source::{SourceCatalog, SourceEntry};
 pub use spectral_line::{SpectralLineCatalog, SpectralLineEntry};
 
@@ -468,76 +473,6 @@ impl TaiUtcTable {
     }
 }
 
-#[derive(Debug, Clone)]
-struct IgrfTable {
-    years: Vec<f64>,
-    coeffs_by_year: Vec<Vec<f64>>,
-    secular_variation: Vec<f64>,
-    nmax: usize,
-}
-
-impl IgrfTable {
-    fn retained_heap_bytes(&self) -> Option<usize> {
-        let mut bytes = self
-            .years
-            .capacity()
-            .checked_mul(size_of::<f64>())?
-            .checked_add(
-                self.coeffs_by_year
-                    .capacity()
-                    .checked_mul(size_of::<Vec<f64>>())?,
-            )?
-            .checked_add(
-                self.secular_variation
-                    .capacity()
-                    .checked_mul(size_of::<f64>())?,
-            )?;
-        for coefficients in &self.coeffs_by_year {
-            bytes = bytes.checked_add(coefficients.capacity().checked_mul(size_of::<f64>())?)?;
-        }
-        Some(bytes)
-    }
-
-    fn coefficients_for_decimal_year(
-        &self,
-        decimal_year: f64,
-    ) -> Result<(Vec<f64>, usize), MeasuresDataError> {
-        let min_year = *self.years.first().ok_or_else(|| {
-            MeasuresDataError::MissingData("IGRF table has no year rows".to_string())
-        })?;
-        let max_year = self.years.last().copied().unwrap_or(min_year) + 5.0;
-        if decimal_year < min_year || decimal_year > max_year {
-            return Err(MeasuresDataError::MissingData(format!(
-                "IGRF date must be between {min_year:.0}-01-01 and {max_year:.0}-12-31"
-            )));
-        }
-
-        let coeffs = if decimal_year >= *self.years.last().expect("years non-empty") {
-            extrapolate_coefficients(
-                decimal_year,
-                *self.years.last().expect("years non-empty"),
-                self.coeffs_by_year.last().expect("coefficients non-empty"),
-                &self.secular_variation,
-            )
-        } else {
-            let upper = self
-                .years
-                .iter()
-                .position(|year| *year > decimal_year)
-                .expect("decimal year below final row has upper interval");
-            interpolate_coefficients(
-                decimal_year,
-                self.years[upper - 1],
-                &self.coeffs_by_year[upper - 1],
-                self.years[upper],
-                &self.coeffs_by_year[upper],
-            )
-        };
-
-        Ok((coeffs, self.nmax))
-    }
-}
-
 static PACKAGED_PROVENANCE: OnceLock<Result<SnapshotProvenance, String>> = OnceLock::new();
 
 /// Validation policy applied when opening an explicit runtime root.
@@ -870,22 +805,7 @@ fn scientific_state_identity(
         state.float(entry.multiplier);
     }
 
-    state.sequence_len(igrf.years.len())?;
-    for year in &igrf.years {
-        state.float(*year);
-    }
-    state.sequence_len(igrf.coeffs_by_year.len())?;
-    for coefficients in &igrf.coeffs_by_year {
-        state.sequence_len(coefficients.len())?;
-        for coefficient in coefficients {
-            state.float(*coefficient);
-        }
-    }
-    state.sequence_len(igrf.secular_variation.len())?;
-    for coefficient in &igrf.secular_variation {
-        state.float(*coefficient);
-    }
-    state.sequence_len(igrf.nmax)?;
+    igrf.hash_state(&mut state)?;
 
     Ok(state.finish())
 }
@@ -974,6 +894,12 @@ impl MeasuresProvider for MeasuresRuntime {
 
     fn igrf_coefficients(&self, decimal_year: f64) -> Result<(Vec<f64>, usize), String> {
         self.igrf_coefficients(decimal_year)
+            .map_err(|error| error.to_string())
+    }
+
+    fn igrf_coefficients_at_mjd(&self, tdb_mjd: f64) -> Result<(Vec<f64>, usize), String> {
+        self.igrf()
+            .and_then(|table| table.coefficients_at_mjd(tdb_mjd))
             .map_err(|error| error.to_string())
     }
 
@@ -1250,97 +1176,6 @@ fn load_tai_utc_from(root: &Path) -> Result<TaiUtcTable, MeasuresDataError> {
         });
     }
     Ok(TaiUtcTable { entries })
-}
-
-fn load_igrf_from(root: &Path) -> Result<IgrfTable, MeasuresDataError> {
-    let table = RuntimeTable::open(&root.join("geodetic/IGRF"))?;
-    let mjd = table.scalar_f64("MJD")?;
-    let mut years = Vec::with_capacity(table.row_count());
-    let mut coeffs_by_year = Vec::with_capacity(table.row_count());
-    let mut secular_variation = Vec::new();
-    let mut nmax = 0usize;
-
-    for (row, mjd_value) in mjd.iter().copied().enumerate().take(table.row_count()) {
-        years.push(decimal_year_from_mjd(mjd_value));
-        let coeffs = table.array_f64_cell("COEF", row)?;
-        nmax = solve_igrf_nmax(coeffs.len())?;
-        coeffs_by_year.push(coeffs);
-        secular_variation = table.array_f64_cell("dCOEF", row)?.to_vec();
-    }
-
-    Ok(IgrfTable {
-        years,
-        coeffs_by_year,
-        secular_variation,
-        nmax,
-    })
-}
-
-fn decimal_year_from_mjd(mjd: f64) -> f64 {
-    let jd = mjd + 2_400_000.5;
-    let z = (jd + 0.5).floor();
-    let f = (jd + 0.5) - z;
-    let mut a = z;
-    if z >= 2_299_161.0 {
-        let alpha = ((z - 1_867_216.25) / 36_524.25).floor();
-        a = z + 1.0 + alpha - (alpha / 4.0).floor();
-    }
-    let b = a + 1524.0;
-    let c = ((b - 122.1) / 365.25).floor();
-    let d = (365.25 * c).floor();
-    let e = ((b - d) / 30.6001).floor();
-    let day = b - d - (30.6001 * e).floor() + f;
-    let month = if e < 14.0 { e - 1.0 } else { e - 13.0 };
-    let year = if month > 2.0 { c - 4716.0 } else { c - 4715.0 };
-
-    let year_i = year as i32;
-    let month_i = month as i32;
-    let day_i = day.floor() as i32;
-    let leap = if (year_i % 4 == 0) && ((year_i % 100 != 0) || (year_i % 400 == 0)) {
-        1
-    } else {
-        0
-    };
-    const DAYS: [i32; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-    let mut day_in_year = DAYS[(month_i - 1) as usize] + day_i;
-    if month_i > 2 {
-        day_in_year += leap;
-    }
-    f64::from(year_i) + (f64::from(day_in_year) / (365.0 + f64::from(leap)))
-}
-
-fn solve_igrf_nmax(coeff_len: usize) -> Result<usize, MeasuresDataError> {
-    for nmax in 1..32 {
-        if nmax * (nmax + 2) == coeff_len {
-            return Ok(nmax);
-        }
-    }
-    Err(MeasuresDataError::MissingData(format!(
-        "unable to derive IGRF nmax from coefficient length {coeff_len}"
-    )))
-}
-
-fn interpolate_coefficients(
-    date: f64,
-    year1: f64,
-    coeffs1: &[f64],
-    year2: f64,
-    coeffs2: &[f64],
-) -> Vec<f64> {
-    let factor = (date - year1) / (year2 - year1);
-    coeffs1
-        .iter()
-        .zip(coeffs2.iter())
-        .map(|(lhs, rhs)| lhs + factor * (rhs - lhs))
-        .collect()
-}
-
-fn extrapolate_coefficients(date: f64, base_year: f64, main: &[f64], sv: &[f64]) -> Vec<f64> {
-    let factor = date - base_year;
-    main.iter()
-        .zip(sv.iter())
-        .map(|(main_coeff, sv_coeff)| main_coeff + factor * sv_coeff)
-        .collect()
 }
 
 fn parse_measures_version_mjd_age(version: &str, current_mjd: f64) -> Option<f64> {

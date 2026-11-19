@@ -21,20 +21,31 @@
 //!   with CASA's "Cannot convert due to missing frame information", where
 //!   CASA's tool starts with a frame at MJD 0 at the geocentre and converts
 //!   with it (`measure(dir, 'AZEL')` with no `doframe`);
-//! - codes casa-types does not convert (`B1950_VLA`, `BMEAN`, `BTRUE`, the
-//!   planets, `COMET`, `Undefined`) define and show but do not convert, and
+//! - codes casa-types does not convert (`B1950_VLA`, `BMEAN`, `BTRUE`,
+//!   `COMET`, `Undefined`) define and show but do not convert, and
 //!   `R_` (razing) codes are not read;
-//! - measure offsets and multi-valued measures are not yet implemented.
+//! - scalar constructors for epoch/direction/position/frequency still refuse
+//!   offsets; the spectral constructors and record conversion/query paths
+//!   support offsets and vectors. Remaining kinds stay explicitly refused.
 
+mod arguments;
+mod comet;
 mod define;
 mod frame;
+mod geometry;
 mod inspect;
 mod offset;
+mod record;
+mod rise_set;
+mod shift;
+mod showframe;
+mod spectral;
 pub(crate) mod surface;
 mod xvalue;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use casa_measures_data::{CometTable, PlanetaryTable};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -42,17 +53,21 @@ use pyo3::prelude::*;
 use crate::convert::holder::Measure;
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::tools::{LogLine, emit};
 
 /// The Python logger CASA's `me` messages go to.
 const LOGGER: &str = "casars.tools.measures";
 
 /// The frame `doframe` sets.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct Frame {
     epoch: Option<Measure>,
     position: Option<Measure>,
     direction: Option<Measure>,
+    radial_velocity: Option<record::Measures>,
+    comet: Option<Arc<CometTable>>,
+    // Formatted display of these frame elements, cleared when an element changes.
+    rendered: Option<String>,
 }
 
 /// The tool's state: the frame and the measures data.
@@ -60,6 +75,9 @@ struct Frame {
 pub(crate) struct State {
     frame: Frame,
     measures: Option<Arc<dyn MeasuresProvider>>,
+    planets: Option<PlanetaryTable>,
+    // The comet queries retain their table when done clears the coordinate frame.
+    comet: Option<Arc<CometTable>>,
 }
 
 impl State {
@@ -104,12 +122,6 @@ impl PyMeasures {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
-}
-
-/// A method casa-rs does not implement yet, refused naming #1053, which
-/// classifies them.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("measures", method, 1053)
 }
 
 /// The measures data failed to load: CASA's tool always has them.
@@ -307,114 +319,6 @@ impl PyMeasures {
         self.call(py, move |_, lines| xvalue::addxvalue(&record, lines))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (pos), text_signature = "($self, pos)")]
-    fn asbaseline(&self, pos: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("asbaseline")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (rf = None, v0 = None, v1 = None, v2 = None, off = None),
-        text_signature = "($self, rf='ITRF', v0=[], v1=[], v2=[], off={})"
-    )]
-    fn baseline(
-        &self,
-        rf: Option<&Bound<'_, PyAny>>,
-        v0: Option<&Bound<'_, PyAny>>,
-        v1: Option<&Bound<'_, PyAny>>,
-        v2: Option<&Bound<'_, PyAny>>,
-        off: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("baseline")
-    }
-
-    /// CASA's sentinel angular diameter when no comet table is loaded.
-    fn cometangdiam(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "rad")))
-    }
-
-    /// CASA's sentinel distance when no comet table is loaded.
-    fn cometdist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "AU")))
-    }
-
-    /// Return an empty name and warn when no comet table is loaded.
-    fn cometname(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, lines| {
-            lines.push(LogLine::warning(
-                "Method cometname fails! No Comet table present",
-            ));
-            Ok(CasaValue::Text(String::new()))
-        })
-    }
-
-    /// Return CASA's sentinel when no topocentric comet table is loaded.
-    fn comettopo(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, lines| {
-            lines.push(LogLine::warning(
-                "Method comettopo fails!  No Topocentric Comet table present",
-            ));
-            Ok(CasaValue::record([
-                ("unit", CasaValue::Text(String::new())),
-                ("value", CasaValue::floats(vec![0.0])),
-            ]))
-        })
-    }
-
-    /// CASA's comet type when no comet table is loaded.
-    fn comettype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, _| Ok(CasaValue::Text("none".to_string())))
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (rf = None, v0 = None, off = None),
-        text_signature = "($self, rf='RADIO', v0=[], off={})"
-    )]
-    fn doppler(
-        &self,
-        rf: Option<&Bound<'_, PyAny>>,
-        v0: Option<&Bound<'_, PyAny>>,
-        off: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("doppler")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (rf = None, v0 = None, v1 = None, v2 = None, off = None),
-        text_signature = "($self, rf='IGRF', v0=[], v1=[], v2=[], off={})"
-    )]
-    fn earthmagnetic(
-        &self,
-        rf: Option<&Bound<'_, PyAny>>,
-        v0: Option<&Bound<'_, PyAny>>,
-        v1: Option<&Bound<'_, PyAny>>,
-        v2: Option<&Bound<'_, PyAny>>,
-        off: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("earthmagnetic")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v={})")]
-    fn expand(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("expand")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v='')")]
-    fn framecomet(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("framecomet")
-    }
-
     /// The rest lines of the measures data, their names joined by spaces
     /// in the table's order, as CASA gives them. CASA deprecates the method
     /// and says so; so does casa-rs.
@@ -442,63 +346,6 @@ impl PyMeasures {
         })
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (rf = None, v0 = None, off = None),
-        text_signature = "($self, rf='LSRK', v0=[], off={})"
-    )]
-    fn radialvelocity(
-        &self,
-        rf: Option<&Bound<'_, PyAny>>,
-        v0: Option<&Bound<'_, PyAny>>,
-        off: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("radialvelocity")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (crd = None, ev = None), text_signature = "($self, crd=[], ev=[])")]
-    fn rise(
-        &self,
-        crd: Option<&Bound<'_, PyAny>>,
-        ev: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("rise")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (crd = None, ev = None), text_signature = "($self, crd=[], ev=[])")]
-    fn riseset(
-        &self,
-        crd: Option<&Bound<'_, PyAny>>,
-        ev: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("riseset")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (v = None, offset = None, pa = None),
-        text_signature = "($self, v={}, offset=[], pa=[])"
-    )]
-    fn shift(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        offset: Option<&Bound<'_, PyAny>>,
-        pa: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("shift")
-    }
-
-    /// Not yet implemented in casa-rs.
-    fn showframe(&self) -> PyResult<Py<PyAny>> {
-        stub("showframe")
-    }
-
     /// The sources of the measures data, their names joined by spaces in
     /// the table's order, as CASA gives them.
     fn sourcelist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -516,71 +363,5 @@ impl PyMeasures {
             let measures = state.measures().map_err(no_measures)?;
             Ok(define::spectralline(name, &*measures, lines))
         })
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (rf, v0, rfq = None), text_signature = "($self, rf, v0, rfq=[])")]
-    fn todoppler(
-        &self,
-        rf: &Bound<'_, PyAny>,
-        v0: &Bound<'_, PyAny>,
-        rfq: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("todoppler")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (rf, v0, rfq), text_signature = "($self, rf, v0, rfq)")]
-    fn tofrequency(
-        &self,
-        rf: &Bound<'_, PyAny>,
-        v0: &Bound<'_, PyAny>,
-        rfq: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("tofrequency")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (rf, v0), text_signature = "($self, rf, v0)")]
-    fn toradialvelocity(
-        &self,
-        rf: &Bound<'_, PyAny>,
-        v0: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("toradialvelocity")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v0, d0), text_signature = "($self, v0, d0)")]
-    fn torestfrequency(&self, v0: &Bound<'_, PyAny>, d0: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("torestfrequency")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v={})")]
-    fn touvw(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("touvw")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (rf = None, v0 = None, v1 = None, v2 = None, off = None),
-        text_signature = "($self, rf='ITRF', v0=[], v1=[], v2=[], off={})"
-    )]
-    fn uvw(
-        &self,
-        rf: Option<&Bound<'_, PyAny>>,
-        v0: Option<&Bound<'_, PyAny>>,
-        v1: Option<&Bound<'_, PyAny>>,
-        v2: Option<&Bound<'_, PyAny>>,
-        off: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("uvw")
     }
 }

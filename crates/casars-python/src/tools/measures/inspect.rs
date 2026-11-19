@@ -9,7 +9,9 @@
 //! Hz; then, with `refcode`, its reference code.
 
 use crate::convert::RecordArg;
-use crate::convert::holder::{Measure, MeasureValue, direction_angles, position_spherical};
+use crate::convert::holder::{
+    Measure, MeasureValue, direction_angles, position_spherical, spatial_spherical,
+};
 use crate::convert::value::{CasaValue, stream_double};
 use crate::tools::LogLine;
 
@@ -19,12 +21,12 @@ const DEGREE: f64 = std::f64::consts::PI / 180.0;
 /// The measure in `v`, or `None` after logging casacore's message and CASA's
 /// `context` at `level`.
 fn read(v: &RecordArg, context: &str, warning: bool, lines: &mut Vec<LogLine>) -> Option<Measure> {
-    match Measure::from_record(&v.0) {
+    match super::record::Measures::read(v) {
         Ok(read) => {
             if let Some(message) = read.warning {
                 lines.push(LogLine::warning(message));
             }
-            Some(read.measure)
+            Some(read.values[0])
         }
         Err(error) => {
             let message = format!("{}{context}", error.message());
@@ -78,7 +80,7 @@ pub(super) fn getvalue(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
 
 /// `me.ismeasure(v)`.
 pub(super) fn ismeasure(v: &RecordArg) -> CasaValue {
-    CasaValue::Bool(Measure::from_record(&v.0).is_ok())
+    CasaValue::Bool(super::record::Measures::read(v).is_ok())
 }
 
 /// `me.show(v, refcode)`.
@@ -103,8 +105,17 @@ pub(super) fn show(v: &RecordArg, refcode: bool, lines: &mut Vec<LogLine>) -> Ca
         }
         MeasureValue::Epoch(mjd) => stream_double(mjd.as_mjd()),
         MeasureValue::Frequency(hz) => format!("{} Hz", stream_double(hz)),
+        MeasureValue::Doppler(value) => format!(
+            "{} m/s",
+            stream_double(value * crate::convert::holder::C_MPS)
+        ),
+        MeasureValue::RadialVelocity(value) => format!("{} m/s", stream_double(value)),
         MeasureValue::Position(xyz) => {
             let (longitude, latitude, length) = position_spherical(xyz);
+            vector(&[length, longitude, latitude])
+        }
+        MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) | MeasureValue::EarthMagnetic(xyz) => {
+            let (longitude, latitude, length) = spatial_spherical(xyz);
             vector(&[length, longitude, latitude])
         }
     };
@@ -120,8 +131,8 @@ pub(super) fn show(v: &RecordArg, refcode: bool, lines: &mut Vec<LogLine>) -> Ca
 /// Not yet implemented in casa-rs for other measures, which CASA writes
 /// with casacore's `Measure` output operator.
 pub(super) fn dirshow(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
-    let measure = match Measure::from_record(&v.0) {
-        Ok(read) => read.measure,
+    let measure = match super::record::Measures::read(v) {
+        Ok(read) => read.values[0],
         Err(error) => {
             lines.push(LogLine::error(format!(
                 "Error [{}] in converting record to measure",
@@ -130,6 +141,33 @@ pub(super) fn dirshow(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
             return CasaValue::Text(String::new());
         }
     };
+    match measure.value {
+        MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) | MeasureValue::EarthMagnetic(xyz) => {
+            return CasaValue::Text(format!(
+                "{}: [{}, {}, {}]  {}",
+                measure.kind().tell_me(),
+                stream_double(xyz[0]),
+                stream_double(xyz[1]),
+                stream_double(xyz[2]),
+                measure.refer
+            ));
+        }
+        MeasureValue::Doppler(value) => {
+            return CasaValue::Text(format!(
+                "Doppler: {}  {}",
+                stream_double(value),
+                measure.refer
+            ));
+        }
+        MeasureValue::RadialVelocity(value) => {
+            return CasaValue::Text(format!(
+                "Radialvelocity: {}  {}",
+                stream_double(value),
+                measure.refer
+            ));
+        }
+        _ => {}
+    }
     let MeasureValue::Direction(cosines) = measure.value else {
         lines.push(LogLine::warning(format!(
             "dirshow of {} measures is not yet implemented in casa-rs",

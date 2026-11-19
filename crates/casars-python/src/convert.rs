@@ -30,15 +30,16 @@ pub(crate) mod quantum;
 pub(crate) mod reply_value;
 pub(crate) mod value;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt;
 
 use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
 use num_complex::Complex64;
 use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::types::{PyBool, PyBytes, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 /// The speed of light, m/s (casacore's `C::c`).
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
@@ -103,6 +104,14 @@ impl From<BTreeMap<String, Variant>> for VariantRecord {
             fields,
             scalar_kind: None,
         }
+    }
+}
+
+impl VariantRecord {
+    /// Whether a captured quantity vector has CASA's floating numeric type.
+    /// MeasureHolder accepts floating vectors, but not integer QuantumHolders.
+    pub(crate) fn is_double_vector(&self) -> bool {
+        self.scalar_kind.is_none()
     }
 }
 
@@ -203,8 +212,35 @@ impl<'a, 'py> FromPyObject<'a, 'py> for Variant {
     }
 }
 
+thread_local! {
+    static CAPTURE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Bound recursive Python capture, including cycles, before entering native work.
+struct CaptureDepth;
+impl CaptureDepth {
+    fn enter() -> PyResult<Self> {
+        CAPTURE_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current >= 128 {
+                return Err(PyValueError::new_err(
+                    "cyclic or too deeply nested CASA value (#1252)",
+                ));
+            }
+            depth.set(current + 1);
+            Ok(Self)
+        })
+    }
+}
+impl Drop for CaptureDepth {
+    fn drop(&mut self) {
+        CAPTURE_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
 /// Captures `object` as a [`Variant`].
 fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
+    let _capture = CaptureDepth::enter()?;
     if object.is_none() {
         return Ok(Variant::Empty);
     }
@@ -213,6 +249,12 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
     }
     if let Ok(text) = object.cast::<PyString>() {
         return Ok(Variant::Text(text.to_str()?.to_string()));
+    }
+    if let Ok(bytes) = object.cast::<PyBytes>() {
+        let text: String = bytes.call_method1("decode", ("utf-8",))?.extract()?;
+        return Ok(Variant::Text(
+            text.split('\0').next().unwrap_or_default().to_owned(),
+        ));
     }
     if let Ok(dict) = object.cast::<PyDict>() {
         // CASA does not accept a NumPy complex64 scalar in a quantity
@@ -564,7 +606,12 @@ type NestedItems<'py> = (Vec<usize>, Vec<Bound<'py, PyAny>>);
 /// `(shape, flat_items_in_fortran_order)`. Returns `None` if any list/tuple
 /// is empty or nesting depth is inconsistent.
 fn nested_sequence_items<'py>(object: &Bound<'py, PyAny>) -> PyResult<Option<NestedItems<'py>>> {
-    fn collect<'py>(seq: &Bound<'py, PyAny>) -> PyResult<Option<NestedItems<'py>>> {
+    fn collect<'py>(seq: &Bound<'py, PyAny>, depth: usize) -> PyResult<Option<NestedItems<'py>>> {
+        if depth >= 128 {
+            return Err(PyValueError::new_err(
+                "cyclic or too deeply nested CASA sequence (#1252)",
+            ));
+        }
         if !seq.is_instance_of::<PyList>() && !seq.is_instance_of::<PyTuple>() {
             return Ok(None);
         }
@@ -580,7 +627,7 @@ fn nested_sequence_items<'py>(object: &Bound<'py, PyAny>) -> PyResult<Option<Nes
         }
         let mut sub_results = Vec::with_capacity(items.len());
         for item in &items {
-            let Some(sub) = collect(item)? else {
+            let Some(sub) = collect(item, depth + 1)? else {
                 return Ok(None);
             };
             sub_results.push(sub);
@@ -601,7 +648,7 @@ fn nested_sequence_items<'py>(object: &Bound<'py, PyAny>) -> PyResult<Option<Nes
         shape.extend(sub_shape);
         Ok(Some((shape, flat)))
     }
-    let Some((shape, items)) = collect(object)? else {
+    let Some((shape, items)) = collect(object, 0)? else {
         return Ok(None);
     };
     Ok((shape.len() >= 2).then_some((shape, items)))

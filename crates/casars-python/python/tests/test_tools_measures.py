@@ -38,9 +38,11 @@ LOGGER = "casars.tools.measures"
 CASA = casa_signatures("measures")
 
 IMPLEMENTED = {
-    "addxvalue", "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framenow", "frequency", "getoffset", "getref",
+    "asbaseline", "baseline", "earthmagnetic", "expand", "touvw", "uvw",
+    "doppler", "radialvelocity", "todoppler", "tofrequency", "toradialvelocity", "torestfrequency",
+    "addxvalue", "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framecomet", "framenow", "frequency", "getoffset", "getref",
     "gettype", "getvalue", "ismeasure", "linelist", "listcodes", "measure", "observatory", "obslist",
-    "posangle", "position", "separation", "show", "source", "sourcelist", "spectralline", "type",
+    "posangle", "position", "rise", "riseset", "separation", "shift", "show", "showframe", "source", "sourcelist", "spectralline", "type",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
@@ -416,13 +418,6 @@ def test_conversions_without_their_frame_fail_with_casas_message(
 
 def test_framenow_sets_an_epoch() -> None:
     assert measures().framenow() is True
-
-
-@pytest.mark.parametrize("method", sorted(NOT_YET_IMPLEMENTED))
-def test_unimplemented_methods_raise_not_implemented(method: str) -> None:
-    required = [entry for entry in CASA["methods"][method] if entry["default"] is None]
-    with pytest.raises(NotImplementedError, match=rf"^measures\.{method} is not yet implemented in casa-rs \(#1053\)$"):
-        getattr(measures(), method)(*[{} for _ in required])
 
 
 #: CASA 6.7.6.14's me.obslist, me.sourcelist and me.linelist on its own

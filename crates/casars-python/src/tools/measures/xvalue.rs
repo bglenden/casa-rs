@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::convert::RecordArg;
-use crate::convert::holder::{Measure, MeasureValue};
+use crate::convert::holder::MeasureValue;
 use crate::convert::value::CasaValue;
 use crate::tools::LogLine;
 
@@ -37,13 +37,13 @@ pub(super) fn read_record(value: &Bound<'_, PyAny>) -> PyResult<RecordArg> {
         };
         if depth > 128 {
             return Err(PyValueError::new_err(
-                "measure record is too deeply nested (#1053)",
+                "measure record is too deeply nested (#1252)",
             ));
         }
         let identity = value.as_ptr() as usize;
         if !active.insert(identity) {
             return Err(PyValueError::new_err(
-                "cyclic measure record refused (#1053)",
+                "cyclic measure record refused (#1252)",
             ));
         }
         pending.push(Visit::Leave(identity));
@@ -54,12 +54,12 @@ pub(super) fn read_record(value: &Bound<'_, PyAny>) -> PyResult<RecordArg> {
 
 /// `me.addxvalue`: the direction cosines or the position vector.
 pub(super) fn addxvalue(record: &RecordArg, lines: &mut Vec<LogLine>) -> PyResult<CasaValue> {
-    let read = match Measure::from_record(&record.0) {
+    let read = match super::record::Measures::read(record) {
         Ok(read) => read,
         Err(error) => {
             let message = error.message();
             if message.contains("not yet implemented") {
-                return Err(PyNotImplementedError::new_err(format!("{message} (#1053)")));
+                return Err(PyNotImplementedError::new_err(format!("{message} (#1252)")));
             }
             lines.push(LogLine::error(format!(
                 "{message}Non-measure type a in measure conversion\n"
@@ -70,10 +70,16 @@ pub(super) fn addxvalue(record: &RecordArg, lines: &mut Vec<LogLine>) -> PyResul
     if let Some(warning) = read.warning {
         lines.push(LogLine::warning(warning));
     }
-    let (unit, values) = match read.measure.value {
+    let (unit, values) = match read.values[0].value {
         MeasureValue::Direction(values) => ("", values),
-        MeasureValue::Position(values) => ("m", values),
-        MeasureValue::Epoch(_) | MeasureValue::Frequency(_) => return Ok(CasaValue::empty_record()),
+        MeasureValue::Position(values)
+        | MeasureValue::Baseline(values)
+        | MeasureValue::Uvw(values) => ("m", values),
+        MeasureValue::EarthMagnetic(values) => ("nT", values),
+        MeasureValue::Epoch(_)
+        | MeasureValue::Frequency(_)
+        | MeasureValue::Doppler(_)
+        | MeasureValue::RadialVelocity(_) => return Ok(CasaValue::empty_record()),
     };
     Ok(CasaValue::record([
         ("unit", CasaValue::Text(unit.to_string())),

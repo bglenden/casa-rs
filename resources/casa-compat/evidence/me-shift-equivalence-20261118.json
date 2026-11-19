@@ -1,0 +1,246 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "575540a3369514a43cf2d816d17c625afabbf11f",
+  "scope": "Native shift by angular separation and position angle.",
+  "work_item": "https://github.com/bglenden/casa-rs/issues/1252",
+  "upstream_sources": [
+    "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/casatools/src/tools/measures/measures_cmpt.cc?at=6.7.6.14",
+    "https://github.com/casacore/casacore/blob/v3.7.1/casa/Quanta/MVDirection.cc",
+    "https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html"
+  ],
+  "comparison": {
+    "fixture": "crates/casars-python/python/tests/data/casa_measures_shift.json",
+    "case_count": 39,
+    "capture": "CASAPY tools/simulation/measures_shift_oracle.py --measures-data target/geometry-snapshot --out crates/casars-python/python/tests/data/casa_measures_shift.json",
+    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_shift.py",
+    "comparator": "Exact record shape, labels, units, and stable exception messages. Trims the wheel builder location from CASA errors. Numeric angle tolerance 2e-12 relative and 2e-13 absolute. Two corrected shifts are checked by independent CASA direction and separation calls.",
+    "result": "39 recorded cases and the original upstream Ganymede north/east/south test passed. The affected Python selection passed 1218 tests with one optional skip."
+  },
+  "performance": {
+    "command": "CASAPY tools/simulation/measures_shift_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --calls 1000 --samples 7",
+    "conditions": "Release maturin build in the same CASA Python with the same snapshot, one warm-up and seven samples of 1000 calls, no concurrent local build or test.",
+    "casa": {
+      "backend": "casa",
+      "casa_version": "6.7.6-14",
+      "revision": "575540a3369514a43cf2d816d17c625afabbf11f",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "upstream_north": {
+          "median_ns": 40294.084,
+          "samples_ns": [
+            40931.333,
+            40294.084,
+            40375.083,
+            41100.625,
+            40075.542,
+            40047.916,
+            40255.959
+          ]
+        },
+        "upstream_east": {
+          "median_ns": 41540.833,
+          "samples_ns": [
+            41590.166,
+            41722.916,
+            41475.625,
+            41309.375,
+            41635.375,
+            41284.75,
+            41540.833
+          ]
+        },
+        "upstream_south": {
+          "median_ns": 42427.5,
+          "samples_ns": [
+            42532.458,
+            42640.958,
+            42253.209,
+            42131.083,
+            42228.333,
+            42427.5,
+            42701.042
+          ]
+        },
+        "galactic": {
+          "median_ns": 41742.708,
+          "samples_ns": [
+            41562.75,
+            41851.125,
+            42680.958,
+            41742.708,
+            41259.5,
+            44546.209,
+            41273.583
+          ]
+        },
+        "vector": {
+          "median_ns": 43345.333,
+          "samples_ns": [
+            43258.5,
+            43285.083,
+            43345.333,
+            42964.5,
+            43816.542,
+            43627.666,
+            43938.5
+          ]
+        },
+        "nested_offset": {
+          "median_ns": 120692.75,
+          "samples_ns": [
+            119508.458,
+            119561.416,
+            120724.709,
+            121204.209,
+            120692.75,
+            119492.042,
+            120831.625
+          ]
+        },
+        "large_east": {
+          "median_ns": 42642.5,
+          "samples_ns": [
+            42511.916,
+            42672.292,
+            42497.375,
+            42511.75,
+            42642.5,
+            42988.958,
+            43180.834
+          ]
+        },
+        "pole_crossing": {
+          "median_ns": 40110.458,
+          "samples_ns": [
+            40258.334,
+            40110.458,
+            39831.583,
+            40070.208,
+            40007.833,
+            40300.125,
+            40257.917
+          ]
+        }
+      }
+    },
+    "native": {
+      "backend": "casars",
+      "casa_version": "6.7.6-14",
+      "revision": "575540a3369514a43cf2d816d17c625afabbf11f",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "upstream_north": {
+          "median_ns": 3673.583,
+          "samples_ns": [
+            3673.583,
+            3696.291,
+            3746.958,
+            3699.209,
+            3670.917,
+            3626.25,
+            3633.959
+          ]
+        },
+        "upstream_east": {
+          "median_ns": 3395.208,
+          "samples_ns": [
+            3401.084,
+            3395.208,
+            3399.042,
+            3374.25,
+            3400.208,
+            3381.834,
+            3384.667
+          ]
+        },
+        "upstream_south": {
+          "median_ns": 3461.667,
+          "samples_ns": [
+            3387.416,
+            3559.375,
+            3466.458,
+            3461.667,
+            3487.25,
+            3410.542,
+            3435.208
+          ]
+        },
+        "galactic": {
+          "median_ns": 3433.666,
+          "samples_ns": [
+            3432.458,
+            3436.792,
+            3471.416,
+            3433.666,
+            3388.875,
+            3395.75,
+            3435.541
+          ]
+        },
+        "vector": {
+          "median_ns": 6331.916,
+          "samples_ns": [
+            6034.0,
+            6044.792,
+            6399.416,
+            6370.5,
+            6331.916,
+            6362.5,
+            6310.834
+          ]
+        },
+        "nested_offset": {
+          "median_ns": 11931.291,
+          "samples_ns": [
+            12240.084,
+            12330.166,
+            11819.459,
+            12074.542,
+            11931.291,
+            11777.916,
+            11839.791
+          ]
+        },
+        "large_east": {
+          "median_ns": 3368.5,
+          "samples_ns": [
+            3561.0,
+            3368.5,
+            3334.667,
+            3320.75,
+            3340.583,
+            3407.0,
+            3591.5
+          ]
+        },
+        "pole_crossing": {
+          "median_ns": 3589.291,
+          "samples_ns": [
+            3613.792,
+            3589.291,
+            3648.833,
+            3571.125,
+            3563.25,
+            3594.25,
+            3585.375
+          ]
+        }
+      }
+    },
+    "speedups": {
+      "upstream_north": 10.968605854284496,
+      "upstream_east": 12.235136404014128,
+      "upstream_south": 12.256378213155685,
+      "galactic": 12.156892371011041,
+      "vector": 6.845531905350607,
+      "nested_offset": 10.115648843029645,
+      "large_east": 12.659195487605759,
+      "pole_crossing": 11.175036518354181
+    },
+    "all_faster": true
+  },
+  "validation": "61 affected Rust tests, formatting, scoped Clippy, strict public and private rustdoc, arch-check and docs-check.",
+  "review": "Isolated binding and spherical operation with independent CASA demonstration tests under Review level 1."
+}

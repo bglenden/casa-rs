@@ -4,7 +4,6 @@ import logging
 from pathlib import Path
 
 import numpy as np
-import pytest
 from casars.tools import measures
 
 DATA = Path(__file__).parent / 'data'
@@ -37,6 +36,5 @@ def test_comet_getters_without_table_match_casa(caplog):
                 else: assert caplog.messages==[]
 
 
-def test_framecomet_remains_explicitly_unimplemented():
-    with pytest.raises(NotImplementedError,match='#1053'):
-        measures().framecomet('missing-comet-table')
+def test_framecomet_reports_a_missing_table(tmp_path):
+    assert measures().framecomet(str(tmp_path / 'missing-comet-table')) is False

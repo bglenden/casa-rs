@@ -14,7 +14,7 @@ use crate::tools::surface::{
 use CasaDefault::{Bool, Empty, EmptyRecord, Required, Text};
 use Kind as K;
 use Returns as R;
-use Status::{Implemented as Yes, NotYetImplemented as No};
+use Status::Implemented as Yes;
 
 const OFF: Parameter = param("off", K::Record, EmptyRecord);
 const V: [Parameter; 1] = [param("v", K::Record, Required)];
@@ -71,9 +71,9 @@ const METHODS: &[Method] = &[
         "asbaseline",
         &[param("pos", K::Record, Required)],
         R::Record,
-        No,
+        Yes,
     ),
-    method("baseline", &BASELINE, R::Record, No),
+    method("baseline", &BASELINE, R::Record, Yes),
     method("cometangdiam", &[], R::Record, Yes),
     method("cometdist", &[], R::Record, Yes),
     method("cometname", &[], R::Text, Yes),
@@ -93,16 +93,16 @@ const METHODS: &[Method] = &[
     method("dirshow", &V, R::Text, Yes),
     method("doframe", &V, R::Bool, Yes),
     method("done", &[], R::Bool, Yes),
-    method("doppler", &DOPPLER, R::Record, No),
-    method("earthmagnetic", &EARTHMAGNETIC, R::Record, No),
+    method("doppler", &DOPPLER, R::Record, Yes),
+    method("earthmagnetic", &EARTHMAGNETIC, R::Record, Yes),
     method("epoch", &EPOCH, R::Record, Yes),
     method(
         "expand",
         &[param("v", K::Record, EmptyRecord)],
         R::Record,
-        No,
+        Yes,
     ),
-    method("framecomet", &[param("v", K::Text, Text(""))], R::Bool, No),
+    method("framecomet", &[param("v", K::Text, Text(""))], R::Bool, Yes),
     method("framenow", &[], R::Bool, Yes),
     method("frequency", &FREQUENCY, R::Record, Yes),
     method("getoffset", &V, R::Record, Yes),
@@ -136,9 +136,9 @@ const METHODS: &[Method] = &[
     method("obslist", &[], R::Texts, Yes),
     method("posangle", &PAIR, R::Record, Yes),
     method("position", &POSITION, R::Record, Yes),
-    method("radialvelocity", &RADIALVELOCITY, R::Record, No),
-    method("rise", &RISE, R::Record, No),
-    method("riseset", &RISE, R::Record, No),
+    method("radialvelocity", &RADIALVELOCITY, R::Record, Yes),
+    method("rise", &RISE, R::Record, Yes),
+    method("riseset", &RISE, R::Record, Yes),
     method("separation", &PAIR, R::Record, Yes),
     method(
         "shift",
@@ -148,7 +148,7 @@ const METHODS: &[Method] = &[
             param("pa", K::Quantity, Empty),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "show",
@@ -159,7 +159,7 @@ const METHODS: &[Method] = &[
         R::Text,
         Yes,
     ),
-    method("showframe", &[], R::Text, No),
+    method("showframe", &[], R::Text, Yes),
     method(
         "source",
         &[param("name", K::Measure, Empty)],
@@ -181,7 +181,7 @@ const METHODS: &[Method] = &[
             param("rfq", K::Any, Empty),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "tofrequency",
@@ -191,9 +191,9 @@ const METHODS: &[Method] = &[
             param("rfq", K::Record, Required),
         ],
         R::Record,
-        No,
+        Yes,
     ),
-    method("toradialvelocity", &RF_V0, R::Record, No),
+    method("toradialvelocity", &RF_V0, R::Record, Yes),
     method(
         "torestfrequency",
         &[
@@ -201,16 +201,16 @@ const METHODS: &[Method] = &[
             param("d0", K::Record, Required),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "touvw",
         &[param("v", K::Record, EmptyRecord)],
         R::Record,
-        No,
+        Yes,
     ),
     method("type", &[], R::Text, Yes),
-    method("uvw", &UVW, R::Record, No),
+    method("uvw", &UVW, R::Record, Yes),
 ];
 
 /// `casars.tools.measures`.

@@ -27,16 +27,13 @@ def test_scalar_extra_values_match_casa():
                 np.testing.assert_allclose(result["value"], expected["value"], rtol=1e-14, atol=1e-16)
 
 
-def test_unrepresented_measures_are_refused():
+def test_extra_values_read_direction_records_with_offsets():
     me = measures()
-    direction = me.direction("J2000", "10deg", "20deg")
-    offset = me.direction("J2000", "1deg", "2deg")
-    with pytest.raises(NotImplementedError, match="#1053"):
-        me.addxvalue(dict(direction, offset=offset))
-    with pytest.raises(NotImplementedError, match="#1053"):
-        me.addxvalue(dict(direction, m0={"value": [0.1, 0.2], "unit": "rad"}))
-    with pytest.raises(NotImplementedError, match="#1053"):
-        me.addxvalue({"type": "baseline", "refer": "ITRF"})
+    from test_measures_spectral import CASES
+    case = next(c for c in CASES if c['name']=='support_direction_offset_addxvalue')
+    result = me.addxvalue(case['args'][0])
+    assert result['unit'] == case['result']['unit']
+    np.testing.assert_allclose(result['value'], case['result']['value'], rtol=1e-14, atol=1e-16)
 
 
 def test_cyclic_and_deep_records_are_refused_safely():

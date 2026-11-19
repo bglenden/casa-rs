@@ -1,0 +1,1174 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "d09863e14b8c1f3d3d4cdc782277aaba9c441e29",
+  "scope": "Explicit measures frame display, DE200 solar-system directions, UT2 display and conversion, and retained comet table state. COMET direction conversion remains on #1252.",
+  "work_item": "https://github.com/bglenden/casa-rs/issues/1252",
+  "sources": [
+    "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/casatools/src/tools/measures/measures_cmpt.cc?at=6.7.6.14",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MeasFrame.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCFrame.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/casa/Quanta/MVEpoch.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCDirection.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCEpoch.cc"
+  ],
+  "comparison": {
+    "fixture": "crates/casars-python/python/tests/data/casa_measures_showframe.json",
+    "frame_states": 49,
+    "state_transitions": 10,
+    "capture": "CASAPY tools/simulation/measures_showframe_oracle.py --measures-data target/geometry-snapshot --out crates/casars-python/python/tests/data/casa_measures_showframe.json",
+    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_showframe.py",
+    "comparator": "Exact display strings and stable exception messages. Fixture keeps raw CASA output alongside independent controls for radial velocity and sidereal time scales. Tests cover exact split epochs, direct UT1/UT2/UTC conversions, and J2000 positions of all ten DE200 bodies. They repeat display before each frame change and check framenow.",
+    "result": "49 recorded states, 10 transitions and live framenow pass. Affected Python selection: 1267 passed and one optional skip."
+  },
+  "performance": {
+    "command": "CASAPY tools/simulation/measures_showframe_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --calls 1000 --samples 7",
+    "conditions": "Warm displays of 23 unchanged frames and 11 direct planetary directions on the same bundled snapshot. One warm-up and seven retained samples of 1000 calls on both backends in CASA Python, with no concurrent local builds or tests.",
+    "rejected": "Uncached candidate matched 31 of 32 states and only 3 of 10 timings beat CASA. Caching the rendered string and invalidating on successful frame changes removes repeated projections and formatting.",
+    "casa": {
+      "backend": "casa",
+      "casa_version": "6.7.6-14",
+      "revision": "d09863e14b8c1f3d3d4cdc782277aaba9c441e29",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "empty": {
+          "median_ns": 120.125,
+          "samples_ns": [
+            121.542,
+            120.334,
+            120.542,
+            120.125,
+            120.0,
+            119.792,
+            119.916
+          ]
+        },
+        "epoch": {
+          "median_ns": 873.75,
+          "samples_ns": [
+            876.084,
+            873.75,
+            875.459,
+            873.666,
+            880.042,
+            873.333,
+            871.0
+          ]
+        },
+        "position": {
+          "median_ns": 845.792,
+          "samples_ns": [
+            843.833,
+            844.166,
+            845.792,
+            841.083,
+            888.791,
+            905.75,
+            862.541
+          ]
+        },
+        "direction": {
+          "median_ns": 1946.25,
+          "samples_ns": [
+            1946.25,
+            1942.0,
+            1946.041,
+            1960.458,
+            1965.5,
+            1938.75,
+            1956.833
+          ]
+        },
+        "galactic": {
+          "median_ns": 2010.959,
+          "samples_ns": [
+            2009.291,
+            2015.583,
+            2010.959,
+            2009.833,
+            2017.25,
+            2009.458,
+            2130.917
+          ]
+        },
+        "azel_with_frame": {
+          "median_ns": 3406.333,
+          "samples_ns": [
+            3462.833,
+            3412.0,
+            3406.333,
+            3460.333,
+            3382.084,
+            3200.584,
+            3248.459
+          ]
+        },
+        "velocity": {
+          "median_ns": 535.0,
+          "samples_ns": [
+            529.958,
+            535.0,
+            530.208,
+            539.167,
+            533.041,
+            543.375,
+            542.792
+          ]
+        },
+        "all": {
+          "median_ns": 3857.666,
+          "samples_ns": [
+            3946.167,
+            3861.791,
+            3857.666,
+            3869.042,
+            3816.458,
+            3837.917,
+            3854.75
+          ]
+        },
+        "comet_only": {
+          "median_ns": 459.166,
+          "samples_ns": [
+            458.584,
+            459.291,
+            461.667,
+            459.166,
+            459.041,
+            457.209,
+            467.083
+          ]
+        },
+        "replacement": {
+          "median_ns": 2672.334,
+          "samples_ns": [
+            2649.042,
+            2672.334,
+            2684.292,
+            2679.75,
+            2667.833,
+            2704.584,
+            2601.292
+          ]
+        },
+        "split_epoch": {
+          "median_ns": 820.042,
+          "samples_ns": [
+            837.583,
+            798.917,
+            797.25,
+            820.042,
+            835.125,
+            838.333,
+            819.834
+          ]
+        },
+        "ut2": {
+          "median_ns": 862.542,
+          "samples_ns": [
+            862.083,
+            863.458,
+            861.417,
+            875.167,
+            865.541,
+            862.542,
+            862.167
+          ]
+        },
+        "sun_offset": {
+          "median_ns": 3231.167,
+          "samples_ns": [
+            3375.583,
+            3261.166,
+            3229.834,
+            3217.042,
+            3231.167,
+            3205.125,
+            3333.209
+          ]
+        },
+        "sun": {
+          "median_ns": 3301.041,
+          "samples_ns": [
+            3305.25,
+            3296.125,
+            3301.041,
+            3349.584,
+            3285.25,
+            3290.083,
+            3326.834
+          ]
+        },
+        "moon": {
+          "median_ns": 3210.792,
+          "samples_ns": [
+            3210.792,
+            3230.125,
+            3199.083,
+            3220.75,
+            3208.292,
+            3216.042,
+            3206.042
+          ]
+        },
+        "mercury": {
+          "median_ns": 3239.542,
+          "samples_ns": [
+            3336.541,
+            3307.0,
+            3213.625,
+            3229.5,
+            3233.834,
+            3239.542,
+            3249.625
+          ]
+        },
+        "venus": {
+          "median_ns": 3324.959,
+          "samples_ns": [
+            3375.375,
+            3370.208,
+            3377.917,
+            3324.959,
+            3192.833,
+            3213.583,
+            3210.208
+          ]
+        },
+        "mars": {
+          "median_ns": 3260.75,
+          "samples_ns": [
+            3348.958,
+            3260.75,
+            3229.167,
+            3231.792,
+            3229.042,
+            3317.25,
+            3288.5
+          ]
+        },
+        "jupiter": {
+          "median_ns": 3236.583,
+          "samples_ns": [
+            3334.667,
+            3324.083,
+            3311.792,
+            3183.916,
+            3221.209,
+            3225.5,
+            3236.583
+          ]
+        },
+        "saturn": {
+          "median_ns": 3241.0,
+          "samples_ns": [
+            3223.792,
+            3239.833,
+            3243.958,
+            3241.0,
+            3295.167,
+            3244.292,
+            3227.708
+          ]
+        },
+        "uranus": {
+          "median_ns": 3278.166,
+          "samples_ns": [
+            3277.417,
+            3279.625,
+            3272.458,
+            3279.459,
+            3278.166,
+            3269.792,
+            3321.542
+          ]
+        },
+        "neptune": {
+          "median_ns": 3311.917,
+          "samples_ns": [
+            3306.458,
+            3326.625,
+            3311.917,
+            3358.291,
+            3287.542,
+            3294.959,
+            3349.875
+          ]
+        },
+        "pluto": {
+          "median_ns": 3245.459,
+          "samples_ns": [
+            3284.917,
+            3237.375,
+            3246.625,
+            3261.875,
+            3226.125,
+            3245.459,
+            3233.042
+          ]
+        },
+        "measure_sun_offset": {
+          "median_ns": 41528.667,
+          "samples_ns": [
+            41539.583,
+            41504.041,
+            42162.25,
+            41528.667,
+            41756.834,
+            41197.709,
+            41446.834
+          ]
+        },
+        "measure_sun": {
+          "median_ns": 40092.875,
+          "samples_ns": [
+            39779.875,
+            39817.5,
+            40110.583,
+            40187.625,
+            40742.917,
+            40092.875,
+            40015.542
+          ]
+        },
+        "measure_moon": {
+          "median_ns": 41878.084,
+          "samples_ns": [
+            41878.084,
+            42345.292,
+            41876.792,
+            42686.0,
+            42078.958,
+            41341.583,
+            41328.417
+          ]
+        },
+        "measure_mercury": {
+          "median_ns": 41534.084,
+          "samples_ns": [
+            41534.084,
+            41661.084,
+            41519.458,
+            41441.25,
+            41268.917,
+            42104.459,
+            41767.208
+          ]
+        },
+        "measure_venus": {
+          "median_ns": 41637.791,
+          "samples_ns": [
+            41282.667,
+            41719.667,
+            41931.25,
+            41565.583,
+            41341.916,
+            41637.791,
+            41943.958
+          ]
+        },
+        "measure_mars": {
+          "median_ns": 42087.417,
+          "samples_ns": [
+            42087.417,
+            41931.583,
+            41091.375,
+            41730.959,
+            42198.25,
+            42096.459,
+            42097.875
+          ]
+        },
+        "measure_jupiter": {
+          "median_ns": 41066.25,
+          "samples_ns": [
+            41564.541,
+            40542.292,
+            40572.166,
+            41066.25,
+            40586.916,
+            41174.792,
+            41084.083
+          ]
+        },
+        "measure_saturn": {
+          "median_ns": 41985.708,
+          "samples_ns": [
+            41985.708,
+            42214.667,
+            41597.875,
+            41940.542,
+            43482.25,
+            41655.0,
+            42307.708
+          ]
+        },
+        "measure_uranus": {
+          "median_ns": 41402.208,
+          "samples_ns": [
+            41393.958,
+            41402.208,
+            41960.583,
+            41434.334,
+            41852.375,
+            41078.167,
+            41202.084
+          ]
+        },
+        "measure_neptune": {
+          "median_ns": 41945.375,
+          "samples_ns": [
+            42736.417,
+            41741.25,
+            41858.625,
+            42212.625,
+            41945.375,
+            42084.625,
+            41459.708
+          ]
+        },
+        "measure_pluto": {
+          "median_ns": 41616.458,
+          "samples_ns": [
+            41105.333,
+            41553.0,
+            41257.834,
+            41616.458,
+            42291.667,
+            41830.959,
+            42327.292
+          ]
+        }
+      }
+    },
+    "native": {
+      "backend": "casars",
+      "casa_version": "6.7.6-14",
+      "revision": "d09863e14b8c1f3d3d4cdc782277aaba9c441e29",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "empty": {
+          "median_ns": 68.083,
+          "samples_ns": [
+            68.416,
+            68.166,
+            68.042,
+            68.083,
+            68.042,
+            68.042,
+            68.166
+          ]
+        },
+        "epoch": {
+          "median_ns": 66.917,
+          "samples_ns": [
+            67.958,
+            66.792,
+            66.875,
+            66.875,
+            66.917,
+            77.0,
+            82.25
+          ]
+        },
+        "position": {
+          "median_ns": 68.208,
+          "samples_ns": [
+            68.333,
+            68.0,
+            68.208,
+            68.125,
+            68.083,
+            68.25,
+            68.208
+          ]
+        },
+        "direction": {
+          "median_ns": 71.708,
+          "samples_ns": [
+            71.75,
+            68.875,
+            69.0,
+            71.875,
+            70.833,
+            74.0,
+            71.708
+          ]
+        },
+        "galactic": {
+          "median_ns": 70.625,
+          "samples_ns": [
+            73.875,
+            69.834,
+            67.125,
+            79.708,
+            70.625,
+            80.375,
+            67.042
+          ]
+        },
+        "azel_with_frame": {
+          "median_ns": 92.25,
+          "samples_ns": [
+            92.542,
+            92.208,
+            92.125,
+            92.25,
+            92.333,
+            92.166,
+            99.416
+          ]
+        },
+        "velocity": {
+          "median_ns": 68.5,
+          "samples_ns": [
+            71.167,
+            68.5,
+            68.459,
+            68.416,
+            68.5,
+            68.5,
+            68.375
+          ]
+        },
+        "all": {
+          "median_ns": 96.834,
+          "samples_ns": [
+            100.958,
+            97.291,
+            96.583,
+            99.541,
+            96.417,
+            96.834,
+            96.583
+          ]
+        },
+        "comet_only": {
+          "median_ns": 67.041,
+          "samples_ns": [
+            67.042,
+            67.041,
+            66.917,
+            67.041,
+            66.875,
+            67.084,
+            67.125
+          ]
+        },
+        "replacement": {
+          "median_ns": 72.041,
+          "samples_ns": [
+            73.584,
+            70.625,
+            83.0,
+            88.292,
+            72.041,
+            69.084,
+            69.083
+          ]
+        },
+        "split_epoch": {
+          "median_ns": 66.042,
+          "samples_ns": [
+            66.042,
+            70.625,
+            75.25,
+            65.166,
+            65.25,
+            65.209,
+            77.208
+          ]
+        },
+        "ut2": {
+          "median_ns": 67.75,
+          "samples_ns": [
+            67.542,
+            67.75,
+            67.791,
+            67.709,
+            67.75,
+            67.708,
+            67.75
+          ]
+        },
+        "sun_offset": {
+          "median_ns": 92.917,
+          "samples_ns": [
+            94.333,
+            98.917,
+            92.875,
+            92.875,
+            92.917,
+            92.916,
+            93.0
+          ]
+        },
+        "sun": {
+          "median_ns": 86.334,
+          "samples_ns": [
+            87.334,
+            86.334,
+            86.458,
+            86.375,
+            86.167,
+            86.208,
+            86.125
+          ]
+        },
+        "moon": {
+          "median_ns": 90.292,
+          "samples_ns": [
+            82.291,
+            88.458,
+            97.208,
+            93.042,
+            90.583,
+            90.083,
+            90.292
+          ]
+        },
+        "mercury": {
+          "median_ns": 93.959,
+          "samples_ns": [
+            88.125,
+            94.042,
+            93.917,
+            93.959,
+            93.875,
+            94.042,
+            94.125
+          ]
+        },
+        "venus": {
+          "median_ns": 86.292,
+          "samples_ns": [
+            85.417,
+            90.667,
+            86.292,
+            86.125,
+            86.166,
+            96.084,
+            89.792
+          ]
+        },
+        "mars": {
+          "median_ns": 89.0,
+          "samples_ns": [
+            113.125,
+            90.042,
+            88.958,
+            89.0,
+            88.75,
+            89.084,
+            88.542
+          ]
+        },
+        "jupiter": {
+          "median_ns": 93.375,
+          "samples_ns": [
+            100.333,
+            95.916,
+            93.25,
+            93.375,
+            93.334,
+            93.375,
+            93.375
+          ]
+        },
+        "saturn": {
+          "median_ns": 93.916,
+          "samples_ns": [
+            93.917,
+            93.666,
+            93.916,
+            96.334,
+            93.375,
+            93.916,
+            94.125
+          ]
+        },
+        "uranus": {
+          "median_ns": 94.125,
+          "samples_ns": [
+            94.125,
+            94.042,
+            94.084,
+            94.458,
+            94.292,
+            94.542,
+            94.083
+          ]
+        },
+        "neptune": {
+          "median_ns": 94.75,
+          "samples_ns": [
+            94.75,
+            94.667,
+            94.625,
+            94.333,
+            94.917,
+            95.5,
+            95.167
+          ]
+        },
+        "pluto": {
+          "median_ns": 93.125,
+          "samples_ns": [
+            93.583,
+            93.125,
+            93.083,
+            93.5,
+            93.291,
+            92.958,
+            92.75
+          ]
+        },
+        "measure_sun_offset": {
+          "median_ns": 4540.542,
+          "samples_ns": [
+            4440.25,
+            4483.75,
+            4534.375,
+            4548.0,
+            4543.0,
+            4540.542,
+            4583.875
+          ]
+        },
+        "measure_sun": {
+          "median_ns": 4491.75,
+          "samples_ns": [
+            4575.375,
+            4502.0,
+            4479.667,
+            4463.084,
+            4565.625,
+            4485.208,
+            4491.75
+          ]
+        },
+        "measure_moon": {
+          "median_ns": 4861.541,
+          "samples_ns": [
+            4902.375,
+            4899.417,
+            4923.0,
+            4832.709,
+            4857.375,
+            4861.541,
+            4826.625
+          ]
+        },
+        "measure_mercury": {
+          "median_ns": 4855.25,
+          "samples_ns": [
+            4855.25,
+            4839.542,
+            4863.666,
+            4870.834,
+            4765.042,
+            4794.291,
+            4886.334
+          ]
+        },
+        "measure_venus": {
+          "median_ns": 4853.5,
+          "samples_ns": [
+            4826.125,
+            4844.25,
+            4848.166,
+            4853.5,
+            4940.958,
+            4854.458,
+            4868.0
+          ]
+        },
+        "measure_mars": {
+          "median_ns": 4539.75,
+          "samples_ns": [
+            4461.042,
+            4447.208,
+            4590.375,
+            4533.792,
+            4539.75,
+            4632.917,
+            4650.208
+          ]
+        },
+        "measure_jupiter": {
+          "median_ns": 4568.584,
+          "samples_ns": [
+            4632.625,
+            4542.584,
+            4553.75,
+            4568.584,
+            4557.292,
+            4579.834,
+            4569.5
+          ]
+        },
+        "measure_saturn": {
+          "median_ns": 4565.958,
+          "samples_ns": [
+            4544.75,
+            4548.833,
+            4571.542,
+            4569.542,
+            4565.958,
+            4592.125,
+            4503.375
+          ]
+        },
+        "measure_uranus": {
+          "median_ns": 4565.209,
+          "samples_ns": [
+            4623.541,
+            4595.75,
+            4614.125,
+            4565.209,
+            4444.041,
+            4447.041,
+            4431.334
+          ]
+        },
+        "measure_neptune": {
+          "median_ns": 4607.25,
+          "samples_ns": [
+            4505.5,
+            4639.042,
+            4607.25,
+            4613.375,
+            4607.167,
+            4607.875,
+            4604.458
+          ]
+        },
+        "measure_pluto": {
+          "median_ns": 4623.916,
+          "samples_ns": [
+            4609.583,
+            4629.125,
+            4629.5,
+            4629.459,
+            4547.875,
+            4576.542,
+            4623.916
+          ]
+        }
+      }
+    },
+    "speedups": {
+      "empty": 1.7643905233318156,
+      "epoch": 13.057220138380382,
+      "position": 12.400187661271406,
+      "direction": 27.141323143861214,
+      "galactic": 28.47375575221239,
+      "azel_with_frame": 36.925018970189704,
+      "velocity": 7.810218978102189,
+      "all": 39.8379288266518,
+      "comet_only": 6.849032681493415,
+      "replacement": 37.0946266709235,
+      "split_epoch": 12.416977075194573,
+      "ut2": 12.731247232472326,
+      "sun_offset": 34.77476672729425,
+      "sun": 38.235700882618666,
+      "moon": 35.56009391751207,
+      "mercury": 34.47825115209825,
+      "venus": 38.53148611690539,
+      "mars": 36.6376404494382,
+      "jupiter": 34.662200803212855,
+      "saturn": 34.50956173601942,
+      "uranus": 34.82779282868526,
+      "neptune": 34.954269129287596,
+      "pluto": 34.85056644295302,
+      "measure_sun_offset": 9.14619157800985,
+      "measure_sun": 8.925891912951522,
+      "measure_moon": 8.614158350202127,
+      "measure_mercury": 8.55446866793677,
+      "measure_venus": 8.578920572782527,
+      "measure_mars": 9.27086667768049,
+      "measure_jupiter": 8.988835490383892,
+      "measure_saturn": 9.195377618453785,
+      "measure_uranus": 9.069071755531894,
+      "measure_neptune": 9.104210754788648,
+      "measure_pluto": 9.000262548022066
+    }
+  },
+  "comet_nonregression": {
+    "command": "CASAPY tools/simulation/measures_comet_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --calls 1000 --samples 7",
+    "scope": "Existing query and table-load cases after sharing one read-only table across the frame and query contexts.",
+    "casa": {
+      "backend": "casa",
+      "casa_version": "6.7.6-14",
+      "revision": "d09863e14b8c1f3d3d4cdc782277aaba9c441e29",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "load_absolute": {
+          "median_ns": 202258.542,
+          "samples_ns": [
+            201495.333,
+            202258.542,
+            202067.292,
+            207349.792,
+            202852.5,
+            202312.833,
+            202204.083
+          ]
+        },
+        "load_ephemerides_relative": {
+          "median_ns": 196158.875,
+          "samples_ns": [
+            197773.542,
+            196475.25,
+            196080.708,
+            195772.708,
+            196158.875,
+            196481.292,
+            195629.917
+          ]
+        },
+        "load_topocentric": {
+          "median_ns": 188627.875,
+          "samples_ns": [
+            187813.042,
+            188779.875,
+            187859.375,
+            193844.333,
+            188627.875,
+            188427.708,
+            188993.875
+          ]
+        },
+        "name": {
+          "median_ns": 87.375,
+          "samples_ns": [
+            87.375,
+            87.541,
+            89.958,
+            87.375,
+            87.166,
+            86.917,
+            87.125
+          ]
+        },
+        "type": {
+          "median_ns": 87.625,
+          "samples_ns": [
+            90.959,
+            87.459,
+            87.25,
+            87.417,
+            87.625,
+            88.291,
+            88.084
+          ]
+        },
+        "topocentre_m": {
+          "median_ns": 3265.708,
+          "samples_ns": [
+            3061.75,
+            3065.709,
+            3182.291,
+            3286.791,
+            3268.542,
+            3265.708,
+            3266.334
+          ]
+        },
+        "distance": {
+          "median_ns": 3544.75,
+          "samples_ns": [
+            3545.917,
+            3534.792,
+            3545.041,
+            3523.792,
+            3632.042,
+            3544.75,
+            3500.041
+          ]
+        },
+        "angular_diameter": {
+          "median_ns": 3517.125,
+          "samples_ns": [
+            3558.75,
+            3507.709,
+            3500.958,
+            3517.125,
+            3498.667,
+            3582.625,
+            3563.916
+          ]
+        },
+        "topocentric_distance": {
+          "median_ns": 3501.959,
+          "samples_ns": [
+            3587.709,
+            3626.75,
+            3506.291,
+            3501.959,
+            3491.416,
+            3486.542,
+            3498.5
+          ]
+        },
+        "topocentric_angular_diameter": {
+          "median_ns": 3540.416,
+          "samples_ns": [
+            3508.0,
+            3520.5,
+            3497.958,
+            3658.541,
+            3540.416,
+            3540.958,
+            3581.917
+          ]
+        }
+      }
+    },
+    "native": {
+      "backend": "casars",
+      "casa_version": "6.7.6-14",
+      "revision": "d09863e14b8c1f3d3d4cdc782277aaba9c441e29",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "load_absolute": {
+          "median_ns": 169407.625,
+          "samples_ns": [
+            169407.625,
+            168937.208,
+            169257.208,
+            169702.083,
+            168680.333,
+            169512.0,
+            169788.333
+          ]
+        },
+        "load_ephemerides_relative": {
+          "median_ns": 171155.166,
+          "samples_ns": [
+            170572.541,
+            170884.459,
+            171155.166,
+            171192.667,
+            170697.916,
+            173289.875,
+            173245.083
+          ]
+        },
+        "load_topocentric": {
+          "median_ns": 97117.375,
+          "samples_ns": [
+            97307.709,
+            96890.5,
+            96830.125,
+            97538.542,
+            97251.958,
+            97084.042,
+            97117.375
+          ]
+        },
+        "name": {
+          "median_ns": 68.084,
+          "samples_ns": [
+            68.666,
+            68.25,
+            68.084,
+            68.041,
+            68.084,
+            68.584,
+            67.958
+          ]
+        },
+        "type": {
+          "median_ns": 68.583,
+          "samples_ns": [
+            68.417,
+            68.083,
+            68.708,
+            68.166,
+            68.75,
+            70.917,
+            68.583
+          ]
+        },
+        "topocentre_m": {
+          "median_ns": 312.583,
+          "samples_ns": [
+            312.875,
+            313.25,
+            315.667,
+            312.583,
+            311.625,
+            309.708,
+            308.959
+          ]
+        },
+        "distance": {
+          "median_ns": 227.583,
+          "samples_ns": [
+            227.583,
+            227.625,
+            227.333,
+            227.458,
+            227.041,
+            227.917,
+            230.667
+          ]
+        },
+        "angular_diameter": {
+          "median_ns": 229.875,
+          "samples_ns": [
+            229.709,
+            247.167,
+            231.791,
+            246.334,
+            226.167,
+            228.042,
+            229.875
+          ]
+        },
+        "topocentric_distance": {
+          "median_ns": 225.833,
+          "samples_ns": [
+            238.5,
+            225.833,
+            223.583,
+            226.25,
+            226.208,
+            223.375,
+            224.542
+          ]
+        },
+        "topocentric_angular_diameter": {
+          "median_ns": 224.75,
+          "samples_ns": [
+            224.667,
+            224.75,
+            224.292,
+            225.125,
+            227.292,
+            224.917,
+            224.708
+          ]
+        }
+      }
+    },
+    "speedups": {
+      "load_absolute": 1.1939164013426196,
+      "load_ephemerides_relative": 1.1460879597405784,
+      "load_topocentric": 1.9422670248243428,
+      "name": 1.2833411667939603,
+      "type": 1.277648980067947,
+      "topocentre_m": 10.44749074645774,
+      "distance": 15.57563614153957,
+      "angular_diameter": 15.300163132137031,
+      "topocentric_distance": 15.506852408638242,
+      "topocentric_angular_diameter": 15.752685205784205
+    }
+  },
+  "validation": "310 affected Rust tests, formatting, scoped Clippy, strict public and private rustdoc, arch-check, docs-check.",
+  "review": "One local Astra xhigh review. All findings addressed by preserving the two-part epoch, using the existing DE200 reader for the ten bodies and their angular offsets, supporting casacore UT2, retaining error causes, and checking both sidereal epochs against direct CASA conversions."
+}

@@ -10,8 +10,14 @@ use super::{MeasuresDataError, MeasuresRuntime};
 
 /// Casacore's default DE200 coefficients, read one time block at a time.
 pub struct PlanetaryEphemeris {
-    table: Table,
+    ephemeris: PlanetaryTable,
     body: usize,
+}
+
+/// Casacore's DE200 table shared across directions to different bodies.
+#[derive(Debug)]
+pub struct PlanetaryTable {
+    table: Table,
     coefficients: [[usize; 13]; 3],
     first_mjd: f64,
     step_days: f64,
@@ -25,23 +31,43 @@ pub struct PlanetaryEphemeris {
 impl PlanetaryEphemeris {
     /// Bind the named body to the discovered runtime's DE200 table.
     pub fn open_discovered(name: &str) -> Result<Self, MeasuresDataError> {
-        let body = match name.to_ascii_uppercase().as_str() {
-            "MERCURY" => 0,
-            "VENUS" => 1,
-            "MARS" => 3,
-            "JUPITER" => 4,
-            "SATURN" => 5,
-            "URANUS" => 6,
-            "NEPTUNE" => 7,
-            "PLUTO" => 8,
-            "MOON" => 9,
-            "SUN" => 10,
-            _ => {
-                return Err(invalid(format!(
-                    "unknown CASA planetary direction {name:?}"
-                )));
-            }
-        };
+        Ok(Self {
+            body: body_index(&name.to_ascii_uppercase())?,
+            ephemeris: PlanetaryTable::open_discovered()?,
+        })
+    }
+
+    /// Evaluate the light-time and parallax corrected direction at the
+    /// epoch and observatory in the frame.
+    pub fn direction(&self, frame: &MeasFrame) -> Result<MDirection, MeasuresDataError> {
+        let (direction, distance) = self.ephemeris.geocentric(self.body, None, frame)?;
+        topocentric(direction, distance * self.ephemeris.au_km * 1000., frame)
+    }
+}
+
+fn body_index(name: &str) -> Result<usize, MeasuresDataError> {
+    Ok(match name {
+        "MERCURY" => 0,
+        "VENUS" => 1,
+        "MARS" => 3,
+        "JUPITER" => 4,
+        "SATURN" => 5,
+        "URANUS" => 6,
+        "NEPTUNE" => 7,
+        "PLUTO" => 8,
+        "MOON" => 9,
+        "SUN" => 10,
+        _ => {
+            return Err(invalid(format!(
+                "unknown CASA planetary direction {name:?}"
+            )));
+        }
+    })
+}
+
+impl PlanetaryTable {
+    /// Open the DE200 table in the configured measures runtime.
+    pub fn open_discovered() -> Result<Self, MeasuresDataError> {
         let runtime = MeasuresRuntime::open_discovered(Default::default())?;
         let table = Table::open(TableOptions::new(runtime.root().join("ephemerides/DE200")))?;
         let keys = table.keywords();
@@ -71,7 +97,6 @@ impl PlanetaryEphemeris {
         }
         Ok(Self {
             table,
-            body,
             coefficients,
             first_mjd,
             step_days,
@@ -83,9 +108,33 @@ impl PlanetaryEphemeris {
         })
     }
 
-    /// Evaluate the light-time and parallax corrected direction at the
-    /// epoch and observatory in the frame.
-    pub fn direction(&self, frame: &MeasFrame) -> Result<MDirection, MeasuresDataError> {
+    /// Resolve a solar-system direction in the geocentric JNAT reference
+    /// and return its geocentric parallax distance in metres.
+    ///
+    /// The frame supplies the epoch. A direction with a latitude of +90°
+    /// denotes the default position of the body. Otherwise the direction's
+    /// angles shift its DE200 position before solar deflection, as in
+    /// casacore's `MCDirection::R_PLANET`.
+    pub fn geocentric_direction(
+        &self,
+        model: &MDirection,
+        frame: &MeasFrame,
+    ) -> Result<(MDirection, f64), MeasuresDataError> {
+        let body = body_index(model.refer().as_str())?;
+        let offset = (model.cosines()[2] != 1.).then(|| model.as_angles());
+        let (direction, distance_au) = self.geocentric(body, offset, frame)?;
+        Ok((
+            MDirection::from_cosines(direction, DirectionRef::JNAT),
+            distance_au * self.au_km * 1000.0,
+        ))
+    }
+
+    fn geocentric(
+        &self,
+        body_index: usize,
+        offset: Option<(f64, f64)>,
+        frame: &MeasFrame,
+    ) -> Result<([f64; 3], f64), MeasuresDataError> {
         let epoch = frame
             .epoch()
             .ok_or_else(|| invalid("planetary direction needs an epoch"))?;
@@ -102,8 +151,8 @@ impl PlanetaryEphemeris {
         let mut light_time = 0.;
         for _ in 0..16 {
             let emission = time - light_time;
-            let mut body = self.position(self.body, emission)?;
-            if self.body == 9 {
+            let mut body = self.position(body_index, emission)?;
+            if body_index == 9 {
                 let barycentre = self.position(2, emission)?;
                 body = std::array::from_fn(|axis| body[axis] + barycentre[axis]);
             }
@@ -111,7 +160,7 @@ impl PlanetaryEphemeris {
             let delta = subtract(body, earth);
             let distance = norm(delta);
             let elongation_sum = earth_distance + norm(body_sun);
-            let delay = if self.body == 10 {
+            let delay = if body_index == 10 {
                 distance
             } else {
                 distance
@@ -120,10 +169,19 @@ impl PlanetaryEphemeris {
             } / self.light_speed;
             if (delay - light_time).abs() <= 1e-9 * delay {
                 let mut direction = delta.map(|coordinate| coordinate / distance);
+                if let Some((longitude_offset, latitude_offset)) = offset {
+                    let [x, y, z] = direction;
+                    direction = MDirection::from_angles(
+                        y.atan2(x) + longitude_offset,
+                        z.atan2(x.hypot(y)) + latitude_offset,
+                        DirectionRef::JNAT,
+                    )
+                    .cosines();
+                }
                 let earth_unit = earth_sun.map(|coordinate| coordinate / earth_distance);
                 let body_distance = norm(body_sun);
                 let projection = dot(direction, earth_unit);
-                if self.body != 10
+                if body_index != 10
                     && body_distance > 0.
                     && (projection - 1.).abs() > 1. - (self.sun_radius / earth_distance).cos()
                 {
@@ -136,7 +194,7 @@ impl PlanetaryEphemeris {
                             + scale * (forward * earth_unit[axis] - projection * body_unit[axis])
                     });
                 }
-                return topocentric(direction, distance * self.au_km * 1000., frame);
+                return Ok((direction, distance));
             }
             light_time = delay;
         }

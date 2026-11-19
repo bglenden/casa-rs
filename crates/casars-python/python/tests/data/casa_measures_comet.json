@@ -1,0 +1,7035 @@
+{
+  "casa_version": "6.7.6-14",
+  "synthetic": {
+    "columns": {
+      "MJD": [
+        55564.0,
+        55565.0,
+        55566.0
+      ],
+      "RA": [
+        359.0,
+        1.0,
+        2.0
+      ],
+      "DEC": [
+        12.0,
+        14.0,
+        17.0
+      ],
+      "Rho": [
+        5.0,
+        5.01,
+        5.03
+      ],
+      "RadVel": [
+        0.01,
+        0.02,
+        0.02
+      ]
+    },
+    "keywords": {
+      "MJD0": 55563.0,
+      "dMJD": 1.0,
+      "NAME": "Test object",
+      "GeoDist": 6378.25,
+      "GeoLong": -67.25,
+      "GeoLat": 25.5,
+      "meanrad": {
+        "unit": "km",
+        "value": 2400.0
+      },
+      "VS_CREATE": "2013/02/20/10:04",
+      "VS_DATE": "2013/02/20/18:18",
+      "VS_TYPE": "Table of comet/planetary positions",
+      "VS_VERSION": "0003.0001"
+    },
+    "variants": {
+      "topocentric": {},
+      "explicit_topocentric": {
+        "posrefsys": "TOPO"
+      },
+      "explicit_j2000": {
+        "posrefsys": "ICRF/J2000.0"
+      },
+      "explicit_icrs": {
+        "posrefsys": "ICRS"
+      },
+      "explicit_b1950": {
+        "posrefsys": "B1950"
+      },
+      "no_radius": {
+        "meanrad": null
+      },
+      "bad_grid": {
+        "MJD0": 55000.0
+      },
+      "bad_version_date": {
+        "VS_DATE": "not a date"
+      },
+      "one_sample": {},
+      "numeric_version_date": {
+        "VS_DATE": "55564"
+      },
+      "time_unit_version_date": {
+        "VS_DATE": "1s"
+      },
+      "zero_range": {},
+      "nonfinite_direction": {},
+      "bad_optional_column": {},
+      "nonconformant_radius": {
+        "meanrad": {
+          "unit": "s",
+          "value": 1.0
+        }
+      },
+      "integer_metadata": {
+        "MJD0": 55563,
+        "dMJD": 1,
+        "GeoDist": 6378,
+        "GeoLat": 25,
+        "GeoLong": -67,
+        "meanrad": {
+          "unit": "km",
+          "value": 2400
+        }
+      }
+    },
+    "row_counts": {
+      "one_sample": 1
+    },
+    "column_overrides": {
+      "zero_range": {
+        "Rho": [
+          0.0,
+          5.01,
+          5.03
+        ]
+      },
+      "nonfinite_direction": {
+        "RA": [
+          null,
+          1.0,
+          2.0
+        ]
+      },
+      "bad_optional_column": {
+        "DiskLong": [
+          "invalid",
+          "invalid",
+          "invalid"
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "unloaded_and_defaults",
+      "steps": [
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "upstream_ganymede",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834453148
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343087275e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "path_protocol",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "bytes"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343088012e-06
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "nul"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            "JPL-Horizons/Ganymede_55437-56293dUTC.tab"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343088012e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "path_expansion",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "home"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "environment"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "plain_environment"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        }
+      ]
+    },
+    {
+      "name": "protocol_errors_keep_frame",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            null
+          ],
+          "error": "TypeError",
+          "message": "argument _v must be a string"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            42
+          ],
+          "error": "TypeError",
+          "message": "argument _v must be a string"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            []
+          ],
+          "error": "TypeError",
+          "message": "argument _v must be a string"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            false
+          ],
+          "error": "TypeError",
+          "message": "argument _v must be a string"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343088012e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "replacement_and_done",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/absent.tab",
+              "form": "text"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "done",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343088012e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "dates_and_ref",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55436.9,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55437.0,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 4.02760224877623
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 8.737757594643867e-06
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "TAI",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55565.3,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.1344488206394265
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.8,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.125495156827768
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 56292.9999,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 4.2153993248525445
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 56293.0,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "explicit_table_reference",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.1241088343047005
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343286243e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "topocentric",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "topocentric"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "explicit_topocentric",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_topocentric"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "explicit_j2000",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_j2000"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "explicit_icrs",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_icrs"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "explicit_b1950",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_b1950"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "no_radius",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "no_radius"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -0.39971906715150013
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "bad_grid",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "bad_grid"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "bad_version_date",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "bad_version_date"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "one_sample",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "one_sample"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "numeric_version_date",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "numeric_version_date"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "time_unit_version_date",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "time_unit_version_date"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "zero_range",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "zero_range"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.0,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 6.684587124092374e-18
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 4800000000000.001
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "nonfinite_direction",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "nonfinite_direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": "nan"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": "nan"
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "bad_optional_column",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "bad_optional_column"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "nonconformant_radius",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "nonconformant_radius"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 2.671956929535133e-12
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "integer_metadata",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "integer_metadata"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2258594.3534631343,
+              -5320914.851042295,
+              2695459.273382181
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_app_alma",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04071802918370023
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159362931687732
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.043236034306403444
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04268361927488643
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04323610352980569
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.042683540216958755
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04071094153820309
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159051779171579
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -1.1772235971233642
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159172967394367
+            },
+            "refer": "HADEC",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.45140362400233
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3781150724283901
+            },
+            "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443801759732259
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04754163565424635
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443765634998475
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047542291843318964
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078786780823376
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04162104671487067
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04070821139970531
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04158652120122874
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.47724, -2.44559] deg)\n       Ganymede comet between MJD 55437 and 56293",
+          "python_type": "str"
+        }
+      ]
+    },
+    {
+      "name": "direction_app_vla",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": -1.8782942581394362
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.5916750987501983
+              },
+              "m2": {
+                "unit": "m",
+                "value": 6373576.280915651
+              },
+              "refer": "ITRF",
+              "type": "position"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04071802918370023
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159362931687732
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.043236034306403444
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04268361927488643
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04323610352980569
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.042683540216958755
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04071143502766477
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159817735272759
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -1.8729708582553621
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159796106012957
+            },
+            "refer": "HADEC",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.4339797698275307
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2733812649782994
+            },
+            "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443801759732259
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04754163565424635
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443765634998475
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047542291843318964
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078786780823376
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04162104671487067
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04070821139970531
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04158652120122874
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [-1.60119e+06, -5.04198e+06, 3.55488e+06]\n        (Longitude = -1.87829 Latitude = 0.591675)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.47724, -2.44559] deg)\n       Ganymede comet between MJD 55437 and 56293",
+          "python_type": "str"
+        }
+      ]
+    },
+    {
+      "name": "direction_app_without_observatory",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04071802918370023
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159362931687732
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.043236034306403444
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04268361927488643
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04323610352980569
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.042683540216958755
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443801759732259
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04754163565424635
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443765634998475
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047542291843318964
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078786780823376
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04162104671487067
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04070821139970531
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04158652120122874
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_j2000_alma",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.040724792742427365
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.041596705619117116
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04324279765623693
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.042686694978438626
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04324286687950384
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.0426866159207579
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.040717705115928246
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.041593594105399236
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -1.1772168335519289
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159480599191401
+            },
+            "refer": "HADEC",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.4514037294741782
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3781224967753543
+            },
+            "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.054436404146047626
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04753892824915484
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.0544360428986142
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047539584439886894
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078625554830935
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04161833885498469
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.040706599143759334
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04158381334035652
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.47763, -2.44577] deg)\n       Ganymede comet between MJD 55197 and 59214",
+          "python_type": "str"
+        }
+      ]
+    },
+    {
+      "name": "direction_j2000_vla",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": -1.8782942581394362
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.5916750987501983
+              },
+              "m2": {
+                "unit": "m",
+                "value": 6373576.280915651
+              },
+              "refer": "ITRF",
+              "type": "position"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.0407243122019514
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.041589051145266044
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.043242316799962946
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.042679041269067124
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.043242386023511444
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04267896221136883
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04071771803425723
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.041593599193114825
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -1.8729645752420772
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159338290424406
+            },
+            "refer": "HADEC",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.433979560666367
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.27337349793604837
+            },
+            "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443592136434887
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047531274641873233
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.054435560116780954
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047531930832597054
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078577505723131
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.041610685111832794
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04070611865806724
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04157615959691035
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [-1.60119e+06, -5.04198e+06, 3.55488e+06]\n        (Longitude = -1.87829 Latitude = 0.591675)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.4776, -2.44533] deg)\n       Ganymede comet between MJD 55197 and 59214",
+          "python_type": "str"
+        }
+      ]
+    },
+    {
+      "name": "direction_j2000_without_observatory",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {},
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_topocentric",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "topocentric"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.078585955453944e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696859357616594
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.00255030170333086
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22585118618149325
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.002550380129647092
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22585126665908867
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -2.6161694754526667e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22697037593380595
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -2.530489577318016
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696945574657193
+            },
+            "refer": "HADEC",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.753020261583151
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.966154201082831
+            },
+            "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.013733395162426217
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22098482133643887
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.013733035563131553
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22098416555144146
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.00010530064412935214
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22691193042031882
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -2.5607234446231215e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22694639866230046
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-0.146122, 12.9403] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str"
+        },
+        {
+          "method": "rise",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "unit": "rad",
+              "value": -1.4731876240196538
+            },
+            "set": {
+              "unit": "rad",
+              "value": 1.4731260523005447
+            }
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "riseset",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62287.765534907536
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55563.67055021165
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            },
+            "set": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62288.23445529302
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55564.13819019135
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            }
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_explicit_topocentric",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_topocentric"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.541008539988195e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696681118884066
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.0025549242954973615
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22584940399241338
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.0025550027218366553
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22584948446985503
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.078585955453944e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696859357616594
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -2.530484953150472
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696767338129448
+            },
+            "refer": "HADEC",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.7530202615854105
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.9661493557756684
+            },
+            "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.013738012672855028
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22098303933086363
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.013737653072867704
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.220982383545814
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.00010992431548665667
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22691014822516045
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.023094411645514e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.2269446164708697
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-0.146386, 12.9402] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str"
+        },
+        {
+          "method": "rise",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "unit": "rad",
+              "value": -1.4731930445089
+            },
+            "set": {
+              "unit": "rad",
+              "value": 1.4731222243381004
+            }
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "riseset",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62287.76553404484
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55563.670549351315
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            },
+            "set": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62288.234454683785
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55564.13818958378
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            }
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_explicit_icrs",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_icrs"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.002489701470434712
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.2280860392373523
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.070744095105385e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696851301500984
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.078585955453944e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696859357616594
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.002494310176028411
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22808781119490298
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -2.5330100505077886
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.2280868953604176
+            },
+            "refer": "HADEC",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.7527790496974618
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.9688485442442178
+            },
+            "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.011207306867213548
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22211099897048653
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.01120694765051461
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22211034322540332
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0024241693683828367
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.2280381927983284
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0025038839696229476
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22807265889060446
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-0.00175941, 13.0043] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str"
+        },
+        {
+          "method": "rise",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "unit": "rad",
+              "value": -1.4701677842062757
+            },
+            "set": {
+              "unit": "rad",
+              "value": 1.4751471871471453
+            }
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "riseset",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62287.76601552997
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55563.67102952173
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            },
+            "set": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62288.23477696662
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55564.13851098661
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            }
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_explicit_b1950",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_b1950"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.013692237682717259
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.23295301140514135
+            },
+            "refer": "APP",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.011158340590376051
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.23182610067466375
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "ICRS"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.011158262215687779
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.2318261816007115
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.013696777189691266
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.2329547376335904
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "HADEC"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -2.5442125235440973
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.23295384110054143
+            },
+            "refer": "HADEC",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "AZEL"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.7518117273385119
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.9807790067358091
+            },
+            "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.078585955453944e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696859357616594
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.0428380178896554e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696793800874202
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.013616074091083166
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.23289570786703204
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.01369588476125895
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.23293016180146586
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [0.639326, 13.2827] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str"
+        },
+        {
+          "method": "rise",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "unit": "rad",
+              "value": -1.456787016486872
+            },
+            "set": {
+              "unit": "rad",
+              "value": 1.4841714918523066
+            }
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "riseset",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62287.768145145295
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55563.67315332205
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            },
+            "set": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62288.23621322933
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55564.139943327544
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            }
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_outside_table",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2009/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "error": "RuntimeError",
+          "message": "No or outside range comet table specified"
+        }
+      ]
+    },
+    {
+      "name": "direction_no_table",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "APP"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "COMET"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "COMET",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_shifted_record",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.2967059728390361
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.6108652381980153
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.043236034306403444
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04268361927488643
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.2967059728390361
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.6108652381980153
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04071094153820309
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04159051779171579
+            },
+            "refer": "TOPO",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_rise_set",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "rise",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "unit": "rad",
+              "value": -1.629081416990909
+            },
+            "set": {
+              "unit": "rad",
+              "value": 1.5476453586235086
+            }
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "riseset",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": {
+            "rise": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62287.740723639785
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55563.64580669207
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            },
+            "set": {
+              "last": {
+                "m0": {
+                  "unit": "d",
+                  "value": 62288.24631540898
+                },
+                "refer": "LAST",
+                "type": "epoch"
+              },
+              "utc": {
+                "m0": {
+                  "unit": "d",
+                  "value": 55564.1500179228
+                },
+                "refer": "UTC",
+                "type": "epoch"
+              }
+            }
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_spectral_context",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.47724, -2.44559] deg)\n       Ganymede comet between MJD 55437 and 56293",
+          "python_type": "str"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "Hz",
+                "value": 1000000000.0
+              },
+              "refer": "TOPO",
+              "type": "frequency"
+            },
+            "BARY"
+          ],
+          "result": {
+            "m0": {
+              "unit": "Hz",
+              "value": 1000095775.9962342
+            },
+            "refer": "BARY",
+            "type": "frequency"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "m/s",
+                "value": 10000.0
+              },
+              "refer": "TOPO",
+              "type": "radialvelocity"
+            },
+            "LSRK"
+          ],
+          "result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -18100.991894190523
+            },
+            "refer": "LSRK",
+            "type": "radialvelocity"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 1.5232132235179132
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.9595382108349554
+              },
+              "m2": {
+                "unit": "m",
+                "value": 36.6333181680284
+              },
+              "refer": "J2000",
+              "type": "uvw"
+            },
+            "ITRF"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.5232585278588613
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.9595382108380235
+            },
+            "m2": {
+              "unit": "m",
+              "value": 36.63331816802839
+            },
+            "refer": "ITRF",
+            "type": "uvw"
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_replacement_context",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_b1950"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [0.639326, 13.2827] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "m/s",
+                "value": 0.0
+              },
+              "refer": "GEO",
+              "type": "radialvelocity"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -234.5752307210706
+            },
+            "refer": "TOPO",
+            "type": "radialvelocity"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_topocentric"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [0.639326, 13.2827] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str",
+          "native_result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-0.146386, 12.9402] deg)\n       Test object comet between MJD 55564 and 55566"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "m/s",
+                "value": 0.0
+              },
+              "refer": "GEO",
+              "type": "radialvelocity"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -234.5752307210706
+            },
+            "refer": "TOPO",
+            "type": "radialvelocity"
+          },
+          "python_type": "dict",
+          "native_result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -239.62197754050177
+            },
+            "refer": "TOPO",
+            "type": "radialvelocity"
+          }
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-0.146386, 12.9402] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "m/s",
+                "value": 0.0
+              },
+              "refer": "GEO",
+              "type": "radialvelocity"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -239.62197754050177
+            },
+            "refer": "TOPO",
+            "type": "radialvelocity"
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_table_lifetime",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.47724, -2.44559] deg)\n       Ganymede comet between MJD 55437 and 56293",
+          "python_type": "str"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.043236034306403444
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04268361927488643
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/absent.tab",
+              "form": "text"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.47724, -2.44559] deg)\n       Ganymede comet between MJD 55437 and 56293",
+          "python_type": "str"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.043236034306403444
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04268361927488643
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "done",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: ",
+          "python_type": "str"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "J2000"
+          ],
+          "result": {},
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "cometdist_no_epoch",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "casa_signal": "SIGSEGV",
+          "native_result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "cometdist_after_done",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "done",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "casa_signal": "SIGSEGV",
+          "native_result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "cometangdiam_no_epoch",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "casa_signal": "SIGSEGV",
+          "native_result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "cometangdiam_after_done",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "done",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "casa_signal": "SIGSEGV",
+          "native_result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    }
+  ]
+}

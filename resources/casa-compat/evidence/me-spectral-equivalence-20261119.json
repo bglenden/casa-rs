@@ -1,0 +1,1360 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "cecd62488304f66d95405494bbe2eae2de115e55",
+  "runtime_revision": "8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7",
+  "scope": "Six spectral measures methods and shared record/query/frame/offset integration. This does not establish full measures or issue #1252 acceptance.",
+  "build": {
+    "profile": "release",
+    "command": "VIRTUAL_ENV=target/venv CARGO_TARGET_DIR=target/build CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 maturin develop --release --manifest-path crates/casars-python/Cargo.toml",
+    "evidence_reuse": "Runtime rebuilt at 8d3b14eb5d. Benchmark revision cecd624883 changes only a malformed vector refusal test; executable runtime is unchanged."
+  },
+  "comparison": {
+    "oracle_command": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3 tools/simulation/measures_spectral_oracle.py --out crates/casars-python/python/tests/data/casa_measures_spectral.json",
+    "fixture": "crates/casars-python/python/tests/data/casa_measures_spectral.json",
+    "cases": 558,
+    "comparator": "test_measures_spectral.py: recursively exact record keys/text/error classes/messages, numeric rtol=2e-11, atol=2e-7, equal_nan=True; three owner-empty-frame results explicitly classified; CASA vector defects retain raw output and use independent scalar controls. The 32 review cases include constructor-to-doframe-to-frequency integration and preserve input NumPy dtypes.",
+    "safety_tests": 3
+  },
+  "validation": [
+    {
+      "command": [
+        "target/venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "crates/casars-python/python/tests/test_binding_snapshots.py",
+        "crates/casars-python/python/tests/test_measures_addxvalue.py",
+        "crates/casars-python/python/tests/test_measures_getoffset.py",
+        "crates/casars-python/python/tests/test_measures_no_comet.py",
+        "crates/casars-python/python/tests/test_measures_spectral.py",
+        "crates/casars-python/python/tests/test_quanta_bare_complex_scalar.py",
+        "crates/casars-python/python/tests/test_quanta_define.py",
+        "crates/casars-python/python/tests/test_quanta_fits.py",
+        "crates/casars-python/python/tests/test_quanta_format_placeholders.py",
+        "crates/casars-python/python/tests/test_quanta_malformed_records.py",
+        "crates/casars-python/python/tests/test_quanta_normalize.py",
+        "crates/casars-python/python/tests/test_quanta_power.py",
+        "crates/casars-python/python/tests/test_quanta_record_complex_array.py",
+        "crates/casars-python/python/tests/test_quanta_record_complex_scalar.py",
+        "crates/casars-python/python/tests/test_quanta_record_empty_array.py",
+        "crates/casars-python/python/tests/test_quanta_record_errors.py",
+        "crates/casars-python/python/tests/test_quanta_record_scalar_types.py",
+        "crates/casars-python/python/tests/test_quanta_record_vector_types.py",
+        "crates/casars-python/python/tests/test_quanta_record_zero_dim.py",
+        "crates/casars-python/python/tests/test_quanta_relational.py",
+        "crates/casars-python/python/tests/test_quanta_spectral_conversion.py",
+        "crates/casars-python/python/tests/test_quanta_underscore_units.py",
+        "crates/casars-python/python/tests/test_quanta_unit_one.py",
+        "crates/casars-python/python/tests/test_tools_measures.py",
+        "crates/casars-python/python/tests/test_tools_quanta.py",
+        "crates/casars-python/python/tests/test_componentlist_ascii.py",
+        "crates/casars-python/python/tests/test_componentlist_concatenate.py",
+        "crates/casars-python/python/tests/test_componentlist_convertfluxpol.py",
+        "crates/casars-python/python/tests/test_componentlist_convertfluxunit.py",
+        "crates/casars-python/python/tests/test_componentlist_convertfrequnit.py",
+        "crates/casars-python/python/tests/test_componentlist_convertrefdir.py",
+        "crates/casars-python/python/tests/test_componentlist_convertshape.py",
+        "crates/casars-python/python/tests/test_componentlist_direction_models.py",
+        "crates/casars-python/python/tests/test_componentlist_edit.py",
+        "crates/casars-python/python/tests/test_componentlist_fluxerror.py",
+        "crates/casars-python/python/tests/test_componentlist_getshape.py",
+        "crates/casars-python/python/tests/test_componentlist_indices.py",
+        "crates/casars-python/python/tests/test_componentlist_iscomponentlist.py",
+        "crates/casars-python/python/tests/test_componentlist_isphysical.py",
+        "crates/casars-python/python/tests/test_componentlist_keyword_read.py",
+        "crates/casars-python/python/tests/test_componentlist_offsets.py",
+        "crates/casars-python/python/tests/test_componentlist_putkeyword.py",
+        "crates/casars-python/python/tests/test_componentlist_record_shape_units.py",
+        "crates/casars-python/python/tests/test_componentlist_records.py",
+        "crates/casars-python/python/tests/test_componentlist_removal.py",
+        "crates/casars-python/python/tests/test_componentlist_replace.py",
+        "crates/casars-python/python/tests/test_componentlist_review.py",
+        "crates/casars-python/python/tests/test_componentlist_sample.py",
+        "crates/casars-python/python/tests/test_componentlist_selection.py",
+        "crates/casars-python/python/tests/test_componentlist_setflux.py",
+        "crates/casars-python/python/tests/test_componentlist_setfreq.py",
+        "crates/casars-python/python/tests/test_componentlist_setfreqframe.py",
+        "crates/casars-python/python/tests/test_componentlist_setlabel.py",
+        "crates/casars-python/python/tests/test_componentlist_setrefdir.py",
+        "crates/casars-python/python/tests/test_componentlist_setrefdirframe.py",
+        "crates/casars-python/python/tests/test_componentlist_setshape.py",
+        "crates/casars-python/python/tests/test_componentlist_setspectrum.py",
+        "crates/casars-python/python/tests/test_componentlist_setstokesspectrum.py",
+        "crates/casars-python/python/tests/test_componentlist_simulate.py",
+        "crates/casars-python/python/tests/test_componentlist_sort_summary.py",
+        "crates/casars-python/python/tests/test_componentlist_upstream.py",
+        "crates/casars-python/python/tests/test_tools_table.py",
+        "crates/casars-python/python/tests/test_tools_table_asdm_io.py",
+        "crates/casars-python/python/tests/test_tools_table_cache.py",
+        "crates/casars-python/python/tests/test_tools_table_copies.py",
+        "crates/casars-python/python/tests/test_tools_table_create.py",
+        "crates/casars-python/python/tests/test_tools_table_fits_io.py",
+        "crates/casars-python/python/tests/test_tools_table_row_iter.py",
+        "crates/casars-python/python/tests/test_tools_table_slices.py",
+        "crates/casars-python/python/tests/test_tools_table_taql.py",
+        "crates/casars-python/python/tests/test_tools_table_text_io.py"
+      ],
+      "result": "1588 passed, 4 skipped in 85.40s. Skips excluded from behavioral acceptance."
+    },
+    {
+      "command": "CARGO_TARGET_DIR=target/build CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 PYO3_PYTHON=target/venv/bin/python PYTHONPATH=target/venv/lib/python3.12/site-packages cargo test -p casars-python",
+      "result": "60 unit tests and 1 provider conformance test passed. The initial gate found one obsolete assertion that Doppler remained unimplemented; it now checks the independently captured CASA zero-Doppler result."
+    },
+    {
+      "command": "cargo clippy -p casars-python --all-targets --no-deps -- -D warnings",
+      "result": "passed with isolated target and incremental/debug disabled"
+    },
+    {
+      "command": "cargo fmt --all",
+      "result": "passed"
+    },
+    {
+      "command": "just arch-check",
+      "result": "passed including evidence-link validation, 18 semantics tests, dependency checker and file limits"
+    },
+    {
+      "command": "just docs-check",
+      "result": "passed"
+    },
+    {
+      "command": "target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_spectral.py",
+      "result": "561 passed (558 independent CASA cases plus 3 subprocess safety tests). The 32 new review cases failed 25 times before repairs, with 7 passing controls."
+    },
+    {
+      "command": [
+        "target/venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "crates/casars-python/python/tests/test_binding_snapshots.py",
+        "crates/casars-python/python/tests/test_measures_addxvalue.py",
+        "crates/casars-python/python/tests/test_measures_getoffset.py",
+        "crates/casars-python/python/tests/test_measures_no_comet.py",
+        "crates/casars-python/python/tests/test_measures_spectral.py",
+        "crates/casars-python/python/tests/test_quanta_bare_complex_scalar.py",
+        "crates/casars-python/python/tests/test_quanta_define.py",
+        "crates/casars-python/python/tests/test_quanta_fits.py",
+        "crates/casars-python/python/tests/test_quanta_format_placeholders.py",
+        "crates/casars-python/python/tests/test_quanta_malformed_records.py",
+        "crates/casars-python/python/tests/test_quanta_normalize.py",
+        "crates/casars-python/python/tests/test_quanta_power.py",
+        "crates/casars-python/python/tests/test_quanta_record_complex_array.py",
+        "crates/casars-python/python/tests/test_quanta_record_complex_scalar.py",
+        "crates/casars-python/python/tests/test_quanta_record_empty_array.py",
+        "crates/casars-python/python/tests/test_quanta_record_errors.py",
+        "crates/casars-python/python/tests/test_quanta_record_scalar_types.py",
+        "crates/casars-python/python/tests/test_quanta_record_vector_types.py",
+        "crates/casars-python/python/tests/test_quanta_record_zero_dim.py",
+        "crates/casars-python/python/tests/test_quanta_relational.py",
+        "crates/casars-python/python/tests/test_quanta_spectral_conversion.py",
+        "crates/casars-python/python/tests/test_quanta_underscore_units.py",
+        "crates/casars-python/python/tests/test_quanta_unit_one.py",
+        "crates/casars-python/python/tests/test_tools_measures.py",
+        "crates/casars-python/python/tests/test_tools_quanta.py"
+      ],
+      "result": "919 passed, 2 optional skips, 1 stale malformed-vector refusal assertion failed. The old assertion mixed vector/scalar direction components; CASA rejects that record before the unfinished Cartesian path. It now uses two valid equal-length components, retaining the required NotImplementedError. A focused rerun passes all 3 addxvalue tests. Composite affected batch: 920 passing tests, 2 skips excluded."
+    },
+    {
+      "command": "cargo clippy -p casars-python --all-targets --no-deps -- -D warnings; cargo test -p casars-python",
+      "result": "Reviewed runtime passes Clippy, 60 unit tests and 1 provider conformance test, using the isolated target and embedded Python environment."
+    }
+  ],
+  "performance": {
+    "gate": "Every named case median faster than CASA 6.7.6.14 in the same Python, release build, no concurrent local builds/tests. 1000 calls/sample x 7 retained samples (one warmup sample); large vectors use documented 20/3 calls/sample.",
+    "casa": {
+      "revision": "cecd62488304f66d95405494bbe2eae2de115e55",
+      "source_dirty": false,
+      "casa_version": "6.7.6-14",
+      "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+      "backend": "casa",
+      "command": [
+        "tools/simulation/measures_spectral_benchmark.py",
+        "--backend",
+        "casa",
+        "--out",
+        "target/evidence/bench-casa-reviewed.json",
+        "--repeat",
+        "1000",
+        "--samples",
+        "7"
+      ],
+      "cases": {
+        "doppler": {
+          "median_ns": 15603.125,
+          "samples_ns": [
+            16036.166,
+            15649.583,
+            15775.75,
+            15474.959,
+            15603.125,
+            15535.0,
+            15516.958
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "radialvelocity": {
+          "median_ns": 14531.75,
+          "samples_ns": [
+            14542.458,
+            14533.458,
+            14443.083,
+            14442.833,
+            14565.417,
+            14531.75,
+            14457.333
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "todoppler": {
+          "median_ns": 24745.416,
+          "samples_ns": [
+            24745.416,
+            24493.709,
+            25027.958,
+            25136.958,
+            25223.0,
+            24494.292,
+            24654.083
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "tofrequency": {
+          "median_ns": 24637.458,
+          "samples_ns": [
+            24391.375,
+            25256.25,
+            25046.792,
+            24637.458,
+            24586.125,
+            24502.875,
+            26249.166
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "toradialvelocity": {
+          "median_ns": 16509.625,
+          "samples_ns": [
+            17158.25,
+            17392.958,
+            16509.625,
+            16249.167,
+            16426.292,
+            16426.625,
+            17177.459
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "torestfrequency": {
+          "median_ns": 24182.917,
+          "samples_ns": [
+            23654.291,
+            24403.625,
+            24430.958,
+            23801.542,
+            24182.917,
+            24165.959,
+            24733.833
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "measure(doppler,2)": {
+          "median_ns": 21788.583,
+          "samples_ns": [
+            21788.583,
+            21711.375,
+            21672.625,
+            21831.25,
+            21788.792,
+            21904.208,
+            21557.334
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,2)": {
+          "median_ns": 50408.583,
+          "samples_ns": [
+            51284.167,
+            49745.375,
+            50080.667,
+            50408.583,
+            53503.875,
+            50863.166,
+            49535.375
+          ],
+          "calls_per_sample": 1000,
+          "mode": "independent scalar controls; CASA vector path truncates"
+        },
+        "measure(doppler,128)": {
+          "median_ns": 71910.4,
+          "samples_ns": [
+            74129.2,
+            73200.0,
+            72852.1,
+            71666.65,
+            71910.4,
+            71627.05,
+            70958.3
+          ],
+          "calls_per_sample": 20,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,128)": {
+          "median_ns": 3301937.5,
+          "samples_ns": [
+            3165308.3,
+            3471800.0,
+            3310937.5,
+            3301937.5,
+            3086350.0,
+            3294816.65,
+            3328872.95
+          ],
+          "calls_per_sample": 20,
+          "mode": "independent scalar controls; CASA vector path truncates"
+        },
+        "measure(doppler,1024)": {
+          "median_ns": 407902.6666666667,
+          "samples_ns": [
+            436875.0,
+            410389.0,
+            403402.6666666667,
+            409097.3333333333,
+            404486.0,
+            402708.3333333333,
+            407902.6666666667
+          ],
+          "calls_per_sample": 3,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,1024)": {
+          "median_ns": 26301041.666666668,
+          "samples_ns": [
+            26621847.0,
+            25813125.0,
+            26816416.666666668,
+            25222125.0,
+            26301041.666666668,
+            28806597.0,
+            25581541.666666668
+          ],
+          "calls_per_sample": 3,
+          "mode": "independent scalar controls; CASA vector path truncates"
+        }
+      }
+    },
+    "native": {
+      "revision": "cecd62488304f66d95405494bbe2eae2de115e55",
+      "source_dirty": false,
+      "casa_version": "6.7.6-14",
+      "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+      "backend": "casars",
+      "command": [
+        "tools/simulation/measures_spectral_benchmark.py",
+        "--backend",
+        "casars",
+        "--out",
+        "target/evidence/bench-native-reviewed.json",
+        "--repeat",
+        "1000",
+        "--samples",
+        "7"
+      ],
+      "cases": {
+        "doppler": {
+          "median_ns": 1028.792,
+          "samples_ns": [
+            1028.667,
+            1028.708,
+            1028.792,
+            1028.916,
+            1027.708,
+            1043.041,
+            1031.958
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "radialvelocity": {
+          "median_ns": 1031.75,
+          "samples_ns": [
+            1032.792,
+            1031.333,
+            1031.75,
+            1032.75,
+            1034.417,
+            1030.125,
+            1030.542
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "todoppler": {
+          "median_ns": 2489.0,
+          "samples_ns": [
+            2494.291,
+            2503.292,
+            2497.542,
+            2446.166,
+            2481.417,
+            2440.5,
+            2489.0
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "tofrequency": {
+          "median_ns": 4120.708,
+          "samples_ns": [
+            4128.875,
+            4126.041,
+            4120.875,
+            4120.25,
+            4120.708,
+            4114.375,
+            4120.125
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "toradialvelocity": {
+          "median_ns": 2092.0,
+          "samples_ns": [
+            2090.541,
+            2093.583,
+            2092.667,
+            2094.625,
+            2075.333,
+            2072.417,
+            2092.0
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "torestfrequency": {
+          "median_ns": 3338.167,
+          "samples_ns": [
+            3347.042,
+            3337.292,
+            3339.625,
+            3333.917,
+            3348.166,
+            3338.167,
+            3336.25
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "measure(doppler,2)": {
+          "median_ns": 3649.959,
+          "samples_ns": [
+            3656.167,
+            3630.916,
+            3649.959,
+            3649.834,
+            3651.292,
+            3642.666,
+            3665.042
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,2)": {
+          "median_ns": 5780.916,
+          "samples_ns": [
+            5785.958,
+            5789.834,
+            5789.584,
+            5778.75,
+            5780.916,
+            5759.625,
+            5741.209
+          ],
+          "calls_per_sample": 1000,
+          "mode": "bulk vector, same complete outputs as scalar controls"
+        },
+        "measure(doppler,128)": {
+          "median_ns": 13470.85,
+          "samples_ns": [
+            13450.0,
+            13795.85,
+            13618.75,
+            13441.65,
+            13443.75,
+            13547.9,
+            13470.85
+          ],
+          "calls_per_sample": 20,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,128)": {
+          "median_ns": 14006.25,
+          "samples_ns": [
+            14077.05,
+            14029.15,
+            13993.75,
+            14006.25,
+            14018.75,
+            13997.9,
+            13989.55
+          ],
+          "calls_per_sample": 20,
+          "mode": "bulk vector, same complete outputs as scalar controls"
+        },
+        "measure(doppler,1024)": {
+          "median_ns": 77889.0,
+          "samples_ns": [
+            78694.33333333333,
+            77889.0,
+            77694.66666666667,
+            78597.33333333333,
+            77694.66666666667,
+            78000.0,
+            77750.0
+          ],
+          "calls_per_sample": 3,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,1024)": {
+          "median_ns": 65347.333333333336,
+          "samples_ns": [
+            65583.33333333333,
+            65125.0,
+            66000.0,
+            65125.0,
+            65402.666666666664,
+            65347.333333333336,
+            65180.666666666664
+          ],
+          "calls_per_sample": 3,
+          "mode": "bulk vector, same complete outputs as scalar controls"
+        }
+      }
+    },
+    "speedups": {
+      "doppler": 15.166452499630635,
+      "radialvelocity": 14.084565059365156,
+      "todoppler": 9.941910807553235,
+      "tofrequency": 5.978938085396976,
+      "toradialvelocity": 7.891790152963671,
+      "torestfrequency": 7.244370039006437,
+      "measure(doppler,2)": 5.9695418496481745,
+      "tofrequency(vector,2)": 8.719826235150277,
+      "measure(doppler,128)": 5.33822290352873,
+      "tofrequency(vector,128)": 235.74743418116913,
+      "measure(doppler,1024)": 5.236973984345243,
+      "tofrequency(vector,1024)": 402.48071841748197
+    },
+    "all_faster": true,
+    "caveat": "tofrequency(vector,N) compares complete native vector outputs with independent CASA scalar calls because its raw vector path truncates. measure(doppler,N) compares the raw working CASA vector path."
+  },
+  "experiments": [
+    {
+      "hypothesis": "Decode every vector element through cloned scalar records",
+      "result": "Rejected: slower than CASA, 0.405x at 128 and 0.262x at 1024. Retired without model escalation.",
+      "native": {
+        "revision": "5007611057127d8b6778cfc498248d5f38b976ca",
+        "source_dirty": true,
+        "casa_version": "6.7.6-14",
+        "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+        "backend": "casars",
+        "command": [
+          "tools/simulation/measures_spectral_benchmark.py",
+          "--backend",
+          "casars",
+          "--out",
+          "target/evidence/bench-native-probe.json",
+          "--repeat",
+          "100",
+          "--samples",
+          "3"
+        ],
+        "cases": {
+          "doppler": {
+            "median_ns": 1022.09,
+            "samples_ns": [
+              1026.67,
+              1017.09,
+              1022.09
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "radialvelocity": {
+            "median_ns": 1015.83,
+            "samples_ns": [
+              1012.09,
+              1016.66,
+              1015.83
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "todoppler": {
+            "median_ns": 2773.34,
+            "samples_ns": [
+              2773.34,
+              2777.09,
+              2763.75
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "tofrequency": {
+            "median_ns": 4888.75,
+            "samples_ns": [
+              4892.92,
+              4888.75,
+              4880.0
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "toradialvelocity": {
+            "median_ns": 2503.33,
+            "samples_ns": [
+              2494.59,
+              2512.5,
+              2503.33
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "torestfrequency": {
+            "median_ns": 4162.5,
+            "samples_ns": [
+              4165.41,
+              4162.5,
+              4122.92
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "measure(doppler,2)": {
+            "median_ns": 5906.67,
+            "samples_ns": [
+              5956.67,
+              5906.67,
+              5895.83
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "tofrequency(vector,2)": {
+            "median_ns": 8365.84,
+            "samples_ns": [
+              8365.84,
+              8337.5,
+              8471.66
+            ],
+            "calls_per_sample": 100,
+            "mode": "bulk vector, same complete outputs as scalar controls"
+          },
+          "measure(doppler,128)": {
+            "median_ns": 178104.15,
+            "samples_ns": [
+              178104.15,
+              177512.5,
+              178210.4
+            ],
+            "calls_per_sample": 20,
+            "mode": "direct call"
+          },
+          "tofrequency(vector,128)": {
+            "median_ns": 175370.8,
+            "samples_ns": [
+              175370.8,
+              175170.85,
+              176856.25
+            ],
+            "calls_per_sample": 20,
+            "mode": "bulk vector, same complete outputs as scalar controls"
+          },
+          "measure(doppler,1024)": {
+            "median_ns": 1538333.3333333333,
+            "samples_ns": [
+              1526750.0,
+              1541722.0,
+              1538333.3333333333
+            ],
+            "calls_per_sample": 3,
+            "mode": "direct call"
+          },
+          "tofrequency(vector,1024)": {
+            "median_ns": 1504291.6666666667,
+            "samples_ns": [
+              1504291.6666666667,
+              1538125.0,
+              1488736.0
+            ],
+            "calls_per_sample": 3,
+            "mode": "bulk vector, same complete outputs as scalar controls"
+          }
+        }
+      },
+      "casa": {
+        "revision": "5007611057127d8b6778cfc498248d5f38b976ca",
+        "source_dirty": true,
+        "casa_version": "6.7.6-14",
+        "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+        "backend": "casa",
+        "command": [
+          "tools/simulation/measures_spectral_benchmark.py",
+          "--backend",
+          "casa",
+          "--out",
+          "target/evidence/bench-casa-probe.json",
+          "--repeat",
+          "100",
+          "--samples",
+          "3"
+        ],
+        "cases": {
+          "doppler": {
+            "median_ns": 17672.92,
+            "samples_ns": [
+              17602.09,
+              18136.67,
+              17672.92
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "radialvelocity": {
+            "median_ns": 16513.75,
+            "samples_ns": [
+              16513.75,
+              16620.83,
+              16357.5
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "todoppler": {
+            "median_ns": 24964.17,
+            "samples_ns": [
+              25264.58,
+              24746.25,
+              24964.17
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "tofrequency": {
+            "median_ns": 25453.75,
+            "samples_ns": [
+              24813.33,
+              25830.42,
+              25453.75
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "toradialvelocity": {
+            "median_ns": 17527.08,
+            "samples_ns": [
+              17492.08,
+              18450.42,
+              17527.08
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "torestfrequency": {
+            "median_ns": 24926.66,
+            "samples_ns": [
+              24852.08,
+              24926.66,
+              27044.58
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "measure(doppler,2)": {
+            "median_ns": 21458.75,
+            "samples_ns": [
+              20970.0,
+              21458.75,
+              21784.17
+            ],
+            "calls_per_sample": 100,
+            "mode": "direct call"
+          },
+          "tofrequency(vector,2)": {
+            "median_ns": 50345.41,
+            "samples_ns": [
+              50345.41,
+              50994.17,
+              49300.0
+            ],
+            "calls_per_sample": 100,
+            "mode": "independent scalar controls; CASA vector path truncates"
+          },
+          "measure(doppler,128)": {
+            "median_ns": 72106.25,
+            "samples_ns": [
+              72106.25,
+              73250.0,
+              71750.0
+            ],
+            "calls_per_sample": 20,
+            "mode": "direct call"
+          },
+          "tofrequency(vector,128)": {
+            "median_ns": 3215787.5,
+            "samples_ns": [
+              3215787.5,
+              3234479.2,
+              3214631.25
+            ],
+            "calls_per_sample": 20,
+            "mode": "independent scalar controls; CASA vector path truncates"
+          },
+          "measure(doppler,1024)": {
+            "median_ns": 402555.6666666667,
+            "samples_ns": [
+              402555.6666666667,
+              409153.0,
+              402319.3333333333
+            ],
+            "calls_per_sample": 3,
+            "mode": "direct call"
+          },
+          "tofrequency(vector,1024)": {
+            "median_ns": 24904278.0,
+            "samples_ns": [
+              25912791.666666668,
+              24904278.0,
+              24838875.0
+            ],
+            "calls_per_sample": 3,
+            "mode": "independent scalar controls; CASA vector path truncates"
+          }
+        }
+      }
+    },
+    {
+      "hypothesis": "Parse metadata and units once, map native values, build vector records directly",
+      "result": "All 12 diagnostic cases faster; formal clean-source run above confirms all 12. No scientific acceptance weakened."
+    },
+    {
+      "hypothesis": "Rest quantities can be converted to the current Hz unit before constructing a frequency",
+      "result": "Rejected by isolated redefine-Hz comparison: native 0.9999666435904802 versus CASA 1.9999332871809605. Existing coherent-frequency helper fixes it; new isolated regression fails before and passes after.",
+      "before": {
+        "native": {
+          "returncode": 0,
+          "stdout": "RESULT={'m0': {'unit': 'Hz', 'value': 0.9999666435904802}, 'refer': 'LSRK', 'type': 'frequency'}\n",
+          "stderr_tail": ""
+        },
+        "casa": {
+          "returncode": 0,
+          "stdout": "RESULT={'m0': {'unit': 'Hz', 'value': 1.9999332871809605}, 'refer': 'LSRK', 'type': 'frequency'}\n",
+          "stderr_tail": "\"2026-11-18T17:17:48.91384-07:00\", fd:4, children:[UNKNOWN:Operation not permitted {syscall:\"bind\", os_error:\"Operation not permitted\", errno:1, created_time:\"2026-11-18T17:17:48.913835-07:00\"}]}]}]}\n"
+        }
+      }
+    }
+  ],
+  "crash_controls": {
+    "native_before": [
+      {
+        "case": "constructor_record",
+        "returncode": -11,
+        "stderr": ""
+      },
+      {
+        "case": "constructor_list",
+        "returncode": -11,
+        "stderr": ""
+      },
+      {
+        "case": "conversion_record",
+        "returncode": -11,
+        "stderr": ""
+      }
+    ],
+    "casa": [
+      {
+        "case": "constructor_record",
+        "returncode": -11,
+        "stderr_tail": " created_time:\"2026-11-18T16:50:52.672939-07:00\"}, UNKNOWN:Unable to configure socket {created_time:\"2026-11-18T16:50:52.67303-07:00\", fd:4, children:[UNKNOWN:Operation not permitted {syscall:\"bind\", os_error:\"Operation not permitted\", errno:1, created_time:\"2026-11-18T16:50:52.673026-07:00\"}]}]}]}\n"
+      },
+      {
+        "case": "constructor_list",
+        "returncode": -11,
+        "stderr_tail": "created_time:\"2026-11-18T16:50:56.761726-07:00\"}, UNKNOWN:Unable to configure socket {created_time:\"2026-11-18T16:50:56.761761-07:00\", fd:4, children:[UNKNOWN:Operation not permitted {created_time:\"2026-11-18T16:50:56.761755-07:00\", errno:1, os_error:\"Operation not permitted\", syscall:\"bind\"}]}]}]}\n"
+      },
+      {
+        "case": "conversion_record",
+        "returncode": -11,
+        "stderr_tail": "ily\", syscall:\"socket\", target_address:\"[::]:0\"}, UNKNOWN:Unable to configure socket {fd:4, created_time:\"2026-11-18T16:51:00.311177-07:00\", children:[UNKNOWN:Operation not permitted {created_time:\"2026-11-18T16:51:00.311174-07:00\", errno:1, os_error:\"Operation not permitted\", syscall:\"bind\"}]}]}]}\n"
+      }
+    ],
+    "after": "Three native subprocess tests pass, including repeated rejection and a subsequent valid call. Core files disabled."
+  },
+  "decisions": [
+    "Preserve existing owner-approved empty initial frame; cross-reference radial-velocity conversion requires explicit real elements.",
+    "Correct CASA vector data loss using independent scalar controls; retain original broken outputs as evidence.",
+    "Bound recursive shared Python capture at 128 levels, correcting both native-candidate and CASA process crashes.",
+    "No persistence format change, runtime CASA dependency or new third-party dependency."
+  ],
+  "review": {
+    "state": "resolved",
+    "model": "gpt-6.2-astra",
+    "effort": "xhigh",
+    "reviewed_revision": "66f34458e3df5fbcbe6626aa6fa136eedce30787",
+    "rounds": 1,
+    "findings": [
+      {
+        "rank": "P1",
+        "finding": "A vector offset defines one reference origin, not cycling additions.",
+        "repair": "Canonicalize reference offsets to their first value in computation/constructor output; getoffset still copies the supplied raw vector.",
+        "regression_cases": "review_vector_offset_2, review_vector_offset_3, review_constructor_vector_offset, review_getoffset_preserves_vector"
+      },
+      {
+        "rank": "P1",
+        "finding": "doframe rejected radial-velocity constructor offsets and vector records.",
+        "repair": "Keep the first radial-velocity frame origin and its reference offsets, materializing them against the explicit frame when converting. Exercise the downstream REST frequency result.",
+        "regression_cases": "review_frame_constructor_offset, review_doframe_vector, review_frame_frequency_vector, review_doframe_offset, review_frame_frequency_offset"
+      },
+      {
+        "rank": "P2",
+        "finding": "Antipodal direction offsets divide by zero.",
+        "repair": "Match MVDirection::adjust: the exact zero sum becomes the north pole.",
+        "regression_cases": "review_antipodal_direction"
+      },
+      {
+        "rank": "P2",
+        "finding": "Scalar components were silently broadcast against vector components.",
+        "repair": "Check every component length, including scalar components.",
+        "regression_cases": "review_inconsistent_components_*"
+      },
+      {
+        "rank": "P2",
+        "finding": "Vector normalization erased integer QuantumHolder types.",
+        "repair": "Check retained original numeric metadata before normalizing; preserve the floating and float32 controls.",
+        "regression_cases": "review_numeric_type_*"
+      },
+      {
+        "rank": "P2",
+        "finding": "Signed Doppler ratios produced negative frequencies.",
+        "repair": "Use the CASA BETA conversion/square-root path before frequency/rest-frequency algebra.",
+        "regression_cases": "review_signed_*"
+      },
+      {
+        "rank": "P2",
+        "finding": "Mixed quantity/measure rest records used the wrong precedence.",
+        "repair": "Try the outer QuantumHolder first, then the frequency m0 fallback.",
+        "regression_cases": "review_rest_quantity_precedence"
+      },
+      {
+        "rank": "P2",
+        "finding": "getoffset refused valid UTF-8 byte units.",
+        "repair": "Copy byte strings through the same UTF-8 and NUL-termination semantics as record capture.",
+        "regression_cases": "review_bytes_offset_*"
+      }
+    ],
+    "verification": "All eight findings repaired; independent fail-before/pass-after cases and affected gates pass. No second code review. Subsequent source changes are the findings repairs and the one test-only correction."
+  },
+  "remaining": "#1252 stays open for remaining measures methods/forms/references, upstream comet/Ganymede and shift tests, and complete measures performance/evidence reconciliation; #1170 stays open for its three retained sequence-scalar gaps.",
+  "prior_performance": {
+    "gate": "Every named case median faster than CASA 6.7.6.14 in the same Python, release build, no concurrent local builds/tests. 1000 calls/sample x 7 retained samples (one warmup sample); large vectors use documented 20/3 calls/sample.",
+    "casa": {
+      "revision": "cecd62488304f66d95405494bbe2eae2de115e55",
+      "source_dirty": false,
+      "casa_version": "6.7.6-14",
+      "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+      "backend": "casa",
+      "command": [
+        "tools/simulation/measures_spectral_benchmark.py",
+        "--backend",
+        "casa",
+        "--out",
+        "target/evidence/bench-casa-reviewed.json",
+        "--repeat",
+        "1000",
+        "--samples",
+        "7"
+      ],
+      "cases": {
+        "doppler": {
+          "median_ns": 15603.125,
+          "samples_ns": [
+            16036.166,
+            15649.583,
+            15775.75,
+            15474.959,
+            15603.125,
+            15535.0,
+            15516.958
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "radialvelocity": {
+          "median_ns": 14531.75,
+          "samples_ns": [
+            14542.458,
+            14533.458,
+            14443.083,
+            14442.833,
+            14565.417,
+            14531.75,
+            14457.333
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "todoppler": {
+          "median_ns": 24745.416,
+          "samples_ns": [
+            24745.416,
+            24493.709,
+            25027.958,
+            25136.958,
+            25223.0,
+            24494.292,
+            24654.083
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "tofrequency": {
+          "median_ns": 24637.458,
+          "samples_ns": [
+            24391.375,
+            25256.25,
+            25046.792,
+            24637.458,
+            24586.125,
+            24502.875,
+            26249.166
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "toradialvelocity": {
+          "median_ns": 16509.625,
+          "samples_ns": [
+            17158.25,
+            17392.958,
+            16509.625,
+            16249.167,
+            16426.292,
+            16426.625,
+            17177.459
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "torestfrequency": {
+          "median_ns": 24182.917,
+          "samples_ns": [
+            23654.291,
+            24403.625,
+            24430.958,
+            23801.542,
+            24182.917,
+            24165.959,
+            24733.833
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "measure(doppler,2)": {
+          "median_ns": 21788.583,
+          "samples_ns": [
+            21788.583,
+            21711.375,
+            21672.625,
+            21831.25,
+            21788.792,
+            21904.208,
+            21557.334
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,2)": {
+          "median_ns": 50408.583,
+          "samples_ns": [
+            51284.167,
+            49745.375,
+            50080.667,
+            50408.583,
+            53503.875,
+            50863.166,
+            49535.375
+          ],
+          "calls_per_sample": 1000,
+          "mode": "independent scalar controls; CASA vector path truncates"
+        },
+        "measure(doppler,128)": {
+          "median_ns": 71910.4,
+          "samples_ns": [
+            74129.2,
+            73200.0,
+            72852.1,
+            71666.65,
+            71910.4,
+            71627.05,
+            70958.3
+          ],
+          "calls_per_sample": 20,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,128)": {
+          "median_ns": 3301937.5,
+          "samples_ns": [
+            3165308.3,
+            3471800.0,
+            3310937.5,
+            3301937.5,
+            3086350.0,
+            3294816.65,
+            3328872.95
+          ],
+          "calls_per_sample": 20,
+          "mode": "independent scalar controls; CASA vector path truncates"
+        },
+        "measure(doppler,1024)": {
+          "median_ns": 407902.6666666667,
+          "samples_ns": [
+            436875.0,
+            410389.0,
+            403402.6666666667,
+            409097.3333333333,
+            404486.0,
+            402708.3333333333,
+            407902.6666666667
+          ],
+          "calls_per_sample": 3,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,1024)": {
+          "median_ns": 26301041.666666668,
+          "samples_ns": [
+            26621847.0,
+            25813125.0,
+            26816416.666666668,
+            25222125.0,
+            26301041.666666668,
+            28806597.0,
+            25581541.666666668
+          ],
+          "calls_per_sample": 3,
+          "mode": "independent scalar controls; CASA vector path truncates"
+        }
+      }
+    },
+    "native": {
+      "revision": "cecd62488304f66d95405494bbe2eae2de115e55",
+      "source_dirty": false,
+      "casa_version": "6.7.6-14",
+      "python": "/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3",
+      "backend": "casars",
+      "command": [
+        "tools/simulation/measures_spectral_benchmark.py",
+        "--backend",
+        "casars",
+        "--out",
+        "target/evidence/bench-native-reviewed.json",
+        "--repeat",
+        "1000",
+        "--samples",
+        "7"
+      ],
+      "cases": {
+        "doppler": {
+          "median_ns": 1028.792,
+          "samples_ns": [
+            1028.667,
+            1028.708,
+            1028.792,
+            1028.916,
+            1027.708,
+            1043.041,
+            1031.958
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "radialvelocity": {
+          "median_ns": 1031.75,
+          "samples_ns": [
+            1032.792,
+            1031.333,
+            1031.75,
+            1032.75,
+            1034.417,
+            1030.125,
+            1030.542
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "todoppler": {
+          "median_ns": 2489.0,
+          "samples_ns": [
+            2494.291,
+            2503.292,
+            2497.542,
+            2446.166,
+            2481.417,
+            2440.5,
+            2489.0
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "tofrequency": {
+          "median_ns": 4120.708,
+          "samples_ns": [
+            4128.875,
+            4126.041,
+            4120.875,
+            4120.25,
+            4120.708,
+            4114.375,
+            4120.125
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "toradialvelocity": {
+          "median_ns": 2092.0,
+          "samples_ns": [
+            2090.541,
+            2093.583,
+            2092.667,
+            2094.625,
+            2075.333,
+            2072.417,
+            2092.0
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "torestfrequency": {
+          "median_ns": 3338.167,
+          "samples_ns": [
+            3347.042,
+            3337.292,
+            3339.625,
+            3333.917,
+            3348.166,
+            3338.167,
+            3336.25
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "measure(doppler,2)": {
+          "median_ns": 3649.959,
+          "samples_ns": [
+            3656.167,
+            3630.916,
+            3649.959,
+            3649.834,
+            3651.292,
+            3642.666,
+            3665.042
+          ],
+          "calls_per_sample": 1000,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,2)": {
+          "median_ns": 5780.916,
+          "samples_ns": [
+            5785.958,
+            5789.834,
+            5789.584,
+            5778.75,
+            5780.916,
+            5759.625,
+            5741.209
+          ],
+          "calls_per_sample": 1000,
+          "mode": "bulk vector, same complete outputs as scalar controls"
+        },
+        "measure(doppler,128)": {
+          "median_ns": 13470.85,
+          "samples_ns": [
+            13450.0,
+            13795.85,
+            13618.75,
+            13441.65,
+            13443.75,
+            13547.9,
+            13470.85
+          ],
+          "calls_per_sample": 20,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,128)": {
+          "median_ns": 14006.25,
+          "samples_ns": [
+            14077.05,
+            14029.15,
+            13993.75,
+            14006.25,
+            14018.75,
+            13997.9,
+            13989.55
+          ],
+          "calls_per_sample": 20,
+          "mode": "bulk vector, same complete outputs as scalar controls"
+        },
+        "measure(doppler,1024)": {
+          "median_ns": 77889.0,
+          "samples_ns": [
+            78694.33333333333,
+            77889.0,
+            77694.66666666667,
+            78597.33333333333,
+            77694.66666666667,
+            78000.0,
+            77750.0
+          ],
+          "calls_per_sample": 3,
+          "mode": "direct call"
+        },
+        "tofrequency(vector,1024)": {
+          "median_ns": 65347.333333333336,
+          "samples_ns": [
+            65583.33333333333,
+            65125.0,
+            66000.0,
+            65125.0,
+            65402.666666666664,
+            65347.333333333336,
+            65180.666666666664
+          ],
+          "calls_per_sample": 3,
+          "mode": "bulk vector, same complete outputs as scalar controls"
+        }
+      }
+    },
+    "speedups": {
+      "doppler": 15.166452499630635,
+      "radialvelocity": 14.084565059365156,
+      "todoppler": 9.941910807553235,
+      "tofrequency": 5.978938085396976,
+      "toradialvelocity": 7.891790152963671,
+      "torestfrequency": 7.244370039006437,
+      "measure(doppler,2)": 5.9695418496481745,
+      "tofrequency(vector,2)": 8.719826235150277,
+      "measure(doppler,128)": 5.33822290352873,
+      "tofrequency(vector,128)": 235.74743418116913,
+      "measure(doppler,1024)": 5.236973984345243,
+      "tofrequency(vector,1024)": 402.48071841748197
+    },
+    "all_faster": true,
+    "caveat": "tofrequency(vector,N) compares complete native vector outputs with independent CASA scalar calls because its raw vector path truncates. measure(doppler,N) compares the raw working CASA vector path."
+  }
+}

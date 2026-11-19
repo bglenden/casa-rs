@@ -673,6 +673,7 @@ fn calibrate_gencal_reads_every_parameter_it_emits() {
                 gaincurve_table: None,
             },
             polarization: String::new(),
+            gaincurve_infile: None,
         })
     );
     // `calibrate`'s gencal mode needs its caltype set.

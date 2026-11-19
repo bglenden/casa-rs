@@ -156,7 +156,10 @@ impl CalibrationTableSummary {
                         "K Jones" | "Kcross Jones"
                     )
                     | (CalibrationParameterFamily::Float, "KAntPos Jones")
-                    | (CalibrationParameterFamily::Float, "EGainCurve")
+                    | (
+                        CalibrationParameterFamily::Float,
+                        "EGainCurve" | "EPowerCurve"
+                    )
                     | (CalibrationParameterFamily::Float, "TOpac")
             ) || self.table_subtype == "BPOLY")
             && self

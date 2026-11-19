@@ -327,6 +327,7 @@ impl ImmathSelection {
             && self.shape == full_shape
             && self.box_spec.as_ref().is_none_or(|b| b.boxes.len() <= 1)
             && !matches!(self.region, Some(PixelRegion::Polygon(_)))
+            && !matches!(self.region, Some(PixelRegion::Boxes(ref boxes)) if boxes.len() > 1)
             && !self.has_channel_gaps()
             && !self.has_stokes_gaps()
     }
@@ -466,14 +467,7 @@ pub(super) fn selection_and_mask<T: RealMathPixel>(
     if let Some(ref b) = sel.box_spec
         && b.boxes.len() > 1
     {
-        let [px, py] = sel.plane;
-        let box_mask = ArrayD::from_shape_fn(IxDyn(&sel.shape), |idx| {
-            let gx = sel.start[px] + idx[px];
-            let gy = sel.start[py] + idx[py];
-            b.boxes
-                .iter()
-                .any(|&[x0, y0, x1, y1]| (x0..=x1).contains(&gx) && (y0..=y1).contains(&gy))
-        });
+        let box_mask = boxes_union_mask(&b.boxes, &sel.start, &sel.shape, sel.plane);
         and_mask(&mut mask, &box_mask);
     }
 
@@ -499,6 +493,22 @@ pub(super) fn selection_and_mask<T: RealMathPixel>(
     Ok(mask)
 }
 
+fn boxes_union_mask(
+    boxes: &[[usize; 4]],
+    start: &[usize],
+    shape: &[usize],
+    plane: [usize; 2],
+) -> ArrayD<bool> {
+    let [px, py] = plane;
+    ArrayD::from_shape_fn(IxDyn(shape), |idx| {
+        let gx = start[px] + idx[px];
+        let gy = start[py] + idx[py];
+        boxes
+            .iter()
+            .any(|&[x0, y0, x1, y1]| (x0..=x1).contains(&gx) && (y0..=y1).contains(&gy))
+    })
+}
+
 fn immath_region_pixel_mask(
     region: &PixelRegion,
     start: &[usize],
@@ -506,7 +516,13 @@ fn immath_region_pixel_mask(
     plane: [usize; 2],
 ) -> Result<ArrayD<bool>, ImageError> {
     match region {
-        PixelRegion::Box(_) => Ok(ArrayD::from_elem(IxDyn(shape), true)),
+        PixelRegion::Boxes(boxes) => {
+            if boxes.len() < 2 {
+                Ok(ArrayD::from_elem(IxDyn(shape), true))
+            } else {
+                Ok(boxes_union_mask(boxes, start, shape, plane))
+            }
+        }
         PixelRegion::Polygon(vertices) => {
             if vertices.len() < 3 {
                 return Err(ImageError::InvalidMetadata(

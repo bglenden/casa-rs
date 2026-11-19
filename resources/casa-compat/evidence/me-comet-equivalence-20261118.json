@@ -1,0 +1,336 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6",
+  "scope": "framecomet and the five comet queries. COMET direction conversion remains on #1252.",
+  "work_item": "https://github.com/bglenden/casa-rs/issues/1252",
+  "public_sources": [
+    "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/casatools/src/tools/measures/measures_cmpt.cc?at=6.7.6.14",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MeasComet.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MeasIERS.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/casa/Containers/RecordInterface.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/casa/Quanta/MVTime.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/casa/OS/Path.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/tables/Tables/Table.cc"
+  ],
+  "measures_snapshot": {
+    "generated_at_utc": "2026-04-09T16:32:00Z",
+    "casarundata_version": "casarundata-2026.02.19-1.tar.gz",
+    "measures_version": "WSRT_Measures_20260408-160001.ztar",
+    "measures_site": "https://www.astron.nl/iers/",
+    "included_paths": [
+      "readme.txt",
+      "geodetic",
+      "ephemerides/DE200",
+      "ephemerides/DE405",
+      "ephemerides/VGEO",
+      "ephemerides/VTOP",
+      "ephemerides/JPL-Horizons",
+      "ephemerides/Sources",
+      "ephemerides/Lines"
+    ]
+  },
+  "build": "maturin develop --release --manifest-path crates/casars-python/Cargo.toml",
+  "comparison": {
+    "fixture": "crates/casars-python/python/tests/data/casa_measures_comet.json",
+    "state_sequences": 25,
+    "steps": 199,
+    "capture": "CASAPY tools/simulation/measures_comet_oracle.py --measures-data target/geometry-snapshot --out crates/casars-python/python/tests/data/casa_measures_comet.json",
+    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures*.py crates/casars-python/python/tests/test_tools_measures.py crates/casars-python/python/tests/test_binding_snapshots.py",
+    "comparator": "Exact method return types, dictionary keys, units, array shapes, and exceptions. Numeric relative tolerance 2e-11. Includes the upstream Ganymede assertions and independent synthetic CASA tables. Four isolated CASA SIGSEGV observations have native sentinel expectations.",
+    "result": "1179 affected Python tests passed, one optional live signature check skipped in the native-only environment."
+  },
+  "performance": {
+    "command": "CASAPY tools/simulation/measures_comet_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --calls 1000 --samples 7",
+    "conditions": "Identical CASA Python and measures snapshot; warm tool calls. One warm-up and seven retained samples per case, 1000 calls per sample. No local concurrent builds or tests.",
+    "casa": {
+      "backend": "casa",
+      "casa_version": "6.7.6-14",
+      "revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "load_absolute": {
+          "median_ns": 207914.667,
+          "samples_ns": [
+            205281.709,
+            207914.667,
+            208198.958,
+            207803.334,
+            206971.375,
+            208723.542,
+            208528.5
+          ]
+        },
+        "load_ephemerides_relative": {
+          "median_ns": 200986.542,
+          "samples_ns": [
+            202120.625,
+            200965.208,
+            200729.541,
+            201417.791,
+            200986.542,
+            210400.459,
+            199568.917
+          ]
+        },
+        "load_topocentric": {
+          "median_ns": 192949.708,
+          "samples_ns": [
+            191477.875,
+            192949.708,
+            192867.208,
+            192201.459,
+            193037.5,
+            194426.166,
+            193313.917
+          ]
+        },
+        "name": {
+          "median_ns": 86.167,
+          "samples_ns": [
+            86.667,
+            86.041,
+            86.167,
+            86.417,
+            86.542,
+            86.083,
+            85.791
+          ]
+        },
+        "type": {
+          "median_ns": 87.875,
+          "samples_ns": [
+            86.708,
+            87.875,
+            87.417,
+            88.167,
+            87.709,
+            90.0,
+            87.875
+          ]
+        },
+        "topocentre_m": {
+          "median_ns": 3094.667,
+          "samples_ns": [
+            3094.667,
+            3093.792,
+            3076.958,
+            3080.083,
+            3120.125,
+            3315.5,
+            3219.542
+          ]
+        },
+        "distance": {
+          "median_ns": 3481.708,
+          "samples_ns": [
+            3550.667,
+            3568.5,
+            3478.667,
+            3481.708,
+            3473.584,
+            3469.166,
+            3596.541
+          ]
+        },
+        "angular_diameter": {
+          "median_ns": 3378.083,
+          "samples_ns": [
+            3396.208,
+            3386.625,
+            3378.083,
+            3364.458,
+            3360.833,
+            3399.708,
+            3349.416
+          ]
+        },
+        "topocentric_distance": {
+          "median_ns": 3521.125,
+          "samples_ns": [
+            3521.125,
+            3523.458,
+            3525.875,
+            3532.459,
+            3516.292,
+            3455.375,
+            3432.625
+          ]
+        },
+        "topocentric_angular_diameter": {
+          "median_ns": 3569.667,
+          "samples_ns": [
+            3569.667,
+            3587.75,
+            3567.625,
+            3569.709,
+            3567.167,
+            3578.167,
+            3567.667
+          ]
+        }
+      }
+    },
+    "native": {
+      "backend": "casars",
+      "casa_version": "6.7.6-14",
+      "revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "load_absolute": {
+          "median_ns": 168416.833,
+          "samples_ns": [
+            167803.666,
+            167871.167,
+            168416.833,
+            167592.792,
+            168513.417,
+            168717.833,
+            171995.375
+          ]
+        },
+        "load_ephemerides_relative": {
+          "median_ns": 169291.958,
+          "samples_ns": [
+            171369.0,
+            168725.5,
+            170782.25,
+            169300.5,
+            169038.959,
+            169291.958,
+            168367.083
+          ]
+        },
+        "load_topocentric": {
+          "median_ns": 100670.625,
+          "samples_ns": [
+            98213.166,
+            96728.25,
+            101079.375,
+            99680.875,
+            100892.792,
+            100670.625,
+            100954.291
+          ]
+        },
+        "name": {
+          "median_ns": 72.042,
+          "samples_ns": [
+            71.583,
+            72.0,
+            72.042,
+            72.0,
+            72.125,
+            72.625,
+            72.5
+          ]
+        },
+        "type": {
+          "median_ns": 69.167,
+          "samples_ns": [
+            69.583,
+            69.167,
+            69.041,
+            69.208,
+            68.958,
+            69.209,
+            69.042
+          ]
+        },
+        "topocentre_m": {
+          "median_ns": 297.417,
+          "samples_ns": [
+            302.958,
+            299.667,
+            296.541,
+            296.834,
+            297.833,
+            297.041,
+            297.417
+          ]
+        },
+        "distance": {
+          "median_ns": 228.166,
+          "samples_ns": [
+            226.959,
+            227.042,
+            227.5,
+            228.166,
+            235.0,
+            242.666,
+            250.875
+          ]
+        },
+        "angular_diameter": {
+          "median_ns": 229.0,
+          "samples_ns": [
+            229.416,
+            229.0,
+            228.875,
+            229.291,
+            228.666,
+            228.291,
+            231.583
+          ]
+        },
+        "topocentric_distance": {
+          "median_ns": 228.875,
+          "samples_ns": [
+            229.0,
+            229.125,
+            228.875,
+            228.542,
+            226.833,
+            232.334,
+            226.833
+          ]
+        },
+        "topocentric_angular_diameter": {
+          "median_ns": 228.959,
+          "samples_ns": [
+            231.125,
+            229.166,
+            228.959,
+            228.542,
+            227.292,
+            229.5,
+            227.875
+          ]
+        }
+      }
+    },
+    "speedups": {
+      "load_absolute": 1.234524265160597,
+      "load_ephemerides_relative": 1.1872184855939818,
+      "load_topocentric": 1.9166435889317268,
+      "name": 1.1960661836151134,
+      "type": 1.2704758049358797,
+      "topocentre_m": 10.405144964813713,
+      "distance": 15.259539107491914,
+      "angular_diameter": 14.751454148471616,
+      "topocentric_distance": 15.384489350081923,
+      "topocentric_angular_diameter": 15.590856878305722
+    },
+    "all_faster": true,
+    "rejected": "At 6b6afe8c9d, relative-path load was 0.697x CASA throughput. Directly looking up the named table removes repeated checks for unrelated runtime catalogs. The focused relative-path regression failed before this repair."
+  },
+  "validation": [
+    "80 affected Rust unit and integration tests passed.",
+    "The optional live measures signature test passed separately under CASA Python.",
+    "Formatting, affected crate Clippy, strict public and private rustdoc, architecture, and generated docs checks passed."
+  ],
+  "review": {
+    "model": "Astra xhigh",
+    "revision": "976f9c255c",
+    "findings": [
+      "Table header validation and home or environment expansion before resolving the table path.",
+      "Numeric MJD and time-unit version dates.",
+      "A zero range keeps the casacore micrometre convention.",
+      "NaN samples propagate inside the covered bracket.",
+      "Validate the type of each present optional disk column.",
+      "Use CASA's Quantum conversion for a radius quantity with mismatched dimensions."
+    ],
+    "result": "All six findings are resolved. Eight failing regressions reproduce the reviewed behavior gaps and pass after the fixes."
+  }
+}

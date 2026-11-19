@@ -220,8 +220,8 @@ fn physical_grid(
         TimeParameterFamily::Antpos => {
             CalibrationGrid::Antpos(AntposGrid::from_arrays(path, &values, &flags)?)
         }
-        TimeParameterFamily::GainCurve => {
-            CalibrationGrid::GainCurve(GainCurveGrid::from_arrays(path, &values, &flags)?)
+        TimeParameterFamily::GainCurve { power } => {
+            CalibrationGrid::GainCurve(GainCurveGrid::from_arrays(path, &values, &flags, power)?)
         }
         TimeParameterFamily::Opacity => {
             CalibrationGrid::Opacity(OpacityGrid::from_arrays(path, &values, &flags)?)

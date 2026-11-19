@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native generation of externally specified CASA calibration tables.
 
+mod power_curve;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -32,6 +34,8 @@ const COL_GAIN: &str = "GAIN";
 const COL_BANDNAME: &str = "BANDNAME";
 const COL_NAME: &str = "NAME";
 const COL_TIME_RANGE: &str = "TIME_RANGE";
+const COL_TELESCOPE_NAME: &str = "TELESCOPE_NAME";
+pub(crate) const POWER_CURVE_TERMS: usize = 8;
 
 /// Supported native `gencal` families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -47,8 +51,12 @@ pub enum GencalType {
     Mbd,
     /// Antenna-position delay correction table (`KAntPos Jones`).
     Antpos,
+    /// VLA gain curve alone (`EGainCurve`).
+    Gc,
     /// VLA gain-curve plus antenna-efficiency table (`EGainCurve`).
     Gceff,
+    /// VLA efficiency alone (`EGainCurve`).
+    Eff,
     /// Zenith-opacity table (`TOpac`).
     Opac,
 }
@@ -59,7 +67,7 @@ impl GencalType {
             Self::Amp | Self::Ph => "G Jones",
             Self::Sbd | Self::Mbd => "K Jones",
             Self::Antpos => "KAntPos Jones",
-            Self::Gceff => "EGainCurve",
+            Self::Gc | Self::Gceff | Self::Eff => "EGainCurve",
             Self::Opac => "TOpac",
         }
     }
@@ -74,6 +82,10 @@ impl GencalType {
     fn is_specified(self) -> bool {
         matches!(self, Self::Amp | Self::Ph | Self::Sbd | Self::Mbd)
     }
+
+    pub(crate) fn is_gain_curve(self) -> bool {
+        matches!(self, Self::Gc | Self::Gceff | Self::Eff)
+    }
 }
 
 impl std::str::FromStr for GencalType {
@@ -87,6 +99,7 @@ impl std::str::FromStr for GencalType {
             "mbd" => Ok(Self::Mbd),
             "antpos" => Ok(Self::Antpos),
             "gceff" | "gc" => Ok(Self::Gceff),
+            "eff" => Ok(Self::Eff),
             "opac" | "opacity" => Ok(Self::Opac),
             other => Err(format!(
                 "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, gceff, or opac"
@@ -194,6 +207,8 @@ pub enum GencalError {
 
 #[derive(Debug, Clone)]
 struct PriorCalRow {
+    time_seconds: f64,
+    interval_seconds: f64,
     field_id: i32,
     spw_id: i32,
     antenna_id: i32,
@@ -205,12 +220,13 @@ struct PriorCalRow {
 
 /// Generate one native prior calibration table.
 pub fn gencal(request: &GencalRequest) -> Result<GencalReport, GencalError> {
-    gencal_with_output_mode(request, "", crate::CalibrationOutputMode::Update)
+    gencal_with_output_mode(request, "", None, crate::CalibrationOutputMode::Update)
 }
 
 pub(crate) fn gencal_with_output_mode(
     request: &GencalRequest,
     polarization: &str,
+    gaincurve_infile: Option<&Path>,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
     // Reserve before reading prior parameters, so concurrent updates cannot
@@ -224,19 +240,38 @@ pub(crate) fn gencal_with_output_mode(
     })?;
     let updating = mode == crate::CalibrationOutputMode::Update
         && request.output_table.exists()
-        && request.caltype != GencalType::Gceff;
+        && !request.caltype.is_gain_curve();
+    let embedded = match request.caltype {
+        GencalType::Gc | GencalType::Gceff => {
+            power_curve::source_path(&request.measurement_set, ms.main_table())?
+        }
+        _ => None,
+    };
     let mut rows = match request.caltype {
         GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd => {
             specified_rows(&ms, request, polarization, updating)?
         }
         GencalType::Antpos => antpos_rows(&ms, request)?,
-        GencalType::Gceff => gaincurve_rows(&ms, request)?,
+        GencalType::Gc | GencalType::Gceff | GencalType::Eff => {
+            validate_gaincurve_selection(&ms, request)?;
+            if let Some(path) = embedded.as_deref() {
+                refuse_curve_input_overlap(request, path)?;
+                power_curve::rows(&ms, path)?
+            } else {
+                gaincurve_rows(&ms, request, gaincurve_infile)?
+            }
+        }
         GencalType::Opac => opacity_rows(&ms, request)?,
     };
     if updating && !request.caltype.is_specified() {
         apply_existing_parameters(request, &mut rows)?;
     }
-    write_prior_caltable(&ms, request, &rows, output, mode)
+    let subtype = if embedded.is_some() {
+        "EPowerCurve"
+    } else {
+        request.caltype.table_subtype()
+    };
+    write_prior_caltable(&ms, request, subtype, &rows, output, mode)
 }
 
 /// Load the existing `setSpecify` parameters and metadata. The ordered gain
@@ -400,6 +435,8 @@ fn specified_rows(
     };
     let mut rows = (0..antenna_count * window_count)
         .map(|row| PriorCalRow {
+            time_seconds: 0.0,
+            interval_seconds: 0.0,
             field_id: -1,
             spw_id: (row / antenna_count) as i32,
             antenna_id: (row % antenna_count) as i32,
@@ -474,6 +511,8 @@ fn antpos_rows(
             .copied()
             .unwrap_or([0.0, 0.0, 0.0]);
         rows.push(PriorCalRow {
+            time_seconds: 0.0,
+            interval_seconds: 0.0,
             field_id: -1,
             spw_id: 0,
             antenna_id: antenna_id as i32,
@@ -486,33 +525,64 @@ fn antpos_rows(
     Ok(rows)
 }
 
+fn validate_gaincurve_selection(
+    ms: &MeasurementSet,
+    request: &GencalRequest,
+) -> Result<(), GencalError> {
+    let invalid = |detail: String| {
+        GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {detail}"))
+    };
+    // Calibrater resolves these expressions before EGainCurve writes the
+    // full antenna and spectral-window grid.
+    if !request.spw.is_empty() && request.spw != "*" {
+        ms.resolve_spw_selector(&request.spw)
+            .map_err(|error| invalid(error.to_string()))?;
+    }
+    if !request.antenna.is_empty() && request.antenna != "*" {
+        ms.resolve_reference_antennas(&request.antenna)
+            .map_err(|error| invalid(error.to_string()))?;
+    }
+    Ok(())
+}
+
 fn gaincurve_rows(
     ms: &MeasurementSet,
     request: &GencalRequest,
+    gaincurve_infile: Option<&Path>,
 ) -> Result<Vec<PriorCalRow>, GencalError> {
-    let source_path = request
-        .gaincurve_table
-        .clone()
-        .or_else(default_vla_gaincurve_table)
-        .ok_or_else(|| {
-            GencalError::InvalidRequest(
-                "gceff requires --gaincurve-table or a CASA data tree at ~/.casa/data/nrao/VLA/GainCurves".to_string(),
-            )
-        })?;
+    let invalid = |detail: String| {
+        GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {detail}"))
+    };
+    let use_curve = request.caltype != GencalType::Eff;
+    let use_efficiency = request.caltype != GencalType::Gc;
+
+    let explicit = gaincurve_infile.or(request.gaincurve_table.as_deref());
+    let source_path = if let Some(explicit) = explicit {
+        explicit.to_path_buf()
+    } else {
+        let observation = ms
+            .subtable(SubtableId::Observation)
+            .ok_or_else(|| invalid("missing OBSERVATION subtable".into()))?;
+        let telescope = get_string(observation, 0, COL_TELESCOPE_NAME)?;
+        if !telescope.contains("VLA") {
+            return Err(invalid(format!(
+                "Automatic gain curve not supported for {telescope}"
+            )));
+        }
+        default_vla_gaincurve_table().ok_or_else(|| {
+            invalid("the standard VLA GainCurves table is missing from the CASA data tree".into())
+        })?
+    };
+    refuse_curve_input_overlap(request, &source_path)?;
     let gaincurves = Table::open(TableOptions::new(&source_path)).map_err(|source| {
         GencalError::OpenGainCurves {
             path: source_path.display().to_string(),
             source: Box::new(source),
         }
     })?;
-    let antenna_count = ms
-        .antenna()
-        .map_err(|source| GencalError::OpenMeasurementSet {
-            path: "ANTENNA".to_string(),
-            source: Box::new(source),
-        })?
-        .row_count();
-    let antenna_keys = vla_gaincurve_antenna_keys(ms)?;
+    let antenna_keys = vla_gaincurve_antenna_keys(ms, gaincurve_infile.is_none())?;
+    // The native gaincurve_table extension also accepts shorter polynomials.
+    let require_full_curve = gaincurve_infile.is_some() || request.gaincurve_table.is_none();
     let spw = ms
         .spectral_window()
         .map_err(|source| GencalError::OpenMeasurementSet {
@@ -520,34 +590,99 @@ fn gaincurve_rows(
             source: Box::new(source),
         })?;
     let obs_time = first_observation_time(ms).or_else(|_| first_main_time(ms))?;
-    let mut rows = Vec::with_capacity(antenna_count * spw.row_count());
-    for spw_id in 0..spw.row_count() {
-        let center_hz = spw_center_frequency_hz(&spw, spw_id)?;
-        let band = vla_spw_band(&spw, spw_id)?;
-        let efficiency = vla_efficiency(center_hz / 1.0e9) as f32;
-        for (antenna_id, antenna_key) in antenna_keys.iter().enumerate().take(antenna_count) {
-            let mut fparam = matching_gaincurve(
+    let mut valid_rows = Vec::new();
+    for row in 0..gaincurves.row_count() {
+        if get_f64(&gaincurves, row, COL_BTIME)? <= obs_time
+            && get_f64(&gaincurves, row, COL_ETIME)? > obs_time
+        {
+            valid_rows.push(row);
+        }
+    }
+    let flat = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+    let mut found_curve = false;
+    let mut rows = Vec::with_capacity(antenna_keys.len() * spw.row_count());
+    for window in 0..spw.row_count() {
+        let center_hz = spw_center_frequency_hz(&spw, window)?;
+        let curves = if use_curve {
+            gaincurves_for_window(
                 &gaincurves,
-                obs_time,
+                &valid_rows,
                 center_hz,
-                band.as_deref(),
-                antenna_key,
-            )?;
-            for value in &mut fparam {
+                vla_spw_band(&spw, window)?.as_deref(),
+                require_full_curve,
+            )?
+        } else {
+            BTreeMap::new()
+        };
+        found_curve |= !curves.is_empty();
+        let nominal = curves.get("0").map_or(&flat[..], Vec::as_slice);
+        let efficiency = if use_efficiency {
+            vla_efficiency(center_hz / 1.0e9) as f32
+        } else {
+            1.0
+        };
+        for (antenna, key) in antenna_keys.iter().enumerate() {
+            let mut values = curves.get(key).map_or(nominal, Vec::as_slice).to_vec();
+            for value in &mut values {
                 *value *= efficiency;
             }
             rows.push(PriorCalRow {
+                time_seconds: 0.0,
+                interval_seconds: 0.0,
                 field_id: -1,
-                spw_id: spw_id as i32,
-                antenna_id: antenna_id as i32,
+                spw_id: window as i32,
+                antenna_id: antenna as i32,
                 observation_id: -1,
-                parameters: f32_column(&fparam),
+                parameters: f32_column(&values),
                 snr_value: 0.0,
                 preserved: None,
             });
         }
     }
+    if use_curve && !found_curve {
+        return Err(invalid("Found no gaincurve data for any spw.".into()));
+    }
     Ok(rows)
+}
+
+fn refuse_curve_input_overlap(request: &GencalRequest, input: &Path) -> Result<(), GencalError> {
+    let invalid = |reason| GencalError::PrepareOutput {
+        path: request.output_table.display().to_string(),
+        reason,
+    };
+    if crate::paths::overlap(&request.output_table, input)
+        .map_err(|error| invalid(error.to_string()))?
+    {
+        return Err(invalid(
+            "caltable overlaps the gain-curve input table".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn gaincurve_report_input(
+    request: &GencalRequest,
+    infile: Option<&Path>,
+) -> Result<Option<PathBuf>, GencalError> {
+    if !request.caltype.is_gain_curve() {
+        return Ok(None);
+    }
+    if matches!(request.caltype, GencalType::Gc | GencalType::Gceff) {
+        let ms = &request.measurement_set;
+        let main = Table::open(TableOptions::new(ms)).map_err(|source| {
+            GencalError::OpenMeasurementSet {
+                path: ms.display().to_string(),
+                source: Box::new(casa_ms::MsError::from(source)),
+            }
+        })?;
+        if let Some(path) = power_curve::source_path(ms, &main)? {
+            return Ok(Some(path));
+        }
+    }
+    Ok(infile
+        .map(Path::to_path_buf)
+        .or_else(|| request.gaincurve_table.clone())
+        .or_else(default_vla_gaincurve_table))
 }
 
 fn opacity_rows(
@@ -584,6 +719,8 @@ fn opacity_rows(
     for spw_id in parse_spw_selector(ms, "")? {
         for antenna_id in 0..antenna_count {
             rows.push(PriorCalRow {
+                time_seconds: 0.0,
+                interval_seconds: 0.0,
                 field_id: -1,
                 spw_id,
                 antenna_id: antenna_id as i32,
@@ -622,6 +759,7 @@ fn opacity_antennas(
 fn write_prior_caltable(
     ms: &MeasurementSet,
     request: &GencalRequest,
+    subtype: &str,
     rows: &[PriorCalRow],
     output: crate::output::CalibrationOutput,
     mode: crate::CalibrationOutputMode,
@@ -643,7 +781,6 @@ fn write_prior_caltable(
         ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid gencal caltable schema");
-    let subtype = request.caltype.table_subtype();
     let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
@@ -669,7 +806,10 @@ fn write_prior_caltable(
         let flags = vec![false; len];
         let snr = vec![row.snr_value; len];
         let mut record = RecordValue::new(vec![
-            RecordField::new(COL_TIME, Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new(
+                COL_TIME,
+                Value::Scalar(ScalarValue::Float64(row.time_seconds)),
+            ),
             RecordField::new(
                 COL_FIELD_ID,
                 Value::Scalar(ScalarValue::Int32(row.field_id)),
@@ -683,7 +823,10 @@ fn write_prior_caltable(
                 Value::Scalar(ScalarValue::Int32(row.antenna_id)),
             ),
             RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(-1))),
-            RecordField::new(COL_INTERVAL, Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new(
+                COL_INTERVAL,
+                Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
+            ),
             RecordField::new(COL_SCAN_NUMBER, Value::Scalar(ScalarValue::Int32(-1))),
             RecordField::new(
                 COL_OBSERVATION_ID,
@@ -832,73 +975,53 @@ fn parse_spw_selector(ms: &MeasurementSet, selector: &str) -> Result<Vec<i32>, G
     Ok(ids.into_iter().collect())
 }
 
-fn matching_gaincurve(
+fn gaincurves_for_window(
     table: &Table,
-    time_seconds: f64,
-    frequency_hz: f64,
+    valid: &[usize],
+    center_hz: f64,
     band: Option<&str>,
-    antenna_key: &str,
-) -> Result<Vec<f32>, GencalError> {
-    if let Some(band) = band
-        && let Some(gain) = matching_gaincurve_from_rows(
-            table,
-            time_seconds,
-            |row| {
-                get_string(table, row, COL_BANDNAME)
-                    .map(|row_band| row_band == band)
-                    .unwrap_or(false)
-            },
-            antenna_key,
-        )?
+    require_full_curve: bool,
+) -> Result<BTreeMap<String, Vec<f32>>, GencalError> {
+    let mut selected = Vec::new();
+    if table
+        .schema()
+        .is_some_and(|schema| schema.contains_column(COL_BANDNAME))
     {
-        return Ok(gain);
-    }
-    matching_gaincurve_from_rows(
-        table,
-        time_seconds,
-        |row| {
-            let Ok(bfreq) = get_f64(table, row, COL_BFREQ) else {
-                return false;
-            };
-            let Ok(efreq) = get_f64(table, row, COL_EFREQ) else {
-                return false;
-            };
-            bfreq <= frequency_hz && efreq > frequency_hz
-        },
-        antenna_key,
-    )?
-    .ok_or_else(|| {
-        GencalError::InvalidRequest(format!(
-            "no VLA GainCurves row covers antenna {antenna_key}, time {time_seconds}, frequency {frequency_hz}"
-        ))
-    })
-}
-
-fn matching_gaincurve_from_rows(
-    table: &Table,
-    time_seconds: f64,
-    mut row_matches: impl FnMut(usize) -> bool,
-    antenna_key: &str,
-) -> Result<Option<Vec<f32>>, GencalError> {
-    let nominal_key = "0";
-    let mut nominal = None;
-    for row in 0..table.row_count() {
-        if get_f64(table, row, COL_BTIME)? > time_seconds
-            || get_f64(table, row, COL_ETIME)? <= time_seconds
-            || !row_matches(row)
-        {
-            continue;
+        let band = band.unwrap_or("?");
+        for &row in valid {
+            if get_string(table, row, COL_BANDNAME)? == band {
+                selected.push(row);
+            }
         }
+    } else if require_full_curve {
+        return Err(GencalError::UnsupportedTableValue(
+            "gain-curve input is missing BANDNAME".into(),
+        ));
+    }
+    if selected.is_empty() {
+        for &row in valid {
+            if get_f64(table, row, COL_BFREQ)? <= center_hz
+                && get_f64(table, row, COL_EFREQ)? > center_hz
+            {
+                selected.push(row);
+            }
+        }
+    }
+    let mut curves = BTreeMap::new();
+    for row in selected {
         let antenna = get_string(table, row, COL_ANTENNA)?;
-        let gain = get_f32_array_fortran(table, row, COL_GAIN)?;
-        if antenna == antenna_key {
-            return Ok(Some(gain));
-        }
-        if antenna == nominal_key {
-            nominal = Some(gain);
+        if let std::collections::btree_map::Entry::Vacant(entry) = curves.entry(antenna) {
+            let gain = get_f32_array_fortran(table, row, COL_GAIN)?;
+            if require_full_curve && gain.len() != 8 {
+                return Err(GencalError::UnsupportedTableValue(format!(
+                    "gain-curve table row {row} has {} coefficients, expected eight",
+                    gain.len(),
+                )));
+            }
+            entry.insert(gain);
         }
     }
-    Ok(nominal)
+    Ok(curves)
 }
 
 /// SolvableVisCal::initSVC collapses all spectral vectors for uniform
@@ -1003,23 +1126,23 @@ fn vla_spw_band(
         .and_then(|rest| rest.split_once('#').map(|(band, _)| band.to_string())))
 }
 
-fn vla_gaincurve_antenna_keys(ms: &MeasurementSet) -> Result<Vec<String>, GencalError> {
+fn vla_gaincurve_antenna_keys(
+    ms: &MeasurementSet,
+    normalize: bool,
+) -> Result<Vec<String>, GencalError> {
     let table = ms
         .subtable(SubtableId::Antenna)
         .ok_or_else(|| GencalError::InvalidRequest("missing ANTENNA subtable".to_string()))?;
     let mut keys = Vec::with_capacity(table.row_count());
     for row in 0..table.row_count() {
         let name = get_string(table, row, COL_NAME)?;
-        let digits = name
-            .chars()
-            .skip_while(|ch| !ch.is_ascii_digit())
-            .collect::<String>();
-        let stripped = digits.trim_start_matches('0');
-        keys.push(if stripped.is_empty() {
-            row.to_string()
+        if normalize {
+            let start = name.find(|ch: char| ch.is_ascii_digit());
+            let digits = start.map_or("", |index| &name[index..]);
+            keys.push(digits.strip_prefix('0').unwrap_or(digits).to_string());
         } else {
-            stripped.to_string()
-        });
+            keys.push(name);
+        }
     }
     Ok(keys)
 }
@@ -1075,16 +1198,12 @@ fn vla_efficiency(frequency_ghz: f64) -> f64 {
         0.60, 0.60, 0.57, 0.52, 0.48, 0.50, 0.49, 0.42, 0.35, 0.29, 0.28, 0.26,
     ];
     let scaled = EFF.map(|value| (value / 5.622).sqrt());
-    if frequency_ghz <= FREQ[0] {
-        return scaled[0];
-    }
-    for index in 1..FREQ.len() {
-        if frequency_ghz <= FREQ[index] {
-            let fraction = (frequency_ghz - FREQ[index - 1]) / (FREQ[index] - FREQ[index - 1]);
-            return scaled[index - 1] + (scaled[index] - scaled[index - 1]) * fraction;
-        }
-    }
-    scaled[scaled.len() - 1]
+    let upper = FREQ
+        .partition_point(|sample| *sample < frequency_ghz)
+        .clamp(1, FREQ.len() - 1);
+    let lower = upper - 1;
+    let fraction = (frequency_ghz - FREQ[lower]) / (FREQ[upper] - FREQ[lower]);
+    scaled[lower] + (scaled[upper] - scaled[lower]) * fraction
 }
 
 fn first_observation_time(ms: &MeasurementSet) -> Result<f64, GencalError> {
