@@ -28,6 +28,34 @@ def retune(vis, window, frequency):
         tool.close()
 
 
+def attach_power_curves(vis, raw):
+    tool = table()
+    assert tool.open(str(vis / 'ANTENNA'))
+    antenna_count = tool.nrows()
+    tool.close()
+    times = columns(vis, ('TIME',))['TIME']
+    midpoint = float(times.min() + times.max()) / 2.
+    duration = float(times.max() - times.min()) + 2.
+    types = ('POWER(ZA)', 'POWER(EL)', 'VOLTAGE(ZA)', 'VOLTAGE(EL)')
+    raw.write_text(''.join(
+        f'{midpoint} {duration} {antenna} 0 {types[antenna % 4]} 2 1.1 1.2 .001 .002 0 0 0 0 1.3 1.5\n'
+        for antenna in range(antenna_count)
+    ))
+    path = vis / 'GAIN_CURVE'
+    assert tool.fromascii(
+        str(path), str(raw), sep=' ',
+        columnnames=['TIME', 'INTERVAL', 'ANTENNA_ID', 'SPECTRAL_WINDOW_ID', 'TYPE',
+                     'NUM_POLY', 'GAIN', 'SENSITIVITY'],
+        datatypes=['D', 'D', 'I', 'I', 'A', 'I', 'R2,4', 'R2'],
+    )
+    tool.close()
+    assert tool.open(str(vis), nomodify=False)
+    try:
+        tool.putkeyword('GAIN_CURVE', f'Table: {path}')
+    finally:
+        tool.close()
+
+
 def compare_case(root, case, vis, kind, options, native, check_apply=False):
     output = root / case
     output.mkdir()
@@ -116,6 +144,19 @@ def main():
         generate(module, source, path, [('gceff', {}), ('gc', {})])
         compare_tables(path, root / 'gc' / 'casa.cal')
     results['absolute-overwrite'] = {'table_nrms': 0.0}
+
+    embedded = root / 'embedded.ms'
+    copy_ms(source, embedded)
+    attach_power_curves(embedded, root / 'embedded.txt')
+    results['embedded-gc'], power = compare_case(root, 'embedded-gc', embedded, 'gc', {},
+                                                native, check_apply=True)
+    results['embedded-gceff'], combined = compare_case(root, 'embedded-gceff', embedded, 'gceff',
+                                                     {'infile': str(root / 'absent')}, native)
+    np.testing.assert_array_equal(combined['FPARAM'], power['FPARAM'])
+    assert power['FPARAM'].shape[0] == 16
+    results['embedded-eff'], flat = compare_case(root, 'embedded-eff', embedded, 'eff', {}, native)
+    np.testing.assert_array_equal(flat['FPARAM'], default['eff'])
+
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     print(json.dumps(results, indent=2))
 
