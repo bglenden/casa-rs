@@ -70,9 +70,12 @@ Use `ia.open("example.im")` to reopen the product. Use
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
 
+Use `ia.open("example.fits")` to read pixels and their validity mask directly
+from a FITS file. Metadata edits on this attachment last until `ia.done()`.
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
-native CASA image. `whichhdu` selects the image HDU and `whichrep` selects the
-coordinate representation. `zeroblanks=True` writes zero at blank pixels
+writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
+selects the image HDU and `whichrep` selects the coordinate representation.
+`zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
 a separate image tool. The remaining
 CASA image and coordinate operations are tracked in
