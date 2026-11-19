@@ -1,4 +1,6 @@
-"""Native products from the image tool's FITS factories."""
+"""Direct FITS attachments and native products from the image tool."""
+
+import os
 
 import numpy as np
 import pytest
@@ -17,7 +19,7 @@ def _card(key, value):
     return f"{key:8}= {text}".ljust(80).encode("ascii")
 
 
-def _hdu(primary, pixels, *, alternate=False, bitpix=16):
+def _hdu(primary, pixels, *, alternate=False, bitpix=16, scaling=()):
     extension = [("SIMPLE", True)] if primary else [("XTENSION", "IMAGE   ")]
     shape = [("NAXIS1", 2), ("NAXIS2", 2)] if pixels is not None else []
     keys = extension + [("BITPIX", bitpix), ("NAXIS", len(shape))] + shape
@@ -38,6 +40,7 @@ def _hdu(primary, pixels, *, alternate=False, bitpix=16):
             ("CRPIX1A", 1.0), ("CRPIX2A", 1.0), ("CRVAL1A", 35.0), ("CRVAL2A", 36.0),
             ("CDELT1A", -0.05), ("CDELT2A", 0.06),
         ]
+    keys += scaling
     header = b"".join(_card(key, value) for key, value in keys)
     header += b"HISTORY first custom history".ljust(80) + b"END".ljust(80)
     values = b"" if pixels is None else np.asarray(pixels, dtype=">i2" if bitpix > 0 else ">f4").tobytes()
@@ -49,6 +52,21 @@ def oracle():
     casa = pytest.importorskip("casatools")
     assert casa.version_string().replace("-", ".") == "6.7.6.14"
     return casa
+
+
+def test_subimage_refuses_direct_fits_without_publishing(tmp_path):
+    source = tmp_path / "image.fits"
+    output = tmp_path / "subimage.im"
+    content = _hdu(True, [1, 2, 3, 4])
+    source.write_bytes(content)
+    tool = tools.image()
+    assert tool.open(str(source))
+    with pytest.raises(NotImplementedError, match=r"subimage.*#1627"):
+        tool.subimage(str(output))
+    assert not output.exists()
+    assert source.read_bytes() == content
+    np.testing.assert_array_equal(tool.getchunk(), [[1, 3], [2, 4]])
+    assert tool.done()
 
 
 @pytest.mark.parametrize("writer", ["casa", "casars"])
@@ -225,3 +243,134 @@ def test_fits_import_preserves_full_history_rows(tmp_path, oracle):
         assert table.getcell("LOCATION", 0) == "::test location' OBJID='obj42"
         assert table.getcell("TIME", 0) == 51544 * 86400.0
         assert table.done()
+
+
+@pytest.mark.parametrize("method", ["open", "newimage", "newimagefromfile"])
+def test_read_fits_pixels_and_mask_without_importing(tmp_path, oracle, method):
+    # FITS detection uses the file content. This path has no extension.
+    path = tmp_path / "direct-image"
+    path.write_bytes(_hdu(True, [1, -999, 3, 4]))
+    parent, expected_parent = tools.image(), oracle.image()
+    assert parent.fromshape(shape=[3])
+    assert expected_parent.fromshape(shape=[3])
+    if method == "open":
+        assert parent.open(str(path))
+        assert expected_parent.open(str(path))
+        image, expected = parent, expected_parent
+    else:
+        image = getattr(parent, method)(str(path))
+        expected = getattr(expected_parent, method)(str(path))
+        assert parent.shape().tolist() == [3]
+        assert expected_parent.shape().tolist() == [3]
+        assert parent.done()
+        assert expected_parent.done()
+    assert image.ispersistent() and image.name() == str(path)
+    assert image.pixeltype() == "float"
+    assert image.miscinfo() == expected.miscinfo() == {"foobar": 73}
+    assert image.history() == expected.history() == ["first custom history"]
+    assert image.maskhandler("get") == expected.maskhandler("get") == ["T"]
+    assert image.maskhandler("default") == expected.maskhandler("default") == [""]
+    _assert_value(image.coordsys().torecord(), expected.coordsys().torecord())
+    for args in [{}, {"inc": [2, 1], "dropdeg": True}, {"axes": [0]}, {"blc": [1, 0], "trc": [1, 1]}]:
+        _assert_value(image.getchunk(**args), expected.getchunk(**args))
+        _assert_value(image.getchunk(getmask=True, **args), expected.getchunk(getmask=True, **args))
+    _assert_value(image.pixelvalue([0, 0]), expected.pixelvalue([0, 0]))
+    null = image.pixelvalue([1, 0])
+    assert null["mask"] is False and np.isnan(null["value"]["value"])
+    assert image.done()
+    assert expected.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_fits_metadata_edits_are_per_attachment(tmp_path, oracle, backend):
+    backend = oracle if backend == "casa" else tools
+    path = tmp_path / "edit.fits"
+    payload = _hdu(True, [1, -999, 3, 4])
+    path.write_bytes(payload)
+    image, independent = backend.image(), backend.image()
+    assert image.open(str(path))
+    assert independent.open(str(path))
+    assert image.setbrightnessunit("K")
+    assert image.setmiscinfo({"comment": "this attachment"})
+    assert image.sethistory("source", ["this attachment"])
+    assert image.setrestoringbeam("4arcsec", "2arcsec", "15deg", log=False)
+    coordinates = image.coordsys()
+    assert coordinates.setreferencepixel([1.0, 1.0])
+    assert image.setcoordsys(coordinates.torecord())
+    assert image.pixelvalue()["value"] == {"unit": "K", "value": 4.0}
+    assert image.miscinfo() == {"comment": "this attachment"}
+    assert image.commonbeam()["major"] == {"unit": "arcsec", "value": 4.0}
+    assert "this attachment" in image.history()
+    assert independent.brightnessunit() == "Jy/beam"
+    assert independent.miscinfo() == {"foobar": 73}
+    assert independent.restoringbeam() == {}
+    assert independent.history() == ["first custom history"]
+    assert independent.done()
+    with pytest.raises(RuntimeError, match="FITSImage is not writable"):
+        image.putchunk(np.zeros((2, 2)))
+    with pytest.raises(RuntimeError, match="Cannot make requested mask"):
+        image.calcmask("T")
+    with pytest.raises(RuntimeError, match="setDefaultMask cannot be used"):
+        image.maskhandler("set", "missing")
+    with pytest.raises(RuntimeError, match="renameRegion cannot be used"):
+        image.maskhandler("rename", ["missing", "new"])
+    with pytest.raises(RuntimeError, match="cannot create mask for virtual image"):
+        image.maskhandler("copy", ["missing", "new"])
+    with pytest.raises(RuntimeError, match="table is not writable"):
+        image.remove()
+    assert not image.isopen()
+    assert path.read_bytes() == payload
+    assert image.open(str(path))
+    assert image.brightnessunit() == "Jy/beam"
+    assert image.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Replacing an open FITS path requires POSIX")
+@pytest.mark.parametrize("cache", [True, False])
+def test_fits_stream_opens_on_first_pixel_read(tmp_path, oracle, cache):
+    for index, backend in enumerate([oracle, tools]):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        path, moved = directory / "source.fits", directory / "moved.fits"
+        path.write_bytes(_hdu(True, [1, 2, 3, 4]))
+        image = backend.image()
+        assert image.open(str(path), cache=cache)
+        path.rename(moved)
+        path.write_bytes(_hdu(True, [5, 6, 7, 8]))
+        expected = np.array([[5., 7.], [6., 8.]])
+        _assert_value(image.getchunk(), expected)
+        moved.unlink()
+        path.rename(moved)
+        _assert_value(image.getchunk(), expected)
+        path.write_bytes(_hdu(True, [9, 10, 11, 12]))
+        moved.unlink()
+        _assert_value(image.getchunk(), expected)
+        assert image.done()
+
+
+def test_direct_fits_selects_image_extension_and_preserves_infinities(tmp_path, oracle):
+    path = tmp_path / "extension.fits"
+    path.write_bytes(
+        _hdu(True, None)
+        + _hdu(False, [1, np.inf, np.nan, -np.inf], bitpix=-32)
+    )
+    for backend in [oracle, tools]:
+        image = backend.image()
+        assert image.open(str(path))
+        _assert_value(image.getchunk(), np.array([[1., np.nan], [np.inf, -np.inf]]))
+        _assert_value(image.getchunk(getmask=True), np.array([[True, False], [True, True]]))
+        assert image.done()
+
+
+def test_direct_fits_scaled_integer_blanks_without_scratch(tmp_path, monkeypatch, oracle):
+    path = tmp_path / "scaled.fits"
+    path.write_bytes(_hdu(True, [1, -999, 3, 4], scaling=[("BSCALE", 0.5), ("BZERO", 12)]))
+    monkeypatch.setenv("TMPDIR", str(path))
+    for backend in [oracle, tools]:
+        image = backend.image()
+        assert image.open(str(path))
+        _assert_value(image.getchunk(), np.array([[12.5, 13.5], [np.nan, 14.0]]))
+        _assert_value(image.getchunk(getmask=True), np.array([[True, True], [False, True]]))
+        blank = image.pixelvalue([1, 0])
+        assert blank["mask"] is False and np.isnan(blank["value"]["value"])
+        assert image.done()

@@ -73,9 +73,12 @@ Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
 
+Use `ia.open("example.fits")` to read pixels and their validity mask directly
+from a FITS file. Metadata edits on this attachment last until `ia.done()`.
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
-native CASA image. `whichhdu` selects the image HDU and `whichrep` selects the
-coordinate representation. `zeroblanks=True` writes zero at blank pixels
+writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
+selects the image HDU and `whichrep` selects the coordinate representation.
+`zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
 a separate image tool. The remaining
 CASA image and coordinate operations are tracked in
