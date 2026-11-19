@@ -21,6 +21,7 @@ casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
+casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
 casa-numerics = { path = "../casa-numerics" }
 casa-tables = { path = "../casa-tables" }

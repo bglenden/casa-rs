@@ -34,7 +34,7 @@ impl MaskOperation {
     }
 }
 
-fn validate_name(name: &str) -> PyResult<()> {
+pub(super) fn validate_name(name: &str) -> PyResult<()> {
     if Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name) {
         return Err(raised(format!("Invalid mask name {name}")));
     }
@@ -46,7 +46,7 @@ fn named_mask(image: &ImageHandle, name: &str) -> PyResult<ArrayD<bool>> {
         .map_err(raised)
 }
 
-fn has_region(image: &ImageHandle, to: &str) -> bool {
+pub(super) fn has_region(image: &ImageHandle, to: &str) -> bool {
     with_pixels!(image, storage => match storage {
         Storage::Paged(image) => image.mask_names().into_iter()
             .chain(image.region_names())

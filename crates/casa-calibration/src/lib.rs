@@ -62,6 +62,7 @@ mod task_contract;
 mod timing;
 mod uvmodelfit;
 mod uvsub;
+mod weather;
 mod weight_spectra;
 mod writer;
 
