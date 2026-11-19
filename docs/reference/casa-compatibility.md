@@ -22,7 +22,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | clearcal | clearcal | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
-| exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
+| exportfits | exportfits | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
@@ -331,7 +331,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `optical`, `bitpix`, `minpix`, `maxpix`, `dropstokes`, `stokeslast`, `history`, `dropdeg`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none

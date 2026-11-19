@@ -12621,8 +12621,7 @@
             "provider": {"field": "optical"},
             "python": {"name": "optical"},
             "presentation": {"label": "Optical Velocity", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "bitpix",
@@ -12636,8 +12635,7 @@
             "provider": {"field": "bitpix"},
             "python": {"name": "bitpix"},
             "presentation": {"label": "Bits per Pixel", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "minpix",
@@ -12651,10 +12649,6 @@
             "provider": {"field": "minpix"},
             "python": {"name": "minpix"},
             "presentation": {"label": "Minimum Pixel", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "bitpix", "value": {"kind": "integer", "value": 16}}
           }
         },
         {
@@ -12669,10 +12663,6 @@
             "provider": {"field": "maxpix"},
             "python": {"name": "maxpix"},
             "presentation": {"label": "Maximum Pixel", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "bitpix", "value": {"kind": "integer", "value": 16}}
           }
         },
         {
@@ -12687,8 +12677,7 @@
             "provider": {"field": "dropstokes"},
             "python": {"name": "dropstokes"},
             "presentation": {"label": "Drop Stokes", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "stokeslast",
@@ -12702,8 +12691,7 @@
             "provider": {"field": "stokeslast"},
             "python": {"name": "stokeslast"},
             "presentation": {"label": "Stokes Last", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "history",
@@ -12717,8 +12705,7 @@
             "provider": {"field": "history"},
             "python": {"name": "history"},
             "presentation": {"label": "History", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "dropdeg",
@@ -12732,8 +12719,7 @@
             "provider": {"field": "dropdeg"},
             "python": {"name": "dropdeg"},
             "presentation": {"label": "Drop Degenerate Axes", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "imagename",

@@ -16,7 +16,13 @@ use super::attachment::{self, AttachedImage};
 use super::handle::{ImageHandle, Storage, raised};
 use super::pixels::Pixels;
 
+enum CreationInput {
+    Shape(Option<IntList>),
+    Pixels(PyResult<Pixels>),
+}
+
 struct Create {
+    method: &'static str,
     outfile: String,
     shape: Vec<usize>,
     record: RecordValue,
@@ -126,27 +132,62 @@ impl Create {
         );
         image.append_history_at("::ImageFactory::createImage", &[creation])?;
         if enabled {
-            let (method, args) = match pixels {
-                Some(pixels) => ("fromarray", format!("pixels={}", pixels.history())),
-                None => (
-                    "fromshape",
-                    format!(
-                        "outfile={:?}, shape={}",
-                        self.outfile,
-                        format!("{:?}", self.shape).replace(' ', "")
-                    ),
+            let args = match pixels {
+                Some(pixels) if self.method == "newimagefromarray" => {
+                    format!("outfile={:?}, pixels={}", self.outfile, pixels.history())
+                }
+                Some(pixels) => format!("pixels={}", pixels.history()),
+                None => format!(
+                    "outfile={:?}, shape={}",
+                    self.outfile,
+                    format!("{:?}", self.shape).replace(' ', ""),
                 ),
             };
+            let kind = if self.method == "newimagefromarray" {
+                String::new()
+            } else {
+                format!(", type={:?}", self.kind)
+            };
             let call = format!(
-                "ia.{method}({args}, csys={{...}}, linear={}, overwrite={}, log={}, type={:?})",
-                self.linear, self.overwrite, self.log, self.kind
+                "ia.{}({args}, csys={{...}}, linear={}, overwrite={}, log={}{kind})",
+                self.method, self.linear, self.overwrite, self.log
             );
-            image.record_history(method, call)?;
+            image.record_history(self.method, call)?;
         }
         Ok(())
     }
 
-    fn run(&self, pixels: Option<Pixels>, history: bool) -> PyResult<AttachedImage> {
+    fn image_shape(shape: Option<IntList>) -> PyResult<Vec<usize>> {
+        let shape = shape.unwrap_or_else(|| IntList::of(&[0])).0;
+        if shape.is_empty() {
+            return Err(raised(
+                "Exception: The shape must have more than zero elements.",
+            ));
+        }
+        if shape.iter().any(|&length| length <= 0) {
+            return Err(raised("Exception: All elements of shape must be positive."));
+        }
+        Ok(shape.into_iter().map(|length| length as usize).collect())
+    }
+
+    fn run(mut self, input: CreationInput, history: bool) -> PyResult<AttachedImage> {
+        let pixels = match input {
+            CreationInput::Shape(shape) => {
+                self.shape = Self::image_shape(shape)?;
+                None
+            }
+            CreationInput::Pixels(pixels) => {
+                if !matches!(self.kind.to_ascii_lowercase().as_str(), "f" | "d") {
+                    return Err(raised(format!(
+                        "Exception: Unsupported value for type: {:?}. Supported values are \"d\" and \"f\"",
+                        self.kind
+                    )));
+                }
+                let pixels = pixels?;
+                self.shape = pixels.shape().to_vec();
+                Some(pixels)
+            }
+        };
         if self.outfile.is_empty() {
             return self
                 .build(pixels, None, history)
@@ -220,6 +261,35 @@ impl Create {
     }
 }
 
+impl PyImageTool {
+    fn replace_from(
+        &self,
+        py: Python<'_>,
+        request: Create,
+        input: CreationInput,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            let mut state = self.state();
+            state.image = None;
+            state.image = Some(request.run(input, state.history)?);
+            Ok(true)
+        })
+    }
+
+    fn new_from(
+        &self,
+        py: Python<'_>,
+        request: Create,
+        input: CreationInput,
+    ) -> PyResult<Py<Self>> {
+        let image = py.detach(|| {
+            let history = self.state().history;
+            request.run(input, history)
+        })?;
+        Py::new(py, Self::attached(image))
+    }
+}
+
 #[pymethods]
 #[allow(clippy::too_many_arguments)]
 impl PyImageTool {
@@ -235,31 +305,17 @@ impl PyImageTool {
         log: bool,
         r#type: &str,
     ) -> PyResult<bool> {
-        let shape = shape.unwrap_or_else(|| IntList::of(&[0])).0;
-        let record = casa_record(py, csys)?;
-        py.detach(|| {
-            let mut state = self.state();
-            state.image = None;
-            if shape.is_empty() {
-                return Err(raised(
-                    "Exception: The shape must have more than zero elements.",
-                ));
-            }
-            if shape.iter().any(|&length| length <= 0) {
-                return Err(raised("Exception: All elements of shape must be positive."));
-            }
-            let request = Create {
-                shape: shape.into_iter().map(|length| length as usize).collect(),
-                record,
-                outfile: outfile.into(),
-                linear,
-                overwrite,
-                log,
-                kind: r#type.into(),
-            };
-            state.image = Some(request.run(None, state.history)?);
-            Ok(true)
-        })
+        let request = Create {
+            method: "fromshape",
+            shape: Vec::new(),
+            record: casa_record(py, csys)?,
+            outfile: outfile.into(),
+            linear,
+            overwrite,
+            log,
+            kind: r#type.into(),
+        };
+        self.replace_from(py, request, CreationInput::Shape(shape))
     }
 
     #[pyo3(signature = (outfile = "", pixels = None, csys = None, linear = false, overwrite = false, log = true, r#type = "f"), text_signature = "($self, outfile='', pixels=[], csys={}, linear=False, overwrite=False, log=True, type='f')")]
@@ -274,21 +330,74 @@ impl PyImageTool {
         log: bool,
         r#type: &str,
     ) -> PyResult<bool> {
-        let record = casa_record(py, csys)?;
-        let pixels = Pixels::capture(py, pixels, true);
-        py.detach(|| {
-            let mut state = self.state();
-            state.image = None;
-            if !matches!(r#type.to_ascii_lowercase().as_str(), "f" | "d") {
-                return Err(raised(format!("Exception: Unsupported value for type: {type_name:?}. Supported values are \"d\" and \"f\"", type_name = r#type)));
-            }
-            let pixels = pixels?;
-            let request = Create {
-                shape: pixels.shape().to_vec(), record, outfile: outfile.into(), linear, overwrite,
-                log, kind: r#type.into(),
-            };
-            state.image = Some(request.run(Some(pixels), state.history)?);
-            Ok(true)
-        })
+        let request = Create {
+            method: "fromarray",
+            shape: Vec::new(),
+            record: casa_record(py, csys)?,
+            outfile: outfile.into(),
+            linear,
+            overwrite,
+            log,
+            kind: r#type.into(),
+        };
+        self.replace_from(
+            py,
+            request,
+            CreationInput::Pixels(Pixels::capture(py, pixels, true)),
+        )
+    }
+
+    #[pyo3(signature = (outfile = "", shape = None, csys = None, linear = false, overwrite = false, log = true, r#type = "f"), text_signature = "($self, outfile='', shape=[0], csys={}, linear=False, overwrite=False, log=True, type='f')")]
+    fn newimagefromshape(
+        &self,
+        py: Python<'_>,
+        outfile: &str,
+        shape: Option<IntList>,
+        csys: Option<&Bound<'_, PyDict>>,
+        linear: bool,
+        overwrite: bool,
+        log: bool,
+        r#type: &str,
+    ) -> PyResult<Py<Self>> {
+        let request = Create {
+            method: "newimagefromshape",
+            shape: Vec::new(),
+            record: casa_record(py, csys)?,
+            outfile: outfile.into(),
+            linear,
+            overwrite,
+            log,
+            kind: r#type.into(),
+        };
+        self.new_from(py, request, CreationInput::Shape(shape))
+    }
+
+    #[pyo3(signature = (outfile = "", pixels = None, csys = None, linear = false, overwrite = false, log = true, r#type = "f"), text_signature = "($self, outfile='', pixels=[], csys={}, linear=False, overwrite=False, log=True, type='f')")]
+    fn newimagefromarray(
+        &self,
+        py: Python<'_>,
+        outfile: &str,
+        pixels: Option<&Bound<'_, PyAny>>,
+        csys: Option<&Bound<'_, PyDict>>,
+        linear: bool,
+        overwrite: bool,
+        log: bool,
+        r#type: &str,
+    ) -> PyResult<Py<Self>> {
+        let request = Create {
+            method: "newimagefromarray",
+            shape: Vec::new(),
+            record: casa_record(py, csys)?,
+            outfile: outfile.into(),
+            linear,
+            overwrite,
+            log,
+            kind: r#type.into(),
+        };
+        self.new_from(
+            py,
+            request,
+            CreationInput::Pixels(Pixels::capture(py, pixels, true)),
+        )
     }
 }
