@@ -177,7 +177,6 @@ pub(super) fn receptors(correlations: &[i32], index: usize) -> Option<(usize, us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lookup_frequency::relative_axis;
 
     #[test]
     fn constant_wide_bandpass_shares_payload_and_resampling_across_times() {
