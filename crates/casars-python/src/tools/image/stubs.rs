@@ -796,22 +796,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (done = None, verbose = None), text_signature = "($self, done=False, verbose=True)")]
-    fn remove(
-        &self,
-        done: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("remove")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (file), text_signature = "($self, file)")]
-    fn removefile(&self, file: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("removefile")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (name, overwrite = None), text_signature = "($self, name, overwrite=False)")]
     fn rename(
         &self,

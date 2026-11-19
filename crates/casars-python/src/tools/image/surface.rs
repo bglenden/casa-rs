@@ -965,9 +965,14 @@ const METHODS: &[Method] = &[
             param("verbose", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("removefile", &[param("file", K::Any, Required)], R::Any, No),
+    method(
+        "removefile",
+        &[param("file", K::Any, Required)],
+        R::Any,
+        Yes,
+    ),
     method(
         "rename",
         &[

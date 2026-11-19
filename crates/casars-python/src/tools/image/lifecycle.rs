@@ -6,6 +6,8 @@ use casa_images::ImagePixelType;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::prelude::*;
 
+use crate::tools::{LogLine, emit};
+
 use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
 use super::handle::raised;
@@ -52,14 +54,61 @@ impl PyImageTool {
 
     #[pyo3(signature = (remove = false, verbose = true), text_signature = "($self, remove=False, verbose=True)")]
     fn done(&self, py: Python<'_>, remove: bool, verbose: bool) -> PyResult<bool> {
-        let _ = verbose;
-        py.detach(|| {
+        let removed = py.detach(|| {
             let image = self.state().image.take();
             if remove && let Some(image) = image {
-                image.remove()?;
+                image.remove().map(Some)
+            } else {
+                Ok(None)
             }
+        })?;
+        if let Some(name) = removed {
+            report_removed(py, &name, verbose)?;
+        }
+        Ok(true)
+    }
+
+    #[pyo3(signature = (done = false, verbose = true), text_signature = "($self, done=False, verbose=True)")]
+    fn remove(&self, py: Python<'_>, done: bool, verbose: bool) -> PyResult<bool> {
+        // Both CASA forms detach the tool before attempting the deletion.
+        let _ = done;
+        let removed = py.detach(|| {
+            self.state()
+                .image
+                .take()
+                .map(|image| image.remove())
+                .transpose()
+        })?;
+        if let Some(name) = removed {
+            report_removed(py, &name, verbose)?;
             Ok(true)
-        })
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn removefile(&self, py: Python<'_>, file: &str) -> PyResult<bool> {
+        let removed = py.detach(|| attachment::remove_file(Path::new(file)));
+        match removed {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                let warning = if file.is_empty() {
+                    "Empty filename".to_owned()
+                } else {
+                    format!("{file} does not exist or is not a table.")
+                };
+                emit(py, "casars.tools.image", &[LogLine::warning(warning)])?;
+                Ok(false)
+            }
+            Err(error) => {
+                emit(
+                    py,
+                    "casars.tools.image",
+                    &[LogLine::warning(error.to_string())],
+                )?;
+                Ok(false)
+            }
+        }
     }
 
     fn isopen(&self, py: Python<'_>) -> bool {
@@ -135,4 +184,14 @@ impl PyImageTool {
         py.detach(|| self.state().history = enable);
         true
     }
+}
+
+fn report_removed(py: Python<'_>, name: &str, verbose: bool) -> PyResult<()> {
+    let message = format!("deleted table {name}");
+    let log = if verbose {
+        LogLine::info(message)
+    } else {
+        LogLine::debug(message)
+    };
+    emit(py, "casars.tools.image", &[log])
 }
