@@ -20,6 +20,7 @@ mod fits_import;
 mod fits_rename;
 mod handle;
 mod lifecycle;
+mod locking;
 mod makecomplex;
 mod mask_expression;
 mod masks;

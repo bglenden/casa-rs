@@ -656,6 +656,32 @@ impl Table {
         self.lock_state.as_ref().map(|s| &s.options)
     }
 
+    /// Checks whether another process is waiting for this automatic lock.
+    ///
+    /// Casacore's automatic locking checks the lock request list at the
+    /// configured interval. Callers with separately buffered payloads check
+    /// at the end of an operation so they can flush before releasing.
+    #[cfg(unix)]
+    pub fn auto_lock_release_requested(&mut self) -> Result<bool, TableError> {
+        let Some(state) = self.lock_state.as_mut() else {
+            return Ok(false);
+        };
+        if !matches!(
+            state.options.mode.resolve(),
+            LockMode::AutoLocking | LockMode::AutoNoReadLocking
+        ) || !state.lock_file.has_lock(LockType::Read)
+        {
+            return Ok(false);
+        }
+        state
+            .lock_file
+            .inspect(false)
+            .map_err(|error| TableError::LockIo {
+                path: state.path.display().to_string(),
+                message: error.to_string(),
+            })
+    }
+
     /// Record that this handle is about to write the table directory at
     /// `path`. Called by every persistence path before its first write.
     ///

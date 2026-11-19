@@ -101,7 +101,7 @@ impl AttachedImage {
             .transpose()
             .map_err(raised)?;
         let image = Arc::new(SharedImage {
-            handle: Mutex::new(ImageHandle::open(path).map_err(raised)?),
+            handle: Mutex::new(ImageHandle::open_native(path, shareable).map_err(raised)?),
             use_lock,
             shareable,
         });
@@ -133,6 +133,20 @@ impl AttachedImage {
             return Err(raised(format!(
                 "The image at {} has changed",
                 key.display()
+            )));
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_bound_name(&self, handle: &ImageHandle) -> PyResult<()> {
+        self.check_directory()?;
+        if let (Some(key), Some(path)) = (&self.key, handle.path())
+            && path != key
+            && !path.canonicalize().is_ok_and(|actual| &actual == key)
+        {
+            return Err(raised(format!(
+                "The image at {} has changed",
+                path.display()
             )));
         }
         Ok(())
@@ -243,6 +257,7 @@ impl AttachedImage {
             }
         }
         let mut locks = BTreeMap::new();
+        self.lock().unlock_storage()?;
         lock_table_tree(source, &mut locks)?;
         if target_metadata.as_ref().is_some_and(|entry| entry.is_dir()) {
             lock_table_tree(&target, &mut locks)?;
@@ -263,7 +278,8 @@ impl AttachedImage {
         // locks so the log-table writer can append the rename history.
         locks.retain(|path, _| path == source || path == &target);
         let reopen = || {
-            let mut image = ImageHandle::open(&target).map_err(raised)?;
+            let mut image =
+                ImageHandle::open_native(&target, self.image.shareable).map_err(raised)?;
             log_rename(&mut image)?;
             Ok::<_, PyErr>(image)
         };
@@ -300,6 +316,7 @@ impl AttachedImage {
         if conflicting_images(&registry, key, 1) {
             return Err(in_use(key, "this"));
         }
+        self.lock().unlock_storage()?;
         remove_native_table(&name, key, self.image.use_lock.as_deref())?;
         registry.remove(key);
         Ok(name.to_string_lossy().into_owned())

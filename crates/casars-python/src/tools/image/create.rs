@@ -255,7 +255,12 @@ pub(super) fn publish_image(
     } else {
         rename_without_replacing(&product, &path).map_err(raised)?;
     }
-    match AttachedImage::open(&mut registry, &path) {
+    let mut attach = || {
+        let image = AttachedImage::open(&mut registry, &path)?;
+        image.require_lock(&mut image.lock(), casa_tables::LockType::Write)?;
+        Ok::<_, PyErr>(image)
+    };
+    match attach() {
         Ok(image) => {
             // The old table is inside the private staging directory after an exchange.
             drop(stage);

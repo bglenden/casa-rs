@@ -189,10 +189,14 @@ impl PyImageTool {
     fn torecord(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let record = py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(CasaValue::empty_record());
             };
-            serialize_image(&image.lock())
+            let mut image = attachment.lock();
+            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
+            let record = serialize_image(&image)?;
+            image.release_requested_lock()?;
+            Ok::<_, PyErr>(record)
         })?;
         record.into_python(py)
     }

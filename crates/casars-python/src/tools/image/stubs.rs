@@ -452,12 +452,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn haslock(&self) -> PyResult<Py<PyAny>> {
-        stub("haslock")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (axes = None, region = None, mask = None, nbins = None, includepix = None, cumu = None, log = None, stretch = None), text_signature = "($self, axes=[-1], region={}, mask='', nbins=25, includepix=[-1.0], cumu=False, log=False, stretch=False)")]
     fn histograms(
         &self,
@@ -496,16 +490,6 @@ impl PyImageTool {
         verbose: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("insert")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (writelock = None, nattempts = None), text_signature = "($self, writelock=False, nattempts=0)")]
-    fn lock(
-        &self,
-        writelock: Option<&Bound<'_, PyAny>>,
-        nattempts: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("lock")
     }
 
     /// Not yet implemented in casa-rs.
@@ -811,11 +795,5 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("twopointcorrelation")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn unlock(&self) -> PyResult<Py<PyAny>> {
-        stub("unlock")
     }
 }

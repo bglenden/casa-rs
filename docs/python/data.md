@@ -103,6 +103,12 @@ Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
 
+For a native image, `ia.haslock()` reports its read and write locks in that
+order. Use `ia.lock(writelock=True, nattempts=1)` to try for a write lock
+without waiting. `ia.unlock()` flushes pending changes and releases the
+lock. `putchunk` normally releases the lock after writing. Pass
+`locking=False` to keep it while making several updates.
+
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
 Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool

@@ -109,12 +109,26 @@ impl ImageHandle {
         if path.is_file() {
             return Self::open_fits(path, FitsToolImport::open(path, 0, -1)?);
         }
-        Ok(match AnyPagedImage::open(path)? {
+        AnyPagedImage::open(path).map(Self::from_paged)
+    }
+
+    pub(super) fn open_native(path: &Path, locking: bool) -> Result<Self, ImageError> {
+        #[cfg(unix)]
+        if locking {
+            return AnyPagedImage::open_with_lock(path).map(Self::from_paged);
+        }
+        #[cfg(not(unix))]
+        let _ = locking;
+        Self::open(path)
+    }
+
+    fn from_paged(image: AnyPagedImage) -> Self {
+        match image {
             AnyPagedImage::Float32(image) => Self::Float(Storage::Paged(Box::new(image))),
             AnyPagedImage::Float64(image) => Self::Double(Storage::Paged(Box::new(image))),
             AnyPagedImage::Complex32(image) => Self::Complex(Storage::Paged(Box::new(image))),
             AnyPagedImage::Complex64(image) => Self::DComplex(Storage::Paged(Box::new(image))),
-        })
+        }
     }
 
     pub(super) fn open_for_concatenation(path: &Path) -> Result<Self, ImageError> {
