@@ -4290,6 +4290,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#listing-an-incomplete-antenna-integration-can-terminate-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listing an incomplete antenna integration can terminate CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -10791,6 +10802,15 @@ splits at 72 characters on the first card and <code>&gt;</code> plus 71 characte
 continuation card without skipping characters, emitting all 48 cards on
 <code>cube_i.im</code> so both casa-rs and CASA 6.7.6.14 <code>ia.history(list=False)</code> read back
 all 17 original history entries intact (#977).</p>
+<h2 id="listing-an-incomplete-antenna-integration-can-terminate-casa">Listing an incomplete antenna integration can terminate CASA<a class="headerlink" href="#listing-an-incomplete-antenna-integration-can-terminate-casa" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14's <code>listcal</code> reshapes each spectral window's solution
+rows into complete antenna integrations. Removing the last antenna
+row from an otherwise regular G Jones table terminated the paired
+CASA subprocess after opening the requested listing file.</p>
+<p>casa-rs validates the antenna blocks before publishing a listing. The
+same input raises a recoverable error and leaves the destination absent.
+Complete integrations retain their original order, even when two have
+the same time and field (#1526).</p>
 
 
 

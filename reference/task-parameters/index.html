@@ -863,6 +863,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#list-calibration-solutions-listcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        List Calibration Solutions (listcal)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1654,6 +1665,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#list-calibration-solutions-listcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        List Calibration Solutions (listcal)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1682,9 +1704,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 675</li>
-<li>Surfaces: 42 (42 task, 0 session)</li>
-<li>Surface bindings: 993</li>
+<li>Concepts: 677</li>
+<li>Surfaces: 43 (43 task, 0 session)</li>
+<li>Surface bindings: 1000</li>
 </ul>
 <table>
 <thead>
@@ -2033,6 +2055,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">3</td>
 <td>Compute descriptive statistics for a calibration table column.</td>
+</tr>
+<tr>
+<td><a href="#surface-listcal">List Calibration Solutions</a><br><code>listcal</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">7</td>
+<td>List selected antenna calibration solutions and flags.</td>
 </tr>
 </tbody>
 </table>
@@ -10943,6 +10973,85 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"gain"</code>; optional</td>
 <td>Statistics</td>
 <td>Column to summarize for amplitude, phase, real or imaginary statistics.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-listcal"></a></p>
+<h2 id="list-calibration-solutions-listcal">List Calibration Solutions (<code>listcal</code>)<a class="headerlink" href="#list-calibration-solutions-listcal" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: List selected antenna calibration solutions and flags.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r3</code></td>
+<td><code>path (measurement_set)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>One input MeasurementSet path.</td>
+</tr>
+<tr>
+<td><code>caltable</code></td>
+<td><code>parameter.caltable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input calibration table.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Applycal field selector text.</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Applycal antenna selector text.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Applycal spw selector text.</td>
+</tr>
+<tr>
+<td><code>listfile</code></td>
+<td><code>statistics.listing_file@r1</code></td>
+<td><code>path (file)</code></td>
+<td><code>""</code>; optional</td>
+<td>Output</td>
+<td>Write the solution listing to a new text file. Empty writes to the terminal.</td>
+</tr>
+<tr>
+<td><code>pagerows</code></td>
+<td><code>statistics.listing_pagerows@r1</code></td>
+<td><code>integer</code></td>
+<td><code>50</code>; optional</td>
+<td>Output</td>
+<td>Maximum rows per page. Zero or a negative value prints a continuous listing.</td>
 </tr>
 </tbody>
 </table>

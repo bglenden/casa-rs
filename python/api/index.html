@@ -1367,6 +1367,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.listcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        listcal
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.msconvert" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2376,6 +2387,17 @@
     <span class="md-ellipsis">
       
         initweights
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.listcal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        listcal
       
     </span>
   </a>
@@ -6699,6 +6721,56 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="sd">    CASA's ``initweights``: its parameters, defaults and return value.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">initweights</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.listcal" class="doc doc-heading">
+            <code class=" language-python"><span class="n">listcal</span><span class="p">(</span><span class="n">vis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">caltable</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">antenna</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">spw</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">listfile</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">pagerows</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.listcal" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>List selected antenna calibration solutions and flags.</p>
+<p>CASA's <code>listcal</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1413</span>
+<span class="normal">1414</span>
+<span class="normal">1415</span>
+<span class="normal">1416</span>
+<span class="normal">1417</span>
+<span class="normal">1418</span>
+<span class="normal">1419</span>
+<span class="normal">1420</span>
+<span class="normal">1421</span>
+<span class="normal">1422</span>
+<span class="normal">1423</span>
+<span class="normal">1424</span>
+<span class="normal">1425</span>
+<span class="normal">1426</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">listcal</span><span class="p">(</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">antenna</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">spw</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">listfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">pagerows</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""List selected antenna calibration solutions and flags.</span>
+
+<span class="sd">    CASA's ``listcal``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">listcal</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

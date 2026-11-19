@@ -895,6 +895,12 @@ coordinates through the CASA Python interface:</p>
 <span class="n">ia</span><span class="o">.</span><span class="n">done</span><span class="p">()</span>
 </code></pre></div>
 
+<p>A coordinate tool returned by <code>ia.coordsys()</code> has its own state. Inspect the
+direction axes with <code>cs.findcoordinate("direction")["pixel"]</code> or identify the
+coordinate for a particular axis with <code>cs.findaxis(world=False, axis=0)</code>.
+<code>cs.names()</code> and <code>cs.units()</code> follow world-axis order. Use <code>cs.copy()</code> to edit
+a separate coordinate system, then pass its record to <code>ia.setcoordsys()</code> to
+persist the edits to the image.</p>
 <p>Use <code>ia.open("example.im")</code> to reopen the product. Use
 <code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. Use <code>ia.setmiscinfo(record)</code> to replace an image’s miscellaneous metadata, and
 <code>ia.sethistory(origin, messages)</code> to append provenance. The remaining CASA
