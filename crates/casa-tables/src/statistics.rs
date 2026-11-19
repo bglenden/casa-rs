@@ -308,7 +308,16 @@ pub fn column_statistics(
                 table.reference_column_manager_type(column)?.as_deref() == Some("StandardStMan")
             }
         };
-        array_samples(&access, column, rows, nrows, mode, indexed, standard)?
+        let mismatch_error = if standard {
+            Some(
+                "Table DataManager error: Internal error: StManIndArray::get/put shapes not conforming",
+            )
+        } else if rows.is_some() || table.is_reference_table()? {
+            Some("Table DataManager error: getArrayColumnCells shape mismatch in column")
+        } else {
+            None
+        };
+        array_samples(&access, column, rows, nrows, mode, indexed, mismatch_error)?
     } else {
         let cells = match rows {
             Some(rows) => access.scalar_cells_owned_for_rows(rows),
@@ -339,7 +348,7 @@ fn array_samples(
     nrows: usize,
     mode: &str,
     indexed: bool,
-    standard: bool,
+    mismatch_error: Option<&str>,
 ) -> Result<Vec<Vec<f64>>, ColumnStatisticsError> {
     // Batch storage reads instead of asking the data manager to reopen and
     // locate the array for every row. Keep the decoded cells in one batch.
@@ -373,10 +382,15 @@ fn array_samples(
                     "All selected rows are flagged.".into(),
                 ));
             }
-            if standard && *target != next_shape {
-                return Err(ColumnStatisticsError::Invalid(
-                    "Table DataManager error: Internal error: StManIndArray::get/put shapes not conforming".into(),
-                ));
+            if *target != next_shape
+                && let Some(message) = mismatch_error
+            {
+                let error = if message.ends_with(" in column") {
+                    format!("{message} {column}")
+                } else {
+                    message.to_owned()
+                };
+                return Err(ColumnStatisticsError::Invalid(error));
             }
             let values = pad_cell(values, &next_shape, target)?;
             if indexed {
