@@ -1087,7 +1087,7 @@ const METHODS: &[Method] = &[
             param("imagename", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("shape", &[], R::Any, Yes),
     method(
