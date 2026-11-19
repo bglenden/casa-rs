@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1103,6 +1103,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.calstat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        calstat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.clearcal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2101,6 +2112,17 @@
     <span class="md-ellipsis">
       
         calibrate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.calstat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        calstat
       
     </span>
   </a>
@@ -4976,6 +4998,48 @@ generated parameter checker in both cases.</p>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TaskCompletion</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""apply, inspect, and solve CASA-style calibration workflows"""</span>
     <span class="k">return</span> <span class="n">_run</span><span class="p">(</span><span class="s2">"calibrate"</span><span class="p">,</span> <span class="n">_explicit</span><span class="p">(</span><span class="nb">locals</span><span class="p">(),</span> <span class="p">(</span><span class="s1">'mode'</span><span class="p">,</span> <span class="s1">'vis'</span><span class="p">,</span> <span class="s1">'outputvis'</span><span class="p">,</span> <span class="s1">'summary_paths'</span><span class="p">,</span> <span class="s1">'gaintables'</span><span class="p">,</span> <span class="s1">'table_path'</span><span class="p">,</span> <span class="s1">'callib'</span><span class="p">,</span> <span class="s1">'gainfield'</span><span class="p">,</span> <span class="s1">'interp'</span><span class="p">,</span> <span class="s1">'spwmap'</span><span class="p">,</span> <span class="s1">'apply_mode'</span><span class="p">,</span> <span class="s1">'calwt'</span><span class="p">,</span> <span class="s1">'output'</span><span class="p">,</span> <span class="s1">'overwrite'</span><span class="p">,</span> <span class="s1">'parang'</span><span class="p">,</span> <span class="s1">'format'</span><span class="p">,</span> <span class="s1">'stats_axis'</span><span class="p">,</span> <span class="s1">'stats_datacolumn'</span><span class="p">,</span> <span class="s1">'use_flags'</span><span class="p">,</span> <span class="s1">'out_table'</span><span class="p">,</span> <span class="s1">'refant'</span><span class="p">,</span> <span class="s1">'gain_type'</span><span class="p">,</span> <span class="s1">'solve_mode'</span><span class="p">,</span> <span class="s1">'solint'</span><span class="p">,</span> <span class="s1">'gain_combine'</span><span class="p">,</span> <span class="s1">'gain_model_source'</span><span class="p">,</span> <span class="s1">'smodel'</span><span class="p">,</span> <span class="s1">'min_snr'</span><span class="p">,</span> <span class="s1">'bandpass_combine'</span><span class="p">,</span> <span class="s1">'bandtype'</span><span class="p">,</span> <span class="s1">'solnorm'</span><span class="p">,</span> <span class="s1">'fluxscale_input'</span><span class="p">,</span> <span class="s1">'reference_fields'</span><span class="p">,</span> <span class="s1">'transfer_fields'</span><span class="p">,</span> <span class="s1">'refspwmap'</span><span class="p">,</span> <span class="s1">'gainthreshold'</span><span class="p">,</span> <span class="s1">'incremental'</span><span class="p">,</span> <span class="s1">'selectdata'</span><span class="p">,</span> <span class="s1">'field'</span><span class="p">,</span> <span class="s1">'spw'</span><span class="p">,</span> <span class="s1">'antenna'</span><span class="p">,</span> <span class="s1">'scan'</span><span class="p">,</span> <span class="s1">'observation'</span><span class="p">,</span> <span class="s1">'array'</span><span class="p">,</span> <span class="s1">'timerange'</span><span class="p">,</span> <span class="s1">'msselect'</span><span class="p">,</span> <span class="s1">'caltype'</span><span class="p">,</span> <span class="s1">'parameter'</span><span class="p">,</span> <span class="s1">'gaincurve_table'</span><span class="p">,</span> <span class="s1">'flagbackup'</span><span class="p">,</span> <span class="s1">'minblperant'</span><span class="p">,</span> <span class="s1">'degamp'</span><span class="p">,</span> <span class="s1">'degphase'</span><span class="p">)))</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.calstat" class="doc doc-heading">
+            <code class=" language-python"><span class="n">calstat</span><span class="p">(</span><span class="n">caltable</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="s1">'amplitude'</span><span class="p">,</span> <span class="n">datacolumn</span><span class="o">=</span><span class="s1">'gain'</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.calstat" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Compute descriptive statistics for a calibration table column.</p>
+<p>CASA's <code>calstat</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1407</span>
+<span class="normal">1408</span>
+<span class="normal">1409</span>
+<span class="normal">1410</span>
+<span class="normal">1411</span>
+<span class="normal">1412</span>
+<span class="normal">1413</span>
+<span class="normal">1414</span>
+<span class="normal">1415</span>
+<span class="normal">1416</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">calstat</span><span class="p">(</span>
+    <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">axis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'amplitude'</span><span class="p">,</span>
+    <span class="n">datacolumn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'gain'</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Compute descriptive statistics for a calibration table column.</span>
+
+<span class="sd">    CASA's ``calstat``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">calstat</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

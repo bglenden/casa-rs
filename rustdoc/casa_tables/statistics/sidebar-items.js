@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ColumnStatisticsError"],"fn":["column_statistics"],"type":["ColumnStatistics"]};

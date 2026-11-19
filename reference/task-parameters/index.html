@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -852,6 +852,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#calibration-statistics-calstat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Calibration Statistics (calstat)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1632,6 +1643,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#calibration-statistics-calstat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Calibration Statistics (calstat)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1660,9 +1682,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 671</li>
-<li>Surfaces: 41 (41 task, 0 session)</li>
-<li>Surface bindings: 990</li>
+<li>Concepts: 673</li>
+<li>Surfaces: 42 (42 task, 0 session)</li>
+<li>Surface bindings: 993</li>
 </ul>
 <table>
 <thead>
@@ -2003,6 +2025,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">25</td>
 <td>Estimate MeasurementSet weights from visibility variance.</td>
+</tr>
+<tr>
+<td><a href="#surface-calstat">Calibration Statistics</a><br><code>calstat</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">3</td>
+<td>Compute descriptive statistics for a calibration table column.</td>
 </tr>
 </tbody>
 </table>
@@ -10866,6 +10896,53 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"corrected"</code>; optional</td>
 <td>Weights</td>
 <td>Data column to use to compute weights. Supported values are "data", "corrected", "residual", and "residual_data" (case insensitive, minimum match supported).</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-calstat"></a></p>
+<h2 id="calibration-statistics-calstat">Calibration Statistics (<code>calstat</code>)<a class="headerlink" href="#calibration-statistics-calstat" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Compute descriptive statistics for a calibration table column.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>caltable</code></td>
+<td><code>parameter.caltable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input calibration table.</td>
+</tr>
+<tr>
+<td><code>axis</code></td>
+<td><code>statistics.calibration_axis@r1</code></td>
+<td><code>string</code></td>
+<td><code>"amplitude"</code>; optional</td>
+<td>Statistics</td>
+<td>Complex projection or a literal numeric column name.</td>
+</tr>
+<tr>
+<td><code>datacolumn</code></td>
+<td><code>statistics.calibration_datacolumn@r1</code></td>
+<td><code>string</code></td>
+<td><code>"gain"</code>; optional</td>
+<td>Statistics</td>
+<td>Column to summarize for amplitude, phase, real or imaginary statistics.</td>
 </tr>
 </tbody>
 </table>
