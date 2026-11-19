@@ -123,6 +123,7 @@ pub(crate) fn pages(
                     .iter()
                     .map(|panel| panel.atmosphere.clone())
                     .collect(),
+                fdm: source.iter().map(|panel| panel.fdm.clone()).collect(),
             })
         })
         .collect()
