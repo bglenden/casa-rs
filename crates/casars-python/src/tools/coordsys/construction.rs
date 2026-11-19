@@ -43,8 +43,13 @@ fn stokes_coordinate(names: Vec<String>) -> PyResult<Option<StokesCoordinate>> {
             .collect::<Vec<_>>(),
         _ => names,
     };
+    let values = stokes_values(names.iter().map(String::as_str))?;
+    Ok((!values.is_empty()).then(|| StokesCoordinate::new(values)))
+}
+
+fn stokes_values<'a>(names: impl IntoIterator<Item = &'a str>) -> PyResult<Vec<StokesType>> {
     let values = names
-        .iter()
+        .into_iter()
         .map(|name| StokesType::from_name(name).unwrap_or(StokesType::Undefined))
         .collect::<Vec<_>>();
     if values
@@ -54,7 +59,40 @@ fn stokes_coordinate(names: Vec<String>) -> PyResult<Option<StokesCoordinate>> {
     {
         return Err(raised("You have specified the same Stokes more than once"));
     }
-    Ok((!values.is_empty()).then(|| StokesCoordinate::new(values)))
+    Ok(values)
+}
+
+fn native_coordinate_field(name: &str) -> Option<(&str, usize)> {
+    let offset = name.find(|character: char| character.is_ascii_digit())?;
+    let (kind, index) = name.split_at(offset);
+    let index = index.parse().ok()?;
+    match kind {
+        "direction" | "spectral" | "stokes" | "linear" | "tabular" | "quality" | "coordsys"
+        | "coordinate" => Some((kind, index)),
+        _ => None,
+    }
+}
+
+fn validate_coordinate_indices(record: &RecordValue) -> PyResult<()> {
+    let mut indices = Vec::new();
+    for field in record.fields() {
+        let Some((kind, index)) = native_coordinate_field(&field.name) else {
+            continue;
+        };
+        if matches!(kind, "quality" | "coordsys") {
+            return Err(raised(format!(
+                "The CASA {kind} coordinate is unsupported (#1626)"
+            )));
+        }
+        indices.push(index);
+    }
+    indices.sort_unstable();
+    if !indices.iter().copied().eq(0..indices.len()) {
+        return Err(raised(
+            "Coordinate record numbering must be contiguous and unique",
+        ));
+    }
+    Ok(())
 }
 
 impl CoordinateState {
@@ -110,6 +148,7 @@ impl CoordinateState {
         linear: i32,
         tabular: bool,
     ) -> PyResult<()> {
+        validate_coordinate_indices(&self.record)?;
         if direction {
             self.append(defaults::direction_coordinate())?;
         }
@@ -147,7 +186,66 @@ fn evla_observation() -> ObsInfo {
     )
 }
 
-fn restore(record: RecordValue, parent_name: String) -> PyResult<CoordinateState> {
+fn normalize_stokes_records(record: &mut RecordValue) -> PyResult<()> {
+    for field in record.fields_mut() {
+        let Some((kind, _)) = native_coordinate_field(&field.name) else {
+            continue;
+        };
+        let Value::Record(subrecord) = &mut field.value else {
+            continue;
+        };
+        if kind != "stokes"
+            && !matches!(subrecord.get("coordinate_type"), Some(Value::Scalar(ScalarValue::String(kind))) if kind == "Stokes")
+        {
+            continue;
+        }
+        let Some(Value::Array(ArrayValue::String(values))) = subrecord.get("stokes") else {
+            return Err(raised("Incorrect data type for field stokes"));
+        };
+        if values.ndim() != 1 || values.is_empty() {
+            return Err(raised("The stokes field must be a nonempty vector"));
+        }
+        let values = stokes_values(values.iter().map(String::as_str))?;
+        subrecord.upsert(
+            "stokes",
+            ArrayValue::from_string_vec(
+                values
+                    .into_iter()
+                    .map(|value| value.name().into())
+                    .collect(),
+            )
+            .into(),
+        );
+    }
+    Ok(())
+}
+
+fn replacement(value: &Value, key: &str) -> PyResult<Value> {
+    let values = match value {
+        Value::Array(ArrayValue::Float64(values)) if values.ndim() == 1 => {
+            return Ok(value.clone());
+        }
+        Value::Array(ArrayValue::Float32(values)) if values.ndim() == 1 => {
+            values.iter().copied().map(f64::from).collect()
+        }
+        Value::Array(ArrayValue::Int32(values)) if values.ndim() == 1 => {
+            values.iter().copied().map(f64::from).collect()
+        }
+        Value::Array(ArrayValue::Int64(values)) if values.ndim() == 1 => {
+            values.iter().map(|value| *value as f64).collect()
+        }
+        _ => {
+            return Err(raised(format!(
+                "Incorrect data type for field {key}, expected a numeric vector"
+            )));
+        }
+    };
+    Ok(ArrayValue::from_f64_vec(values).into())
+}
+
+fn restore(mut record: RecordValue, parent_name: String) -> PyResult<CoordinateState> {
+    validate_coordinate_indices(&record)?;
+    normalize_stokes_records(&mut record)?;
     let mut coordinates =
         CoordinateSystem::from_record(&record).map_err(|error| raised(error.to_string()))?;
     let info = coordinates.obs_info_mut();
@@ -164,21 +262,28 @@ fn restore(record: RecordValue, parent_name: String) -> PyResult<CoordinateState
     let placements =
         CoordinateSystem::record_coordinates(&record).map_err(|error| raised(error.to_string()))?;
     let mut restored = coordinates.obs_info().to_record();
-    for placement in placements {
+    for (model_index, placement) in placements.into_iter().enumerate() {
         let field = placement.field;
         let index = field.trim_start_matches(|character: char| !character.is_ascii_digit());
-        for key in [
-            format!("pixelmap{index}"),
-            format!("worldmap{index}"),
-            format!("pixelreplace{index}"),
-            format!("worldreplace{index}"),
-            field,
-        ] {
+        for prefix in ["pixelmap", "worldmap", "pixelreplace", "worldreplace"] {
+            let key = format!("{prefix}{index}");
             let value = record
                 .get(&key)
                 .ok_or_else(|| raised(format!("RecordInterface: unknown field {key}")))?;
-            restored.push(RecordField::new(key, value.clone()));
+            let value = if prefix.ends_with("replace") {
+                replacement(value, &key)?
+            } else {
+                value.clone()
+            };
+            restored.push(RecordField::new(key, value));
         }
+        let model = coordinates.coordinate(model_index);
+        let value = if model.coordinate_type() == CoordinateType::Stokes {
+            model.to_record().into()
+        } else {
+            record.get(&field).expect("coordinate field exists").clone()
+        };
+        restored.push(RecordField::new(field, value));
     }
     Ok(CoordinateState {
         coordinates,
@@ -204,7 +309,10 @@ impl PyCoordsys {
         let child = py.detach(|| {
             let mut state = self.state();
             let parent_name = std::mem::take(&mut state.parent_name);
-            *state = CoordinateState::empty();
+            let unset = ObsInfo::new("UNKNOWN")
+                .with_observer("UNKNOWN")
+                .with_date(MEpoch::from_mjd(0.0, EpochRef::LAST));
+            *state = CoordinateState::new(CoordinateSystem::new().with_obs_info(unset));
             state.parent_name = parent_name;
             state
                 .add_defaults(direction, spectral, stokes, linear, tabular)

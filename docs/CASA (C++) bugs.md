@@ -3823,6 +3823,11 @@ When `coordsys.fromrecord` receives a nonstring `parentName`, CASA reports
 a record type error after installing the decoded coordinates. casa-rs
 validates the parent-name field before replacing the existing system.
 
+CASA also terminates the process when a coordinate replacement vector has
+two dimensions, such as `worldreplace0=[[1.0]]` for a one-axis Stokes
+coordinate. Casa-rs reports a record type error and retains the former
+coordinate system.
+
 ## `tb.getcol` refuses a column of `int64`
 
 - Date noted: 2026-10-30

@@ -80,6 +80,11 @@ def test_addcoordinate_successive_groups_and_duplicates(casa):
         with pytest.raises(RuntimeError, match="Unable to create new coordsys"):
             cs.newcoordsys(stokes=["I", "I"])
         assert cs.naxes() == 0
+        with pytest.raises(RuntimeError, match="Unable to create new coordsys"):
+            cs.newcoordsys(direction=True, stokes=["I", "I"])
+        assert cs.naxes() == 2
+        assert cs.telescope() == cs.observer() == "UNKNOWN"
+        assert cs.epoch() == {"type":"epoch", "refer":"LAST", "m0":{"unit":"d", "value":0.0}}
 
 
 def test_complete_stokes_code_domain(casa):
@@ -155,3 +160,60 @@ def test_malformed_record_retains_previous_coordinate_state():
     assert cs.parentname() == "source"
     assert cs.addcoordinate(stokes=" ")
     assert cs.naxes() == 2
+
+
+def test_restore_canonicalizes_stokes_and_replacement_vectors(casa):
+    expected = casa.coordsys().newcoordsys(stokes="I,RR")
+    actual = tools.coordsys()
+    for names in (["rr", "yy"], ["unknown", "I"]):
+        record = expected.torecord()
+        record["stokes0"]["stokes"] = names
+        record["stokes0"]["pc"] = [[2.0]]
+        record["worldreplace0"] = [1, 2]
+        assert actual.fromrecord(record)
+        assert expected.fromrecord(record)
+        check_record(actual, expected)
+
+
+def test_restore_rejects_stokes_and_replacement_fields_that_casa_rejects(casa):
+    for make in (tools.coordsys, casa.coordsys):
+        coordinate = make().newcoordsys(direction=True)
+        for names in (["I", "I"], [13, 17]):
+            record = make().newcoordsys(stokes="RR").torecord()
+            record["stokes0"]["stokes"] = names
+            with pytest.raises(RuntimeError):
+                coordinate.fromrecord(record)
+            assert coordinate.coordinatetype() == ["Direction"]
+        record = make().newcoordsys(stokes="RR").torecord()
+        record["worldreplace0"] = "no"
+        with pytest.raises(RuntimeError, match="worldreplace0"):
+            coordinate.fromrecord(record)
+        assert coordinate.coordinatetype() == ["Direction"]
+
+
+def test_restore_rejects_unsupported_quality_or_sparse_coordinate_indices(casa):
+    native = casa.coordsys().newcoordsys(stokes=["I", "Q"]).torecord()
+    quality = native.pop("stokes0")
+    quality["axes"] = ["Quality"]
+    del quality["stokes"]
+    quality["quality"] = ["DATA", "ERROR"]
+    native["quality0"] = quality
+    oracle = casa.coordsys()
+    assert oracle.fromrecord(native)
+    assert oracle.coordinatetype() == ["Quality"]
+
+    coordinate = tools.coordsys().newcoordsys(direction=True)
+    with pytest.raises(RuntimeError, match=r"quality coordinate.*#1626"):
+        coordinate.fromrecord(oracle.torecord())
+    assert coordinate.naxes() == 2
+    linear = tools.coordsys().newcoordsys(linear=1).torecord()
+    for field in ("linear", "pixelmap", "worldmap", "pixelreplace", "worldreplace"):
+        linear[field + "1"] = linear.pop(field + "0")
+    with pytest.raises(RuntimeError, match="numbering must be contiguous"):
+        coordinate.fromrecord(linear)
+    assert coordinate.coordinatetype() == ["Direction"]
+    record = tools.coordsys().newcoordsys(stokes="I").torecord()
+    record["worldreplace0"] = [[1.0]]
+    with pytest.raises(RuntimeError, match="worldreplace0.*numeric vector"):
+        coordinate.fromrecord(record)
+    assert coordinate.coordinatetype() == ["Direction"]
