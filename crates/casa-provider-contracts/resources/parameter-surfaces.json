@@ -18997,6 +18997,10 @@
               "label": "xaxis",
               "group": "Axes"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "PlotMS admits visibility and calibration coordinates, while PlotBandpass accepts its spectral channel and frequency axes."
           }
         },
         {
@@ -19164,6 +19168,10 @@
               "label": "yaxis",
               "group": "Axes"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "PlotMS permits a list of simultaneous coordinate axes, while PlotBandpass selects a single spectral display mode."
           }
         },
         {
@@ -21610,7 +21618,7 @@
         {
           "name": "plotrange",
           "concept": {
-            "id": "plotms.plotrange",
+            "id": "plotbandpass.plotrange",
             "semantic_revision": 1
           },
           "order": 68,
@@ -22903,7 +22911,7 @@
           "name": "showatm",
           "unimplemented": {"issue": 1526},
           "concept": {
-            "id": "plotms.showatm",
+            "id": "plotbandpass.showatm",
             "semantic_revision": 1
           },
           "order": 98,
@@ -22948,7 +22956,7 @@
           "name": "showtsky",
           "unimplemented": {"issue": 1526},
           "concept": {
-            "id": "plotms.showtsky",
+            "id": "plotbandpass.showtsky",
             "semantic_revision": 1
           },
           "order": 99,
@@ -22993,7 +23001,7 @@
           "name": "showimage",
           "unimplemented": {"issue": 1526},
           "concept": {
-            "id": "plotms.showimage",
+            "id": "plotbandpass.showimage",
             "semantic_revision": 1
           },
           "order": 100,

@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 811
+- Concepts: 807
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -1005,7 +1005,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>flaggedsymboloutline</code> | <code>plotms.flaggedsymboloutline@r1</code> | <code>variant</code> | <code>false</code>; optional | Presentation | Outline plotted flagged symbols |
 | <code>xconnector</code> | <code>plotms.xconnector@r1</code> | <code>choice (4 values)</code> | <code>""</code>; optional | Presentation | Set connector for data points (blank="none"; "line","step") |
 | <code>timeconnector</code> | <code>plotms.timeconnector@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Connect points by time rather than x-axis |
-| <code>plotrange</code> | <code>plotms.plotrange@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Axes | Plot axes ranges: [xmin,xmax,ymin,ymax] |
+| <code>plotrange</code> | <code>plotbandpass.plotrange@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Axes | The axes limits to use [x0,x1,y0,y1]. |
 | <code>title</code> | <code>plotms.title@r1</code> | <code>string</code> | <code>""</code>; optional | Presentation | Title at top of plot |
 | <code>titlefont</code> | <code>plotms.titlefont@r1</code> | <code>integer</code> | <code>0</code>; optional | Presentation | Font size for plot title |
 | <code>xlabel</code> | <code>plotms.xlabel@r1</code> | <code>string</code> | <code>""</code>; optional | Presentation | Text for horizontal x-axis. Blank for default. |
@@ -1035,9 +1035,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>clearplots</code> | <code>plotms.clearplots@r1</code> | <code>bool</code> | <code>true</code>; optional | Presentation | Remove any existing plots so new ones can replace them. |
 | <code>callib</code> | <code>plotms.callib@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Calibration | Calibration library string or filename for on-the-fly calibration. |
 | <code>headeritems</code> | <code>plotms.headeritems@r1</code> | <code>string</code> | <code>""</code>; optional | Presentation | Comma-separated list of pre-defined page header items. |
-| <code>showatm</code> | <code>plotms.showatm@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Compute and overlay the atmospheric transmission curve |
-| <code>showtsky</code> | <code>plotms.showtsky@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Compute and overlay the sky temperature curve |
-| <code>showimage</code> | <code>plotms.showimage@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Compute and overlay the image sideband curve |
+| <code>showatm</code> | <code>plotbandpass.showatm@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Compute and overlay the atmospheric transmission curve |
+| <code>showtsky</code> | <code>plotbandpass.showtsky@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Compute and overlay the sky temperature curve instead of transmission |
+| <code>showimage</code> | <code>plotbandpass.showimage@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | also show the atmospheric curve for the image sideband (in black) |
 | <code>colorizeoverlay</code> | <code>plotms.colorizeoverlay@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Colorize the curve overlay using coloraxis |
 
 <a id="surface-flagdata"></a>
