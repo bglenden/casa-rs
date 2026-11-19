@@ -96,6 +96,11 @@ impl PyImageTool {
             };
             let image = image.lock();
             image.check_single_precision("pixelvalue")?;
+            if image.coordinates().n_world_axes() == 0 {
+                return Err(raised(
+                    "WCBox: Failed AlwaysAssert itsCSys.nWorldAxes() > 0",
+                ));
+            }
             let pixel = pixel.into_iter().map(|p| p as i64).collect::<Vec<_>>();
             if let ImageHandle::Float(Storage::Temp {
                 image,

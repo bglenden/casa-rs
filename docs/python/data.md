@@ -80,8 +80,14 @@ writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.
 `zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
-a separate image tool. The remaining
-CASA image and coordinate operations are tracked in
+a separate image tool.
+
+`ia.torecord()` captures the pixels, coordinates and image info, including
+restoring beams. `ia.fromrecord(record)` restores a temporary image. Pass an
+output path to write a native CASA image. As in CASA, restoring a record uses
+single-precision pixels and starts a new history.
+
+The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
 ### Extract a subimage
