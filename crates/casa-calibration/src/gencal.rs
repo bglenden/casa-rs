@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native generation of externally specified CASA calibration tables.
 
+mod power_curve;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -33,6 +35,7 @@ const COL_BANDNAME: &str = "BANDNAME";
 const COL_NAME: &str = "NAME";
 const COL_TIME_RANGE: &str = "TIME_RANGE";
 const COL_TELESCOPE_NAME: &str = "TELESCOPE_NAME";
+pub(crate) const POWER_CURVE_TERMS: usize = 8;
 
 /// Supported native `gencal` families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -204,6 +207,8 @@ pub enum GencalError {
 
 #[derive(Debug, Clone)]
 struct PriorCalRow {
+    time_seconds: f64,
+    interval_seconds: f64,
     field_id: i32,
     spw_id: i32,
     antenna_id: i32,
@@ -236,20 +241,34 @@ pub(crate) fn gencal_with_output_mode(
     let updating = mode == crate::CalibrationOutputMode::Update
         && request.output_table.exists()
         && !request.caltype.is_gain_curve();
+    let embedded = match request.caltype {
+        GencalType::Gc | GencalType::Gceff => ms.main_table().keywords().get("GAIN_CURVE"),
+        _ => None,
+    };
     let mut rows = match request.caltype {
         GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd => {
             specified_rows(&ms, request, polarization, updating)?
         }
         GencalType::Antpos => antpos_rows(&ms, request)?,
         GencalType::Gc | GencalType::Gceff | GencalType::Eff => {
-            gaincurve_rows(&ms, request, gaincurve_infile)?
+            validate_gaincurve_selection(&ms, request)?;
+            if let Some(reference) = embedded {
+                power_curve::rows(&ms, reference)?
+            } else {
+                gaincurve_rows(&ms, request, gaincurve_infile)?
+            }
         }
         GencalType::Opac => opacity_rows(&ms, request)?,
     };
     if updating && !request.caltype.is_specified() {
         apply_existing_parameters(request, &mut rows)?;
     }
-    write_prior_caltable(&ms, request, &rows, output, mode)
+    let subtype = if embedded.is_some() {
+        "EPowerCurve"
+    } else {
+        request.caltype.table_subtype()
+    };
+    write_prior_caltable(&ms, request, subtype, &rows, output, mode)
 }
 
 /// Load the existing `setSpecify` parameters and metadata. The ordered gain
@@ -413,6 +432,8 @@ fn specified_rows(
     };
     let mut rows = (0..antenna_count * window_count)
         .map(|row| PriorCalRow {
+            time_seconds: 0.0,
+            interval_seconds: 0.0,
             field_id: -1,
             spw_id: (row / antenna_count) as i32,
             antenna_id: (row % antenna_count) as i32,
@@ -487,6 +508,8 @@ fn antpos_rows(
             .copied()
             .unwrap_or([0.0, 0.0, 0.0]);
         rows.push(PriorCalRow {
+            time_seconds: 0.0,
+            interval_seconds: 0.0,
             field_id: -1,
             spw_id: 0,
             antenna_id: antenna_id as i32,
@@ -499,11 +522,10 @@ fn antpos_rows(
     Ok(rows)
 }
 
-fn gaincurve_rows(
+fn validate_gaincurve_selection(
     ms: &MeasurementSet,
     request: &GencalRequest,
-    gaincurve_infile: Option<&Path>,
-) -> Result<Vec<PriorCalRow>, GencalError> {
+) -> Result<(), GencalError> {
     let invalid = |detail: String| {
         GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {detail}"))
     };
@@ -517,14 +539,19 @@ fn gaincurve_rows(
         ms.resolve_reference_antennas(&request.antenna)
             .map_err(|error| invalid(error.to_string()))?;
     }
+    Ok(())
+}
+
+fn gaincurve_rows(
+    ms: &MeasurementSet,
+    request: &GencalRequest,
+    gaincurve_infile: Option<&Path>,
+) -> Result<Vec<PriorCalRow>, GencalError> {
+    let invalid = |detail: String| {
+        GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {detail}"))
+    };
     let use_curve = request.caltype != GencalType::Eff;
     let use_efficiency = request.caltype != GencalType::Gc;
-    if use_curve && ms.main_table().keywords().get("GAIN_CURVE").is_some() {
-        return Err(invalid(
-            "the MeasurementSet's legacy GAIN_CURVE power-polynomial path is unimplemented (#32)"
-                .into(),
-        ));
-    }
 
     let explicit = gaincurve_infile.or(request.gaincurve_table.as_deref());
     let source_path = if let Some(explicit) = explicit {
@@ -596,6 +623,8 @@ fn gaincurve_rows(
                 *value *= efficiency;
             }
             rows.push(PriorCalRow {
+                time_seconds: 0.0,
+                interval_seconds: 0.0,
                 field_id: -1,
                 spw_id: window as i32,
                 antenna_id: antenna as i32,
@@ -646,6 +675,8 @@ fn opacity_rows(
     for spw_id in parse_spw_selector(ms, "")? {
         for antenna_id in 0..antenna_count {
             rows.push(PriorCalRow {
+                time_seconds: 0.0,
+                interval_seconds: 0.0,
                 field_id: -1,
                 spw_id,
                 antenna_id: antenna_id as i32,
@@ -684,6 +715,7 @@ fn opacity_antennas(
 fn write_prior_caltable(
     ms: &MeasurementSet,
     request: &GencalRequest,
+    subtype: &str,
     rows: &[PriorCalRow],
     output: crate::output::CalibrationOutput,
     mode: crate::CalibrationOutputMode,
@@ -705,7 +737,6 @@ fn write_prior_caltable(
         ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid gencal caltable schema");
-    let subtype = request.caltype.table_subtype();
     let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
@@ -731,7 +762,10 @@ fn write_prior_caltable(
         let flags = vec![false; len];
         let snr = vec![row.snr_value; len];
         let mut record = RecordValue::new(vec![
-            RecordField::new(COL_TIME, Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new(
+                COL_TIME,
+                Value::Scalar(ScalarValue::Float64(row.time_seconds)),
+            ),
             RecordField::new(
                 COL_FIELD_ID,
                 Value::Scalar(ScalarValue::Int32(row.field_id)),
@@ -745,7 +779,10 @@ fn write_prior_caltable(
                 Value::Scalar(ScalarValue::Int32(row.antenna_id)),
             ),
             RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(-1))),
-            RecordField::new(COL_INTERVAL, Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new(
+                COL_INTERVAL,
+                Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
+            ),
             RecordField::new(COL_SCAN_NUMBER, Value::Scalar(ScalarValue::Int32(-1))),
             RecordField::new(
                 COL_OBSERVATION_ID,
