@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Smooth complex gain solutions in amplitude and tracked phase.
+//! Smooth calibration solutions over centered windows.
+
+mod fringe;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -25,7 +27,7 @@ pub(crate) fn smooth_calibration_table(
     field: &str,
     smoother: Smoother,
     seconds: f64,
-    _ratesmooth: bool,
+    ratesmooth: bool,
 ) -> Result<(), String> {
     if !seconds.is_finite() || seconds <= 0.0 {
         return Err("smoothtime must be a positive duration in seconds".into());
@@ -41,8 +43,21 @@ pub(crate) fn smooth_calibration_table(
     if source.info().table_type != crate::constants::TABLE_INFO_TYPE {
         return Err("input is not a calibration table".into());
     }
-    if source.info().sub_type == "Fringe Jones" {
-        return Err("fringe rate smoothing is tracked in #1525".into());
+    let subtype = source.info().sub_type.trim().to_ascii_uppercase();
+    if !matches!(
+        subtype.as_str(),
+        "G JONES"
+            | "T JONES"
+            | "B JONES"
+            | "TF JONES"
+            | "K JONES"
+            | "KCROSS JONES"
+            | "FRINGE JONES"
+    ) {
+        return Err(format!(
+            "calibration type {} does not support smoothing",
+            source.info().sub_type
+        ));
     }
     let parameter_column = match source.schema() {
         Some(schema) if schema.contains_column("CPARAM") => "CPARAM",
@@ -55,16 +70,43 @@ pub(crate) fn smooth_calibration_table(
     let mut lock = TableWriteLock::acquire_to_reread(&output.staging, 0).map_err(error_text)?;
     let mut table = Table::open(TableOptions::new(&output.staging)).map_err(error_text)?;
     let groups = solution_groups(&table, &fields)?;
-    for rows in groups.values().filter(|rows| rows.len() > 1) {
+    let spectrum = if subtype == "FRINGE JONES" {
+        Some(
+            Table::open(TableOptions::new(output.staging.join("SPECTRAL_WINDOW")))
+                .map_err(error_text)?,
+        )
+    } else {
+        None
+    };
+    for (key, rows) in groups.iter().filter(|(_, rows)| rows.len() > 1) {
+        let fringe = if let Some(spectrum) = &spectrum {
+            let window = usize::try_from(key[0]).map_err(error_text)?;
+            let spectral_window = casa_ms::subtables::MsSpectralWindow::new(spectrum);
+            let frequency = *spectral_window
+                .chan_freq(window)
+                .map_err(error_text)?
+                .first()
+                .ok_or_else(|| {
+                    "fringe solution spectral window has no channel frequencies".to_string()
+                })?;
+            Some(FringePrediction {
+                frequency,
+                ratesmooth,
+            })
+        } else {
+            None
+        };
         smooth_group(
             &mut table,
             parameter_column,
             rows,
             smoother,
             seconds / 2.0,
+            fringe,
             &mut lock,
         )?;
     }
+    crate::output_merge::save_sorted(&mut table, &output.staging).map_err(error_text)?;
     drop(table);
     lock.release().map_err(error_text)?;
     output.commit().map_err(error_text)
@@ -114,12 +156,18 @@ fn solution_groups(table: &Table, fields: &[i32]) -> Result<SolutionGroups, Stri
     Ok(groups)
 }
 
+struct FringePrediction {
+    frequency: f64,
+    ratesmooth: bool,
+}
+
 fn smooth_group(
     table: &mut Table,
     column: &str,
     rows: &[(usize, f64)],
     smoother: Smoother,
     half_width: f64,
+    fringe: Option<FringePrediction>,
     lock: &mut TableWriteLock,
 ) -> Result<(), String> {
     let row_ids = rows.iter().map(|&(row, _)| row).collect::<Vec<_>>();
@@ -162,17 +210,29 @@ fn smooth_group(
             &by_time[first..end]
         })
         .collect::<Vec<_>>();
-    for parameter in 0..shape[0] {
-        for channel in 0..shape[1] {
-            let cell = [parameter, channel];
-            let valid = flags.iter().map(|row| !row[cell]).collect::<Vec<_>>();
-            if column == "CPARAM" {
-                smooth_complex(&mut parameters, cell, &valid, &windows, smoother)?;
-            } else {
-                smooth_real(&mut parameters, cell, &valid, &windows, smoother)?;
-            }
-            for (row, window) in flags.iter_mut().zip(&windows) {
-                row[cell] = !window.iter().any(|&sample| valid[sample]);
+    if let Some(fringe) = fringe {
+        fringe::apply(
+            &mut parameters,
+            &mut flags,
+            rows,
+            &windows,
+            smoother,
+            fringe.frequency,
+            fringe.ratesmooth,
+        )?;
+    } else {
+        for parameter in 0..shape[0] {
+            for channel in 0..shape[1] {
+                let cell = [parameter, channel];
+                let valid = flags.iter().map(|row| !row[cell]).collect::<Vec<_>>();
+                if column == "CPARAM" {
+                    smooth_complex(&mut parameters, cell, &valid, &windows, smoother)?;
+                } else {
+                    smooth_real(&mut parameters, cell, &valid, &windows, smoother)?;
+                }
+                for (row, window) in flags.iter_mut().zip(&windows) {
+                    row[cell] = !window.iter().any(|&sample| valid[sample]);
+                }
             }
         }
     }

@@ -6903,3 +6903,17 @@ silently over-thresholds and masks the entire output plane.
 casa-rs validates unit conformance via `get_conformant_value` when `sigma > 0`
 (`crates/casa-images/src/analysis/immath/pol.rs`) and refuses non-conforming or
 unitless `sigma` against non-empty image `bunit` with a clear error (#977).
+
+## Median fringe smoothing wraps delay values as phase
+
+In CASA 6.7.6.14, `smoothcal(smoothtype='median')` on a `Fringe Jones`
+calibration table applies phase wrapping to every FPARAM component. The
+condition `ipar == 0 || 4` in `FringeJones::smooth` is always true. A
+valid 8 ns delay therefore became about 1.717 ns in a window with only
+that sample. The same branch also skips the median filter for delays and
+dispersive delays.
+
+casa-rs wraps only the two phase parameters and applies the numerical
+median to the time, rate, and dispersive delay parameters. The use of
+fringe rates for predicting phase wraps and the phase outputs follow
+CASA (#1525).
