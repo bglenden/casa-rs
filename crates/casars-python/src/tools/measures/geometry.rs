@@ -46,6 +46,12 @@ pub(super) fn expand(input: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
             );
         }
     };
+    if !matches!(
+        labels.0.to_ascii_lowercase().as_str(),
+        "baseline" | "position" | "uvw"
+    ) {
+        return failed_tuple(lines, "Can only expand baselines, positions, or uvw", 2);
+    }
     fields.insert("type".into(), Variant::Text("uvw".into()));
     fields.insert("refer".into(), Variant::Text("J2000".into()));
     let source = match Measures::read(&RecordArg(fields)) {
@@ -163,8 +169,8 @@ pub(super) fn touvw(
 }
 
 use casa_types::measures::MeasFrame;
-use casa_types::measures::baseline::UvwFrame;
-use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::baseline::baseline_rotation;
+use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::earth_magnetic::{EarthMagneticRef, MEarthMagnetic};
 
 enum Operator {
@@ -200,17 +206,8 @@ impl Conversion {
                     .parse::<DirectionRef>()
                     .map_err(|e| e.to_string())?;
                 let to = target.parse::<DirectionRef>().map_err(|e| e.to_string())?;
-                let mut matrix = baseline_matrix(from, to, &frame, state.measures()?)?;
-                if input.kind() == MeasureKind::Uvw {
-                    let source = frame
-                        .direction()
-                        .ok_or("No direction in frame for uvw calculation")?;
-                    let first = source.convert_to(from, &frame).map_err(|e| e.to_string())?;
-                    let last = source.convert_to(to, &frame).map_err(|e| e.to_string())?;
-                    let start = uvw_matrix(&first);
-                    let end = uvw_matrix(&last);
-                    matrix = multiply(multiply(end, matrix), transpose(start));
-                }
+                let matrix = baseline_rotation(from, to, &frame, input.kind() == MeasureKind::Uvw)
+                    .map_err(|error| error.to_string())?;
                 Operator::Matrix(matrix)
             };
             Ok(Self {
@@ -253,106 +250,9 @@ pub(super) fn convert(
         Err(error) => Err(error),
     })
 }
-fn baseline_matrix(
-    from: DirectionRef,
-    to: DirectionRef,
-    frame: &MeasFrame,
-    data: std::sync::Arc<dyn casa_types::measures::MeasuresProvider>,
-) -> Result<[[f64; 3]; 3], String> {
-    if from == to {
-        return Ok([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]);
-    }
-    let linear = |r: DirectionRef| {
-        matches!(
-            r,
-            DirectionRef::J2000
-                | DirectionRef::JMEAN
-                | DirectionRef::JTRUE
-                | DirectionRef::GALACTIC
-                | DirectionRef::SUPERGAL
-                | DirectionRef::ICRS
-                | DirectionRef::ECLIPTIC
-                | DirectionRef::MECLIPTIC
-                | DirectionRef::TECLIPTIC
-        )
-    };
-    if from != DirectionRef::ITRF && to != DirectionRef::ITRF {
-        if linear(from) && linear(to) {
-            return direction_matrix(from, to, frame);
-        }
-        return Err(format!(
-            "baseline conversion {from} to {to} is not yet implemented (#1252)"
-        ));
-    }
-    let other = if from == DirectionRef::ITRF { to } else { from };
-    if other != DirectionRef::J2000 {
-        if !linear(other) {
-            return Err(format!(
-                "baseline conversion {from} to {to} is not yet implemented (#1252)"
-            ));
-        }
-        let itrf_j2000 = baseline_matrix(DirectionRef::ITRF, DirectionRef::J2000, frame, data)?;
-        let j2000_other = direction_matrix(DirectionRef::J2000, other, frame)?;
-        let matrix = multiply(j2000_other, itrf_j2000);
-        return Ok(if from == DirectionRef::ITRF {
-            matrix
-        } else {
-            transpose(matrix)
-        });
-    }
-    let epoch = frame.epoch().ok_or("missing frame data: epoch")?.clone();
-    let position = frame.position().ok_or("missing frame data: position")?;
-    let source = frame
-        .direction()
-        .ok_or("missing frame data: direction")?
-        .convert_to(DirectionRef::J2000, frame)
-        .map_err(|e| e.to_string())?;
-    let (ra, dec) = source.as_angles();
-    let plan = UvwFrame::new([ra, dec], epoch, position, data).map_err(|e| e.to_string())?;
-    let columns: [[f64; 3]; 3] = std::array::from_fn(|axis| {
-        plan.baseline_j2000(std::array::from_fn(|i| if i == axis { 1. } else { 0. }))
-    });
-    let matrix = transpose(columns);
-    Ok(if from == DirectionRef::ITRF {
-        matrix
-    } else {
-        transpose(matrix)
-    })
-}
-fn direction_matrix(
-    from: DirectionRef,
-    to: DirectionRef,
-    frame: &MeasFrame,
-) -> Result<[[f64; 3]; 3], String> {
-    let mut columns = [[0.; 3]; 3];
-    for (axis, column) in columns.iter_mut().enumerate() {
-        let value = std::array::from_fn(|i| if i == axis { 1. } else { 0. });
-        *column = MDirection::from_cosines(value, from)
-            .convert_to(to, frame)
-            .map_err(|e| e.to_string())?
-            .cosines();
-    }
-    Ok(transpose(columns))
-}
-fn uvw_matrix(direction: &MDirection) -> [[f64; 3]; 3] {
-    let columns: [[f64; 3]; 3] = std::array::from_fn(|axis| {
-        casa_types::measures::baseline::j2000_baseline_uvw(
-            std::array::from_fn(|i| if i == axis { 1. } else { 0. }),
-            direction,
-        )
-    });
-    transpose(columns)
-}
-fn transpose(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    std::array::from_fn(|i| std::array::from_fn(|j| m[j][i]))
-}
 fn rotate(m: [[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| (0..3).map(|j| m[i][j] * v[j]).sum())
 }
-fn multiply(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum()))
-}
-
 use crate::convert::quantum::quantum_holder;
 use casa_types::quanta::Quantity;
 
@@ -426,6 +326,16 @@ fn define_three(
             };
         }
         triples.push(q);
+    }
+    if kind == MeasureKind::EarthMagnetic {
+        use casa_types::quanta::{Dimension, UnitDim};
+        let angle = UnitDim::basis(Dimension::Angle);
+        if triples[0][1..].iter().any(|q| q.unit().val().dim != angle) {
+            return Ok(failure(
+                lines,
+                "earthmagnetic requires a field strength and two angles",
+            ));
+        }
     }
     let refer = kind.codes().resolve_or_default(rf);
     if kind.codes().resolve(rf).is_none() {

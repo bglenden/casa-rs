@@ -99,6 +99,13 @@ for method in ['touvw','expand']:
         v=deepcopy(records['baseline'])
         for j,key in enumerate(['m0','m1','m2']):v[key]['value']=[v[key]['value']*(i+1)+j*.01 for i in range(n)]
         capture(method+'_baseline_vector_'+str(n),method,[v],frame=frame)
+# Independent controls for the direct FK4 path and the HADEC handedness
+# boundary, including directions in which the neighboring AZEL hop differs.
+for kind in ['baseline', 'uvw']:
+    for source, target in [('B1950','APP'), ('APP','B1950'), ('HADEC','ITRF'),
+                           ('ITRF','HADEC'), ('HADEC','AZEL'), ('AZEL','HADEC')]:
+        value = getattr(m, kind)(source, '1m', '2m', '3m')
+        capture(f'{kind}_hop_{source}_{target}', 'measure', [value, target], frame=frame)
 # Qualify the observed CASA defects with independent quantity/record paths.
 qa=quanta()
 for case in cases:
@@ -106,6 +113,13 @@ for case in cases:
     if case['method'] in ['touvw','expand'] and isinstance(result,list) and result and result[0]=={}:
         case['native_result']=[{} for _ in result]
         case['deviation']='A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call.'
+    if case['name'] in ['baseline_values_2','uvw_values_2']:
+        ref, radius, lon, lat = case['args']
+        case['native_result'] = clean(getattr(m, case['method'])(ref, lon, lat, radius))
+        case['deviation'] = 'Keep the length and both angles in a length-first field. CASA wrongly reorders this form to an invalid quantity triple and emits a zero vector; its angle-first form supplies the control.'
+    if case['method'] == 'expand' and case['args'] and isinstance(case['args'][0], dict) and case['args'][0].get('type') == 'earthmagnetic':
+        case['native_result'] = [{}, {}]
+        case['deviation'] = 'Refuse a magnetic field in pairwise geometric expansion. CASA relabels it as uvw and emits length data with the original magnetic type.'
     if case['name'] in ['baseline_values_6','uvw_values_6']:
         case['unit_controls']=[qa.compare(qa.quantity(v),qa.quantity('1m')) for v in ['1Hz','2Hz','3Hz']]
         assert not any(case['unit_controls'])

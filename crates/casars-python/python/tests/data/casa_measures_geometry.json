@@ -2020,7 +2020,24 @@
         "refer": "ITRF",
         "type": "baseline"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "native_result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943292
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.0
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      },
+      "deviation": "Keep the length and both angles in a length-first field. CASA wrongly reorders this form to an invalid quantity triple and emits a zero vector; its angle-first form supplies the control."
     },
     {
       "name": "baseline_values_3",
@@ -5403,7 +5420,24 @@
         "refer": "ITRF",
         "type": "uvw"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "native_result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943292
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.0
+        },
+        "refer": "ITRF",
+        "type": "uvw"
+      },
+      "deviation": "Keep the length and both angles in a length-first field. CASA wrongly reorders this form to an invalid quantity triple and emits a zero vector; its angle-first form supplies the control."
     },
     {
       "name": "uvw_values_3",
@@ -17806,7 +17840,12 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {}
+      ],
+      "deviation": "Refuse a magnetic field in pairwise geometric expansion. CASA relabels it as uvw and emits length data with the original magnetic type."
     },
     {
       "name": "earthmagnetic_inspect_1_getref",
@@ -18828,7 +18867,12 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {}
+      ],
+      "deviation": "Refuse a magnetic field in pairwise geometric expansion. CASA relabels it as uvw and emits length data with the original magnetic type."
     },
     {
       "name": "earthmagnetic_inspect_2_getref",
@@ -19931,7 +19975,7 @@
         {},
         {}
       ],
-      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
+      "deviation": "Refuse a magnetic field in pairwise geometric expansion. CASA relabels it as uvw and emits length data with the original magnetic type."
     },
     {
       "name": "baseline_convert_J2000",
@@ -27274,6 +27318,966 @@
         }
       ],
       "python_type": "tuple"
+    },
+    {
+      "name": "baseline_hop_B1950_APP",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "B1950",
+          "type": "baseline"
+        },
+        "APP"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.130986760655203
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9332376104908876
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.74165738677394
+        },
+        "refer": "APP",
+        "type": "baseline"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "baseline_hop_APP_B1950",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "APP",
+          "type": "baseline"
+        },
+        "B1950"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.0834592410873836
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9271656650679254
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.7416573867739404
+        },
+        "refer": "B1950",
+        "type": "baseline"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "baseline_hop_HADEC_ITRF",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "HADEC",
+          "type": "baseline"
+        },
+        "ITRF"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.2896953132990796
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "baseline_hop_ITRF_HADEC",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "HADEC"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.2896953132990796
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "HADEC",
+        "type": "baseline"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "baseline_hop_HADEC_AZEL",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "HADEC",
+          "type": "baseline"
+        },
+        "AZEL"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -0.5653073307955406
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.06561954156625438
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "AZEL",
+        "type": "baseline"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "baseline_hop_AZEL_HADEC",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "AZEL",
+          "type": "baseline"
+        },
+        "HADEC"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -0.5653073307955407
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.06561954156625432
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "HADEC",
+        "type": "baseline"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_B1950_APP",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "B1950",
+          "type": "uvw"
+        },
+        "APP"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1059076863559627
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740146105891
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "APP",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_APP_B1950",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "APP",
+          "type": "uvw"
+        },
+        "B1950"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.108389661673945
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740130199616
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.74165738677394
+        },
+        "refer": "B1950",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_HADEC_ITRF",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "HADEC",
+          "type": "uvw"
+        },
+        "ITRF"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.7416573867739404
+        },
+        "refer": "ITRF",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_ITRF_HADEC",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "ITRF",
+          "type": "uvw"
+        },
+        "HADEC"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "HADEC",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_HADEC_AZEL",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "HADEC",
+          "type": "uvw"
+        },
+        "AZEL"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.5499725608374668
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.7416573867739413
+        },
+        "refer": "AZEL",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_AZEL_HADEC",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "AZEL",
+          "type": "uvw"
+        },
+        "HADEC"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.518915310753939
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "HADEC",
+        "type": "uvw"
+      },
+      "python_type": "dict"
     },
     {
       "name": "addxvalue_vector_direction",

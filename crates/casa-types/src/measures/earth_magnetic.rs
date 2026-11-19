@@ -332,7 +332,18 @@ impl MEarthMagnetic {
             let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
                 what: "epoch (for IGRF)",
             })?;
-            let (xyz, _) = igrf_field_xyz(position, epoch, frame)?;
+            let tdb = epoch.convert_to(EpochRef::TDB, frame)?.value().as_mjd();
+            let provider = frame.measures().ok_or(MeasureError::MissingFrameData {
+                what: "IGRF measures provider",
+            })?;
+            let (coefficients, degree) =
+                provider.igrf_coefficients_at_mjd(tdb).map_err(|reason| {
+                    MeasureError::ModelError {
+                        model: "IGRF",
+                        reason,
+                    }
+                })?;
+            let xyz = earth_field_xyz_itrf(position.as_spherical(), &coefficients, degree);
             return Self::from_xyz_nt(xyz[0], xyz[1], xyz[2], EarthMagneticRef::ITRF)
                 .convert_to(target, frame);
         }
