@@ -525,7 +525,14 @@ pub(crate) fn plan_apply_with_preparation_error(
             MsError::ColumnNotPresent(_) => ApplyPlanError::MissingDataColumn,
             other => ApplyPlanError::Selection { source: other },
         })?;
+    plan_with_visibility_metadata(ms, request, preparation_error)
+}
 
+pub(crate) fn plan_with_visibility_metadata(
+    ms: &MeasurementSet,
+    request: &ApplyPlanRequest,
+    preparation_error: Option<ApplyPreparationError<'_>>,
+) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
     let requires_corrected_data_column = request.apply_mode.writes_corrected_data()
         && match ms.data_column(VisibilityDataColumn::CorrectedData) {
             Ok(_) => false,

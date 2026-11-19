@@ -65,11 +65,16 @@ def flagged_table(cal, result):
             handle.putcell("FPARAM", row, values)
 
 
-def test_case(root, base, native, index, options, existing, shift, exception=None):
+def test_case(root, base, native, index, options, existing, shift, exception=None, float_only=False):
     files = [root / f"{name}-{index}.ms" for name in ("casa", "native")]
     for api, vis in zip((casa, native), files, strict=True):
         copy_ms(base, vis)
         add_spectra(vis, existing)
+        if float_only:
+            with opened(vis, write=True) as handle:
+                assert handle.addcols({"FLOAT_DATA": {"valueType": "float", "ndim": 2}})
+                handle.putcol("FLOAT_DATA", handle.getcol("DATA").real)
+                handle.removecols("DATA")
         if shift:
             with opened(vis / "SPECTRAL_WINDOW", write=True) as handle:
                 for spw in range(handle.nrows()):
@@ -90,7 +95,8 @@ def test_case(root, base, native, index, options, existing, shift, exception=Non
         else:
             assert exception is None and result is None, (api, options, result)
             after = main_columns(vis)
-            for name in (*UNCHANGED, "HISTORY"):
+            unchanged = ("FLOAT_DATA", *UNCHANGED[1:]) if float_only else UNCHANGED
+            for name in (*unchanged, "HISTORY"):
                 np.testing.assert_array_equal(after[1][name], before[1][name])
     if exception is None:
         # Three f32 ulps can accumulate in the scalar temperature mean and
@@ -130,10 +136,13 @@ def main():
         ("", "linear,linearflag", [0, 1]),
         ("", "linearperscan,cubic", [0, 1]),
         ("", "nearestperobs,spline", [0, 1]),
+        ("", "linear,linearrel", [1, 0]),
+        ("", "linear", [0]),
     ):
         cases.append((dict(wtmode="tsys", tsystable=str(cal), gainfield=field, interp=interp,
                            spwmap=mapping, dowtsp=True), "", True, None))
     cases.extend([
+        (dict(wtmode="tsys", tsystable=str(cal), dowtsp=True), "", False, None, True),
         (dict(wtmode="tsys", tsystable=str(root / "missing.cal")), "", False, Exception),
         (dict(wtmode="tsys", tsystable=str(cal), gainfield="999", dowtsp=True), "", False, RuntimeError),
         (dict(wtmode="tsys", tsystable=str(cal), interp="bad", dowtsp=True), "", False, RuntimeError),

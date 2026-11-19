@@ -68,7 +68,8 @@ def add_spectra(path, contents):
 def main_columns(path):
     with opened(path) as main:
         present = set(main.colnames())
-        values = {column: main.getcol(column) for column in ("WEIGHT", "SIGMA", *UNCHANGED)}
+        values = {column: main.getcol(column)
+                  for column in ("WEIGHT", "SIGMA", *UNCHANGED, "FLOAT_DATA") if column in present}
         for column in SPECTRA:
             if column not in present:
                 continue

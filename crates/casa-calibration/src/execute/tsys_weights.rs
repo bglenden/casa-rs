@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::ComplexSolution;
-use crate::plan::{ApplyCalibrationTableSpec, SpectralWindowPlan, plan_apply};
+use crate::plan::{ApplyCalibrationTableSpec, SpectralWindowPlan, plan_with_visibility_metadata};
 
 pub(crate) struct TsysPlan {
     plan: ApplyPlan,
@@ -19,7 +19,7 @@ impl TsysPlan {
         spec: ApplyCalibrationTableSpec,
         by_exposure: bool,
     ) -> Result<Self, ApplyExecutionError> {
-        let plan = plan_apply(
+        let (plan, _) = plan_with_visibility_metadata(
             ms,
             &ApplyPlanRequest {
                 selection: casa_ms::MsSelection::default(),
@@ -27,6 +27,7 @@ impl TsysPlan {
                 parang: false,
                 calibration_tables: vec![spec],
             },
+            None,
         )?;
         let planned_table = &plan.calibration_tables[0];
         if planned_table.summary.table_subtype != "B TSYS" {
@@ -135,12 +136,26 @@ impl TsysPlan {
         let CalibrationGrid::Complex(grid) = grid.grid.as_ref() else {
             return Ok(None);
         };
+        let (input, output) = (
+            &input.channel_frequencies_hz,
+            &output.channel_frequencies_hz,
+        );
+        let (relative_input, relative_output);
+        let (input, output) = if matches!(
+            self.table.interp,
+            ApplyInterpolationMode::Casa {
+                relative_frequency: true,
+                ..
+            }
+        ) {
+            relative_input = bandpass::relative_axis(input);
+            relative_output = bandpass::relative_axis(output);
+            (relative_input.as_slice(), relative_output.as_slice())
+        } else {
+            (input.as_slice(), output.as_slice())
+        };
         ComplexSolution::of(grid)
-            .resample_tsys_weight_frequency(
-                &input.channel_frequencies_hz,
-                &output.channel_frequencies_hz,
-                self.table.interp.frequency_mode(),
-            )
+            .resample_tsys_weight_frequency(input, output, self.table.interp.frequency_mode())
             .map(Some)
     }
 }
