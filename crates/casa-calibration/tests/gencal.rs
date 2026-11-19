@@ -145,11 +145,7 @@ fn gencal_opacity_expands_selected_spws_across_antennas() {
         gaincurve_table: None,
     })
     .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("one opacity, or one for each selected SPW"),
-        "{err}"
-    );
+    assert!(err.to_string().contains("expected 1 or 2, got 3"), "{err}");
 }
 
 #[test]

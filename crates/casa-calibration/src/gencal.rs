@@ -125,14 +125,15 @@ pub struct GencalRequest {
     pub output_table: PathBuf,
     /// Prior calibration family to generate.
     pub caltype: GencalType,
-    /// CASA-style antenna selector for `antpos`.
+    /// CASA-style antenna selection for antenna positions and specified priors.
     #[serde(default)]
     pub antenna: String,
-    /// CASA-style SPW selector for `opac`.
+    /// CASA-style spectral-window selection for specified priors.
     #[serde(default)]
     pub spw: String,
-    /// Numeric parameters. `antpos` expects triples per selected antenna; `opac`
-    /// expects one opacity per selected SPW.
+    /// Numeric parameters. `antpos` expects triples of antenna offsets.
+    /// `opac` accepts one broadcast value or values ordered by spectral
+    /// window and then antenna. An omitted axis broadcasts across that axis.
     #[serde(default)]
     pub parameter: Vec<f64>,
     /// Optional explicit VLA GainCurves table path for `gceff`.
