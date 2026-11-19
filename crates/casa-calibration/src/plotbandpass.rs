@@ -54,6 +54,7 @@ pub(crate) struct PlotRequest<'a> {
 pub(crate) struct BandpassPlots {
     pub(crate) caltable: PathBuf,
     pub(crate) measurement_set: Option<PathBuf>,
+    header: String,
     pub(crate) panels: Vec<BandpassPanel>,
     statistics: Option<StatisticsGrid>,
     pub(crate) polynomial: bool,
@@ -76,6 +77,7 @@ pub(crate) struct BandpassPanel {
     diagnostics: Vec<String>,
     epoch: f64,
     overlay: Overlay,
+    legend_times: Vec<(usize, f64)>,
 }
 
 #[derive(Clone, Serialize)]
@@ -131,7 +133,7 @@ pub(crate) fn prepare_bandpass(
         .companion_tables
         .iter()
         .flatten()
-        .map(|path| Companion::open(path, request.vis))
+        .map(|path| Companion::open(path, request.vis, request.threshold_seconds))
         .collect::<Result<Vec<_>, _>>()?;
     if invalid_overlay(&source, request, &companions) {
         return Ok(empty_plots(source, false, None));
@@ -148,6 +150,19 @@ pub(crate) fn prepare_bandpass(
     ) {
         Ok(selected) => selected,
         Err(error) => {
+            if error.invalid_integer {
+                return Err(format!(
+                    "invalid literal for int() with base 10: '{}'",
+                    error.word
+                ));
+            }
+            if error.parameter == "spw" && error.word.contains('!') {
+                return Ok(empty_plots(
+                    source,
+                    false,
+                    Some("The ! modifier is not (yet) supported".into()),
+                ));
+            }
             let message = format!(
                 "No bandpass solutions for {}={:?}",
                 error.parameter, error.word
@@ -211,11 +226,17 @@ pub(crate) fn prepare_bandpass(
         StatisticsGrid::new(
             selected.values().flatten().map(|selected| {
                 let row = source.rows[selected.row];
+                let receptor_count = spectra[&selected.row].shape()[0];
+                let receptor_count = spectral_window(&source, row.window)
+                    .ok()
+                    .map_or(receptor_count, |window| {
+                        polarization_labels(&source, window.original_id, receptor_count).len()
+                    });
                 (
                     antenna_name(&source, row.antenna),
                     row.window,
                     selected.time_index,
-                    spectra[&selected.row].shape()[0],
+                    receptor_count,
                 )
             }),
             &ordinates,
@@ -239,10 +260,14 @@ pub(crate) fn prepare_bandpass(
             if panel_limit.is_some_and(|limit| panels.len() >= limit) {
                 break 'groups;
             }
-            panels.push(panel(&context, key, &rows, axis)?);
+            let panel = panel(&context, key, &rows, axis)?;
+            if !panel.series.is_empty() {
+                panels.push(panel);
+            }
         }
     }
     Ok(BandpassPlots {
+        header: plot_header(&source, request, &companions),
         caltable: source.path,
         measurement_set: source.measurement_set,
         panels,
@@ -260,6 +285,7 @@ fn empty_plots(
     selection_notice: Option<String>,
 ) -> BandpassPlots {
     BandpassPlots {
+        header: source.path.display().to_string(),
         caltable: source.path,
         measurement_set: source.measurement_set,
         panels: Vec::new(),
@@ -269,6 +295,42 @@ fn empty_plots(
         selection_notice,
         immediate_combined_overlay: false,
     }
+}
+
+fn plot_header(source: &Solutions, request: &PlotRequest<'_>, companions: &[Companion]) -> String {
+    let primary = source.path.display();
+    if let [table] = companions
+        && !table.polynomial()
+        && let Some(path) = request.companion_tables[0]
+    {
+        return format!("c1={primary}, c2={}", path.display());
+    }
+    let mut title = primary.to_string();
+    if let Some(degrees) = polynomial_degrees(source) {
+        title.push_str(&format!(
+            " (degamp={}, degphase={})",
+            degrees[0], degrees[1]
+        ));
+    }
+    for (path, companion) in request.companion_tables.iter().flatten().zip(companions) {
+        title.push_str(&format!(", {}", path.display()));
+        if let Some(degrees) = companion.degrees() {
+            title.push_str(&format!(
+                " (degamp={}, degphase={})",
+                degrees[0], degrees[1]
+            ));
+        }
+    }
+    title
+}
+
+fn polynomial_degrees(source: &Solutions) -> Option<[usize; 2]> {
+    if source.subtype == "BPOLY"
+        && let Ok(Spectrum::Polynomial(poly)) = source.spectrum(0)
+    {
+        return Some(poly.degrees());
+    }
+    None
 }
 
 fn invalid_overlay(
@@ -356,11 +418,17 @@ fn panel(
         let matches = companions
             .iter()
             .map(|companion| {
-                companion.match_row(address, window.original_id, request.threshold_seconds)
+                companion.match_row(
+                    address,
+                    window.original_id,
+                    row.time_index,
+                    request.threshold_seconds,
+                )
             })
             .collect::<Vec<_>>();
         let mut comparison_series = (0..matches.len()).map(|_| Vec::new()).collect::<Vec<_>>();
-        let labels = polarization_labels(&source.polarization_basis, receptors);
+        let labels = polarization_labels(source, window.original_id, receptors);
+        let receptors = labels.len();
         for receptor in select_polarizations(&labels, request.polarizations) {
             let raw = samples.curve(
                 receptor,
@@ -477,6 +545,16 @@ fn panel(
             .replace(" channels)", &format!(", {count} channels)")),
         None => metadata.label,
     };
+    let legend_times = if request.overlay.time {
+        selected
+            .iter()
+            .map(|row| (row.time_index, source.rows[row.row].time))
+            .collect::<BTreeMap<_, _>>()
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
     Ok(BandpassPanel {
         ordinate,
         title,
@@ -499,6 +577,7 @@ fn panel(
         diagnostics,
         epoch: source.rows[selected[0].row].time,
         overlay: request.overlay,
+        legend_times,
     })
 }
 
@@ -719,8 +798,11 @@ fn spectral_window(source: &Solutions, window: i32) -> Result<&SolutionWindow, S
         .ok_or_else(|| format!("unknown calibration window {window}"))
 }
 
-fn polarization_labels(basis: &str, receptors: usize) -> Vec<&'static str> {
-    let basis = if basis.eq_ignore_ascii_case("circular") {
+fn polarization_labels(source: &Solutions, window: i32, receptors: usize) -> Vec<&'static str> {
+    if let Some(labels) = source.correlations.get(&window) {
+        return labels.iter().take(receptors).copied().collect();
+    }
+    let basis = if source.polarization_basis.eq_ignore_ascii_case("circular") {
         ["RR", "LL"]
     } else {
         ["XX", "YY"]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Physical calibration solutions and frequency coordinates used by plotbandpass.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{Table, TableOptions, add_directory};
@@ -16,6 +17,7 @@ pub(super) struct Solutions {
     pub(super) measurement_set: Option<PathBuf>,
     pub(super) subtype: String,
     pub(super) polarization_basis: String,
+    pub(super) correlations: BTreeMap<i32, Vec<&'static str>>,
     pub(super) rows: Vec<SolutionRow>,
     pub(super) windows: Vec<SolutionWindow>,
     pub(super) antennas: Vec<String>,
@@ -93,12 +95,17 @@ impl Solutions {
         let rows = solution_rows(&table, &layout)?;
         let subtype = keyword(&table, "VisCal").unwrap_or_else(|| table.info().sub_type.clone());
         let polarization_basis = keyword(&table, "PolBasis").unwrap_or_default();
+        let correlations = measurement_set
+            .as_deref()
+            .map(correlations)
+            .unwrap_or_default();
         Ok(Self {
             table,
             path: path.into(),
             measurement_set,
             subtype,
             polarization_basis,
+            correlations,
             rows,
             windows,
             antennas,
@@ -125,6 +132,45 @@ impl Solutions {
         }
         Ok(Spectrum::Samples { parameters, flags })
     }
+}
+
+fn correlations(ms: &Path) -> BTreeMap<i32, Vec<&'static str>> {
+    let Ok(descriptions) = open(&ms.join("DATA_DESCRIPTION")) else {
+        return BTreeMap::new();
+    };
+    let Ok(polarizations) = open(&ms.join("POLARIZATION")) else {
+        return BTreeMap::new();
+    };
+    let mut windows = BTreeMap::new();
+    for row in 0..descriptions.row_count() {
+        let (Some(window), Some(id)) = (
+            integer_cell(&descriptions, row, "SPECTRAL_WINDOW_ID"),
+            integer_cell(&descriptions, row, "POLARIZATION_ID"),
+        ) else {
+            continue;
+        };
+        if let Ok(ArrayValue::Int32(codes)) = array(&polarizations, id as usize, "CORR_TYPE") {
+            let names = [
+                "", "I", "Q", "U", "V", "RR", "RL", "LR", "LL", "XX", "XY", "YX", "YY",
+            ];
+            let labels = if codes.len() == 4 {
+                match codes.iter().next() {
+                    Some(5..=8) => vec!["RR", "LL"],
+                    Some(9..=12) => vec!["XX", "YY"],
+                    _ => Vec::new(),
+                }
+            } else {
+                codes
+                    .iter()
+                    .filter_map(|&code| names.get(code as usize).copied())
+                    .collect::<Vec<_>>()
+            };
+            if !labels.is_empty() {
+                windows.entry(window).or_insert(labels);
+            }
+        }
+    }
+    windows
 }
 
 impl Layout {

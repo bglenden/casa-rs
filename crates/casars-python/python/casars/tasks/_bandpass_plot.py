@@ -78,8 +78,9 @@ def draw_page(plt, page, workspace, figure, reply, sequence):
     try:
         if len(document["panels"]) == 1:
             axes = [axes]
-        for axis, panel, y_limits, atmosphere, fdm in zip(
-            axes, document["panels"], page["y_limits"], page["atmosphere"], page["fdm"], strict=True,
+        for axis, panel, y_limits, atmosphere, fdm, legend in zip(
+            axes, document["panels"], page["y_limits"], page["atmosphere"], page["fdm"],
+            page["legends"], strict=True,
         ):
             axis.set_xlim(panel["axes"][0]["lower"], panel["axes"][0]["upper"])
             if y_limits is not None:
@@ -88,8 +89,16 @@ def draw_page(plt, page, workspace, figure, reply, sequence):
                 artist.set_markersize(layer["symbol_size"])
             if axis is axes[0]:
                 header = document["header_lines"][0]
-                header = f"...{header[-90:]}" if len(header) > 90 else header
+                if len(header) > 90 and not header.startswith("c1=") and "degamp=" not in header:
+                    header = f"...{header[-90:]}"
                 axis.text(0.07, 0.955, header, transform=figure.transFigure)
+                for item in legend["identities"]:
+                    axis.text(item["x"], item["y"], item["text"], color=item["color"],
+                              transform=figure.transFigure)
+            for marker in legend["markers"]:
+                axis.plot([0.04], [marker["y"]], color="k", marker=marker["marker"], linestyle="None",
+                          transform=axis.transAxes, scalex=False, scaley=False,
+                          markersize=panel["layers"][0]["symbol_size"])
             if atmosphere:
                 with plt.rc_context({"axes.grid": True}):
                     draw_atmosphere(axis, atmosphere, document["layout"])

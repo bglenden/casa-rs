@@ -12,7 +12,16 @@ use casa_types::quanta::format::{YMD, format_time};
 use serde::Serialize;
 
 use super::atmosphere::AtmosphericCurve;
-use super::{BandpassPanel, BandpassPlots, FdmWindow};
+use super::{BandpassPanel, BandpassPlots, BandpassSeries, FdmWindow};
+
+const IDENTITY_COLORS: &[&str] = &[
+    "k", "b", "g", "r", "#00bfbf", "#404040", "#bf4040", "#f2f200", "#4040bf", "#00ff00",
+    "#c2912b", "#8aa138", "#5791eb", "#ff1a99", "#197d78", "#a857a6", "#fc693b",
+];
+
+fn identity_color(index: usize) -> &'static str {
+    IDENTITY_COLORS[index % IDENTITY_COLORS.len()]
+}
 
 pub(crate) struct DisplayOptions<'a> {
     pub(crate) layout: [u32; 2],
@@ -64,6 +73,27 @@ pub(crate) struct BandpassPage {
     quit_immediately: bool,
     footer: String,
     diagnostics: Vec<String>,
+    legends: Vec<OverlayLegend>,
+}
+
+#[derive(Default, Serialize)]
+struct OverlayLegend {
+    identities: Vec<LegendIdentity>,
+    markers: Vec<LegendMarker>,
+}
+
+#[derive(Serialize)]
+struct LegendIdentity {
+    text: String,
+    color: &'static str,
+    x: f64,
+    y: f64,
+}
+
+#[derive(Serialize)]
+struct LegendMarker {
+    marker: &'static str,
+    y: f64,
 }
 
 pub(crate) fn pages(
@@ -89,11 +119,11 @@ pub(crate) fn pages(
         .chunks(capacity)
         .enumerate()
         .map(|(index, source)| {
-            let panels = source
+            let (panels, legends) = source
                 .iter()
                 .enumerate()
                 .map(|(index, panel)| document_panel(panel, index, display))
-                .collect();
+                .unzip();
             let y_limits = source
                 .iter()
                 .map(|panel| y_limits(panel, display))
@@ -102,7 +132,7 @@ pub(crate) fn pages(
                 id: format!("plotbandpass-{index:03}"),
                 title: String::new(),
                 subtitle: subtitle.clone(),
-                header_lines: vec![plot.caltable.display().to_string()],
+                header_lines: vec![plot.header.clone()],
                 axes: Vec::new(),
                 layers: Vec::new(),
                 annotations: Vec::new(),
@@ -152,6 +182,7 @@ pub(crate) fn pages(
                     .iter()
                     .flat_map(|panel| panel.diagnostics.iter().cloned())
                     .collect(),
+                legends,
             })
         })
         .collect()
@@ -181,7 +212,7 @@ fn document_panel(
     bandpass: &BandpassPanel,
     panel_number: usize,
     display: &DisplayOptions<'_>,
-) -> PlotDocumentPanel {
+) -> (PlotDocumentPanel, OverlayLegend) {
     let phase = bandpass.ordinate == super::Ordinate::Phase;
     let (points, lines) = match (display.show_points, display.show_lines) {
         (None, None) => (phase, !phase),
@@ -200,8 +231,15 @@ fn document_panel(
     } else {
         (points, lines)
     };
-    let palette = ["b", "g", "r", "c", "#7f3f98", "#a57a24", "#228a84"];
-    let table_colors = [["b", "g"], ["k", "c"], ["m", "r"]];
+    let mut paint = PanelColors::new(bandpass, display.layout);
+    let identity_overlay = bandpass.overlay.antenna || bandpass.overlay.time;
+    let combined = bandpass.overlay.antenna && bandpass.overlay.time;
+    let b_comparison = bandpass
+        .series
+        .iter()
+        .any(|series| !series.polynomial && series.table_index > 0);
+    let dual_receptor = bandpass.series.iter().any(|series| series.receptor == 0)
+        && bandpass.series.iter().any(|series| series.receptor == 1);
     let mut annotations = Vec::new();
     let mut labels = std::collections::BTreeSet::new();
     let layers = bandpass
@@ -209,17 +247,42 @@ fn document_panel(
         .iter()
         .enumerate()
         .map(|(index, data)| {
-            let color = if bandpass.overlay.antenna || bandpass.overlay.time {
-                palette[index % palette.len()]
+            let color = paint.color(data, index);
+            let points = points && !data.polynomial;
+            let lines = lines || data.polynomial;
+            let dashed = identity_overlay && dual_receptor && data.receptor == 1 && lines;
+            let marker = if points {
+                if data.table_index > 0 || (identity_overlay && data.receptor == 1) {
+                    "o"
+                } else {
+                    "."
+                }
             } else {
-                table_colors[data.table_index][data.receptor % 2]
+                "None"
             };
-            if labels.insert(&data.label) {
+            let table_id = if b_comparison { data.table_index } else { 0 };
+            if !combined && labels.insert((&data.label, table_id)) {
+                let rows = f64::from(display.layout[0]);
+                let text = if b_comparison {
+                    format!("{}-c{}", data.label, table_id + 1)
+                } else if identity_overlay && lines {
+                    format!("{} {}", data.label, if dashed { "dashed" } else { "solid" })
+                } else {
+                    data.label.clone()
+                };
+                let y = 1.0 - (0.04 + 0.03 * (data.receptor + 2 * table_id) as f64) * rows;
+                if identity_overlay && points && !lines {
+                    paint.legend.markers.push(LegendMarker { marker, y });
+                }
                 annotations.push(PlotDocumentAnnotation {
-                    id: format!("polarization-{}", data.receptor),
-                    x: 0.05,
-                    y: 0.95 - 0.07 * data.receptor as f64,
-                    text: data.label.clone(),
+                    id: format!("polarization-{table_id}-{}", data.receptor),
+                    x: if identity_overlay && points && !lines {
+                        0.07
+                    } else {
+                        0.05
+                    },
+                    y,
+                    text,
                     style: Some(PlotTextStyle {
                         axes_relative: true,
                         horizontal_alignment: Some("left".into()),
@@ -255,42 +318,130 @@ fn document_panel(
                 data: None,
                 style: Some(PlotLayerStyle {
                     color: Some(color.into()),
-                    marker: Some(
-                        if points && !data.polynomial {
-                            if data.table_index == 0 { "." } else { "o" }
-                        } else {
-                            "None"
-                        }
-                        .into(),
-                    ),
+                    marker: Some(marker.into()),
                     line_style: Some(
-                        if data.polynomial || lines {
+                        (if dashed {
+                            "--"
+                        } else if lines {
                             "-"
                         } else {
                             "None"
-                        }
+                        })
                         .into(),
                     ),
                 }),
             }
         })
         .collect();
-    PlotDocumentPanel {
-        id: format!("panel-{panel_number}"),
-        title: bandpass.title.clone(),
-        title_font_size: None,
-        axes: vec![
-            axis("x", &bandpass.x_label, x_limits(bandpass, display)),
-            axis(
-                "y",
-                bandpass.y_label,
-                y_limits(bandpass, display).unwrap_or([0.0, 1.0]),
-            ),
-        ],
-        layers,
-        annotations,
-        aspect: None,
-        frame_visible: None,
+    (
+        PlotDocumentPanel {
+            id: format!("panel-{panel_number}"),
+            title: bandpass.title.clone(),
+            title_font_size: None,
+            axes: vec![
+                axis("x", &bandpass.x_label, x_limits(bandpass, display)),
+                axis(
+                    "y",
+                    bandpass.y_label,
+                    y_limits(bandpass, display).unwrap_or([0.0, 1.0]),
+                ),
+            ],
+            layers,
+            annotations,
+            aspect: None,
+            frame_visible: None,
+        },
+        paint.legend,
+    )
+}
+
+struct PanelColors<'a> {
+    bandpass: &'a BandpassPanel,
+    antennas: Vec<&'a str>,
+    first_time: usize,
+    legend: OverlayLegend,
+}
+
+impl<'a> PanelColors<'a> {
+    fn new(bandpass: &'a BandpassPanel, layout: [u32; 2]) -> Self {
+        let mut antennas = Vec::new();
+        for series in &bandpass.series {
+            let name = series.antenna_name.as_str();
+            if !antennas.contains(&name) {
+                antennas.push(name);
+            }
+        }
+        let mut legend = OverlayLegend::default();
+        if bandpass.overlay.antenna && !bandpass.overlay.time {
+            legend
+                .identities
+                .extend(
+                    antennas
+                        .iter()
+                        .enumerate()
+                        .map(|(index, name)| LegendIdentity {
+                            text: (*name).into(),
+                            color: identity_color(index),
+                            x: 0.07 + 0.05 * index.min(17) as f64,
+                            y: 0.931 - 0.018 * index.saturating_sub(17) as f64,
+                        }),
+                );
+        } else if bandpass.overlay.time {
+            legend.identities.push(LegendIdentity {
+                text: "UT".into(),
+                color: "k",
+                x: 0.04,
+                y: 0.931,
+            });
+            let spacing = if layout[1] == 1 { 0.078 } else { 0.065 };
+            legend
+                .identities
+                .extend(bandpass.legend_times.iter().enumerate().map(
+                    |(position, &(index, epoch))| {
+                        let date = format_time(epoch / 86_400.0, YMD, 0);
+                        LegendIdentity {
+                            text: date.get(11..).unwrap_or(&date).into(),
+                            color: if bandpass.overlay.antenna {
+                                "k"
+                            } else {
+                                identity_color(index)
+                            },
+                            x: 0.07 + spacing * position.min(12) as f64,
+                            y: 0.931 - 0.018 * position.saturating_sub(12) as f64,
+                        }
+                    },
+                ));
+        }
+        let first_time = bandpass.legend_times.first().map_or(0, |(index, _)| *index);
+        Self {
+            bandpass,
+            antennas,
+            first_time,
+            legend,
+        }
+    }
+
+    fn color(&self, series: &BandpassSeries, index: usize) -> &'static str {
+        let overlay = self.bandpass.overlay;
+        let antenna = || {
+            self.antennas
+                .iter()
+                .position(|name| *name == series.antenna_name)
+                .unwrap_or(0)
+        };
+        if overlay.antenna && overlay.time {
+            if series.time_index == self.first_time {
+                return ["b", "g", "r", "c"][index % 4];
+            }
+            return identity_color(antenna());
+        }
+        if overlay.antenna {
+            return identity_color(antenna());
+        }
+        if overlay.time {
+            return identity_color(series.time_index);
+        }
+        [["b", "g"], ["k", "c"], ["m", "r"]][series.table_index][series.receptor % 2]
     }
 }
 

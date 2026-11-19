@@ -241,8 +241,9 @@ impl<'a> AtmosphereContext<'a> {
             if reverse {
                 y.reverse();
             }
+            let step = (frequency.len() - 1) as f64 / (channels - 1) as f64;
             (0..channels)
-                .map(|channel| channel as f64)
+                .map(|channel| channel as f64 * step)
                 .collect::<Vec<_>>()
         };
         if image {

@@ -14,6 +14,7 @@ pub(super) struct Polynomial {
     pub(super) domain: [f64; 2],
     amplitudes: Vec<Vec<f64>>,
     phases: Vec<Vec<f64>>,
+    degrees: [usize; 2],
 }
 
 impl Polynomial {
@@ -43,6 +44,11 @@ impl Polynomial {
             mode.contains('P'),
         )?;
         let receptors = amp.len().max(phase.len()).max(1);
+        let degrees = [&amp, &phase].map(|values| {
+            values
+                .first()
+                .map_or(0, |values| values.len().saturating_sub(1))
+        });
         let scale = match scalar(table, row, "SCALE_FACTOR")? {
             ScalarValue::Complex32(value) => f64::from(value.re),
             ScalarValue::Complex64(value) => value.re,
@@ -85,11 +91,16 @@ impl Polynomial {
             domain,
             amplitudes,
             phases,
+            degrees,
         })
     }
 
     pub(super) fn receptors(&self) -> usize {
         self.amplitudes.len()
+    }
+
+    pub(super) fn degrees(&self) -> [usize; 2] {
+        self.degrees
     }
 
     pub(super) fn curve(&self, receptor: usize, ordinate: Ordinate) -> Result<Curve, String> {

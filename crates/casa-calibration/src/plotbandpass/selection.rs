@@ -49,6 +49,7 @@ struct Selection {
 pub(super) struct SelectionMismatch {
     pub(super) parameter: &'static str,
     pub(super) word: String,
+    pub(super) invalid_integer: bool,
 }
 
 pub(super) struct SelectedGroups {
@@ -103,7 +104,12 @@ pub(super) fn groups(
     for group in groups.values_mut() {
         group.sort_by_key(|selected| {
             let row = source.rows[selected.row];
-            (row.window, row.antenna, selected.time_index)
+            let (major, minor) = if overlay.antenna && overlay.time {
+                (selected.time_index, row.antenna as usize)
+            } else {
+                (row.antenna as usize, selected.time_index)
+            };
+            (row.window, major, minor)
         });
     }
     Ok(SelectedGroups {
@@ -157,17 +163,7 @@ impl Selection {
                 source.rows.iter().map(|row| row.field),
                 |id| name_at(&source.fields, id),
             )?,
-            window: select(
-                "spw",
-                &selectors.spw,
-                source.rows.iter().map(|row| row.window),
-                |id| {
-                    usize::try_from(id)
-                        .ok()
-                        .and_then(|id| source.windows.get(id))
-                        .map_or("", |window| &window.name)
-                },
-            )?,
+            window: select_windows(source, &selectors.spw)?,
             time,
             scan,
             baseband: select(
@@ -200,17 +196,79 @@ fn name_at(names: &[String], id: i32) -> &str {
         .map_or("", String::as_str)
 }
 
+fn select_windows(
+    source: &Solutions,
+    selectors: &[String],
+) -> Result<BTreeSet<i32>, SelectionMismatch> {
+    let words = selector_words(selectors).collect::<Vec<_>>();
+    let inline = |word: &str, invalid_integer| SelectionMismatch {
+        parameter: "spw",
+        word: word.into(),
+        invalid_integer,
+    };
+    if let Some(word) = words.iter().find(|word| word.contains('!')) {
+        return Err(inline(word, false));
+    }
+    if words.is_empty() || words.iter().any(|word| word.contains('*')) {
+        return Ok(BTreeSet::new());
+    }
+    let solved = source
+        .rows
+        .iter()
+        .map(|row| row.window)
+        .collect::<BTreeSet<_>>();
+    let mut selected = BTreeSet::new();
+    for word in words {
+        let number = |value: &str| value.trim().parse::<i32>().map_err(|_| inline(value, true));
+        let (start, end) = match word.split_once('~') {
+            Some((start, end)) => (number(start)?, number(end)?),
+            None => {
+                let id = number(word)?;
+                (id, id)
+            }
+        };
+        if source.measurement_set.is_some()
+            && (start < 0 || end >= source.windows.len() as i32)
+            && !(start == end && solved.contains(&start))
+        {
+            return Err(inline(word, false));
+        }
+        selected.extend(solved.iter().filter(|&&id| id >= start && id <= end));
+    }
+    if selected.is_empty() {
+        return Err(inline(&selectors.join(","), false));
+    }
+    Ok(selected)
+}
+
+fn selector_words(selectors: &[String]) -> impl Iterator<Item = &str> {
+    selectors
+        .iter()
+        .flat_map(|part| part.split(',').map(str::trim))
+        .filter(|part| !part.is_empty())
+}
+
 fn select<'a>(
     parameter: &'static str,
     selectors: &[String],
     identifiers: impl Iterator<Item = i32>,
     name: impl Fn(i32) -> &'a str,
 ) -> Result<BTreeSet<i32>, SelectionMismatch> {
-    let words = selectors
-        .iter()
-        .flat_map(|part| part.split(',').map(str::trim))
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
+    let words = selector_words(selectors).collect::<Vec<_>>();
+    if parameter == "timeranges" {
+        for raw in &words {
+            let word = raw.strip_prefix('!').unwrap_or(raw);
+            for endpoint in word.split('~') {
+                if endpoint.trim().parse::<i32>().is_err() {
+                    return Err(SelectionMismatch {
+                        parameter,
+                        word: endpoint.into(),
+                        invalid_integer: true,
+                    });
+                }
+            }
+        }
+    }
     if words.is_empty() || words.contains(&"*") {
         return Ok(BTreeSet::new());
     }
@@ -251,6 +309,7 @@ fn select<'a>(
             return Err(SelectionMismatch {
                 parameter,
                 word: word.into(),
+                invalid_integer: false,
             });
         }
     }
@@ -258,6 +317,7 @@ fn select<'a>(
         return Err(SelectionMismatch {
             parameter,
             word: words.join(","),
+            invalid_integer: false,
         });
     }
     Ok(selected)

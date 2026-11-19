@@ -6,15 +6,16 @@ use std::path::Path;
 
 use super::spectrum::{Curve, Ordinate};
 use super::table::{SolutionRow, Solutions};
-use super::{PlotRequest, SelectedRow, spectral_window};
+use super::{PlotRequest, SelectedRow, polynomial_degrees, spectral_window};
 
 pub(super) struct Companion {
     source: Solutions,
     by_antenna_window: BTreeMap<(i32, i32), Vec<usize>>,
+    epochs: Vec<f64>,
 }
 
 impl Companion {
-    pub(super) fn open(path: &Path, vis: Option<&Path>) -> Result<Self, String> {
+    pub(super) fn open(path: &Path, vis: Option<&Path>, tolerance: f64) -> Result<Self, String> {
         let source = Solutions::open(path, vis)?;
         let mut by_antenna_window = BTreeMap::<_, Vec<_>>::new();
         for (index, row) in source.rows.iter().enumerate() {
@@ -24,9 +25,22 @@ impl Companion {
                 .or_default()
                 .push(index);
         }
+        let mut available = source.rows.iter().map(|row| row.time).collect::<Vec<_>>();
+        available.sort_unstable_by(f64::total_cmp);
+        available.dedup();
+        let mut epochs = Vec::new();
+        for time in available {
+            if epochs
+                .last()
+                .is_none_or(|previous: &f64| time - *previous >= tolerance)
+            {
+                epochs.push(time);
+            }
+        }
         Ok(Self {
             source,
             by_antenna_window,
+            epochs,
         })
     }
 
@@ -34,12 +48,22 @@ impl Companion {
         self.source.subtype == "BPOLY"
     }
 
+    pub(super) fn degrees(&self) -> Option<[usize; 2]> {
+        polynomial_degrees(&self.source)
+    }
+
     pub(super) fn match_row(
         &self,
         primary: SolutionRow,
         original_window: i32,
+        time_index: usize,
         tolerance: f64,
     ) -> Option<usize> {
+        let epoch = if self.polynomial() {
+            primary.time
+        } else {
+            *self.epochs.get(time_index)?
+        };
         self.by_antenna_window
             .get(&(primary.antenna, original_window))?
             .iter()
@@ -47,10 +71,10 @@ impl Companion {
             .filter(|&index| {
                 let peer = self.source.rows[index];
                 primary.field == peer.field
-                    && (primary.time == peer.time || (primary.time - peer.time).abs() < tolerance)
+                    && (epoch == peer.time || (epoch - peer.time).abs() < tolerance)
             })
             .min_by(|&left, &right| {
-                let difference = |index: usize| (self.source.rows[index].time - primary.time).abs();
+                let difference = |index: usize| (self.source.rows[index].time - epoch).abs();
                 difference(left).total_cmp(&difference(right))
             })
     }

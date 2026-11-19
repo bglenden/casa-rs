@@ -18,6 +18,7 @@ from unittest.mock import patch
 import matplotlib
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
+from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 import numpy as np
 
@@ -67,6 +68,40 @@ def shifted_companion(root, scaled):
     with opened(shifted / "SPECTRAL_WINDOW", write=True) as tool:
         tool.putcol("CHAN_FREQ", tool.getcol("CHAN_FREQ") + 2e6)
     return shifted
+
+
+def review_fixtures(root, source, current, scaled):
+    offset = root / "offset.bcal"
+    copytree(scaled, offset)
+    with opened(offset, write=True) as tool:
+        tool.putcol("TIME", tool.getcol("TIME") + 1e6)
+
+    circular = root / "circular.ms"
+    make_cal_ms(str(circular), stokes="RR LL")
+    circular_cal = root / "circular.bcal"
+    bandpass(str(circular), str(circular_cal), refant="A0", solint="inf", minsnr=0.0)
+    wide = root / "wide-atmosphere.ms"
+    make_cal_ms(str(wide), channels=1024)
+    copytree(source / "WEATHER", wide / "WEATHER")
+    wide_cal = root / "wide-atmosphere.bcal"
+    bandpass(str(wide), str(wide_cal), refant="A0", solint="inf", minsnr=0.0)
+    for solution, ms in [(circular_cal, circular), (wide_cal, wide)]:
+        with opened(solution, write=True) as tool:
+            tool.putkeyword("MSName", str(ms))
+
+    flagged = root / "all-flagged.bcal"
+    copytree(current, flagged)
+    with opened(flagged, write=True) as tool:
+        tool.putcol("FLAG", np.ones_like(tool.getcol("FLAG"), dtype=bool))
+
+    return {
+        "offset-companion": dict(xaxis="freq", caltable2=str(offset)),
+        "circular-hand": dict(caltable=str(circular_cal), vis=str(circular), poln="LL"),
+        "wide-atmosphere": dict(caltable=str(wide_cal), vis=str(wide), showatm=True,
+                                pwv=1.1, timeranges="0"),
+        "all-flagged": dict(caltable=str(flagged)),
+        "show-all-flagged": dict(caltable=str(flagged), showflagged=True),
+    }
 
 
 def multiband_fixture(root, source):
@@ -183,6 +218,8 @@ def artist_data(figure):
         "texts": [text.get_text() for text in axes.texts],
         "artists": [(np.asarray(line.get_xdata(), float), np.asarray(line.get_ydata(), float))
                     for line in axes.lines],
+        "styles": [(to_rgba(line.get_color()), line.get_marker(), line.get_linestyle())
+                   for line in axes.lines],
     } for axes in figure.axes]
 
 
@@ -245,6 +282,12 @@ def assert_figures(left, right, label):
             for (x, y), (actual_x, actual_y) in zip(expected["artists"], plotted["artists"], strict=True):
                 np.testing.assert_allclose(actual_x, x, rtol=1e-9, atol=1e-7, err_msg=label)
                 np.testing.assert_allclose(actual_y, y, rtol=2e-5, atol=1e-5, err_msg=label)
+            if label in {"antenna-overlay", "overlay-phase", "overlay-time", "circular-hand"}:
+                assert expected["styles"] == plotted["styles"], (label, expected["styles"], plotted["styles"])
+                assert set(expected["texts"]) == set(plotted["texts"]), (label, expected["texts"], plotted["texts"])
+            if label == "offset-companion":
+                names = {text for text in expected["texts"] if text.startswith("c1=") or "-c" in text}
+                assert names and names <= set(plotted["texts"]), (label, names, plotted["texts"])
             panels += 1
     return panels
 
@@ -302,7 +345,12 @@ def comparisons(root):
         "spw-overlay": multiband | dict(overlay="spw", spw=[0, 1]),
         "baseband-overlay": multiband | dict(overlay="baseband", spw="", scans=[2]),
         "antenna-time": multiband | dict(overlay="antenna,time", antenna=[0, 2], spw=[1]),
+        "antenna-overlay": multiband | dict(overlay="antenna", antenna=[0, 2], spw=[0]),
+        "overlay-phase": multiband | dict(overlay="antenna", antenna=[0, 2], spw=[0], yaxis="phase"),
+        "overlay-time": multiband | dict(overlay="time", timeranges="0,1", spw=[0]),
+        "mixed-spw": multiband | dict(spw="0,2"),
     }
+    plots.update(review_fixtures(root, ms, current, scaled))
     failures = []
 
     def check(label, options, keys=None, compare_plots=True):
@@ -334,6 +382,9 @@ def comparisons(root):
     domains = {
         "bad-axis": dict(xaxis="FREQ"),
         "bad-y-axis": dict(yaxis="delay"),
+        "bad-window-name": dict(spw="UNKNOWN"),
+        "negated-window": dict(spw="!1"),
+        "bad-time-wildcard": dict(timeranges="*"),
         "no-window": dict(spw="42"),
         "no-field": dict(field="MISSING"),
         "no-scan": dict(scans=[99]),
