@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) fn resolve_spw_mapping(
+pub(crate) fn resolve_spw_mapping(
     spec: &ApplyCalibrationTableSpec,
     available: &[i32],
     calibration_window_count: usize,

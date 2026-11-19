@@ -124,7 +124,7 @@ impl Create {
             "Created {storage} image {filename} of shape {:?} with {pixel_type} valued pixels.",
             self.shape
         );
-        image.add_history(creation)?;
+        image.append_history_at("::ImageFactory::createImage", &[creation])?;
         if enabled {
             let (method, args) = match pixels {
                 Some(pixels) => ("fromarray", format!("pixels={}", pixels.history())),

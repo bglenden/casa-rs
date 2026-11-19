@@ -6940,6 +6940,7 @@ reference calculation for real-valued parameters.
 
 casa-rs raises a task error for unsupported table types before publishing
 a result. The paired oracle runs this CASA check in a child process (#1525).
+
 ## `statwt` creates spectra then fails on an explicitly selected subset
 
 CASA 6.7.6.14 initializes a required `WEIGHT_SPECTRUM` or `SIGMA_SPECTRUM`
@@ -6967,3 +6968,65 @@ casa-rs returns deterministic bounds from the non-NaN samples, counts
 all samples and returns NaN for the moments and quantiles when a NaN
 makes those quantities undefined. This preserves the existing native
 table tool behavior in the public calibration task (#1526).
+
+## Accumulating a bandpass updates a fraction of the Jones cells
+
+CASA 6.7.6.14's `calibrater.accumulate` is available with
+`setvi(old=True)`. In the paired eight-channel B Jones fixture it
+changed 20 of 160 valid complex cells. At each of two solution times,
+only the first five channels of antenna 0 received the Jones product.
+The other valid factors remained as they were.
+
+casa-rs multiplies the per-receptor, per-channel factors for every
+antenna. The analytic self-accumulation check squares all 160 valid
+factors and checks flags separately (#1525).
+
+## Accumulation depends on the physical order of overlapping field times
+
+In CASA 6.7.6.14, the old accumulation method passes the incremental
+table's time column to `CTTimeInterp1`. The interpolator uses binary
+search on those times. Physically grouping rows by field can leave that
+column out of chronological order when time ranges overlap.
+
+CASA changed valid gains when the paired fixture was sorted by time.
+casa-rs orders its time series before interpolation and matches the
+time-ordered CASA control. It preserves the prior numerical payload
+at flagged cells. In a selected gain-field comparison, CASA replaced
+one flagged payload with complex unity. The flags and valid values
+matched (#1525).
+
+## Selecting a field in simultaneous calibration rows modifies other fields
+
+The old CASA 6.7.6.14 accumulation method groups rows by spectral
+window and time. It uses the first row's FIELD_ID to decide whether
+to modify the entire group. In a fixture that divides antenna
+solutions at the same timestamp between two fields, selecting FLUX
+also changes PHASE rows. Selecting PHASE skips all the rows.
+
+casa-rs applies the correction within each selected field. The paired
+fixture checks the product on every eligible row and checks the
+unselected rows byte for byte (#1525).
+
+## Accumulation repairs a legacy input even when a separate output is requested
+
+CASA 6.7.6.14's old accumulation path upgrades a pre-4.1 cumulative
+table when it opens the source. The paired input lost its original schema:
+CASA added OBSERVATION_ID and OBSERVATION before publishing the requested
+separate product.
+
+casa-rs applies the same legacy upgrade inside the output snapshot.
+The result matches the upgraded CASA product and a separately named original
+retains its legacy schema (#1525).
+
+## Accumulation can terminate during contextual time interpolation
+
+With the old CASA 6.7.6.14 visibility iterator, accumulation terminated
+the process on the test fixtures for `spline` and `linearperscan`.
+`linearperobs` completed when there was one observation and terminated
+on the two-observation probe.
+
+casa-rs uses the calibration application's time interpolator with the
+cumulative rows' scan and observation metadata. In local comparisons,
+the per-scan output matched two independent single-field CASA controls.
+An independent SciPy natural spline matched 52 valid complex factors
+in the spline comparison (#1525).

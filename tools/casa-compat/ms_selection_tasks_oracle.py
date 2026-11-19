@@ -8,6 +8,7 @@ the same Python environment. Set CASARS_MSTRANSFORM_BIN to the built task.
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from enum import IntEnum
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -20,16 +21,23 @@ from casars import tasks
 from record_casa_returns import make_cal_ms
 
 
+class Observation(IntEnum):
+    SECOND = 1
+
+
 MAIN = ("TIME", "SCAN_NUMBER", "ANTENNA1", "ANTENNA2", "FIELD_ID", "DATA_DESC_ID",
+        "OBSERVATION_ID", "STATE_ID",
         "DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA", "UVW")
 SUBTABLES = {
     "ANTENNA": ("NAME", "POSITION"),
     "DATA_DESCRIPTION": ("SPECTRAL_WINDOW_ID", "POLARIZATION_ID"),
     "FEED": ("ANTENNA_ID", "SPECTRAL_WINDOW_ID"),
     "FIELD": ("NAME", "PHASE_DIR", "SOURCE_ID"),
+    "OBSERVATION": ("PROJECT", "TIME_RANGE"),
     "POINTING": ("ANTENNA_ID", "TIME"),
     "POLARIZATION": ("CORR_TYPE",),
     "SOURCE": ("SOURCE_ID", "SPECTRAL_WINDOW_ID", "NAME"),
+    "STATE": ("OBS_MODE", "FLAG_ROW"),
     "SPECTRAL_WINDOW": ("NAME", "NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION",
                         "EFFECTIVE_BW", "REF_FREQUENCY", "TOTAL_BANDWIDTH"),
 }
@@ -118,10 +126,30 @@ def add_second_window(source):
             tool.putcol(column, tool.getcol(predicate))
 
 
-def succeeds(root, source, name, case, options, subtables=SUBTABLES):
+def add_observation_and_intent(source, *, interleaved=False):
+    for name, changes in {
+        "OBSERVATION": {"PROJECT": "Second observation"},
+        "STATE": {"OBS_MODE": "CALIBRATE_PHASE.ON_SOURCE"},
+    }.items():
+        with core_table(str(source / name), readonly=False, ack=False) as tool:
+            count = 2 if interleaved else 1
+            tool.addrows(count)
+            for index in range(1, 1 + count):
+                for column in tool.colnames():
+                    if tool.iscelldefined(column, 0):
+                        tool.putcell(column, index, changes.get(column, tool.getcell(column, 0)))
+    with core_table(str(source), readonly=False, ack=False) as tool:
+        fields = tool.getcol("FIELD_ID")
+        indices = np.arange(tool.nrows())
+        tool.putcol("OBSERVATION_ID", indices % 3 if interleaved else fields)
+        tool.putcol("STATE_ID", (indices // 3) % 3 if interleaved else fields)
+
+
+def succeeds(root, source, name, case, options, subtables=SUBTABLES, *, via_run=False):
     paths = [root / f"{name}-{case}-{side}.ms" for side in ("casa", "native")]
     for module, path in zip((casatasks, tasks), paths):
-        result = getattr(module, name)(vis=str(source), outputvis=str(path), datacolumn="data", **options)
+        arguments = dict(vis=str(source), outputvis=str(path), datacolumn="data", **options)
+        result = tasks.run(name, **arguments).value if via_run and module is tasks else getattr(module, name)(**arguments)
         assert result is None, (name, case, result)
     compare_columns(*paths, MAIN, f"{name} {case} MAIN")
     for subtable, names in subtables.items():
@@ -153,6 +181,33 @@ def malformed_spw(root, source, name):
         else:
             raise AssertionError(f"{module.__name__}.{name} accepted a malformed channel selector")
         assert not path.exists(), path
+
+
+def rejected_selector_types(root, source, name):
+    cases = (
+        ("observation", None, AssertionError, "null value not allowed"),
+        ("observation", 1.5, AssertionError, "must be of cInt type"),
+        ("observation", [1], RuntimeError, "["),
+        ("observation", np.array([1]), RuntimeError, "["),
+        ("observation", np.array([1], dtype=np.int16), AssertionError, "must be of cIntVec type"),
+        ("observation", True, RuntimeError, "T"),
+        ("intent", True, RuntimeError, "used for field intent with type Bool"),
+        ("intent", 1, RuntimeError, "used for field intent with type Int"),
+        ("intent", ["OBSERVE*"], RuntimeError, "used for field intent with type unknown"),
+        ("intent", np.array("OBSERVE*"), RuntimeError, "used for field intent with type unknown"),
+        ("intent", ["OBSERVE*", 1], AssertionError, "must be of cStrVec type"),
+    )
+    for index, (parameter, value, error_type, message) in enumerate(cases):
+        for module in (casatasks, tasks):
+            path = root / f"{name}-invalid-{index}-{module.__name__}.ms"
+            try:
+                getattr(module, name)(vis=str(source), outputvis=str(path), datacolumn="data", **{parameter: value})
+            except error_type as error:
+                assert message in str(error), str(error)
+            else:
+                raise AssertionError(f"{module.__name__}.{name} accepted {parameter}={value!r}")
+            assert not path.exists(), path
+    return len(cases)
 
 
 def main():
@@ -190,7 +245,31 @@ def main():
             succeeds(root, source, name, "unused-window", {"field": "PHASE"}, subtables)
             selected = succeeds(root, source, name, "compact-second-window", {"spw": "SPW1:2~6"}, subtables)
             succeeds(root, selected, name, "native-input", {"spw": "SPW1:0~2"}, subtables)
-        print(f"{(len(cases) + 3) * 2} selected products and 4 rejected calls matched CASA 6.7.6.14")
+        add_observation_and_intent(source)
+        observation_cases = {
+            "observation-id": {"observation": 1},
+            "observation-np-id": {"observation": np.int64(1)},
+            "observation-enum": {"observation": Observation.SECOND},
+            "observation-scalar-array": {"observation": np.array(1)},
+            "observation-scalar-text-array": {"observation": np.array("1")},
+            "observation-range": {"observation": "1~2"},
+            "observation-and-field": {"observation": "0,1", "field": "PH*"},
+            "intent-pattern": {"intent": "CALIBRATE*"},
+            "intent-np-id": {"intent": np.int32(1)},
+            "intent-and-spw": {"intent": "CALIBRATE*,OBSERVE*", "spw": "SPW1:2~6"},
+        }
+        interleaved = root / "interleaved.ms"
+        make_input(interleaved)
+        add_observation_and_intent(interleaved, interleaved=True)
+        rejected = 4
+        for name in ("split", "mstransform"):
+            for case, options in observation_cases.items():
+                succeeds(root, source, name, case, options, subtables)
+            succeeds(root, source, name, "provider-np-observation", {"observation": np.int32(1)}, subtables, via_run=True)
+            succeeds(root, source, name, "provider-scalar-array", {"observation": np.array(1)}, subtables, via_run=True)
+            succeeds(root, interleaved, name, "interleaved-observations-and-states", {"observation": "2,0", "intent": "2,1"})
+            rejected += rejected_selector_types(root, source, name)
+        print(f"{(len(cases) + len(observation_cases) + 6) * 2} selected products and {rejected} rejected calls matched CASA 6.7.6.14")
 
 
 if __name__ == "__main__":
