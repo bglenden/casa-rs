@@ -86,7 +86,9 @@
 //! (`MCDirection::ToRef_p`), except that casacore converts B1950 to and from
 //! APP directly, with its B1950 precession, nutation and aberration, and so
 //! B1950 to and from TOPO, HADEC, the AZEL frames and ITRF. casa-rs goes
-//! through J2000, which differs by 2.5–4.9″ (2026-10-22, #863).
+//! through J2000 for the ordinary infinite-distance rotation, which differs
+//! by 2.5–4.9″ (2026-10-22, #863). Evaluated ephemerides with a distance
+//! follow the weighted casacore routes, including the direct FK4 pair.
 //! BMEAN/BTRUE and B1950_VLA follow the corresponding FK4 routines.
 
 use std::cell::{Cell, RefCell};
@@ -625,7 +627,13 @@ impl MDirection {
             converted.refer = target;
             return Ok(converted);
         }
-        let path = find_path(self.refer, target)?;
+        let ordinary;
+        let path = if distance_m == 0.0 {
+            ordinary = find_path(self.refer, target)?;
+            ordinary.as_slice()
+        } else {
+            vector_rotation::route(self.refer, target)
+        };
         let ctx = ConvCtx {
             distance_m,
             ..ConvCtx::new()
@@ -633,7 +641,7 @@ impl MDirection {
         let mut cosines = self.cosines;
         let mut current_ref = self.refer;
 
-        for next_ref in path {
+        for &next_ref in path {
             cosines = apply_hop(cosines, current_ref, next_ref, frame, &ctx)?;
             current_ref = next_ref;
         }
@@ -2030,6 +2038,7 @@ fn apply_hop(
             casacore_frames::b1950_to_j2000(cosines, 19.799 - 20.0),
             b1950_epoch_centuries(frame, ctx)?,
         )),
+        (B1950, APP) | (APP, B1950) => vector_rotation::fk4_apparent_direction(cosines, to, frame),
         (B1950, BMEAN) | (BMEAN, B1950) => Ok(casacore_frames::besselian_precession(
             cosines,
             tdb_mjd(frame)?,

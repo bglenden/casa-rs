@@ -211,6 +211,8 @@ shifted = definitions.direction("COMET", "17deg", "35deg")
 vla = definitions.observatory("VLA")
 frequency = definitions.frequency("TOPO", "1GHz")
 velocity = definitions.radialvelocity("TOPO", "10km/s")
+geo = definitions.radialvelocity("GEO", "0m/s")
+uvw = definitions.uvw("J2000", "1m", "21m", "30m")
 definitions.done()
 
 def conversions(*references, source=direction):
@@ -223,7 +225,8 @@ def comet_frame(table_entry, position, date="2011/01/03/17:00:00"):
     return steps
 
 
-targets = ("APP", "J2000", "ICRS", "TOPO", "HADEC", "AZEL")
+targets = ("APP", "J2000", "ICRS", "TOPO", "HADEC", "AZEL",
+           "B1950", "B1950_VLA", "BMEAN", "BTRUE")
 ordinary = explicit()
 j2000 = explicit("JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab")
 alma = ("set_alma",)
@@ -255,7 +258,15 @@ sequences.update({
     ),
     "direction_spectral_context": (
         comet_frame(ordinary, alma) + show
-        + [("measure", frequency, "BARY"), ("measure", velocity, "LSRK")]
+        + [("measure", frequency, "BARY"), ("measure", velocity, "LSRK"),
+           ("measure", uvw, "ITRF")]
+    ),
+    "direction_replacement_context": (
+        comet_frame(("framecomet", {"synthetic": "explicit_b1950"}), alma, "55564.5d")
+        + show + [("measure", geo, "TOPO"),
+                  ("framecomet", {"synthetic": "explicit_topocentric"}),
+                  ("showframe",), ("measure", geo, "TOPO"),
+                  ("doframe", direction), ("showframe",), ("measure", geo, "TOPO")]
     ),
     "direction_table_lifetime": (
         comet_frame(ordinary, alma) + show + conversions("J2000")
@@ -270,6 +281,10 @@ with TemporaryDirectory() as temp:
         count = SYNTHETIC["row_counts"].get(variant, len(SYNTHETIC["columns"]["MJD"]))
         make_table(scratch / (variant + ".tab"), changes, count, variant)
     cases = [run_case(name, steps, scratch) for name, steps in sequences.items()]
+    replacement = next(case for case in cases if case["name"] == "direction_replacement_context")
+    for stale, fresh in zip(replacement["steps"][-5:-3], replacement["steps"][-2:], strict=True):
+        assert stale["method"] == fresh["method"] and stale["result"] != fresh["result"]
+        stale["native_result"] = fresh["result"]
 
 for query, unit in (("cometdist", "AU"), ("cometangdiam", "rad")):
     for after_done in (False, True):

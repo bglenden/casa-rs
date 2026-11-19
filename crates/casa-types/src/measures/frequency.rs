@@ -542,20 +542,18 @@ pub(super) fn compute_earth_beta(velocity_ms: &[f64; 3], dir_j2000: &[f64; 3]) -
 /// Get direction in J2000 from the frame.
 pub(super) fn get_direction_j2000(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
     frame.cached_direction_j2000(|| {
-        let dir = frame.direction().ok_or(MeasureError::MissingFrameData {
-            what: "direction (for velocity projection)",
-        })?;
-        dir.to_j2000(frame)
+        Ok(frame
+            .direction_in(DirectionRef::J2000, "direction (for velocity projection)")?
+            .cosines())
     })
 }
 
 /// Get direction in APP from the frame.
 pub(super) fn get_direction_app(frame: &MeasFrame) -> Result<[f64; 3], MeasureError> {
     frame.cached_direction_app(|| {
-        let dir = frame.direction().ok_or(MeasureError::MissingFrameData {
-            what: "direction (for velocity projection)",
-        })?;
-        Ok(dir.convert_to(DirectionRef::APP, frame)?.cosines())
+        Ok(frame
+            .direction_in(DirectionRef::APP, "direction (for velocity projection)")?
+            .cosines())
     })
 }
 

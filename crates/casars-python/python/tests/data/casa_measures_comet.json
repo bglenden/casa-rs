@@ -2345,6 +2345,130 @@
           "python_type": "dict"
         },
         {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443801759732259
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04754163565424635
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443765634998475
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047542291843318964
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078786780823376
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04162104671487067
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04070821139970531
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04158652120122874
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
           "method": "doframe",
           "args": [
             {
@@ -2604,6 +2728,130 @@
           "python_type": "dict"
         },
         {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443801759732259
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04754163565424635
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443765634998475
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047542291843318964
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078786780823376
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04162104671487067
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04070821139970531
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04158652120122874
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
           "method": "doframe",
           "args": [
             {
@@ -2804,6 +3052,130 @@
             "AZEL"
           ],
           "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443801759732259
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04754163565424635
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443765634998475
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047542291843318964
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078786780823376
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04162104671487067
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04070821139970531
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04158652120122874
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
           "python_type": "dict"
         }
       ]
@@ -3019,6 +3391,130 @@
               "value": 0.3781224967753543
             },
             "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.054436404146047626
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04753892824915484
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.0544360428986142
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047539584439886894
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078625554830935
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04161833885498469
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.040706599143759334
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04158381334035652
+            },
+            "refer": "BTRUE",
             "type": "direction"
           },
           "python_type": "dict"
@@ -3283,6 +3779,130 @@
           "python_type": "dict"
         },
         {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.05443592136434887
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047531274641873233
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.054435560116780954
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.047531930832597054
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04078577505723131
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.041610685111832794
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04070611865806724
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04157615959691035
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
           "method": "doframe",
           "args": [
             {
@@ -3448,6 +4068,86 @@
               "type": "direction"
             },
             "AZEL"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {},
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
           ],
           "result": {},
           "python_type": "dict"
@@ -3667,6 +4367,130 @@
               "value": -0.966154201082831
             },
             "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.013733395162426217
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22098482133643887
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.013733035563131553
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22098416555144146
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.00010530064412935214
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22691193042031882
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -2.5607234446231215e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22694639866230046
+            },
+            "refer": "BTRUE",
             "type": "direction"
           },
           "python_type": "dict"
@@ -4000,6 +4824,130 @@
           "python_type": "dict"
         },
         {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.013738012672855028
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22098303933086363
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.013737653072867704
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.220982383545814
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.00010992431548665667
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22691014822516045
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.023094411645514e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.2269446164708697
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
           "method": "doframe",
           "args": [
             {
@@ -4328,6 +5276,130 @@
           "python_type": "dict"
         },
         {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.011207306867213548
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22211099897048653
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -0.01120694765051461
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22211034322540332
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0024241693683828367
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.2280381927983284
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0025038839696229476
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22807265889060446
+            },
+            "refer": "BTRUE",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
           "method": "doframe",
           "args": [
             {
@@ -4651,6 +5723,130 @@
               "value": -0.9807790067358091
             },
             "refer": "AZEL",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.078585955453944e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696859357616594
+            },
+            "refer": "B1950",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "B1950_VLA"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": -3.0428380178896554e-05
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.22696793800874202
+            },
+            "refer": "B1950_VLA",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BMEAN"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.013616074091083166
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.23289570786703204
+            },
+            "refer": "BMEAN",
+            "type": "direction"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            },
+            "BTRUE"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.01369588476125895
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.23293016180146586
+            },
+            "refer": "BTRUE",
             "type": "direction"
           },
           "python_type": "dict"
@@ -5297,6 +6493,222 @@
               "value": -18100.991894190523
             },
             "refer": "LSRK",
+            "type": "radialvelocity"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 1.5232132235179132
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.9595382108349554
+              },
+              "m2": {
+                "unit": "m",
+                "value": 36.6333181680284
+              },
+              "refer": "J2000",
+              "type": "uvw"
+            },
+            "ITRF"
+          ],
+          "result": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.5232585278588613
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.9595382108380235
+            },
+            "m2": {
+              "unit": "m",
+              "value": 36.63331816802839
+            },
+            "refer": "ITRF",
+            "type": "uvw"
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "direction_replacement_context",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_b1950"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [0.639326, 13.2827] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "m/s",
+                "value": 0.0
+              },
+              "refer": "GEO",
+              "type": "radialvelocity"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -234.5752307210706
+            },
+            "refer": "TOPO",
+            "type": "radialvelocity"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_topocentric"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [0.639326, 13.2827] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str",
+          "native_result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-0.146386, 12.9402] deg)\n       Test object comet between MJD 55564 and 55566"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "m/s",
+                "value": 0.0
+              },
+              "refer": "GEO",
+              "type": "radialvelocity"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -234.5752307210706
+            },
+            "refer": "TOPO",
+            "type": "radialvelocity"
+          },
+          "python_type": "dict",
+          "native_result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -239.62197754050177
+            },
+            "refer": "TOPO",
+            "type": "radialvelocity"
+          }
+        },
+        {
+          "method": "doframe",
+          "args": [
+            {
+              "m0": {
+                "unit": "rad",
+                "value": 0.0
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 1.5707963267948966
+              },
+              "refer": "COMET",
+              "type": "direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "showframe",
+          "args": [],
+          "result": "Frame: Epoch: 55564::12:00:00.0000 (TDB = 55564.5, UT1 = 55564.5, TT = 55564.5)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-0.146386, 12.9402] deg)\n       Test object comet between MJD 55564 and 55566",
+          "python_type": "str"
+        },
+        {
+          "method": "measure",
+          "args": [
+            {
+              "m0": {
+                "unit": "m/s",
+                "value": 0.0
+              },
+              "refer": "GEO",
+              "type": "radialvelocity"
+            },
+            "TOPO"
+          ],
+          "result": {
+            "m0": {
+              "unit": "m/s",
+              "value": -239.62197754050177
+            },
+            "refer": "TOPO",
             "type": "radialvelocity"
           },
           "python_type": "dict"

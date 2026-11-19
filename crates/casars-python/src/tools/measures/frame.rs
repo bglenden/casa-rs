@@ -247,20 +247,16 @@ pub(super) fn convert(
     Ok(converted.map(|converted| Measure::from_casa(&converted)))
 }
 
-fn with_comet_direction(state: &State, frame: MeasFrame) -> MeasFrame {
+pub(super) fn with_comet_direction(state: &State, frame: MeasFrame) -> MeasFrame {
     if frame
         .direction()
         .is_some_and(|dir| dir.refer() == DirectionRef::COMET)
     {
-        // Resolve the active sky position for the Doppler projection. If it
+        // Resolve the active sky position and its range. If it
         // cannot be resolved, the actual conversion decides whether it needs
         // a direction, just as it would with any other incomplete frame.
-        let j2000 =
-            super::comet::resolve_direction(state, &frame).and_then(|(direction, distance)| {
-                direction.convert_with_parallax(DirectionRef::J2000, &frame, distance)
-            });
-        if let Ok(direction) = j2000 {
-            return frame.with_direction(direction);
+        if let Ok((direction, distance)) = super::comet::resolve_direction(state, &frame) {
+            return frame.with_ephemeris_direction(direction, distance);
         }
     }
     frame
@@ -276,23 +272,6 @@ pub(super) fn convert_direction(
         return direction.convert_to(target, frame);
     }
     let (resolved, distance_m) = resolve_direction(state, direction, frame)?;
-    let resolved = if direction.refer() == DirectionRef::COMET
-        && resolved.refer() == DirectionRef::B1950
-        && matches!(
-            target,
-            DirectionRef::APP
-                | DirectionRef::TOPO
-                | DirectionRef::HADEC
-                | DirectionRef::ITRF
-                | DirectionRef::AZEL
-                | DirectionRef::AZELSW
-                | DirectionRef::AZELGEO
-                | DirectionRef::AZELSWGEO
-        ) {
-        resolved.to_apparent(frame)?
-    } else {
-        resolved
-    };
     resolved.convert_with_parallax(target, frame, distance_m)
 }
 

@@ -5401,6 +5401,20 @@ to display TDB, UT1, and TT. The fixture retains the display errors
 and verifies the derived time scales against CASA's direct conversions
 (#1252).
 
+## Replacing a comet table can leave the previous frame direction cached
+
+In CASA 6.7.6.14, set an epoch and observatory, attach a COMET
+direction, and then call `showframe()` or project a radial velocity.
+Replacing the attached ephemeris updates direct COMET conversion
+immediately. The frame display and velocity projection can still use
+the previous table's direction until `doframe(direction("COMET"))` is
+called again. The supplied B1950 and TOPO controls at ALMA differ by
+more than 230 m/s in the GEO to TOPO velocity projection.
+
+Casa-rs refreshes the computed direction when a new table is attached.
+The recorded fixture retains CASA's stale results and verifies the
+refresh against its results after reattaching the direction (#1252).
+
 ## Frame display can report UT1 outside the Earth-orientation table
 
 With the bundled measures snapshot and an explicit UTC epoch in 2030

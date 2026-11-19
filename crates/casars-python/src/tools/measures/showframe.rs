@@ -81,8 +81,8 @@ fn render(state: &mut State, mut native: MeasFrame) -> Result<String, String> {
             vector(direction.cosines()),
             vector([longitude.to_degrees(), latitude.to_degrees()])
         ));
-        if direction.refer() == DirectionRef::COMET {
-            native = native.with_direction(converted);
+        if direction.refer() == DirectionRef::COMET && native.radial_velocity().is_some() {
+            native = frame::with_comet_direction(state, native);
         }
     }
     if let (Some(record), Some(velocity)) = (&state.frame.radial_velocity, native.radial_velocity())

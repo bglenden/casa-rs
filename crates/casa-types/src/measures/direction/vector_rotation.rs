@@ -13,6 +13,7 @@ use crate::measures::baseline::{
     diurnal_aberration_factor, inverse_aberration_shift, inverse_solar_deflection_shift,
     j2000_baseline_uvw, multiply_matrices, rotate_shift_matrix,
 };
+use std::sync::LazyLock;
 
 type Matrix = [[f64; 3]; 3];
 const IDENTITY: Matrix = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
@@ -39,11 +40,10 @@ pub fn baseline_rotation(
     let context = ConvCtx::new();
     let mut source = from;
     let mut rotation = IDENTITY;
-    for target in route(from, to) {
+    for &target in route(from, to) {
         let mut hop = baseline_hop(source, target, frame, &context)?;
         if uvw {
-            let sky = phase_center(frame)?;
-            let reference = uvw_hop_direction(sky, source, target, frame)?;
+            let reference = uvw_hop_direction(source, target, frame)?;
             let moved = if matches!(
                 (source, target),
                 (DirectionRef::B1950, DirectionRef::APP) | (DirectionRef::APP, DirectionRef::B1950)
@@ -93,7 +93,7 @@ pub(in crate::measures) fn convert_magnetic_direction(
     use DirectionRef::*;
     let context = ConvCtx::new();
     let mut source = from;
-    for target in route(from, to) {
+    for &target in route(from, to) {
         unit = match (source, target) {
             (B1950, APP) | (APP, B1950) => fk4_apparent_direction(unit, target, frame)?,
             _ => apply_hop(unit, source, target, frame, &context)?,
@@ -106,7 +106,20 @@ pub(in crate::measures) fn convert_magnetic_direction(
 // Casacore MCBase counts every edge plus its FK4 penalty. The direct
 // APP/B1950 conversion is part of the baseline graph even when a caller
 // starts in a terrestrial frame. Direct conversions retain their own edge.
-fn route(from: DirectionRef, to: DirectionRef) -> Vec<DirectionRef> {
+pub(super) fn route(from: DirectionRef, to: DirectionRef) -> &'static [DirectionRef] {
+    use super::NUM_DIR_REFS;
+    type Routes = [[Vec<DirectionRef>; NUM_DIR_REFS]; NUM_DIR_REFS];
+    static ROUTES: LazyLock<Routes> = LazyLock::new(|| {
+        let mut references = DirectionRef::ALL;
+        references.sort_unstable_by_key(|&reference| dir_ref_index(reference));
+        std::array::from_fn(|i| {
+            std::array::from_fn(|j| shortest_route(references[i], references[j]))
+        })
+    });
+    &ROUTES[dir_ref_index(from)][dir_ref_index(to)]
+}
+
+fn shortest_route(from: DirectionRef, to: DirectionRef) -> Vec<DirectionRef> {
     use super::{NUM_DIR_REFS, ROUTING_EDGES};
     use DirectionRef::*;
     let edges = ROUTING_EDGES.iter().copied().chain([(B1950, APP)]);
@@ -171,10 +184,8 @@ fn route(from: DirectionRef, to: DirectionRef) -> Vec<DirectionRef> {
     path
 }
 
-fn phase_center(frame: &MeasFrame) -> Result<&MDirection, MeasureError> {
-    frame.direction().ok_or(MeasureError::MissingFrameData {
-        what: "direction (for baseline rotation)",
-    })
+fn phase_center(frame: &MeasFrame, target: DirectionRef) -> Result<MDirection, MeasureError> {
+    frame.direction_in(target, "direction (for baseline rotation)")
 }
 
 fn baseline_hop(
@@ -196,7 +207,7 @@ fn baseline_hop(
             } else {
                 b1950_epoch_centuries(frame, context)?
             };
-            let sky = phase_center(frame)?.convert_to(B1950, frame)?.cosines();
+            let sky = phase_center(frame, B1950)?.cosines();
             let matrix = casacore_frames::fk4_baseline_rotation(sky, epoch);
             Ok(if to == J2000 {
                 matrix
@@ -237,9 +248,7 @@ fn horizon_rotation(to: DirectionRef, frame: &MeasFrame) -> Result<Matrix, Measu
     })?;
     let factor = diurnal_aberration_factor(sofars::vm::pm(position.as_itrf()));
     let offset = sofars::vm::s2c(last, position.geocentric_latitude_rad());
-    let app = phase_center(frame)?
-        .convert_to(DirectionRef::APP, frame)?
-        .cosines();
+    let app = phase_center(frame, DirectionRef::APP)?.cosines();
     if to == DirectionRef::TOPO {
         let correction = rotate_shift_matrix(offset.map(|v| -v * factor), app);
         Ok(compose(correction, compose(pole, FLIP_Y)))
@@ -250,7 +259,7 @@ fn horizon_rotation(to: DirectionRef, frame: &MeasFrame) -> Result<Matrix, Measu
 }
 
 fn solar_rotation(to: DirectionRef, frame: &MeasFrame) -> Result<Matrix, MeasureError> {
-    let sky = phase_center(frame)?.convert_to(DirectionRef::J2000, frame)?;
+    let sky = phase_center(frame, DirectionRef::J2000)?;
     let source = sky.cosines();
     let shift = if to == DirectionRef::JNAT {
         let shifted = apply_solar_deflection(source, frame)?;
@@ -268,7 +277,7 @@ fn aberration_rotation(
     frame: &MeasFrame,
     context: &ConvCtx,
 ) -> Result<Matrix, MeasureError> {
-    let sky = phase_center(frame)?.convert_to(DirectionRef::J2000, frame)?;
+    let sky = phase_center(frame, DirectionRef::J2000)?;
     let source = sky.cosines();
     let precession_nutation = compose(
         nutation_matrix(frame, context)?,
@@ -296,9 +305,8 @@ fn e_terms_shift(source: [f64; 3]) -> [f64; 3] {
 
 fn fk4_apparent_rotation(to: DirectionRef, frame: &MeasFrame) -> Result<Matrix, MeasureError> {
     let epoch = tdb_mjd(frame)?;
-    let direction = phase_center(frame)?;
-    let b1950 = direction.convert_to(DirectionRef::B1950, frame)?.cosines();
-    let app = direction.convert_to(DirectionRef::APP, frame)?.cosines();
+    let b1950 = phase_center(frame, DirectionRef::B1950)?.cosines();
+    let app = phase_center(frame, DirectionRef::APP)?.cosines();
     let e_terms = rotate_shift_matrix(e_terms_shift(b1950), b1950);
     let aberration = rotate_shift_matrix(casacore_frames::besselian_aberration(epoch), app);
     let columns = IDENTITY.map(|v| {
@@ -347,7 +355,6 @@ pub(super) fn fk4_apparent_direction(
 }
 
 fn uvw_hop_direction(
-    sky: &MDirection,
     from: DirectionRef,
     to: DirectionRef,
     frame: &MeasFrame,
@@ -356,18 +363,18 @@ fn uvw_hop_direction(
     // MCuvw builds this phase centre with precession alone for the
     // JTRUE/TECLIPTIC hop. Other hops start in their named reference.
     let source = match (from, to) {
-        (JTRUE, TECLIPTIC) => sky.convert_to(JMEAN, frame)?,
+        (JTRUE, TECLIPTIC) => phase_center(frame, JMEAN)?,
         (TECLIPTIC, JTRUE) => {
-            let mean = sky.convert_to(JMEAN, frame)?;
+            let mean = phase_center(frame, JMEAN)?;
             let value = apply_hop(mean.cosines(), JTRUE, TECLIPTIC, frame, &ConvCtx::new())?;
             return Ok(value);
         }
         // MCuvw obtains the terrestrial phase centre from APP first,
         // even when the supplied direction already has the source label.
         (TOPO | HADEC | ITRF | AZEL | AZELSW | AZELGEO | AZELSWGEO, _) => {
-            sky.convert_to(APP, frame)?.convert_to(from, frame)?
+            phase_center(frame, APP)?.convert_to(from, frame)?
         }
-        _ => sky.convert_to(from, frame)?,
+        _ => phase_center(frame, from)?,
     };
     Ok(source.cosines())
 }
