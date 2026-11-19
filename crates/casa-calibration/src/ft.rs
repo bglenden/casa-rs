@@ -77,8 +77,14 @@ pub(crate) fn write_model_scratch(
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
         .collect::<MsResult<_>>()?;
-    let (plan, destinations) =
-        scratch_write_plan(ms, selected.row_indices().collect(), &[MODEL], false, lock)?;
+    let (plan, destinations) = scratch_write_plan(
+        ms,
+        selected.row_indices().collect(),
+        &[MODEL],
+        false,
+        true,
+        lock,
+    )?;
     let batch_rows = plan.batch_rows().max(1);
     let destination = &destinations[0];
     let channels: BTreeMap<_, _> = selected

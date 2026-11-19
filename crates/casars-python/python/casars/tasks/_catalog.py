@@ -382,8 +382,6 @@ def imstat(
     """Compute CASA image statistics over optional pixel, region, and channel selections.
 
     CASA's ``imstat``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``listit``, ``verbose``, ``mask``, ``stretch``, ``logfile``, ``append``.
     """
     return _call_casa(imstat, locals())
 

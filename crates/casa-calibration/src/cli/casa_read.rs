@@ -574,20 +574,14 @@ fn model(
             };
             Ok((source, [1.0, 0.0, 0.0, 0.0]))
         }
-        &[i, ref polarized @ ..] if polarized.len() < 4 => {
-            if !(i > 0.0 && i.is_finite()) {
-                return Err(TaskFailure::validation(
-                    "smodel's Stokes I must be a positive finite flux density",
-                )
-                .at("smodel"));
-            }
+        &[_, ref polarized @ ..] if polarized.len() < 4 => {
             if !use_stored_models && polarized.iter().any(|stokes| *stokes != 0.0) {
                 return Err(not_yet("smodel", &format!("{smodel:?}")));
             }
-            let mut stokes = [0.0; 4];
-            for (value, input) in stokes.iter_mut().zip(smodel) {
-                *value = input as f32;
-            }
+            let stokes = crate::point_model_stokes(&smodel).ok_or_else(|| {
+                TaskFailure::validation("smodel needs finite Stokes values representable as floats")
+                    .at("smodel")
+            })?;
             Ok((GainSolveModelSource::PointSource, stokes))
         }
         _ => Err(TaskFailure::validation(format!(

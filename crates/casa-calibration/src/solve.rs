@@ -907,9 +907,23 @@ pub(crate) fn validate_solve_interval(
     }
 }
 
+/// Convert the CASA point-model Stokes vector to the solver's single precision.
+/// Short vectors are padded with zero. An explicit empty vector is a zero
+/// model, as in `calibrater.setptmodel`, while tasks choose their stored model
+/// before calling this conversion when `smodel` is empty.
+pub fn point_model_stokes(values: &[f64]) -> Option<[f32; 4]> {
+    let mut stokes = [0.0; 4];
+    for (target, &value) in stokes.get_mut(..values.len())?.iter_mut().zip(values) {
+        *target = value as f32;
+    }
+    stokes
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(stokes)
+}
+
 pub(crate) fn validate_smodel(smodel: [f32; 4], polarized: bool) -> Result<(), GainSolveError> {
-    if smodel[0] <= 0.0
-        || smodel.iter().any(|value| !value.is_finite())
+    if smodel.iter().any(|value| !value.is_finite())
         || (!polarized && smodel[1..].iter().any(|value| *value != 0.0))
     {
         return Err(GainSolveError::UnsupportedSkyModel { smodel });

@@ -94,6 +94,7 @@ pub use model::{
     CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
     CalibrationValidationIssue, TimeCoverageSummary,
 };
+pub use model_columns::{delete_calibration_model, reset_calibration_set};
 pub use plan::{
     ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyChannelSelection,
     ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplyPlanError, ApplyPlanRequest,
@@ -118,7 +119,7 @@ pub use simulated::{
 pub use solve::{
     GainNormalization, GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode,
     GainSolveModelSource, GainSolveReport, GainSolveRequest, GainSolveRobustness, GainType,
-    RefAntSelector,
+    RefAntSelector, point_model_stokes,
 };
 pub use solve_stats::{AntennaSolveStats, SolveCounts, SolveStats, WindowSolveStats};
 pub use stats::{
