@@ -252,6 +252,15 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             raise
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
+    if name in ("smoothcal", "rerefant"):
+        for path in ("vis", "tablein"):
+            _validate_required_path(values, path, arguments[path])
+        if name == "smoothcal" and isinstance(arguments["smoothtime"], bool):
+            values["smoothtime"] = float(arguments["smoothtime"])
+        try:
+            return run(name, **values).value
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
     if name == "uvmodelfit":
         shape = arguments["comptype"]
         if isinstance(shape, str) and shape not in ("P", "G", "D"):

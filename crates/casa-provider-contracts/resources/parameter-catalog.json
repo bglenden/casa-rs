@@ -12758,6 +12758,104 @@
       "persistence_class": "profile"
     },
     {
+      "id": "calibration.tablein",
+      "semantic_revision": 1,
+      "casa_name": "tablein",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Existing input calibration table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.field",
+      "semantic_revision": 5,
+      "casa_name": "field",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Field selection expressions. Empty selects every field.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.smoothtype",
+      "semantic_revision": 1,
+      "casa_name": "smoothtype",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use the median or mean smoothing filter.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.smoothtime",
+      "semantic_revision": 1,
+      "casa_name": "smoothtime",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Full width of the smoothing window in seconds.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.ratesmooth",
+      "semantic_revision": 1,
+      "casa_name": "ratesmooth",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use the fringe rate to predict phase wraps when smoothing fringe solutions.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "weightinit.wtmode",
       "semantic_revision": 1,
       "casa_name": "wtmode",
@@ -12885,6 +12983,52 @@
       "documentation": {
         "summary": "Create WEIGHT_SPECTRUM when it is absent.",
         "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.caltable",
+      "semantic_revision": 2,
+      "casa_name": "caltable",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Calibration table the task writes.",
+        "details": null,
+        "examples": [
+          "'gain.cal'"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "data.input.vis",
+      "semantic_revision": 3,
+      "casa_name": "vis",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "measurement_set"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "One input MeasurementSet path.",
+        "details": "CASA fluxscale opens one MeasurementSet; a sequence is not a scalar path.",
+        "examples": [
+          "'observation.ms'"
+        ]
       },
       "persistence_class": "profile"
     },

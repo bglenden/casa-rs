@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 666
-- Surfaces: 40 (40 task, 0 session)
-- Surface bindings: 981
+- Concepts: 673
+- Surfaces: 42 (42 task, 0 session)
+- Surface bindings: 993
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -53,6 +53,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Concat](#surface-concat)<br><code>concat</code> | task | 1 | <code>concat</code> | 9 | Concatenate simulated interferometric MeasurementSets with per-input weights. |
 | [SimALMA](#surface-simalma)<br><code>simalma</code> | task | 1 | <code>simalma</code> | 31 | Simulate ALMA and ACA observations and combine their images |
 | [Get ALMA Antenna Positions](#surface-getantposalma)<br><code>getantposalma</code> | task | 1 | <code>calibration</code> | 10 | Retrieve antenna positions from the ALMA archive. |
+| [Smooth Calibration Solutions](#surface-smoothcal)<br><code>smoothcal</code> | task | 1 | <code>calibration</code> | 7 | Smooth selected calibration solutions in time. |
+| [Re-reference Calibration Solutions](#surface-rerefant)<br><code>rerefant</code> | task | 1 | <code>calibration</code> | 5 | Change the reference antenna in a calibration table. |
 | [Initialize Visibility Weights](#surface-initweights)<br><code>initweights</code> | task | 1 | <code>calibration</code> | 7 | Initialize MeasurementSet weights and their channel spectra. |
 | [Statistical Weights](#surface-statwt)<br><code>statwt</code> | task | 1 | <code>calibration</code> | 25 | Estimate MeasurementSet weights from visibility variance. |
 | [Calibration Statistics](#surface-calstat)<br><code>calstat</code> | task | 1 | <code>calibration</code> | 3 | Compute descriptive statistics for a calibration table column. |
@@ -1483,6 +1485,44 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>firstintegration</code> | <code>getantposalma.firstintegration@r1</code> | <code>bool</code> | <code>true</code>; optional | ALMA Service | Exclude measurements flagged as first integrations. |
 | <code>nretry</code> | <code>getantposalma.nretry@r1</code> | <code>integer</code> | <code>0</code>; optional | ALMA Service | Number of retries after the initial round of service requests. |
 | <code>rdelay</code> | <code>getantposalma.rdelay@r1</code> | <code>float</code> | <code>3.0</code>; optional | ALMA Service | Seconds between retries. |
+
+<a id="surface-smoothcal"></a>
+
+## Smooth Calibration Solutions (<code>smoothcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Smooth selected calibration solutions in time.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>tablein</code> | <code>calibration.tablein@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Existing input calibration table. |
+| <code>caltable</code> | <code>calibration.caltable@r2</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Calibration table the task writes. |
+| <code>field</code> | <code>ms.selection.field@r5</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Data selection | Field selection expressions. Empty selects every field. |
+| <code>smoothtype</code> | <code>smoothing.smoothtype@r1</code> | <code>string</code> | <code>"median"</code>; optional | Smoothing | Use the median or mean smoothing filter. |
+| <code>smoothtime</code> | <code>smoothing.smoothtime@r1</code> | <code>float</code> | <code>60.0</code>; optional | Smoothing | Full width of the smoothing window in seconds. |
+| <code>ratesmooth</code> | <code>smoothing.ratesmooth@r1</code> | <code>bool</code> | <code>false</code>; optional | Smoothing | Use the fringe rate to predict phase wraps when smoothing fringe solutions. |
+
+<a id="surface-rerefant"></a>
+
+## Re-reference Calibration Solutions (<code>rerefant</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Change the reference antenna in a calibration table.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>tablein</code> | <code>calibration.tablein@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Existing input calibration table. |
+| <code>caltable</code> | <code>calibration.caltable@r2</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Calibration table the task writes. |
+| <code>refantmode</code> | <code>setsolve.refantmode@r1</code> | <code>choice (2 values)</code> | <code>"flex"</code>; optional | Reference antenna | Whether another reference antenna is used where refant has no solution. |
+| <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>""</code>; optional | Reference antenna | Reference antenna name or id for solve workflows |
 
 <a id="surface-initweights"></a>
 
