@@ -244,7 +244,7 @@ fn run_task(
 
 fn run_calibrated_plot(
     task: &TaskInvocation<'_>,
-    options: CliOptions,
+    mut options: CliOptions,
     array_payload: Option<&Path>,
     load: PlotMsCalibrationLoader,
     library: &[String],
@@ -262,6 +262,9 @@ fn run_calibrated_plot(
             options.ms_path.display()
         ))
     })?;
+    if !options.selection.selectdata {
+        options.selection = MsSelection::default();
+    }
     let mut calibration = load(&ms, &options.selection, library)?;
     calibration.x_data_column = options.x_data_column;
     let show = task.flag("showgui")?;
