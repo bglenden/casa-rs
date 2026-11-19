@@ -12,7 +12,7 @@ use super::multi_ms::{OpenedMs, partition_paths};
 
 enum Weights {
     Ordinary(Mode),
-    Tsys(ApplyCalibrationTableSpec, bool),
+    Tsys(Box<ApplyCalibrationTableSpec>, bool),
 }
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -24,7 +24,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         Some("ones") => Weights::Ordinary(Mode::Ones),
         Some("delwtsp") => Weights::Ordinary(Mode::DeleteWeightSpectrum),
         Some("delsigsp") => Weights::Ordinary(Mode::DeleteSigmaSpectrum),
-        Some(mode @ ("tsys" | "tinttsys")) => Weights::Tsys(read_tsys(task)?, mode == "tinttsys"),
+        Some(mode @ ("tsys" | "tinttsys")) => {
+            Weights::Tsys(Box::new(read_tsys(task)?), mode == "tinttsys")
+        }
         _ => return Err(TaskFailure::validation("unknown initialization mode").at("wtmode")),
     };
     let spectrum = task.flag("dowtsp")?;
@@ -46,7 +48,7 @@ fn run_one(path: &Path, mode: &Weights, spectrum: bool) -> Result<(), TaskFailur
         }
         Weights::Tsys(spec, by_exposure) => initialize_tsys(
             &mut state.measurement_set,
-            spec.clone(),
+            spec.as_ref().clone(),
             *by_exposure,
             spectrum,
             &mut state.lock,
