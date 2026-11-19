@@ -439,16 +439,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (record, outfile = None), text_signature = "($self, record, outfile='')")]
-    fn fromrecord(
-        &self,
-        record: &Bound<'_, PyAny>,
-        outfile: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fromrecord")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (axis = None, function = None, region = None, mask = None, unit = None, stretch = None, spectype = None, restfreq = None, frame = None, logfile = None), text_signature = "($self, axis=-1, function='mean', region={}, mask='', unit='', stretch=False, spectype='default', restfreq='', frame='', logfile='')")]
     fn getprofile(
         &self,
@@ -950,12 +940,6 @@ impl PyImageTool {
     #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
     fn topixel(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("topixel")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn torecord(&self) -> PyResult<Py<PyAny>> {
-        stub("torecord")
     }
 
     /// Not yet implemented in casa-rs.

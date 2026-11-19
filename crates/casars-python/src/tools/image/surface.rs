@@ -497,7 +497,7 @@ const METHODS: &[Method] = &[
             param("outfile", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromshape",
@@ -1175,7 +1175,7 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
-    method("torecord", &[], R::Any, No),
+    method("torecord", &[], R::Any, Yes),
     method(
         "toworld",
         &[

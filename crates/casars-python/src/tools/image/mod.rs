@@ -17,6 +17,7 @@ mod metadata;
 mod pixels;
 mod point;
 mod records;
+mod serialization;
 mod stubs;
 pub(crate) mod surface;
 

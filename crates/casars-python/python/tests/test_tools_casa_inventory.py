@@ -37,7 +37,7 @@ IMPLEMENTED["image"] = {
     "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fromarray", "fromfits", "fromshape",
     "getchunk", "history", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
-    "makearray", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "type",
+    "fromrecord", "torecord", "makearray", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "type",
 }
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",
