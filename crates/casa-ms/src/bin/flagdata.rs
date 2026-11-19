@@ -341,6 +341,14 @@ mod tests {
     }
 
     #[test]
+    fn clipoutside_keeps_its_cli_switches_alongside_vector_values() {
+        for (switch, expected) in [("--clipoutside", true), ("--no-clipoutside", false)] {
+            let request = request_for(&["--vis", "in.ms", "--mode", "clip", switch]).unwrap();
+            assert_eq!(request.clipoutside, Some(expected));
+        }
+    }
+
+    #[test]
     fn casa_values_not_implemented_yet_name_978() {
         for (name, value) in [
             ("--mode", "shadow"),
