@@ -229,17 +229,12 @@ fn validate_calibration_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFa
     {
         return Err(pending("headeritems"));
     }
-    if task.flag("transform")? {
-        if task
+    if task.flag("transform")?
+        && task
             .text("freqframe")?
             .is_some_and(|value| !value.is_empty())
-        {
-            return Err(pending("freqframe"));
-        }
-        if let Some(rest_frequency) = task.text("restfreq")?.filter(|value| !value.is_empty()) {
-            super::parse_rest_frequency_hz(&rest_frequency)
-                .map_err(|error| TaskFailure::validation(error.to_string()).at("restfreq"))?;
-        }
+    {
+        return Err(pending("freqframe"));
     }
     if task.flag("selectdata")? {
         for name in ["uvrange", "array", "intent", "feed"] {
