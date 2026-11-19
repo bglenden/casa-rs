@@ -310,7 +310,10 @@ mod tests {
         assert!(request.extendflags && request.extendpols);
         assert_eq!((request.growtime, request.growfreq), (50.0, 50.0));
         assert_eq!((request.timedevscale, request.freqdevscale), (5.0, 5.0));
-        assert!(read(&["--vis", "in.ms"], applies).unwrap());
+        assert_eq!(
+            read(&["--vis", "in.ms"], |task| task.required_text("action")).unwrap(),
+            "apply"
+        );
     }
 
     #[test]
@@ -334,7 +337,7 @@ mod tests {
         assert_eq!(request.data_column, FlagDataColumn::CorrectedData);
         assert_eq!(request.quackmode, QuackMode::End);
         // A command line cannot give action=''; tests/flagging.rs runs it.
-        assert!(!read(&["--vis", "in.ms", "--action", "none"], applies).unwrap());
+        assert!(read(&["--vis", "in.ms", "--action", "none"], run).is_ok());
     }
 
     #[test]
@@ -349,7 +352,11 @@ mod tests {
             assert!(error.message.contains("#978"), "{name} {value}: {error:?}");
             assert_eq!(error.parameter.as_deref(), Some(&name[2..]));
         }
-        let error = read(&["--vis", "in.ms", "--action", "calculate"], applies).unwrap_err();
+        let error = read(
+            &["--vis", "in.ms", "--mode", "rflag", "--action", "calculate"],
+            |task| run(task).map(|_| ()),
+        )
+        .unwrap_err();
         assert!(error.message.contains("#978"), "{error:?}");
     }
 
