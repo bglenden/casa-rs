@@ -14,6 +14,8 @@ CASES = json.loads((Path(__file__).with_name('data') / 'casa_measures_spectral.j
 def arguments(value):
     if isinstance(value,dict):
         if set(value)=={'__python_bytes__'}:return bytes(value['__python_bytes__'])
+        if set(value)=={'__numpy_array__'}:
+            array=value['__numpy_array__'];return np.array(array['values'],dtype=array['dtype'])
         return {k:arguments(v) for k,v in value.items()}
     if isinstance(value,list):return [arguments(v) for v in value]
     return value
@@ -51,7 +53,10 @@ print(json.dumps(getattr(measures(),case['method'])(*case['args'],**case['kwargs
         return
     tool = measures()
     try:
-        for frame in case.get('frame', []):assert tool.doframe(frame)
+        for frame in case.get('frame', []):assert tool.doframe(arguments(frame))
+        if 'frame_builder' in case:
+            builder=case['frame_builder']
+            assert tool.doframe(getattr(tool,builder['method'])(*arguments(builder['args'])))
         if 'error' in case:
             with pytest.raises({'TypeError':TypeError,'RuntimeError':RuntimeError,'ValueError':ValueError}[case['error']['type']]) as error:
                 getattr(tool, case['method'])(*arguments(case['args']), **arguments(case['kwargs']))

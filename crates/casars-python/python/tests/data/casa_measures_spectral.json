@@ -11187,6 +11187,985 @@
       "deviation": "Preserve every vector result; compare each element with a separate CASA scalar call. CASA rejects or truncates the vector."
     },
     {
+      "name": "review_vector_offset_2",
+      "method": "measure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": [
+              10.0,
+              20.0
+            ],
+            "unit": "m/s"
+          },
+          "offset": {
+            "type": "radialvelocity",
+            "refer": "BARY",
+            "m0": {
+              "value": [
+                1.0,
+                3.0
+              ],
+              "unit": "m/s"
+            }
+          }
+        },
+        "BARY"
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": [
+            11.0,
+            21.0
+          ]
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "review_vector_offset_3",
+      "method": "measure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": [
+              10.0,
+              20.0,
+              30.0
+            ],
+            "unit": "m/s"
+          },
+          "offset": {
+            "type": "radialvelocity",
+            "refer": "BARY",
+            "m0": {
+              "value": [
+                1.0,
+                3.0
+              ],
+              "unit": "m/s"
+            }
+          }
+        },
+        "BARY"
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": [
+            11.0,
+            21.0,
+            31.0
+          ]
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "review_constructor_vector_offset",
+      "method": "radialvelocity",
+      "args": [
+        "BARY",
+        "10m/s",
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": [
+              1.0,
+              3.0
+            ],
+            "unit": "m/s"
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 10.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 1.0
+          },
+          "refer": "BARY",
+          "type": "radialvelocity"
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "review_getoffset_preserves_vector",
+      "method": "getoffset",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": 10.0,
+            "unit": "m/s"
+          },
+          "offset": {
+            "type": "radialvelocity",
+            "refer": "BARY",
+            "m0": {
+              "value": [
+                1.0,
+                3.0
+              ],
+              "unit": "m/s"
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": [
+            1.0,
+            3.0
+          ]
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "review_frame_constructor_offset",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "REST",
+          "type": "frequency"
+        },
+        "LSRK"
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 999963308.6226568
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      },
+      "frame_builder": {
+        "method": "radialvelocity",
+        "args": [
+          "LSRK",
+          "10km/s",
+          {
+            "m0": {
+              "unit": "m/s",
+              "value": 1000.0
+            },
+            "refer": "LSRK",
+            "type": "radialvelocity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "review_doframe_vector",
+      "method": "doframe",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "LSRK",
+          "m0": {
+            "value": [
+              100.0,
+              200.0
+            ],
+            "unit": "m/s"
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": true
+    },
+    {
+      "name": "review_frame_frequency_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "REST",
+          "type": "frequency"
+        },
+        "LSRK"
+      ],
+      "kwargs": {},
+      "frame": [
+        {
+          "type": "radialvelocity",
+          "refer": "LSRK",
+          "m0": {
+            "value": [
+              100.0,
+              200.0
+            ],
+            "unit": "m/s"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 999999666.4359604
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_doframe_offset",
+      "method": "doframe",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "LSRK",
+          "m0": {
+            "value": 100.0,
+            "unit": "m/s"
+          },
+          "offset": {
+            "type": "radialvelocity",
+            "refer": "LSRK",
+            "m0": {
+              "value": 20.0,
+              "unit": "m/s"
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": true
+    },
+    {
+      "name": "review_frame_frequency_offset",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "REST",
+          "type": "frequency"
+        },
+        "LSRK"
+      ],
+      "kwargs": {},
+      "frame": [
+        {
+          "type": "radialvelocity",
+          "refer": "LSRK",
+          "m0": {
+            "value": 100.0,
+            "unit": "m/s"
+          },
+          "offset": {
+            "type": "radialvelocity",
+            "refer": "LSRK",
+            "m0": {
+              "value": 20.0,
+              "unit": "m/s"
+            }
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 999999599.7231658
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_antipodal_direction",
+      "method": "measure",
+      "args": [
+        {
+          "type": "direction",
+          "refer": "J2000",
+          "m0": {
+            "value": 1.0,
+            "unit": ""
+          },
+          "m1": {
+            "value": 0.0,
+            "unit": ""
+          },
+          "m2": {
+            "value": 0.0,
+            "unit": ""
+          },
+          "offset": {
+            "type": "direction",
+            "refer": "J2000",
+            "m0": {
+              "value": -1.0,
+              "unit": ""
+            },
+            "m1": {
+              "value": 0.0,
+              "unit": ""
+            },
+            "m2": {
+              "value": 0.0,
+              "unit": ""
+            }
+          }
+        },
+        "J2000"
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.5707963267948966
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "review_inconsistent_components_535",
+      "method": "measure",
+      "args": [
+        {
+          "type": "direction",
+          "refer": "J2000",
+          "m0": {
+            "value": [
+              0.0,
+              20.0
+            ],
+            "unit": "deg"
+          },
+          "m1": {
+            "value": 10.0,
+            "unit": "deg"
+          }
+        },
+        "J2000"
+      ],
+      "kwargs": {},
+      "result": {}
+    },
+    {
+      "name": "review_inconsistent_components_536",
+      "method": "measure",
+      "args": [
+        {
+          "type": "direction",
+          "refer": "J2000",
+          "m0": {
+            "value": 0.0,
+            "unit": "deg"
+          },
+          "m1": {
+            "value": [
+              10.0,
+              20.0
+            ],
+            "unit": "deg"
+          }
+        },
+        "J2000"
+      ],
+      "kwargs": {},
+      "result": {}
+    },
+    {
+      "name": "review_numeric_type_integers_ismeasure",
+      "method": "ismeasure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": [
+              10,
+              20
+            ],
+            "unit": "m/s"
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "name": "review_numeric_type_integers_measure",
+      "method": "measure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": [
+              10,
+              20
+            ],
+            "unit": "m/s"
+          }
+        },
+        "BARY"
+      ],
+      "kwargs": {},
+      "result": {}
+    },
+    {
+      "name": "review_numeric_type_int32_ismeasure",
+      "method": "ismeasure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": {
+              "__numpy_array__": {
+                "dtype": "int32",
+                "values": [
+                  10,
+                  20
+                ]
+              }
+            },
+            "unit": "m/s"
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "name": "review_numeric_type_int32_measure",
+      "method": "measure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": {
+              "__numpy_array__": {
+                "dtype": "int32",
+                "values": [
+                  10,
+                  20
+                ]
+              }
+            },
+            "unit": "m/s"
+          }
+        },
+        "BARY"
+      ],
+      "kwargs": {},
+      "result": {}
+    },
+    {
+      "name": "review_numeric_type_int64_ismeasure",
+      "method": "ismeasure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": {
+              "__numpy_array__": {
+                "dtype": "int64",
+                "values": [
+                  10,
+                  20
+                ]
+              }
+            },
+            "unit": "m/s"
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "name": "review_numeric_type_int64_measure",
+      "method": "measure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": {
+              "__numpy_array__": {
+                "dtype": "int64",
+                "values": [
+                  10,
+                  20
+                ]
+              }
+            },
+            "unit": "m/s"
+          }
+        },
+        "BARY"
+      ],
+      "kwargs": {},
+      "result": {}
+    },
+    {
+      "name": "review_numeric_type_floats_ismeasure",
+      "method": "ismeasure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": [
+              10.0,
+              20.0
+            ],
+            "unit": "m/s"
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": true
+    },
+    {
+      "name": "review_numeric_type_floats_measure",
+      "method": "measure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": [
+              10.0,
+              20.0
+            ],
+            "unit": "m/s"
+          }
+        },
+        "BARY"
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": [
+            10.0,
+            20.0
+          ]
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "review_numeric_type_float32_ismeasure",
+      "method": "ismeasure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": {
+              "__numpy_array__": {
+                "dtype": "float32",
+                "values": [
+                  10.0,
+                  20.0
+                ]
+              }
+            },
+            "unit": "m/s"
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": true
+    },
+    {
+      "name": "review_numeric_type_float32_measure",
+      "method": "measure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": {
+              "__numpy_array__": {
+                "dtype": "float32",
+                "values": [
+                  10.0,
+                  20.0
+                ]
+              }
+            },
+            "unit": "m/s"
+          }
+        },
+        "BARY"
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": [
+            10.0,
+            20.0
+          ]
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "review_signed_RATIO_tofrequency",
+      "method": "tofrequency",
+      "args": [
+        "BARY",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": -149896229.0
+          },
+          "refer": "RATIO",
+          "type": "doppler"
+        },
+        {
+          "unit": "GHz",
+          "value": 1.0
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 500000000.0
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_signed_RATIO_torestfrequency",
+      "method": "torestfrequency",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": -149896229.0
+          },
+          "refer": "RATIO",
+          "type": "doppler"
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 2000000000.0
+        },
+        "refer": "REST",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_signed_OPTICAL_tofrequency",
+      "method": "tofrequency",
+      "args": [
+        "BARY",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": -599584916.0
+          },
+          "refer": "OPTICAL",
+          "type": "doppler"
+        },
+        {
+          "unit": "GHz",
+          "value": 1.0
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_signed_OPTICAL_torestfrequency",
+      "method": "torestfrequency",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": -599584916.0
+          },
+          "refer": "OPTICAL",
+          "type": "doppler"
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "refer": "REST",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_signed_RADIO_tofrequency",
+      "method": "tofrequency",
+      "args": [
+        "BARY",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 599584916.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        {
+          "unit": "GHz",
+          "value": 1.0
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_signed_RADIO_torestfrequency",
+      "method": "torestfrequency",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 599584916.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "refer": "REST",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_rest_quantity_precedence",
+      "method": "tofrequency",
+      "args": [
+        "BARY",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 0.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 10.0
+          },
+          "refer": "BARY",
+          "type": "frequency",
+          "unit": "Hz",
+          "value": 20.0
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 20.0
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "review_bytes_offset_getoffset",
+      "method": "getoffset",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": 3.0,
+            "unit": "m/s"
+          },
+          "offset": {
+            "type": "radialvelocity",
+            "refer": "BARY",
+            "m0": {
+              "value": 2.0,
+              "unit": {
+                "__python_bytes__": [
+                  109,
+                  47,
+                  115
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 2.0
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "review_bytes_offset_ismeasure",
+      "method": "ismeasure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": 3.0,
+            "unit": "m/s"
+          },
+          "offset": {
+            "type": "radialvelocity",
+            "refer": "BARY",
+            "m0": {
+              "value": 2.0,
+              "unit": {
+                "__python_bytes__": [
+                  109,
+                  47,
+                  115
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "kwargs": {},
+      "result": true
+    },
+    {
+      "name": "review_bytes_offset_measure",
+      "method": "measure",
+      "args": [
+        {
+          "type": "radialvelocity",
+          "refer": "BARY",
+          "m0": {
+            "value": 3.0,
+            "unit": "m/s"
+          },
+          "offset": {
+            "type": "radialvelocity",
+            "refer": "BARY",
+            "m0": {
+              "value": 2.0,
+              "unit": {
+                "__python_bytes__": [
+                  109,
+                  47,
+                  115
+                ]
+              }
+            }
+          }
+        },
+        "BARY"
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 5.0
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
       "name": "rest_units_redefined_hz",
       "method": "tofrequency",
       "args": [

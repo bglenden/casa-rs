@@ -143,6 +143,42 @@ for case in cases:
         controls.append(clean(getattr(measures(),case['method'])(*values,**case['kwargs'])))
     case['scalar_controls']=controls
     case['deviation']='Preserve every vector result; compare each element with a separate CASA scalar call. CASA rejects or truncates the vector.'
+# Review regressions: reference origins, frame use, vector types and edge algebra.
+def rec(kind,ref,*values):
+    return dict(type=kind,refer=ref,**{'m'+str(i):{'value':v,'unit':u} for i,(v,u) in enumerate(values)})
+rvrec=lambda values,ref='BARY':rec('radialvelocity',ref,(values,'m/s'))
+origin=rvrec([1.,3.])
+for values in [[10.,20.],[10.,20.,30.]]:
+    capture('review_vector_offset_'+str(len(values)),'measure',[dict(rvrec(values),offset=origin),'BARY'])
+capture('review_constructor_vector_offset','radialvelocity',['BARY','10m/s',origin])
+capture('review_getoffset_preserves_vector','getoffset',[dict(rvrec(10.),offset=origin)])
+frame_base=m.radialvelocity('LSRK','1km/s')
+frame_args=['LSRK','10km/s',frame_base]
+frame_rv=m.radialvelocity(*frame_args)
+capture('review_frame_constructor_offset','measure',[m.frequency('REST','1GHz'),'LSRK'],frame=[frame_rv])
+cases[-1]['frame_builder']={'method':'radialvelocity','args':clean(frame_args)}
+cases[-1].pop('frame')
+for name,frame_rv in [('vector',rvrec([100.,200.],'LSRK')),('offset',dict(rvrec(100.,'LSRK'),offset=rvrec(20.,'LSRK')))]:
+    capture('review_doframe_'+name,'doframe',[frame_rv])
+    capture('review_frame_frequency_'+name,'measure',[m.frequency('REST','1GHz'),'LSRK'],frame=[frame_rv])
+cartesian=lambda values:rec('direction','J2000',*((v,'') for v in values))
+capture('review_antipodal_direction','measure',[dict(cartesian([1.,0.,0.]),offset=cartesian([-1.,0.,0.])),'J2000'])
+for values in [([0.,20.],10.),(0.,[10.,20.])]:
+    capture('review_inconsistent_components_'+str(len(cases)),'measure',[rec('direction','J2000',(values[0],'deg'),(values[1],'deg')),'J2000'])
+for name,values in [('integers',[10,20]),('int32',np.array([10,20],dtype=np.int32)),('int64',np.array([10,20],dtype=np.int64)),('floats',[10.,20.]),('float32',np.array([10,20],dtype=np.float32))]:
+    for method,extra in [('ismeasure',[]),('measure',['BARY'])]:
+        capture('review_numeric_type_'+name+'_'+method,method,[rvrec(values),*extra])
+        if isinstance(values,np.ndarray):
+            cases[-1]['args'][0]['m0']['value']={'__numpy_array__':{'dtype':str(values.dtype),'values':values.tolist()}}
+for ref,value in [('RATIO','-0.5'),('OPTICAL','-2'),('RADIO','2')]:
+    signed=m.doppler(ref,value)
+    capture('review_signed_'+ref+'_tofrequency','tofrequency',['BARY',signed,{'unit':'GHz','value':1.}])
+    capture('review_signed_'+ref+'_torestfrequency','torestfrequency',[m.frequency('BARY','1GHz'),signed])
+outer=dict(m.frequency('BARY','10Hz'),unit='Hz',value=20.)
+capture('review_rest_quantity_precedence','tofrequency',['BARY',m.doppler('RADIO','0km/s'),outer])
+byte_offset=dict(rvrec(3.),offset=rec('radialvelocity','BARY',(2.,b'm/s')))
+for method,extra in [('getoffset',[]),('ismeasure',[]),('measure',['BARY'])]:
+    capture('review_bytes_offset_'+method,method,[byte_offset,*extra])
 # Run this last: unit definitions are process-global in both tools.
 from casatools import quanta
 quanta().define('Hz','2/s')

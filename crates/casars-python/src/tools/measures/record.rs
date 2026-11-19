@@ -6,6 +6,7 @@ use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone)]
 pub(super) struct Measures {
     pub(super) values: Vec<Measure>,
     pub(super) vector: bool,
@@ -25,7 +26,9 @@ impl Measures {
         }
         let mut fields = fields.clone();
         let offset = match fields.remove("offset") {
-            Some(Variant::Record(offset)) => Some(Box::new(Self::read_fields(&offset, depth + 1)?)),
+            Some(Variant::Record(offset)) => Some(Box::new(
+                Self::read_fields(&offset, depth + 1)?.into_reference_origin(),
+            )),
             Some(_) => {
                 return Err(HolderError::Invalid(
                     "Illegal offset in MeasureHolder::fromRecord\n".into(),
@@ -39,20 +42,24 @@ impl Measures {
             let Some(Variant::Record(quantity)) = fields.get_mut(key) else {
                 break;
             };
+            let n = match quantity.get("value") {
+                Some(Variant::Numbers(v) | Variant::Array { values: v, .. }) => v.len(),
+                _ => 1,
+            };
+            if length.is_some_and(|nvalues| nvalues != n) {
+                return Err(HolderError::Invalid(format!(
+                    "Illegal number of values in MeasureHolder m{index}\n"
+                )));
+            }
+            length = Some(n);
             if let Some(Variant::Numbers(v) | Variant::Array { values: v, .. }) =
                 quantity.get("value")
             {
-                if length.is_some_and(|n| n != v.len()) {
+                if v.is_empty() || !quantity.is_double_vector() {
                     return Err(HolderError::Invalid(
-                        "Inconsistent measure array lengths in MeasureHolder::fromRecord\n".into(),
+                        "Illegal quantity in MeasureHolder::fromRecord\n".into(),
                     ));
                 }
-                if v.is_empty() {
-                    return Err(HolderError::Invalid(
-                        "empty measure array refused (#1252)".into(),
-                    ));
-                }
-                length = Some(v.len());
                 let data = v.clone();
                 let mut scalar = (**quantity).clone();
                 scalar.insert("value".into(), Variant::Number(data[0]));
@@ -88,6 +95,39 @@ impl Measures {
             warning,
             offset,
         })
+    }
+
+    /// A reference offset and a frame element use the first MeasureHolder value.
+    pub(super) fn into_reference_origin(mut self) -> Self {
+        self.values.truncate(1);
+        self.vector = false;
+        self.offset = self.offset.map(|v| Box::new(v.into_reference_origin()));
+        self
+    }
+
+    /// Materialize a radial-velocity frame origin against the real frame.
+    /// Keep its offset until this point so doframe can precede other elements.
+    pub(super) fn radial_velocity(
+        &self,
+        frame: &casa_types::measures::MeasFrame,
+    ) -> Result<casa_types::measures::radial_velocity::MRadialVelocity, String> {
+        use casa_types::measures::radial_velocity::MRadialVelocity;
+        let first = self.values[0];
+        let MeasureValue::RadialVelocity(mut ms) = first.value else {
+            return Err("Non-radialvelocity frame element".into());
+        };
+        let refer = first
+            .refer
+            .parse()
+            .map_err(|e: casa_types::measures::MeasureError| e.to_string())?;
+        if let Some(offset) = &self.offset {
+            ms += offset
+                .radial_velocity(frame)?
+                .convert_to(refer, frame)
+                .map_err(|e| e.to_string())?
+                .ms();
+        }
+        Ok(MRadialVelocity::new(ms, refer))
     }
 
     pub(super) fn scalar(value: Measure) -> Self {
@@ -173,9 +213,9 @@ impl Measures {
             None
         };
         let mut converted = Vec::with_capacity(self.values.len());
-        for (i, value) in self.values.iter().enumerate() {
+        for value in &self.values {
             let value = if let Some(offset) = &offset {
-                match add(*value, offset.values[i % offset.values.len()]) {
+                match add(*value, offset.values[0]) {
                     Ok(value) => value,
                     Err(error) => return Ok(Err(error)),
                 }
@@ -212,7 +252,11 @@ fn add(mut base: Measure, offset: Measure) -> Result<Measure, String> {
         (MeasureValue::Direction(a), MeasureValue::Direction(b)) => {
             let v: [f64; 3] = std::array::from_fn(|i| a[i] + b[i]);
             let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-            MeasureValue::Direction(v.map(|x| x / norm))
+            MeasureValue::Direction(if norm == 0.0 {
+                [0.0, 0.0, 1.0]
+            } else {
+                v.map(|x| x / norm)
+            })
         }
         _ => return Err("Unmatched offset type in MeasureHolder::fromRecord".into()),
     };

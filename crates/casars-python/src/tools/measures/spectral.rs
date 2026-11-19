@@ -50,7 +50,9 @@ fn define(
     let mut result = Measures::scalar(base);
     if !off.0.is_empty() {
         match Measures::read(off) {
-            Ok(offset) if offset.values[0].kind() == kind => result.offset = Some(Box::new(offset)),
+            Ok(offset) if offset.values[0].kind() == kind => {
+                result.offset = Some(Box::new(offset.into_reference_origin()))
+            }
             Ok(_) if kind == MeasureKind::Doppler => {
                 return failed(lines, "Illegal offset type specified, not used\n");
             }
@@ -87,14 +89,13 @@ fn doppler_rest_hz(value: &Variant) -> Result<Option<f64>, String> {
 // even when rfq is a frequency measure with a frequency-equivalent m0 unit.
 fn quantity_rest_hz(value: &RecordArg) -> Option<f64> {
     let outer = Variant::Record(value.0.clone().into());
-    let q = if let Ok(measure) = Measures::read(value) {
+    let q = quantity(&outer).ok().or_else(|| {
+        let measure = Measures::read(value).ok()?;
         if measure.values[0].kind() != MeasureKind::Frequency {
             return None;
         }
-        quantity(value.0.get("m0")?).ok()?
-    } else {
-        quantity(&outer).ok()?
-    };
+        quantity(value.0.get("m0")?).ok()
+    })?;
     let hz = casa_types::quanta::Unit::new("Hz").ok()?;
     if q.unit().val().dim != hz.val().dim {
         return None;
@@ -208,7 +209,12 @@ impl PyMeasures {
                 values.map(|v| {
                     Ok(Measure {
                         refer,
-                        value: MeasureValue::Frequency(doppler(v)?.shift_frequency_hz(rest)),
+                        value: MeasureValue::Frequency(
+                            doppler(v)?
+                                .convert_to(DopplerRef::BETA, &MeasFrame::new())
+                                .map_err(|e| e.to_string())?
+                                .shift_frequency_hz(rest),
+                        ),
                     })
                 }),
                 lines,
@@ -285,7 +291,9 @@ impl PyMeasures {
                 let MeasureValue::Frequency(hz) = v.value else {
                     return Err("Illegal frequency or Doppler specified".into());
                 };
-                let dop = doppler(dop.values[i % dop.values.len()])?;
+                let dop = doppler(dop.values[i % dop.values.len()])?
+                    .convert_to(DopplerRef::BETA, &MeasFrame::new())
+                    .map_err(|e| e.to_string())?;
                 i += 1;
                 Ok(Measure {
                     refer: "REST",

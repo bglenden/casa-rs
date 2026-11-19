@@ -45,6 +45,25 @@ fn read(record: &RecordArg, context: &str, lines: &mut Vec<LogLine>) -> Option<M
 /// `me.doframe(v)`: an epoch, position or direction joins the frame
 /// (`True`); other measures are not frame elements (`False`).
 pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
+    if matches!(v.0.get("type"), Some(crate::convert::Variant::Text(kind)) if kind.eq_ignore_ascii_case("radialvelocity"))
+    {
+        return match super::record::Measures::read(v) {
+            Ok(values) => {
+                if let Some(warning) = &values.warning {
+                    lines.push(LogLine::warning(warning.clone()));
+                }
+                state.frame.radial_velocity = Some(values.into_reference_origin());
+                CasaValue::Bool(true)
+            }
+            Err(error) => {
+                lines.push(LogLine::error(format!(
+                    "{}Non-measure type v in measure conversion",
+                    error.message()
+                )));
+                CasaValue::Bool(false)
+            }
+        };
+    }
     let Some(measure) = read(v, "Non-measure type v in measure conversion", lines) else {
         return CasaValue::Bool(false);
     };
@@ -53,7 +72,7 @@ pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>
         MeasureKind::Epoch => &mut frame.epoch,
         MeasureKind::Position => &mut frame.position,
         MeasureKind::Direction => &mut frame.direction,
-        MeasureKind::RadialVelocity => &mut frame.radial_velocity,
+        MeasureKind::RadialVelocity => unreachable!("handled with reference offsets above"),
         MeasureKind::Frequency | MeasureKind::Doppler => return CasaValue::Bool(false),
     };
     *slot = Some(measure);
@@ -153,15 +172,10 @@ pub(super) fn convert(
     let measures = state.measures().map_err(no_measures)?;
     let converted = (|| {
         let mut frame = MeasFrame::new().with_measures(measures);
-        let elements = state.frame;
-        for element in [
-            elements.epoch,
-            elements.position,
-            elements.direction,
-            elements.radial_velocity,
-        ]
-        .into_iter()
-        .flatten()
+        let elements = &state.frame;
+        for element in [elements.epoch, elements.position, elements.direction]
+            .into_iter()
+            .flatten()
         {
             frame = match element.to_casa()? {
                 CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
@@ -170,6 +184,10 @@ pub(super) fn convert(
                 CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
                 CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
             };
+        }
+        if let Some(velocity) = &elements.radial_velocity {
+            let value = velocity.radial_velocity(&frame)?;
+            frame = frame.with_radial_velocity(value);
         }
         let unsupported =
             |kind: &str| format!("the {target} {kind} frame is not yet implemented in casa-rs");

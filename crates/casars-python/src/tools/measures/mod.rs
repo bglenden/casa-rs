@@ -53,12 +53,12 @@ use crate::tools::{LogLine, emit, not_yet_implemented_in};
 const LOGGER: &str = "casars.tools.measures";
 
 /// The frame `doframe` sets.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct Frame {
     epoch: Option<Measure>,
     position: Option<Measure>,
     direction: Option<Measure>,
-    radial_velocity: Option<Measure>,
+    radial_velocity: Option<record::Measures>,
 }
 
 /// The tool's state: the frame and the measures data.

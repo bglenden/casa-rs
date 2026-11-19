@@ -107,6 +107,14 @@ impl From<BTreeMap<String, Variant>> for VariantRecord {
     }
 }
 
+impl VariantRecord {
+    /// Whether a captured quantity vector has CASA's floating numeric type.
+    /// MeasureHolder accepts floating vectors, but not integer QuantumHolders.
+    pub(crate) fn is_double_vector(&self) -> bool {
+        self.scalar_kind.is_none()
+    }
+}
+
 impl std::ops::Deref for VariantRecord {
     type Target = BTreeMap<String, Variant>;
 

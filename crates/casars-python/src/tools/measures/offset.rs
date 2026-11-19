@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use pyo3::exceptions::{PyNotImplementedError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::types::{PyBool, PyBytes, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 use super::PyMeasures;
 use super::record::Measures;
@@ -122,6 +122,14 @@ fn copy_value<'py>(value: &Bound<'py, PyAny>, depth: usize) -> PyResult<Bound<'p
     }
     if value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)? {
         return value.call_method0("copy");
+    }
+    if let Ok(bytes) = value.cast::<PyBytes>() {
+        let text: String = bytes.call_method1("decode", ("utf-8",))?.extract()?;
+        return Ok(pyo3::types::PyString::new(
+            value.py(),
+            text.split('\0').next().unwrap_or_default(),
+        )
+        .into_any());
     }
     if value.is_instance_of::<PyString>()
         || value.is_instance_of::<PyBool>()
