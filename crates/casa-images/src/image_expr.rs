@@ -1335,6 +1335,26 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         }
     }
 
+    /// Convert a typed expression window without changing its geometry.
+    pub(crate) fn map_pixel_type<U: ImageExprValue>(
+        self,
+        convert: impl Fn(T) -> U + Copy + 'static,
+    ) -> Result<ImageExprBuilder<'a, U>, ImageError> {
+        let compiled = self.compile()?;
+        Ok(ImageExprBuilder {
+            node: NumericExprNode::TypeBridge {
+                eval_fn: Arc::new(move |start, shape, stride| {
+                    compiled
+                        .get_slice_with_stride(start, shape, stride)
+                        .map(|pixels| pixels.mapv(convert))
+                        .map_err(|error| LatticeError::Table(error.to_string()))
+                }),
+            },
+            meta: self.meta,
+            expr_string: None,
+        })
+    }
+
     /// Negates the expression lazily.
     pub fn negate(self) -> Self {
         self.unary(ImageExprUnaryOp::Negate)

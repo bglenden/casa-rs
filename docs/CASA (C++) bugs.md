@@ -7109,14 +7109,25 @@ continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
 all 17 original history entries intact (#977).
 
-## PlotMS disabling selection calls the selection setter with a missing argument
+## imsubimage aborts for an out-of-range keepaxes index
 
-The installed CASA PlotMS wrapper raises `Exception("updateImmediately must
-be a boolean")` for `selectdata=False`. The wrapper's no-selection call omits
-a selector argument before the update flag. casa-rs applies the requested
-unfiltered selection and leaves the caller's selector expressions inactive
-(#1526).
+On a four-axis image, CASA 6.7.6.14 aborts the process with
+`itsAxes(i) >= naxes` for `imsubimage(dropdeg=True, keepaxes=[4])`.
+The check is in casacore's `AxesSpecifier::apply`. casa-rs returns an
+out-of-range error before creating or replacing the output image. With
+`dropdeg=False`, CASA and casa-rs ignore `keepaxes`.
 
+## imsubimage permutes coordinate labels after dropping transposed axes
+
+In CASA 6.7.6.14, take a cube in RA, Dec, Stokes, frequency order and
+apply `imtrans(order="3012")`. Then run
+`imsubimage(box="1,2,4,5", chans="2", stokes="Q", dropdeg=True, keepaxes=[0])`.
+The resulting shape is `[1, 4, 4]`, with pixels in frequency, RA, Dec order.
+CASA labels the axes Dec, frequency, RA. In
+`CoordinateUtil::dropRemovedAxes`, the permutation passed to
+`CoordinateSystem::transpose` maps from creation order to pixel order,
+while `transpose` expects the inverse. casa-rs keeps the coordinates on
+their original pixel axes as it removes Stokes.
 
 ## plotbandpass passes a fractional platforming channel to range
 
@@ -7128,6 +7139,14 @@ The paired 64-channel fixture enters this branch.
 casa-rs evaluates the check at integer channel indices. In the fixture,
 a step at channel 32 produces a platforming report at the 10 percent
 threshold and a clean result at the 100 percent threshold (#1526).
+
+## PlotMS disabling selection calls the selection setter with a missing argument
+
+The installed CASA PlotMS wrapper raises `Exception("updateImmediately must
+be a boolean")` for `selectdata=False`. The wrapper's no-selection call omits
+a selector argument before the update flag. casa-rs applies the requested
+unfiltered selection and leaves the caller's selector expressions inactive
+(#1526).
 
 ## plotbandpass references an undefined name when WEATHER is absent
 

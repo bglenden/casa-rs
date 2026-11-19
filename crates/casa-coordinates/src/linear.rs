@@ -137,7 +137,7 @@ impl LinearCoordinate {
     /// with a dropped one, so that the dropped axis's value would move the
     /// kept axes' world values or theirs move it. Without coupling, the kept
     /// axes convert exactly as before, whatever the dropped axes hold.
-    pub(crate) fn kept_axes(&self, kept: &[usize]) -> Option<Self> {
+    pub fn kept_axes(&self, kept: &[usize]) -> Option<Self> {
         let dropped = (0..self.n_axes()).filter(|axis| !kept.contains(axis));
         let coupled = dropped
             .flat_map(|axis| kept.iter().map(move |&k| (axis, k)))

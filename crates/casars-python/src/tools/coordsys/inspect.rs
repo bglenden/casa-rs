@@ -57,7 +57,7 @@ fn axis_names(coordinates: &CoordinateSystem) -> Vec<String> {
 
 fn units(coordinate: &CoordinateModel) -> Vec<String> {
     match coordinate {
-        CoordinateModel::Direction(direction) => direction.world_units().to_vec(),
+        CoordinateModel::Direction(direction) => direction.visible_world_units(),
         _ => coordinate.axis_units(),
     }
 }

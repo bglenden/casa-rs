@@ -1013,9 +1013,8 @@ def flagdata(
     ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
     ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
     ``flagneartime``, ``flagnearfreq``, ``minrel``, ``maxrel``, ``minabs``,
-    ``maxabs``, ``spwchan``, ``spwcorr``, ``basecnt``, ``fieldcnt``,
-    ``name``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,
-    ``overwrite``, ``writeflags``.
+    ``maxabs``, ``basecnt``, ``fieldcnt``, ``display``, ``savepars``,
+    ``cmdreason``, ``outfile``, ``overwrite``, ``writeflags``.
     """
     return _call_casa(flagdata, locals())
 
@@ -1099,9 +1098,6 @@ def imsubimage(
     """Extract a CASA-style image section
 
     CASA's ``imsubimage``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``region``, ``stokes``, ``mask``, ``dropdeg``, ``verbose``, ``stretch``,
-    ``keepaxes``.
     """
     return _call_casa(imsubimage, locals())
 

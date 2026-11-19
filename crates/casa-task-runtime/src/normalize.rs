@@ -388,10 +388,14 @@ fn apply_rule(
             capabilities,
         } => {
             let value = map_strings(value, |value| {
-                Ok(if *grammar == SelectorGrammar::Field {
-                    normalize_field_selector(value)
-                } else {
-                    normalize_selector(value)
+                Ok(match grammar {
+                    SelectorGrammar::Field => normalize_field_selector(value),
+                    // CRTF newlines delimit regions; spaces inside paths and
+                    // quoted annotations are also meaningful.
+                    SelectorGrammar::ImageRegion if !value.trim().is_empty() => {
+                        value.trim().to_string()
+                    }
+                    _ => normalize_selector(value),
                 })
             })?;
             validate_selector_capabilities(*grammar, &value, capabilities)

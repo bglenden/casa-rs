@@ -203,6 +203,32 @@ impl CoordinateSystem {
 
             let n_world = coord.n_world_axes() as i32;
             let n_pixel = coord.n_pixel_axes() as i32;
+            if let CoordinateModel::Direction(direction) = coord
+                && let Some(removed) = direction.removed_axis()
+            {
+                for (kind, axis) in [("pixel", next_pixel_axis), ("world", next_world_axis)] {
+                    let mut map = vec![axis; 2];
+                    map[removed.index] = -(axis + removed.index as i32 + 1);
+                    rec.upsert(
+                        format!("{kind}map{index}"),
+                        Value::Array(ArrayValue::from_i32_vec(map)),
+                    );
+                }
+                let mut pixel = [0.0; 2];
+                pixel[removed.index] = removed.pixel;
+                let mut world = direction.pixel_to_world(pixel).unwrap_or([0.0; 2]);
+                world[removed.index] = removed.world_rad;
+                for (kind, values) in [("pixel", pixel), ("world", direction.in_world_units(world))]
+                {
+                    rec.upsert(
+                        format!("{kind}replace{index}"),
+                        Value::Array(ArrayValue::from_f64_vec(values.to_vec())),
+                    );
+                }
+                next_pixel_axis += 1;
+                next_world_axis += 1;
+                continue;
+            }
             rec.upsert(
                 format!("worldmap{index}"),
                 Value::Array(ArrayValue::from_i32_vec(
@@ -264,8 +290,7 @@ impl CoordinateSystem {
     /// that no coordinate order represents: a coordinate whose axes are out
     /// of its own order (`imtrans order='1023'`) or not adjacent
     /// (`order='0213'`), world axes ordered unlike the pixel axes, or any
-    /// other removed axis (`imsubimage(dropdeg=True)` of a single-pixel
-    /// direction axis).
+    /// removed axis other than a direction slice or an independent linear axis.
     /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
     /// the system's axes, as for any other malformed record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {

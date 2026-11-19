@@ -655,9 +655,7 @@ impl CoordinateSystem {
             .flat_map(|index| {
                 let coordinate = system.coordinate(index);
                 match coordinate {
-                    crate::CoordinateModel::Direction(direction) => {
-                        direction.world_units().to_vec()
-                    }
+                    crate::CoordinateModel::Direction(direction) => direction.visible_world_units(),
                     _ => coordinate.axis_units(),
                 }
             })
@@ -1140,7 +1138,7 @@ impl CoordinateSystem {
                 std::f64::consts::FRAC_PI_2 + 1e-10_f64.to_radians() + 8.0 * f64::EPSILON;
             if field == "crval"
                 && let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
-                && direction.reference_value()[1].abs() > pole_limit
+                && direction.projection_reference()[1].abs() > pole_limit
             {
                 return Err(CoordinateError::InvalidRecord(
                     "direction latitude is out of range".into(),

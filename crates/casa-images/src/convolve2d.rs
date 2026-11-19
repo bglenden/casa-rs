@@ -63,6 +63,11 @@ fn direction_axes(
     let CoordinateModel::Direction(direction) = coordinates.coordinate(index) else {
         unreachable!("find_coordinate found a direction coordinate");
     };
+    if direction.n_pixel_axes() != 2 {
+        return Err(ImageError::InvalidMetadata(
+            "convolve2d needs both direction axes".into(),
+        ));
+    }
     Ok((first, direction))
 }
 

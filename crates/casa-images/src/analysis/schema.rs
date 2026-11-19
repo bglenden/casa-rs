@@ -349,22 +349,64 @@ pub struct ImpvRequest {
     pub overwrite: bool,
 }
 
-/// CASA `imsubimage` request for tutorial pixel-box/channel extraction.
+/// CASA `imsubimage` request supporting full spatial/spectral/Stokes/mask
+/// selection, degenerate axis dropping, and output overwrite control.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImsubimageRequest {
-    /// Input CASA image path.
+    /// Input CASA or FITS image path.
     pub imagename: PathBuf,
     /// Output CASA image path.
     pub outfile: PathBuf,
-    /// CASA inclusive pixel box, formatted as `x0,y0,x1,y1`.
-    #[serde(default)]
+    /// CASA inclusive pixel box (or comma-separated quadruplets), formatted as `x0,y0,x1,y1[,...]`.
+    #[serde(default, alias = "box")]
     pub box_pixels: Option<String>,
-    /// CASA channel expression, supporting tutorial forms like `4~12`.
+    /// Region selection (CRTF string/file or saved `image:region` name).
+    #[serde(default)]
+    pub region: Option<String>,
+    /// CASA channel expression, supporting ranges, comparisons, and steps.
     #[serde(default)]
     pub chans: Option<String>,
+    /// CASA Stokes selection (e.g. `I`, `QU`, `I,V`).
+    #[serde(default)]
+    pub stokes: Option<String>,
+    /// LEL mask expression or named `image:maskname` mask reference.
+    #[serde(default)]
+    pub mask: Option<String>,
+    /// Drop degenerate (length-1) axes unless listed in `keepaxes`.
+    #[serde(default)]
+    pub dropdeg: bool,
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
+    /// Emit informational log messages during execution.
+    #[serde(default = "default_true")]
+    pub verbose: bool,
+    /// Stretch lower-dimensional masks along matching degenerate axes.
+    #[serde(default)]
+    pub stretch: bool,
+    /// Zero-based degenerate pixel axes to preserve when `dropdeg` is true.
+    #[serde(default)]
+    pub keepaxes: Vec<i64>,
+}
+
+impl Default for ImsubimageRequest {
+    /// CASA's defaults, as recorded by the `imsubimage` task surface.
+    fn default() -> Self {
+        Self {
+            imagename: PathBuf::new(),
+            outfile: PathBuf::new(),
+            box_pixels: None,
+            region: None,
+            chans: None,
+            stokes: None,
+            mask: None,
+            dropdeg: false,
+            overwrite: false,
+            verbose: default_true(),
+            stretch: false,
+            keepaxes: Vec::new(),
+        }
+    }
 }
 
 /// CASA `immath` request supporting `evalexpr`, `spix`, `pola`, `poli`,
