@@ -8,7 +8,7 @@ use casa_types::{ArrayValue, ScalarValue, Value, quanta::time::MvTime};
 
 use super::{GencalError, GencalRequest, get_string};
 
-const ARCHIVE: &str = "http://www.vla.nrao.edu/cgi-bin/evlais_blines.cgi?Year=";
+const ARCHIVE: &str = "www.vla.nrao.edu/cgi-bin/evlais_blines.cgi?Year=";
 const FIRST_EVLA_YEAR: i32 = 2010;
 const MONTHS: [&str; 12] = [
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
@@ -47,22 +47,22 @@ pub(super) fn resolve(
         return Ok(None);
     }
     let mut antennas = load_antennas(ms)?;
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(30)))
-        .build()
-        .into();
-    let query = |year| agent.get(format!("{ARCHIVE}{year}")).call();
-    let Ok(first) = query(FIRST_EVLA_YEAR) else {
-        return Ok(None);
+    let agent = crate::calibration_service::agent(Duration::from_secs(30)).map_err(invalid)?;
+    let query = |scheme, year| agent.get(format!("{scheme}://{ARCHIVE}{year}")).call();
+    let scheme = match query("http", FIRST_EVLA_YEAR) {
+        Ok(_) => "http",
+        // Some institutional proxies permit CONNECT only for HTTPS. The
+        // archive serves the same data through the encrypted endpoint.
+        Err(ureq::Error::Io(_)) if query("https", FIRST_EVLA_YEAR).is_ok() => "https",
+        Err(_) => return Ok(None),
     };
-    drop(first);
     let unix_seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(invalid)?
         .as_secs_f64();
     let year = MvTime::from_mjd_seconds(unix_seconds + 40_587.0 * 86_400.0).year();
     for correction_year in FIRST_EVLA_YEAR..=year {
-        let mut response = query(correction_year).map_err(invalid)?;
+        let mut response = query(scheme, correction_year).map_err(invalid)?;
         let text = response.body_mut().read_to_string().map_err(invalid)?;
         accumulate(&mut antennas, start, time_limit, correction_year, &text)?;
     }

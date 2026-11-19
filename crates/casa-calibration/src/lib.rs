@@ -22,6 +22,7 @@
 
 mod antpos_vla;
 mod bandpass;
+mod calibration_service;
 mod callib;
 mod casa_return;
 mod cli;

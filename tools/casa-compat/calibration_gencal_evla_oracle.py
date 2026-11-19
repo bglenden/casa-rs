@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from threading import Thread
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import install_opener
 
 import casatasks as casa
 from casatools import table
@@ -39,8 +40,15 @@ def archive_proxy(fail_at=None):
     calls = []
 
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+
         def log_message(self, *args):
             pass
+
+        def do_CONNECT(self):
+            assert self.path == 'www.vla.nrao.edu:80'
+            self.send_response_only(200, 'Connection established')
+            self.end_headers()
 
         def do_GET(self):
             url = urlsplit(self.path)
@@ -52,14 +60,19 @@ def archive_proxy(fail_at=None):
             body = ARCHIVE_2010 if year == 2010 else b'<pre>\n</pre>\n'
             self.send_response(200)
             self.send_header('Content-Length', str(len(body)))
+            self.send_header('Connection', 'close')
             self.end_headers()
             self.wfile.write(body)
+            self.close_connection = True
 
-    variables = ('http_proxy', 'HTTP_PROXY', 'no_proxy', 'NO_PROXY')
+    proxies = ('http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY')
+    variables = (*proxies, 'no_proxy', 'NO_PROXY')
     old = {name: os.environ.get(name) for name in variables}
     with ThreadingHTTPServer(('127.0.0.1', 0), Handler) as server:
         proxy = f'http://127.0.0.1:{server.server_port}'
-        os.environ.update(dict(zip(variables, (proxy, proxy, '', ''), strict=True)))
+        os.environ.update({name: proxy for name in proxies})
+        os.environ.update(no_proxy='', NO_PROXY='')
+        install_opener(None)
         worker = Thread(target=server.serve_forever, daemon=True)
         worker.start()
         try:
@@ -72,6 +85,7 @@ def archive_proxy(fail_at=None):
                     os.environ.pop(name, None)
                 else:
                     os.environ[name] = value
+            install_opener(None)
 
 
 def configure_ms(root, name, base, stamp, telescope='EVLA'):
