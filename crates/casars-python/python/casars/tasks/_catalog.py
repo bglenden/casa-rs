@@ -1346,6 +1346,42 @@ def initweights(
     """
     return _call_casa(initweights, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'initweights')
+def statwt(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    selectdata: bool = True,
+    field: str = '',
+    spw: str = '',
+    intent: str = '',
+    array: str = '',
+    observation: str = '',
+    scan: str = '',
+    combine: str = '',
+    timebin: str | int = 1,
+    slidetimebin: bool = False,
+    chanbin: str | int = 'spw',
+    minsamp: int = 2,
+    statalg: str = 'classic',
+    fence: float = -1.0,
+    center: str = 'mean',
+    lside: bool = True,
+    zscore: float = -1.0,
+    maxiter: int = -1,
+    fitspw: str = '',
+    excludechans: bool = False,
+    wtrange: float | list[float] | tuple[float, ...] = [],
+    flagbackup: bool = True,
+    preview: bool = False,
+    datacolumn: str = 'corrected',
+) -> Any:
+    """Estimate MeasurementSet weights from visibility variance.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'initweights']
+    CASA's ``statwt``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #1524:
+    ``timebin``, ``slidetimebin``, ``chanbin``, ``statalg``, ``fitspw``,
+    ``excludechans``.
+    """
+    return _call_casa(statwt, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'initweights', 'statwt')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'initweights', 'statwt']

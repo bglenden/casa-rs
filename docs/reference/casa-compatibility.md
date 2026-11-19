@@ -47,6 +47,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
+| statwt | statwt | yes | 25 | 25 | 0 | 6 | 0 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 3 | 22 | 0 |
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
 | uvmodelfit | uvmodelfit | yes | 14 | 14 | 0 | 0 | 0 | 0 |
@@ -1489,6 +1490,19 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Accepted only at CASA's default until #978: `keepmms`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `timebin`, `combine`
 - casa-rs parameters CASA lacks: `msselect`
 - Shared parameters: 19, in CASA's order: yes
+- Defaults that differ: none
+
+### statwt
+
+- CASA source: `casatasks/statwt.py`, 25 parameters
+- Implementation: `casatasks/private/task_statwt.py`, `statwt` (line 8): 1 return statements, 0 raise statements
+  - returns at line 77: `rval`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #1524: `timebin`, `slidetimebin`, `chanbin`, `statalg`, `fitspw`, `excludechans`
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 25, in CASA's order: yes
 - Defaults that differ: none
 
 ### tclean

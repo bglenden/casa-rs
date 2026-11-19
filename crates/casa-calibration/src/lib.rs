@@ -50,12 +50,15 @@ mod simulated;
 mod solve;
 mod solve_stats;
 mod stats;
+mod statwt;
 mod summary;
 mod task_contract;
 mod timing;
 mod uvmodelfit;
 mod uvsub;
 mod writer;
+
+pub use statwt::{ClassicScalarStatWt, StatWtDataColumn, StatWtSummary, classical_scalar_statwt};
 
 pub use uvsub::{
     subtract_visibility_model, subtract_visibility_model_holding, visibility_model_source_paths,

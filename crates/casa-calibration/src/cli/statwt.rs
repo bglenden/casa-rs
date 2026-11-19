@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Read the CASA statistical-weighting task surface.
+
+use casa_ms::{MeasurementSet, MsSelection, save_next_flag_backup};
+use casa_provider_contracts::{CasaValue, ParameterValue};
+use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+
+use crate::{ClassicScalarStatWt, StatWtDataColumn, classical_scalar_statwt};
+
+pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    let path = task.input_path("vis")?;
+    let options = options(task)?;
+    let selection = MsSelection {
+        selectdata: task.flag("selectdata")?,
+        field: task.text("field")?,
+        spw: task.text("spw")?,
+        intent: task.text("intent")?,
+        array: task.text("array")?,
+        observation: task.text("observation")?,
+        scan: task.text("scan")?,
+        ..MsSelection::default()
+    };
+    let result = if task.flag("preview")? {
+        #[cfg(unix)]
+        let mut ms = MeasurementSet::open_retained_read(&path).map_err(runtime_error)?;
+        #[cfg(not(unix))]
+        let mut ms = MeasurementSet::open(&path).map_err(runtime_error)?;
+        require_scalar_weights(&ms)?;
+        let selection = crate::session::resolve_casa_calibration_selection(&ms, &selection)
+            .map_err(runtime_error)?;
+        classical_scalar_statwt(&mut ms, &selection, options, None).map_err(runtime_error)?
+    } else {
+        let mut opened = super::multi_ms::OpenedMs::open(&path)?;
+        require_scalar_weights(&opened.measurement_set)?;
+        let selection =
+            crate::session::resolve_casa_calibration_selection(&opened.measurement_set, &selection)
+                .map_err(runtime_error)?;
+        if task.flag("flagbackup")? {
+            save_next_flag_backup(&opened.measurement_set, "statwt").map_err(runtime_error)?;
+        }
+        let result = classical_scalar_statwt(
+            &mut opened.measurement_set,
+            &selection,
+            options,
+            Some(&mut opened.lock),
+        )
+        .map_err(runtime_error)?;
+        opened.release()?;
+        super::history::record_task(task, &path);
+        result
+    };
+    let value = CasaValue::dict([
+        ("mean", CasaValue::float(result.mean)),
+        ("variance", CasaValue::float(result.variance)),
+    ]);
+    TaskSuccess::new(value, &result)
+}
+
+fn require_scalar_weights(ms: &MeasurementSet) -> Result<(), TaskFailure> {
+    if let Some(schema) = ms.main_table().schema()
+        && ["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"]
+            .iter()
+            .any(|name| schema.contains_column(name))
+    {
+        return Err(unavailable("chanbin"));
+    }
+    Ok(())
+}
+
+fn options(task: &TaskInvocation<'_>) -> Result<ClassicScalarStatWt, TaskFailure> {
+    for (name, expected) in [("chanbin", "spw"), ("statalg", "classic"), ("fitspw", "")] {
+        if task.text(name)?.as_deref() != Some(expected) {
+            return Err(unavailable(name));
+        }
+    }
+    if task.value("timebin") != Some(&ParameterValue::Integer(1)) || task.flag("slidetimebin")? {
+        return Err(unavailable("timebin"));
+    }
+    if task.flag("excludechans")? {
+        return Err(unavailable("excludechans"));
+    }
+    let combined = task
+        .text("combine")?
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let combine_correlations = combined.split(',').any(|part| part.trim() == "corr");
+    if combined
+        .split(',')
+        .any(|part| matches!(part.trim(), "scan" | "state" | "field"))
+    {
+        return Err(unavailable("combine"));
+    }
+    let minimum_samples = usize::try_from(task.integer("minsamp")?).unwrap_or(0);
+    if minimum_samples < 2 {
+        return Err(TaskFailure::execution("minsamp must be at least 2").at("minsamp"));
+    }
+    let bounds = task.numbers("wtrange")?;
+    let weight_range = match bounds.as_slice() {
+        [] => None,
+        &[low, high] if low >= 0.0 && high >= low => Some([low as f32, high as f32]),
+        _ => {
+            return Err(
+                TaskFailure::execution("wtrange requires two ordered, nonnegative bounds")
+                    .at("wtrange"),
+            );
+        }
+    };
+    let data_column = parse_data_column(&task.text("datacolumn")?.unwrap_or_default())?;
+    Ok(ClassicScalarStatWt {
+        data_column,
+        minimum_samples,
+        combine_correlations,
+        weight_range,
+    })
+}
+
+fn parse_data_column(value: &str) -> Result<StatWtDataColumn, TaskFailure> {
+    let value = value.to_ascii_lowercase();
+    if !value.is_empty() {
+        for (name, column) in [
+            ("data", StatWtDataColumn::Data),
+            ("corrected", StatWtDataColumn::Corrected),
+            ("residual", StatWtDataColumn::ResidualCorrected),
+            ("residual_data", StatWtDataColumn::ResidualData),
+        ] {
+            if name.starts_with(&value) {
+                return Ok(column);
+            }
+        }
+    }
+    Err(TaskFailure::execution(format!("unknown statwt data column {value:?}")).at("datacolumn"))
+}
+
+fn runtime_error(error: impl std::fmt::Display) -> TaskFailure {
+    TaskFailure::execution(error.to_string())
+}
+
+fn unavailable(parameter: &str) -> TaskFailure {
+    TaskFailure::validation(format!("statwt {parameter} behavior is tracked in #1524"))
+        .at(parameter)
+}
