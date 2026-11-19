@@ -1538,7 +1538,10 @@ struct RowGeometryCache {
     elevations: HashMap<RowGeometryKey, f64>,
     projected_offsets: HashMap<ProjectedOffsetKey, [f64; 3]>,
     materialized_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
-    calibration_lookups: HashMap<CalibrationLookupKey, Option<Arc<CalibrationGrid>>>,
+    calibration_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
+    temperature_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
+    temperature_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
+    temperature_time: Option<u64>,
     last_elevation_context: Option<RowGeometryContextKey>,
     last_elevations: Vec<Option<f64>>,
     last_projected_context: Option<RowGeometryContextKey>,
@@ -1755,16 +1758,27 @@ impl RowGeometryCache {
     fn calibration_lookup<F>(
         &mut self,
         key: CalibrationLookupKey,
+        temperature_time: Option<u64>,
         load: F,
-    ) -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError>
+    ) -> Result<Option<fields::GridAtTime>, ApplyExecutionError>
     where
-        F: FnOnce() -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError>,
+        F: FnOnce() -> Result<Option<fields::GridAtTime>, ApplyExecutionError>,
     {
-        if let Some(grid) = self.calibration_lookups.get(&key) {
+        let lookups = if let Some(time) = temperature_time {
+            if self.temperature_time != Some(time) {
+                self.temperature_grids.clear();
+                self.temperature_lookups.clear();
+                self.temperature_time = Some(time);
+            }
+            &mut self.temperature_lookups
+        } else {
+            &mut self.calibration_lookups
+        };
+        if let Some(grid) = lookups.get(&key) {
             return Ok(grid.clone());
         }
         let grid = load()?;
-        self.calibration_lookups.insert(key, grid.clone());
+        lookups.insert(key, grid.clone());
         Ok(grid)
     }
 }
@@ -2050,6 +2064,7 @@ fn apply_row_all_channels(
                 .unwrap_or(-1);
         }
 
+        let is_tsys = table_plan.summary.table_subtype == "B TSYS";
         let lookup = |antenna, cache: Option<&mut RowGeometryCache>| {
             let mut key = calibration_lookup_key(
                 table_index,
@@ -2065,7 +2080,11 @@ fn apply_row_all_channels(
             let calculate =
                 || fields::lookup(loaded_table, field_id, cal_spw_id, antenna, row, data_spw);
             if let Some(cache) = cache {
-                cache.calibration_lookup(key, calculate)
+                cache.calibration_lookup(
+                    key,
+                    is_tsys.then(|| row.time_seconds.to_bits()),
+                    calculate,
+                )
             } else {
                 calculate()
             }
@@ -2114,13 +2133,15 @@ fn apply_row_all_channels(
 
         // CASA samples BPOLY on its CAL_DESC window and then interpolates
         // the resulting B grid onto the data window.
-        let is_tsys = table_plan.summary.table_subtype == "B TSYS";
         let is_bandpass = is_tsys
             || matches!(
                 table_plan.summary.table_subtype.as_str(),
                 "B Jones" | "BPOLY"
             );
         let scalar_bandpass = is_bandpass && correlation_types.len() == 1;
+        let (ant1_transient, ant2_transient) =
+            (is_tsys && ant1.interpolated, is_tsys && ant2.interpolated);
+        let (ant1, ant2) = (ant1.grid, ant2.grid);
         let bandpass_weights = (is_bandpass && !is_tsys && calibrate_weights)
             .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types, None))
             .flatten();
@@ -2131,6 +2152,7 @@ fn apply_row_all_channels(
                 data_spw,
                 geometry_cache.as_deref_mut(),
                 loaded_table,
+                ant1_transient,
             )?;
             let ant2 = bandpass::prepare(
                 ant2,
@@ -2138,6 +2160,7 @@ fn apply_row_all_channels(
                 data_spw,
                 geometry_cache.as_deref_mut(),
                 loaded_table,
+                ant2_transient,
             )?;
             (ant1, ant2)
         } else {
@@ -5476,32 +5499,38 @@ mod tests {
 
         let mut load_count = 0;
         let first = cache
-            .calibration_lookup(lookup_key, || {
+            .calibration_lookup(lookup_key, None, || {
                 load_count += 1;
-                Ok(Some(gain_curve.clone()))
+                Ok(Some(fields::GridAtTime {
+                    grid: gain_curve.clone(),
+                    interpolated: false,
+                }))
             })
             .expect("first lookup")
             .expect("grid");
         let second = cache
-            .calibration_lookup(lookup_key, || {
+            .calibration_lookup(lookup_key, None, || {
                 load_count += 1;
-                Ok(Some(opacity.clone()))
+                Ok(Some(fields::GridAtTime {
+                    grid: opacity.clone(),
+                    interpolated: false,
+                }))
             })
             .expect("cached lookup")
             .expect("grid");
         assert_eq!(load_count, 1);
-        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first.grid, &second.grid));
 
         let missing_key = calibration_lookup_key(6, 3, 7, 2, 12.5, ApplyInterpolationMode::Nearest);
         assert!(
             cache
-                .calibration_lookup(missing_key, || Ok(None))
+                .calibration_lookup(missing_key, None, || Ok(None))
                 .expect("missing lookup")
                 .is_none()
         );
         assert!(
             cache
-                .calibration_lookup(missing_key, || panic!("cached None should not reload"))
+                .calibration_lookup(missing_key, None, || panic!("cached None should not reload"))
                 .expect("cached missing lookup")
                 .is_none()
         );

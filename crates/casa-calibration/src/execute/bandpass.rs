@@ -57,6 +57,7 @@ pub(super) fn prepare(
     output: &crate::plan::SpectralWindowPlan,
     cache: Option<&mut RowGeometryCache>,
     table: &LoadedCalibrationTable,
+    transient_temperature: bool,
 ) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
     let interpolation = table.interp;
     let path = &table.path;
@@ -75,11 +76,15 @@ pub(super) fn prepare(
         data_spw_id: output.spw_id,
         grid_id: Arc::as_ptr(&grid) as usize,
     };
-    if let Some(prepared) = cache
-        .as_ref()
-        .and_then(|cache| cache.materialized_grid(key))
-    {
-        return Ok(prepared);
+    let cache = cache.map(|cache| {
+        if transient_temperature {
+            &mut cache.temperature_grids
+        } else {
+            &mut cache.materialized_grids
+        }
+    });
+    if let Some(prepared) = cache.as_ref().and_then(|grids| grids.get(&key)) {
+        return Ok(prepared.clone());
     }
     let prepared = Arc::new(CalibrationGrid::Complex(resample(
         gain,
@@ -96,7 +101,7 @@ pub(super) fn prepare(
         matches!(table.time_parameter_family, Some(TimeParameterFamily::Tsys)),
     )?));
     if let Some(cache) = cache {
-        cache.insert_materialized_grid(key, prepared.clone());
+        cache.insert(key, prepared.clone());
     }
     Ok(prepared)
 }
@@ -181,7 +186,23 @@ mod tests {
 
     #[test]
     fn constant_wide_bandpass_shares_payload_and_resampling_across_times() {
+        check_constant_wide_table_shares_payload(None, 2.);
+    }
+
+    #[test]
+    fn constant_wide_tsys_shares_payload_and_resampling_across_times() {
+        check_constant_wide_table_shares_payload(
+            Some(TimeParameterFamily::Tsys),
+            2_f32.sqrt().recip(),
+        );
+    }
+
+    fn check_constant_wide_table_shares_payload(
+        family: Option<TimeParameterFamily>,
+        expected: f32,
+    ) {
         use crate::lookup::{TimePlan, TimeQuery};
+        let real = family.is_some();
         let channels = 4096;
         let raw = Arc::new(CalibrationGrid::Complex(GainGrid {
             receptor_count: 2,
@@ -194,7 +215,7 @@ mod tests {
             interp: ApplyInterpolationMode::Linear,
             supports_calwt: true,
             engine: None,
-            time_parameter_family: None,
+            time_parameter_family: family,
             phase_delay: false,
             callibrary: None,
             time_plans: HashMap::new(),
@@ -209,7 +230,7 @@ mod tests {
         };
         let options = crate::TimeInterpolationOptions::new(crate::TimeInterpolation::Linear);
         let context = TimePlan::apply_context(&table, options).unwrap();
-        let plan = TimePlan::for_apply(&table, options, false, &context).unwrap();
+        let plan = TimePlan::for_apply(&table, options, real, &context).unwrap();
         let input = (0..channels)
             .map(|channel| 1e9 + channel as f64 * 1e6)
             .collect::<Vec<_>>();
@@ -223,17 +244,21 @@ mod tests {
         let mut first = None;
         for time in 0..1000 {
             let selected = plan
-                .registered_grid(&TimeQuery {
-                    observation: 0,
-                    scan: 1,
-                    window: 0,
-                    antenna: 0,
-                    time: f64::from(time),
-                    frequency_hz: None,
-                })
+                .registered_grid(
+                    &TimeQuery {
+                        observation: 0,
+                        scan: 1,
+                        window: 0,
+                        antenna: 0,
+                        time: f64::from(time),
+                        frequency_hz: None,
+                    },
+                    real,
+                )
                 .unwrap();
             assert!(Arc::ptr_eq(&selected, &raw));
-            let sampled = prepare(selected, &input, &output, Some(&mut cache), &table).unwrap();
+            let sampled =
+                prepare(selected, &input, &output, Some(&mut cache), &table, false).unwrap();
             if let Some(first) = &first {
                 assert!(Arc::ptr_eq(first, &sampled));
             } else {
@@ -241,13 +266,39 @@ mod tests {
             }
         }
         assert_eq!(cache.materialized_grids.len(), 1);
+        if real {
+            for time in [1.0_f64, 2.0, 3.0] {
+                let key = calibration_lookup_key(0, 0, 0, 0, time, ApplyInterpolationMode::Linear);
+                let interpolated = cache
+                    .calibration_lookup(key, Some(time.to_bits()), || {
+                        Ok(Some(fields::GridAtTime {
+                            grid: Arc::new(raw.as_ref().clone()),
+                            interpolated: true,
+                        }))
+                    })
+                    .unwrap()
+                    .unwrap();
+                prepare(
+                    interpolated.grid,
+                    &input,
+                    &output,
+                    Some(&mut cache),
+                    &table,
+                    true,
+                )
+                .unwrap();
+                assert_eq!(cache.temperature_lookups.len(), 1);
+                assert_eq!(cache.temperature_grids.len(), 1);
+                assert_eq!(cache.materialized_grids.len(), 1);
+            }
+        }
         let CalibrationGrid::Complex(gain) = first.unwrap().as_ref().clone() else {
             unreachable!()
         };
         assert!(
             gain.values
                 .iter()
-                .all(|value| (*value - Complex32::new(2., 0.)).norm() < 1e-6)
+                .all(|value| (*value - Complex32::new(expected, 0.)).norm() < 1e-6)
         );
         assert!(gain.flags.iter().all(|flag| !*flag));
     }

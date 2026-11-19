@@ -130,6 +130,12 @@ pub(super) fn load(
     Ok(table)
 }
 
+#[derive(Clone)]
+pub(super) struct GridAtTime {
+    pub grid: Arc<CalibrationGrid>,
+    pub interpolated: bool,
+}
+
 pub(super) fn lookup(
     table: &LoadedCalibrationTable,
     field: i32,
@@ -137,7 +143,11 @@ pub(super) fn lookup(
     antenna: i32,
     row: &ApplyRowPlan,
     data_window: &crate::plan::SpectralWindowPlan,
-) -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError> {
+) -> Result<Option<GridAtTime>, ApplyExecutionError> {
+    let pinned = |grid| GridAtTime {
+        grid,
+        interpolated: false,
+    };
     let antenna = table
         .callibrary
         .as_ref()
@@ -152,11 +162,14 @@ pub(super) fn lookup(
         .unwrap_or(antenna);
     let Some(plan) = table.time_plans.get(&field) else {
         if !table.time_plans.is_empty() {
-            return Ok(table.missing_grids.get(&window).cloned());
+            return Ok(table.missing_grids.get(&window).cloned().map(pinned));
         }
         return table
             .lookup(field, window, antenna, row.time_seconds, table.interp)
-            .map(|grid| grid.or_else(|| table.missing_grids.get(&window).cloned()));
+            .map(|grid| {
+                grid.or_else(|| table.missing_grids.get(&window).cloned())
+                    .map(pinned)
+            });
     };
     let frequencies = &data_window.channel_frequencies_hz;
     let frequency_hz = table
@@ -180,11 +193,12 @@ pub(super) fn lookup(
         time: row.time_seconds,
         frequency_hz,
     };
-    if let Some(grid) = plan.registered_grid(&query) {
-        return Ok(Some(grid));
+    let allow_raw_real = matches!(table.time_parameter_family, Some(TimeParameterFamily::Tsys));
+    if let Some(grid) = plan.registered_grid(&query, allow_raw_real) {
+        return Ok(Some(pinned(grid)));
     }
     let Some(solution) = plan.solution(&table.path, query)? else {
-        return Ok(table.missing_grids.get(&window).cloned());
+        return Ok(table.missing_grids.get(&window).cloned().map(pinned));
     };
     let shape = IxDyn(&[solution.receptors, solution.channels]);
     let values =
@@ -196,7 +210,12 @@ pub(super) fn lookup(
         values,
         flags,
     }));
-    physical_grid(&table.path, table.time_parameter_family, raw).map(Some)
+    physical_grid(&table.path, table.time_parameter_family, raw).map(|grid| {
+        Some(GridAtTime {
+            grid,
+            interpolated: true,
+        })
+    })
 }
 
 /// FPARAM interpolation operates on coefficients, not on their geometry-dependent gains.
