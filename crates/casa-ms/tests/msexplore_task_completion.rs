@@ -71,8 +71,12 @@ fn run(
             },
         })
         .collect::<Vec<_>>();
-    let completion = decode_task_completion(session.bundle(), &stdout, workspace, &values)
-        .unwrap_or_else(|error| panic!("{surface} completion: {error}\nstdout: {stdout}"));
+    let TaskReply::Succeeded { result, .. } = &reply else {
+        panic!("{surface}: {reply:?}");
+    };
+    let completion =
+        decode_task_completion(session.bundle(), &result.to_string(), workspace, &values)
+            .unwrap_or_else(|error| panic!("{surface} completion: {error}\nstdout: {stdout}"));
     (reply, completion)
 }
 
