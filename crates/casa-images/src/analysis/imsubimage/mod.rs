@@ -13,17 +13,12 @@ use std::path::Path;
 
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_types::ArrayD;
-use fitsio::images::ImageType as FitsImageType;
-use ndarray::{Axis, IxDyn, ShapeBuilder, Zip};
+use ndarray::{Axis, Zip};
 
-use crate::fits_read::{
-    PrimaryHdu, brightness_unit, history_entries as fits_history_entries,
-    image_info_from_fits_header,
-};
 use crate::image::{ImageHistoryEntry, append_image_history_entries, image_history_entries};
 use crate::{
     AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, ImageSubimageSummary,
-    ImsubimageRequest, PagedImage, TempImage, TempStoragePolicy,
+    ImsubimageRequest, PagedImage, TempImage, TempStoragePolicy, read_fits_image,
 };
 
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
@@ -122,10 +117,10 @@ fn ensure_outfile_does_not_alias_input(outfile: &Path, imagename: &Path) -> Resu
     let same_canon = fs::canonicalize(outfile)
         .ok()
         .zip(fs::canonicalize(imagename).ok())
-        .is_some_and(|(a, b)| a == b);
+        .is_some_and(|(out, input)| input.starts_with(out));
     if same_lexical || same_canon {
         return Err(ImageError::InvalidMetadata(format!(
-            "outfile '{}' matches input image '{}'",
+            "outfile '{}' matches or contains input image '{}'",
             outfile.display(),
             imagename.display()
         )));
@@ -134,60 +129,28 @@ fn ensure_outfile_does_not_alias_input(outfile: &Path, imagename: &Path) -> Resu
 }
 
 fn run_fits_input(request: &ImsubimageRequest) -> Result<ImageSubimageSummary, ImageError> {
-    let history = fits_history_entries(&request.imagename).unwrap_or_default();
-    let mut primary = PrimaryHdu::open(&request.imagename)?;
-    let mut image_info = image_info_from_fits_header(&primary.header);
-    if let Some((beams, _)) = primary.beam_set()? {
-        image_info.beam_set = beams;
-    }
-    let units = brightness_unit(&primary.header);
-    let PrimaryHdu {
-        mut fits,
-        hdu,
-        image_type,
-        shape,
-        coordinates,
-        ..
-    } = primary;
-
-    match image_type {
-        FitsImageType::Double => {
-            let raw = hdu
-                .read_image::<Vec<f64>>(&mut fits)
-                .map_err(|e| ImageError::Io(e.to_string()))?;
-            let pixels = ArrayD::from_shape_vec(IxDyn(&shape).f(), raw).map_err(|e| {
-                ImageError::InvalidMetadata(format!("invalid FITS image shape: {e}"))
-            })?;
-            let mask = pixels
-                .iter()
-                .any(|v| v.is_nan())
-                .then(|| pixels.mapv(|v| !v.is_nan()));
-            let temp = build_fits_temp(shape, coordinates, &units, &image_info, pixels, mask)?;
-            let src = SourceData::Memory {
-                image: Box::new(temp),
-                history,
-            };
-            run_typed(&src, request)
-        }
-        _ => {
-            let raw = hdu
-                .read_image::<Vec<f32>>(&mut fits)
-                .map_err(|e| ImageError::Io(e.to_string()))?;
-            let pixels = ArrayD::from_shape_vec(IxDyn(&shape).f(), raw).map_err(|e| {
-                ImageError::InvalidMetadata(format!("invalid FITS image shape: {e}"))
-            })?;
-            let mask = pixels
-                .iter()
-                .any(|v| v.is_nan())
-                .then(|| pixels.mapv(|v| !v.is_nan()));
-            let temp = build_fits_temp(shape, coordinates, &units, &image_info, pixels, mask)?;
-            let src = SourceData::Memory {
-                image: Box::new(temp),
-                history,
-            };
-            run_typed(&src, request)
-        }
-    }
+    let history = image_history_entries(&request.imagename)?;
+    let fits = read_fits_image(&request.imagename)?;
+    let mask = fits
+        .pixels
+        .iter()
+        .any(|v| v.is_nan())
+        .then(|| fits.pixels.mapv(|v| !v.is_nan()));
+    let image = build_fits_temp(
+        fits.shape,
+        fits.coordinates,
+        &fits.units,
+        &fits.image_info,
+        fits.pixels,
+        mask,
+    )?;
+    run_typed(
+        &SourceData::Memory {
+            image: Box::new(image),
+            history,
+        },
+        request,
+    )
 }
 
 fn build_fits_temp<T: ImagePixel>(
@@ -245,6 +208,7 @@ fn run_typed<T: ImagePixel + Copy>(
     if let Some(expr_mask) = evaluate_subimage_mask(
         request.mask.as_deref(),
         &full_shape,
+        img.coordinates(),
         request.stretch,
         (&selection.start, &selection.shape),
     )? {
@@ -402,6 +366,7 @@ fn write_output_history(
     entries.push(ImageHistoryEntry {
         time_mjd_seconds: time,
         message: msg,
+        priority: "INFO".into(),
         location: "::imsubimage".to_string(),
     });
     append_image_history_entries(outfile, &entries)

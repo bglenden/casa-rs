@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
-use casa_types::quanta::Quantity;
+use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Dimension;
 
@@ -70,19 +70,15 @@ pub(super) fn parse_saved_region(
                 shapes: Vec::new(),
                 saved_polygon_mask: Some(mask),
                 saved_bounds: Some((min_pt, shape)),
-                crtf_chans: None,
-                crtf_stokes: None,
             })
         }
         "LCSlicer" | "LCBox" => {
             let (blc, trc) = decode_lc_box_or_slicer(region_name, rec, full_shape)?;
             let shapes = if full_shape.len() >= 2 {
-                vec![SpatialShape::Box([
-                    blc[plane[0]],
-                    blc[plane[1]],
-                    trc[plane[0]],
-                    trc[plane[1]],
-                ])]
+                vec![
+                    SpatialShape::Box([blc[plane[0]], blc[plane[1]], trc[plane[0]], trc[plane[1]]])
+                        .into(),
+                ]
             } else {
                 Vec::new()
             };
@@ -95,19 +91,15 @@ pub(super) fn parse_saved_region(
                 shapes,
                 saved_polygon_mask: None,
                 saved_bounds: Some((blc, shape)),
-                crtf_chans: None,
-                crtf_stokes: None,
             })
         }
         "WCBox" => {
             let (blc, trc) = decode_wc_box(region_name, rec, target_coords, full_shape)?;
             let shapes = if full_shape.len() >= 2 {
-                vec![SpatialShape::Box([
-                    blc[plane[0]],
-                    blc[plane[1]],
-                    trc[plane[0]],
-                    trc[plane[1]],
-                ])]
+                vec![
+                    SpatialShape::Box([blc[plane[0]], blc[plane[1]], trc[plane[0]], trc[plane[1]]])
+                        .into(),
+                ]
             } else {
                 Vec::new()
             };
@@ -120,8 +112,6 @@ pub(super) fn parse_saved_region(
                 shapes,
                 saved_polygon_mask: None,
                 saved_bounds: Some((blc, shape)),
-                crtf_chans: None,
-                crtf_stokes: None,
             })
         }
         other => Err(ImageError::InvalidMetadata(format!(
@@ -196,71 +186,144 @@ fn decode_wc_box(
     coords: &CoordinateSystem,
     full_shape: &[usize],
 ) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
-    let blc_world = read_quantum_list(rec.get("blc"))?;
-    let trc_world = read_quantum_list(rec.get("trc"))?;
-    if blc_world.len() > coords.n_world_axes() || trc_world.len() > coords.n_world_axes() {
-        return Err(ImageError::InvalidMetadata(format!(
-            "saved WCBox '{name}' world dimension mismatch"
+    let origin = usize::from(matches!(
+        rec.get("oneRel"),
+        Some(Value::Scalar(ScalarValue::Bool(true)))
+    ));
+    let Some(Value::Record(source_record)) = rec.get("coordinates") else {
+        return Err(ImageError::InvalidMetadata(
+            "WCBox has no coordinate system".into(),
+        ));
+    };
+    let saved_coords = CoordinateSystem::from_record(source_record)?;
+    let names = |system: &CoordinateSystem| {
+        (0..system.n_coordinates())
+            .flat_map(|i| system.coordinate(i).axis_names())
+            .collect::<Vec<_>>()
+    };
+    let saved_names = names(&saved_coords);
+    let target_names = names(coords);
+    let axes = read_numeric_vec(rec.get("pixelAxes"))
+        .ok_or_else(|| ImageError::InvalidMetadata("WCBox has no pixelAxes".into()))?
+        .into_iter()
+        .map(|axis| {
+            (axis as usize)
+                .checked_sub(origin)
+                .and_then(|i| saved_names.get(i))
+                .and_then(|name| target_names.iter().position(|candidate| candidate == name))
+                .ok_or_else(|| {
+                    ImageError::InvalidMetadata(format!(
+                        "WCBox {name:?} has an unmatched pixel axis {axis}"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut modes = read_numeric_vec(rec.get("absrel")).unwrap_or_default();
+    if modes.is_empty() {
+        modes.resize(axes.len(), 1.0);
+    }
+    let mut bounds = Vec::new();
+    for (key, low) in [("blc", true), ("trc", false)] {
+        let quantities = read_quantum_list(rec.get(key))?;
+        if quantities.len() != axes.len() || modes.len() != axes.len() {
+            return Err(ImageError::InvalidMetadata(format!(
+                "WCBox {name:?} dimension mismatch"
+            )));
+        }
+        bounds.push(wc_box_corner(
+            coords,
+            full_shape,
+            &axes,
+            &quantities,
+            &modes,
+            origin,
+            low,
+        )?);
+    }
+    let trc = bounds.pop().expect("upper corner");
+    let blc = bounds.pop().expect("lower corner");
+    if blc.iter().zip(&trc).any(|(lower, upper)| lower > upper) {
+        return Err(ImageError::CasaSelection(format!(
+            "WCBox {name:?} has reversed bounds"
         )));
-    }
-    let mut full_w0 = coords.to_world(&vec![0.0; coords.n_pixel_axes()])?;
-    let mut full_w1 = full_w0.clone();
-    for (i, v) in blc_world.iter().enumerate() {
-        full_w0[i] = *v;
-    }
-    for (i, v) in trc_world.iter().enumerate() {
-        full_w1[i] = *v;
-    }
-    let p0 = coords.to_pixel(&full_w0)?;
-    let p1 = coords.to_pixel(&full_w1)?;
-    let mut blc = Vec::with_capacity(full_shape.len());
-    let mut trc = Vec::with_capacity(full_shape.len());
-    for axis in 0..full_shape.len() {
-        let len = full_shape[axis];
-        let lo = p0[axis].min(p1[axis]).round().clamp(0.0, (len - 1) as f64) as usize;
-        let hi = p0[axis].max(p1[axis]).round().clamp(0.0, (len - 1) as f64) as usize;
-        blc.push(lo);
-        trc.push(hi);
     }
     Ok((blc, trc))
 }
 
-fn read_quantum_list(val: Option<&Value>) -> Result<Vec<f64>, ImageError> {
+fn wc_box_corner(
+    coords: &CoordinateSystem,
+    shape: &[usize],
+    axes: &[usize],
+    quantities: &[Quantity],
+    modes: &[f64],
+    origin: usize,
+    low: bool,
+) -> Result<Vec<usize>, ImageError> {
+    let mut world = (0..coords.n_coordinates())
+        .flat_map(|i| coords.coordinate(i).reference_value())
+        .collect::<Vec<_>>();
+    let reference_pixels = (0..coords.n_coordinates())
+        .flat_map(|i| coords.coordinate(i).reference_pixel())
+        .collect::<Vec<_>>();
+    let units = (0..coords.n_coordinates())
+        .flat_map(|i| coords.coordinate(i).axis_units())
+        .collect::<Vec<_>>();
+    for ((&axis, quantity), &mode) in axes.iter().zip(quantities).zip(modes) {
+        if !matches!(quantity.unit().name(), "pix" | "frac" | "default") {
+            if mode != 1.0 {
+                return Err(ImageError::InvalidMetadata(
+                    "relative WCBox world bounds are unsupported".into(),
+                ));
+            }
+            let unit = Unit::new(&units[axis])
+                .map_err(|err| ImageError::InvalidMetadata(err.to_string()))?;
+            world[axis] = quantity
+                .get_value_in(&unit)
+                .map_err(|err| ImageError::InvalidMetadata(err.to_string()))?;
+        }
+    }
+    let converted = coords.to_pixel(&world)?;
+    let mut result = shape
+        .iter()
+        .map(|len| if low { 0 } else { len - 1 })
+        .collect::<Vec<_>>();
+    for ((&axis, quantity), &mode) in axes.iter().zip(quantities).zip(modes) {
+        let unit = quantity.unit().name();
+        if unit == "default" {
+            continue;
+        }
+        let limit = (shape[axis] - 1) as f64;
+        let relative = match mode {
+            1.0 => 0.0,
+            2.0 => reference_pixels[axis],
+            3.0 => shape[axis] as f64 * 0.5,
+            _ => return Err(ImageError::InvalidMetadata("invalid WCBox absrel".into())),
+        };
+        let pixel = match unit {
+            "pix" => quantity.value() + relative - if mode == 1.0 { origin as f64 } else { 0.0 },
+            "frac" => quantity.value() * shape[axis] as f64 + relative - f64::from(!low),
+            _ => converted[axis],
+        };
+        result[axis] = pixel.round().clamp(0.0, limit) as usize;
+    }
+    Ok(result)
+}
+
+fn read_quantum_list(val: Option<&Value>) -> Result<Vec<Quantity>, ImageError> {
     let Some(Value::Record(rec)) = val else {
         return Err(ImageError::InvalidMetadata(
             "WCBox missing blc/trc record".into(),
         ));
     };
-    let mut out = Vec::new();
-    for field in rec.fields() {
-        if !field.name.starts_with('*') {
-            continue;
-        }
-        if let Value::Record(qrec) = &field.value {
-            let v = match qrec.get("value") {
-                Some(Value::Scalar(ScalarValue::Float64(x))) => *x,
-                Some(Value::Scalar(ScalarValue::Float32(x))) => f64::from(*x),
-                Some(Value::Scalar(ScalarValue::Int32(x))) => f64::from(*x),
-                _ => {
-                    return Err(ImageError::InvalidMetadata(
-                        "invalid WCBox quantum value".into(),
-                    ));
-                }
-            };
-            let u = match qrec.get("unit") {
-                Some(Value::Scalar(ScalarValue::String(s))) => s.as_str(),
-                _ => "",
-            };
-            if u.eq_ignore_ascii_case("pix") || u.is_empty() {
-                out.push(v);
-            } else {
-                let q =
-                    Quantity::new(v, u).map_err(|e| ImageError::InvalidMetadata(e.to_string()))?;
-                out.push(q.get_si_value());
-            }
-        }
-    }
-    Ok(out)
+    rec.fields()
+        .iter()
+        .map(|field| match &field.value {
+            Value::Record(value) => crate::beam::quantity_from_record(value),
+            _ => Err(ImageError::InvalidMetadata(
+                "invalid WCBox quantum value".into(),
+            )),
+        })
+        .collect()
 }
 
 fn read_numeric_vec(val: Option<&Value>) -> Option<Vec<f64>> {

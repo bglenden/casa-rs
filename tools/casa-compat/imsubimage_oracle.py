@@ -52,6 +52,11 @@ def make_inputs():
     ia.calcmask('"cube.im" > 150', name="selected", asdefault=False)
     ia.calcmask('"cube.im" != 0', name="valid", asdefault=True)
     ia.done()
+    tb = casatools.table()
+    tb.open("cube.im/logtable", nomodify=False)
+    row = list(tb.getcol("MESSAGE")).index(HISTORY)
+    tb.putcell("PRIORITY", row, "WARN")
+    tb.done()
 
     plane = data[:, :, 0, 0]
     for name, pixels, precision, linear in [
@@ -68,8 +73,16 @@ def make_inputs():
         ia.done()
 
     casatasks.exportfits(imagename="plane.im", fitsimage="plane.fits", overwrite=True)
+    fits = Path("plane.fits").read_bytes()
+    data_offset = next(i for i in range(0, len(fits), 80) if fits[i:i+8] == b"END     ")
+    data_offset = (data_offset // 2880 + 1) * 2880
+    header = bytearray(fits[:data_offset])
+    bitpix = header.find(b"BITPIX  ")
+    header[bitpix:bitpix+80] = b"BITPIX  =                  -64".ljust(80)
+    pixels = np.asarray(plane.astype(np.float64) + 2**-30, dtype=">f8").tobytes(order="F")
+    Path("double.fits").write_bytes(header + pixels + bytes((-len(pixels)) % 2880))
     casatasks.imtrans(imagename="cube.im", outfile="transposed.im", order="3012")
-    Path("union.crtf").write_text(f"#CRTFv0\n{BOX}\n{CIRCLE}\n")
+    Path("circle.crtf").write_text(f"#CRTFv0\n{BOX}\n{CIRCLE}\n")
     ia.open("plane.im")
     cs = ia.coordsys()
     rg = casatools.regionmanager()
@@ -77,6 +90,28 @@ def make_inputs():
     rg.done()
     cs.done()
     ia.done()
+    ia.open("cube.im")
+    cs = ia.coordsys()
+    rg = casatools.regionmanager()
+    region = rg.wbox(blc=["1pix", "1pix"], trc=["3pix", "4pix"],
+                     pixelaxes=[0, 1], csys=cs.torecord())
+    assert rg.tofile("box.rgn", region)
+    rg.done()
+    cs.done()
+    ia.done()
+
+
+def history_marker(image):
+    tb = casatools.table()
+    tb.open(str(Path(image) / "logtable"))
+    try:
+        messages = list(tb.getcol("MESSAGE"))
+        if HISTORY not in messages:
+            return None
+        row = messages.index(HISTORY)
+        return [tb.getcell(column, row) for column in ("TIME", "PRIORITY", "LOCATION", "MESSAGE")]
+    finally:
+        tb.done()
 
 
 def snapshot(path):
@@ -110,7 +145,7 @@ def snapshot(path):
             shape=shape, pixel_type=ia.pixeltype(), unit=ia.brightnessunit(),
             pixels=pixels, masks=list(ia.maskhandler("get")), names=names, units=units, world=world,
             maps=maps, beams=ia.restoringbeam(),
-            copied_history=any(HISTORY in line for line in history),
+            copied_history=history_marker(path),
             task_history=any("imsubimage(" in line for line in history),
         )
     finally:
@@ -155,6 +190,18 @@ def capture_cases(output):
     capture("all_true", "plane.im", mask='"plane.im" >= 0')
     capture("stretch", mask='"stretch.im" > 200', stretch=True, box="1,1,4,4")
     capture("no_stretch", mask='"stretch.im" > 200', error=True)
+    capture("transposed_stretch", "transposed.im", mask='"plane.im" > 200', stretch=True)
+    capture("complex_abs", "complex.im", mask='abs("complex.im" - 100) > 100')
+    capture("complex_imag", "complex.im", mask='imag("complex.im") > 100')
+    capture("complex_signed_imag", "complex.im", mask='imag(-"complex.im") < -100')
+    capture("qualified_union", region=(
+        "box[[0pix, 0pix], [1pix, 1pix]], corr=[I], range=[0pix, 1pix]\n"
+        "box[[3pix, 3pix], [4pix, 4pix]], corr=[Q], range=[2pix, 3pix]"
+    ))
+    capture("saved_box", region="box.rgn")
+    capture("saved_box_conflict", "plane.im", region="saved.rgn", box="0,0,4,4", error=True)
+    capture("saved_chans_conflict", region="box.rgn", chans="1", error=True)
+    capture("saved_stokes_conflict", region="box.rgn", stokes="Q", error=True)
     for name, text in [
         ("crtf_box", BOX),
         ("centerbox", "centerbox[[3pix, 2pix], [3pix, 2pix]]"),
@@ -163,7 +210,7 @@ def capture_cases(output):
         ("ellipse", "ellipse[[3pix, 2pix], [2.5pix, 1.2pix], 35deg]"),
         ("polygon", POLY),
         ("union", BOX + "\n" + CIRCLE),
-        ("file", "union.crtf"),
+        ("file", "circle.crtf"),
         ("saved", "saved.rgn"),
     ]:
         capture(name, "plane.im", region=text)
@@ -171,6 +218,7 @@ def capture_cases(output):
     for name in ("double", "complex", "dcomplex"):
         capture(name, name + ".im", box="1,1,3,4")
     capture("fits", "plane.fits", box="1,1,3,4")
+    capture("fits64", "double.fits", box="1,1,3,4")
     capture("empty", "plane.im", outfile="", error=True)
     return cases
 

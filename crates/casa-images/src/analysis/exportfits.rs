@@ -23,7 +23,7 @@ use fitsio::{
 use ndarray::IxDyn;
 
 use super::{FitsExportSummary, SPEED_OF_LIGHT_M_S, import_fits_for_reading};
-use crate::image::read_logtable_full_history;
+use crate::image::image_history_entries;
 use crate::{AnyPagedImage, ImageError, ImageInterface, ImagePixel, PagedImage};
 
 /// Minimum blank sentinel value in scaled 16-bit FITS images.
@@ -206,7 +206,7 @@ fn export_fits_typed<T: ExportFitsPixel>(
     )?;
 
     let history_entries = if request.history {
-        read_logtable_full_history(&request.imagename)?
+        image_history_entries(&request.imagename)?
     } else {
         Vec::new()
     };
@@ -273,7 +273,7 @@ fn write_staged_fits<T: ExportFitsPixel>(
     units: &str,
     info: &crate::ImageInfo,
     bpa_deg: Option<f64>,
-    history_entries: Option<&[crate::image::LogtableHistoryEntry]>,
+    history_entries: Option<&[crate::image::ImageHistoryEntry]>,
 ) -> Result<(), ImageError> {
     let description = ImageDescription {
         data_type: match encoded {
@@ -1106,7 +1106,7 @@ fn disable_cfitsio_write_scaling(fits: &mut FitsFile) -> Result<(), ImageError> 
 
 fn write_history_cards(
     fits: &mut FitsFile,
-    entries: &[crate::image::LogtableHistoryEntry],
+    entries: &[crate::image::ImageHistoryEntry],
 ) -> Result<(), ImageError> {
     let _ = fits
         .primary_hdu()
@@ -1291,7 +1291,7 @@ fn write_beams_extension(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::image::LogtableHistoryEntry;
+    use crate::image::ImageHistoryEntry;
     use casa_coordinates::{
         DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
         StokesType,
@@ -1363,13 +1363,13 @@ mod tests {
             write_history_cards(
                 &mut fits,
                 &[
-                    LogtableHistoryEntry {
+                    ImageHistoryEntry {
                         time_mjd_seconds: -1.0,
                         priority: String::new(),
                         location: String::new(),
                         message: "line1\nline2".to_string(),
                     },
-                    LogtableHistoryEntry {
+                    ImageHistoryEntry {
                         time_mjd_seconds: 5_000_000_000.0,
                         priority: "WARN".to_string(),
                         location: "multi".to_string(),

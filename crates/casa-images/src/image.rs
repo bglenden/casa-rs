@@ -48,6 +48,8 @@ const LOGTABLE_NAME: &str = "logtable";
 pub struct ImageHistoryEntry {
     /// Time in seconds since MJD zero.
     pub time_mjd_seconds: f64,
+    /// Original CASA log priority.
+    pub priority: String,
     /// Original CASA log location.
     pub location: String,
     /// History message.
@@ -70,45 +72,11 @@ impl ImageHistoryEntry {
     }
 }
 
-/// Internal history entry retaining `PRIORITY` alongside time, location, and message for FITS export.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct LogtableHistoryEntry {
-    pub(crate) time_mjd_seconds: f64,
-    pub(crate) priority: String,
-    pub(crate) location: String,
-    pub(crate) message: String,
-}
-
-/// Read the persistent image log including `PRIORITY` for `exportfits` `HISTORY` cards.
-pub(crate) fn read_logtable_full_history(
-    path: impl AsRef<Path>,
-) -> Result<Vec<LogtableHistoryEntry>, ImageError> {
-    read_logtable_entries(path.as_ref())
-}
-
-/// Read the persistent image log for replay by `imhead(mode="history")`.
+/// Read the image log including CASA priority, timestamp, and location.
 pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
-    Ok(read_logtable_entries(path.as_ref())?
-        .into_iter()
-        .map(|entry| ImageHistoryEntry {
-            time_mjd_seconds: entry.time_mjd_seconds,
-            location: entry.location,
-            message: entry.message,
-        })
-        .collect())
-}
-
-fn read_logtable_entries(image: &Path) -> Result<Vec<LogtableHistoryEntry>, ImageError> {
+    let image = path.as_ref();
     if image.is_file() {
-        return Ok(crate::fits_read::history_entries(image)?
-            .into_iter()
-            .map(|entry| LogtableHistoryEntry {
-                time_mjd_seconds: entry.time_mjd_seconds,
-                priority: "INFO".to_string(),
-                location: entry.location,
-                message: entry.message,
-            })
-            .collect());
+        return crate::fits_read::history_entries(image);
     }
     let logtable_path = image.join(LOGTABLE_NAME);
     if !logtable_path.exists() {
@@ -142,7 +110,7 @@ fn read_logtable_entries(image: &Path) -> Result<Vec<LogtableHistoryEntry>, Imag
                 Some(Value::Scalar(ScalarValue::Float64(time))),
                 Some(Value::Scalar(ScalarValue::String(location))),
                 Some(Value::Scalar(ScalarValue::String(message))),
-            ) => entries.push(LogtableHistoryEntry {
+            ) => entries.push(ImageHistoryEntry {
                 time_mjd_seconds: *time,
                 priority,
                 location: location.clone(),
@@ -2594,6 +2562,7 @@ impl<T: ImagePixel> PagedImage<T> {
             .map(|message| ImageHistoryEntry {
                 time_mjd_seconds: time,
                 message: message.clone(),
+                priority: "INFO".into(),
                 location: location.to_string(),
             })
             .collect::<Vec<_>>();
@@ -2620,7 +2589,7 @@ impl<T: ImagePixel> PagedImage<T> {
                 ),
                 RecordField::new(
                     "PRIORITY",
-                    Value::Scalar(ScalarValue::String("INFO".into())),
+                    Value::Scalar(ScalarValue::String(entry.priority.clone())),
                 ),
                 RecordField::new(
                     "MESSAGE",

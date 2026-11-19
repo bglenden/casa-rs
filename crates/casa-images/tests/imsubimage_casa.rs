@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateType;
+use casa_images::image::image_history_entries;
 use casa_images::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImagePixel, ImsubimageRequest, PagedImage, imhead,
     imsubimage,
@@ -152,16 +153,27 @@ fn check_image<T: ImagePixel + Copy>(
     }
     check_wcs(&image, oracle, case);
     check_beams(&image.image_info().unwrap().beam_set, &oracle["beams"]);
-    let history = image.history().unwrap();
+    let history = image_history_entries(image.name().unwrap()).unwrap();
+    let copied = history
+        .iter()
+        .find(|entry| entry.message == "imsubimage oracle input history")
+        .map(|entry| {
+            serde_json::json!([
+                entry.time_mjd_seconds,
+                entry.priority,
+                entry.location,
+                entry.message
+            ])
+        });
     assert_eq!(
-        history
-            .iter()
-            .any(|line| line.contains("imsubimage oracle input history")),
-        oracle["copied_history"].as_bool().unwrap(),
+        copied.unwrap_or(Json::Null),
+        oracle["copied_history"],
         "{case}"
     );
     assert!(
-        history.iter().any(|line| line.contains("imsubimage(")),
+        history
+            .iter()
+            .any(|entry| entry.message.contains("imsubimage(")),
         "{case}"
     );
 }
@@ -191,22 +203,20 @@ fn subimage_matches_casa_6_7_6_14() {
             if name == "mask_image" {
                 return input_path(&mask).to_str().unwrap().to_string();
             }
-            mask.replace(
-                "\"cube.im",
-                &format!("\"{}", input_path("cube.im").display()),
-            )
-            .replace(
-                "\"plane.im",
-                &format!("\"{}", input_path("plane.im").display()),
-            )
-            .replace(
-                "\"stretch.im",
-                &format!("\"{}", input_path("stretch.im").display()),
-            )
-            .replace(
-                "\"double.im",
-                &format!("\"{}", input_path("double.im").display()),
-            )
+            [
+                "cube.im",
+                "plane.im",
+                "stretch.im",
+                "double.im",
+                "complex.im",
+            ]
+            .into_iter()
+            .fold(mask, |expr, name| {
+                expr.replace(
+                    &format!("\"{name}"),
+                    &format!("\"{}", input_path(name).display()),
+                )
+            })
         });
         let keepaxes = match &params["keepaxes"] {
             Json::Number(axis) => vec![axis.as_i64().unwrap()],
@@ -237,6 +247,9 @@ fn subimage_matches_casa_6_7_6_14() {
             let expected = match name.as_str() {
                 "no_stretch" => "mask should not be extended",
                 "named_double_mask" => "unsupported data type",
+                "saved_box_conflict" | "saved_chans_conflict" | "saved_stokes_conflict" => {
+                    "saved region cannot be combined"
+                }
                 "drop_all" => "cannot drop all axes",
                 "empty" => "outfile must be specified",
                 unexpected => panic!("no assertion for error case {unexpected}"),
@@ -305,6 +318,21 @@ fn failed_overwrite_preserves_image() {
     assert_eq!(original, retained);
 
     request.keepaxes.clear();
+    request.region = Some(input_path("saved.rgn").to_str().unwrap().to_string());
+    assert!(
+        imsubimage(&request)
+            .unwrap_err()
+            .to_string()
+            .contains("saved region cannot be combined")
+    );
+    assert_eq!(
+        PagedImage::<f32>::open(&request.outfile)
+            .unwrap()
+            .get()
+            .unwrap(),
+        original
+    );
+    request.region = None;
     imsubimage(&request).unwrap();
     assert_eq!(
         PagedImage::<f32>::open(&request.outfile).unwrap().shape(),
@@ -391,5 +419,34 @@ fn a_transposed_crop_keeps_coordinates_on_their_data_axes() {
     assert_eq!(
         output.get_at(&[0, 3, 3]).unwrap(),
         input.get_at(&[2, 4, 5, 1]).unwrap()
+    );
+}
+
+#[test]
+fn overwrite_cannot_replace_a_directory_containing_the_input() {
+    let scratch = tempfile::tempdir().unwrap();
+    let work = scratch.path().join("work");
+    std::fs::create_dir(&work).unwrap();
+    let sentinel = work.join("sentinel");
+    std::fs::write(&sentinel, "keep").unwrap();
+    let mut request = ImsubimageRequest {
+        imagename: input_path("plane.im"),
+        outfile: work.join("input.im"),
+        ..ImsubimageRequest::default()
+    };
+    imsubimage(&request).unwrap();
+    request.imagename = request.outfile;
+    request.outfile = work;
+    request.overwrite = true;
+    assert!(
+        imsubimage(&request)
+            .unwrap_err()
+            .to_string()
+            .contains("contains input")
+    );
+    assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "keep");
+    assert_eq!(
+        PagedImage::<f32>::open(&request.imagename).unwrap().shape(),
+        &[6, 6]
     );
 }

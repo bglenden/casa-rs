@@ -56,6 +56,26 @@ pub(super) enum SpatialShape {
     Polygon(Vec<[f64; 2]>),
 }
 
+#[derive(Default, Clone)]
+struct PlaneSelection {
+    channels: Option<Vec<usize>>,
+    stokes: Option<Vec<usize>>,
+}
+
+struct QualifiedShape {
+    spatial: SpatialShape,
+    planes: PlaneSelection,
+}
+
+impl From<SpatialShape> for QualifiedShape {
+    fn from(spatial: SpatialShape) -> Self {
+        Self {
+            spatial,
+            planes: PlaneSelection::default(),
+        }
+    }
+}
+
 pub(super) struct SubimageSelection {
     pub(super) start: Vec<usize>,
     pub(super) shape: Vec<usize>,
@@ -63,6 +83,7 @@ pub(super) struct SubimageSelection {
     /// Precomputed spatial mask (shape `[shape[plane[0]], shape[plane[1]]]`) if
     /// the selection is non-rectangular or a union of multiple shapes.
     pub(super) spatial_mask: Option<Array2<bool>>,
+    qualified_shapes: Vec<QualifiedShape>,
     /// Full-dimensional mask from saved `WCPolygon` / `WCUnion`, if any,
     /// covering the entire parent image (sliced lazily to `[start, shape]`).
     pub(super) saved_polygon_mask: Option<ArrayD<bool>>,
@@ -91,30 +112,52 @@ impl SubimageSelection {
             [0, 1]
         };
 
-        let mut spatial_shapes: Vec<SpatialShape> = Vec::new();
+        let mut regions: Vec<QualifiedShape> = Vec::new();
         let mut saved_polygon_mask: Option<ArrayD<bool>> = None;
         let mut saved_bounds: Option<(Vec<usize>, Vec<usize>)> = None;
-        let mut crtf_chans: Option<Vec<usize>> = None;
-        let mut crtf_stokes: Option<String> = None;
 
         if let Some(box_text) = box_arg {
             let PixelRegion::Boxes(boxes) = parse_box_region(box_text, &full_shape, plane)? else {
                 unreachable!("parse_box_region returns Boxes")
             };
             for b in boxes {
-                spatial_shapes.push(SpatialShape::Box(b));
+                regions.push(SpatialShape::Box(b).into());
             }
         }
 
         if let Some(reg_text) = region_arg {
             let parsed = parse_region_argument(image, reg_text, &full_shape, plane)?;
-            spatial_shapes.extend(parsed.shapes);
+            if parsed.saved_bounds.is_some()
+                && (box_arg.is_some()
+                    || [chans_arg, stokes_arg]
+                        .into_iter()
+                        .flatten()
+                        .any(|v| !v.trim().is_empty()))
+            {
+                return Err(ImageError::CasaSelection(
+                    "saved region cannot be combined with box, chans, or stokes".into(),
+                ));
+            }
+            regions.extend(parsed.shapes);
             saved_polygon_mask = parsed.saved_polygon_mask;
             saved_bounds = parsed.saved_bounds;
-            crtf_chans = parsed.crtf_chans;
-            crtf_stokes = parsed.crtf_stokes;
         }
 
+        let explicit = |selection: Option<&str>| selection.is_some_and(|s| !s.trim().is_empty());
+        for region in &mut regions {
+            if explicit(chans_arg) {
+                region.planes.channels = None;
+            }
+            if explicit(stokes_arg) {
+                region.planes.stokes = None;
+            }
+        }
+        let channel_union = union_planes(&regions, |region| region.planes.channels.as_deref());
+        let stokes_union = union_planes(&regions, |region| region.planes.stokes.as_deref());
+        let spatial_shapes = regions
+            .iter()
+            .map(|region| &region.spatial)
+            .collect::<Vec<_>>();
         let SpatialResolution {
             mut start,
             mut shape,
@@ -132,7 +175,7 @@ impl SubimageSelection {
             image,
             &full_shape,
             chans_arg,
-            crtf_chans.as_deref(),
+            channel_union.as_deref(),
             &mut start,
             &mut shape,
         )?;
@@ -144,7 +187,7 @@ impl SubimageSelection {
         } = resolve_stokes(
             image,
             stokes_arg,
-            crtf_stokes.as_deref(),
+            stokes_union.as_deref(),
             &mut start,
             &mut shape,
         )?;
@@ -154,10 +197,18 @@ impl SubimageSelection {
             shape,
             plane,
             spatial_mask,
+            qualified_shapes: if regions
+                .iter()
+                .any(|r| r.planes.channels.is_some() || r.planes.stokes.is_some())
+            {
+                regions
+            } else {
+                Vec::new()
+            },
             saved_polygon_mask,
-            channel_axis,
+            channel_axis: channel_axis.or_else(|| image.find_axis(CoordinateType::Spectral)),
             channel_indices,
-            stokes_axis,
+            stokes_axis: stokes_axis.or_else(|| image.find_axis(CoordinateType::Stokes)),
             stokes_indices,
             selected_stokes,
         })
@@ -199,6 +250,26 @@ impl SubimageSelection {
             (None, None) => {}
         }
 
+        if !self.qualified_shapes.is_empty() {
+            let qualified = ArrayD::from_shape_fn(IxDyn(&self.shape), |idx| {
+                let x = self.start[px] + idx[px];
+                let y = self.start[py] + idx[py];
+                self.qualified_shapes.iter().any(|region| {
+                    let contains = |axis: Option<usize>, selected: Option<&[usize]>| {
+                        axis.zip(selected).is_none_or(|(axis, selected)| {
+                            selected.contains(&(self.start[axis] + idx[axis]))
+                        })
+                    };
+                    contains(self.channel_axis, region.planes.channels.as_deref())
+                        && contains(self.stokes_axis, region.planes.stokes.as_deref())
+                        && shape_contains(&region.spatial, x, y)
+                })
+            });
+            if qualified.iter().any(|&value| !value) {
+                and_mask(mask, &qualified);
+            }
+        }
+
         if let (Some(ax), Some(indices)) = (self.channel_axis, &self.channel_indices)
             && indices.len() != self.shape[ax]
         {
@@ -211,6 +282,20 @@ impl SubimageSelection {
             mask_skipped_axis(mask, &self.shape, ax, self.start[ax], indices);
         }
     }
+}
+
+fn union_planes(
+    shapes: &[QualifiedShape],
+    indices: impl Fn(&QualifiedShape) -> Option<&[usize]>,
+) -> Option<Vec<usize>> {
+    if shapes.is_empty() {
+        return None;
+    }
+    let mut union = Vec::new();
+    for shape in shapes {
+        union.extend_from_slice(indices(shape)?);
+    }
+    Some(union)
 }
 
 fn and_mask(dst: &mut Option<ArrayD<bool>>, rhs: &ArrayD<bool>) {
@@ -242,11 +327,9 @@ fn mask_skipped_axis(
 }
 
 struct ParsedRegion {
-    shapes: Vec<SpatialShape>,
+    shapes: Vec<QualifiedShape>,
     saved_polygon_mask: Option<ArrayD<bool>>,
     saved_bounds: Option<(Vec<usize>, Vec<usize>)>,
-    crtf_chans: Option<Vec<usize>>,
-    crtf_stokes: Option<String>,
 }
 
 fn parse_region_argument<T: ImagePixel>(
@@ -272,11 +355,9 @@ fn parse_region_argument<T: ImagePixel>(
     if let Some(box_text) = text.strip_prefix("box:") {
         let b = parse_single_box(box_text.trim(), full_shape, plane)?;
         return Ok(ParsedRegion {
-            shapes: vec![SpatialShape::Box(b)],
+            shapes: vec![SpatialShape::Box(b).into()],
             saved_polygon_mask: None,
             saved_bounds: None,
-            crtf_chans: None,
-            crtf_stokes: None,
         });
     }
     if let Some(inner) = text
@@ -285,33 +366,22 @@ fn parse_region_argument<T: ImagePixel>(
     {
         let b = parse_single_box(inner.trim(), full_shape, plane)?;
         return Ok(ParsedRegion {
-            shapes: vec![SpatialShape::Box(b)],
+            shapes: vec![SpatialShape::Box(b).into()],
             saved_polygon_mask: None,
             saved_bounds: None,
-            crtf_chans: None,
-            crtf_stokes: None,
         });
     }
     if looks_like_four_ints(text) {
         let b = parse_single_box(text, full_shape, plane)?;
         return Ok(ParsedRegion {
-            shapes: vec![SpatialShape::Box(b)],
+            shapes: vec![SpatialShape::Box(b).into()],
             saved_polygon_mask: None,
             saved_bounds: None,
-            crtf_chans: None,
-            crtf_stokes: None,
         });
     }
 
-    let crtf_text = if looks_like_inline_crtf(text) {
-        text.to_string()
-    } else {
-        let reg_path = Path::new(text);
-        if !reg_path.exists() {
-            return Err(ImageError::CasaSelection(format!(
-                "Unable to open region file or region table description {text}."
-            )));
-        }
+    let reg_path = Path::new(text);
+    let crtf_text = if reg_path.is_file() {
         let bytes = fs::read(reg_path)
             .map_err(|e| ImageError::Io(format!("read region file {}: {e}", reg_path.display())))?;
         if bytes.starts_with(&[0xbe; 4]) {
@@ -321,6 +391,12 @@ fn parse_region_argument<T: ImagePixel>(
         }
         String::from_utf8(bytes)
             .map_err(|e| ImageError::Io(format!("read CRTF file {text}: {e}")))?
+    } else if looks_like_inline_crtf(text) {
+        text.to_string()
+    } else {
+        return Err(ImageError::CasaSelection(format!(
+            "Unable to open region file or region table description {text}."
+        )));
     };
 
     parse_crtf_document(image, &crtf_text, full_shape, plane)
@@ -371,8 +447,7 @@ fn parse_crtf_document<T: ImagePixel>(
     plane: [usize; 2],
 ) -> Result<ParsedRegion, ImageError> {
     let mut shapes = Vec::new();
-    let mut crtf_chans: Option<Vec<usize>> = None;
-    let mut crtf_stokes: Option<String> = None;
+    let mut defaults = PlaneSelection::default();
 
     for raw_stmt in text.split(['\n', ';']) {
         let stmt = raw_stmt.trim();
@@ -383,31 +458,23 @@ fn parse_crtf_document<T: ImagePixel>(
         if lower.starts_with("ann ") || lower.starts_with("symbol") || lower.starts_with("text") {
             continue;
         }
-        let tokens = split_top_level(stmt, ',');
         if lower.starts_with("global ") {
             parse_crtf_qualifiers(
-                &tokens,
+                &split_top_level(stmt[7..].trim(), ','),
                 image,
                 full_shape,
-                &mut crtf_chans,
-                &mut crtf_stokes,
+                &mut defaults,
             )?;
             continue;
         }
+        let tokens = split_top_level(stmt, ',');
         let Some(first) = tokens.first() else {
             continue;
         };
-        let shape = parse_crtf_shape(image, first, plane)?;
-        shapes.push(shape);
-        if tokens.len() > 1 {
-            parse_crtf_qualifiers(
-                &tokens[1..],
-                image,
-                full_shape,
-                &mut crtf_chans,
-                &mut crtf_stokes,
-            )?;
-        }
+        let spatial = parse_crtf_shape(image, first, plane)?;
+        let mut planes = defaults.clone();
+        parse_crtf_qualifiers(&tokens[1..], image, full_shape, &mut planes)?;
+        shapes.push(QualifiedShape { spatial, planes });
     }
 
     if shapes.is_empty() {
@@ -419,8 +486,6 @@ fn parse_crtf_document<T: ImagePixel>(
         shapes,
         saved_polygon_mask: None,
         saved_bounds: None,
-        crtf_chans,
-        crtf_stokes,
     })
 }
 
@@ -428,8 +493,7 @@ fn parse_crtf_qualifiers<T: ImagePixel>(
     tokens: &[&str],
     image: &dyn ImageInterface<T>,
     full_shape: &[usize],
-    crtf_chans: &mut Option<Vec<usize>>,
-    crtf_stokes: &mut Option<String>,
+    planes: &mut PlaneSelection,
 ) -> Result<(), ImageError> {
     for tok in tokens {
         let trimmed = tok.trim();
@@ -450,7 +514,7 @@ fn parse_crtf_qualifiers<T: ImagePixel>(
                 .collect::<Vec<_>>()
                 .join(",");
             if !joined.is_empty() {
-                *crtf_stokes = Some(joined);
+                planes.stokes = Some(parse_stokes_selection(image, &joined)?);
             }
         } else if key == "range" {
             let spec_ax = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
@@ -458,14 +522,7 @@ fn parse_crtf_qualifiers<T: ImagePixel>(
             })?;
             let indices =
                 parse_crtf_spectral_range(val, image.coordinates(), spec_ax, full_shape[spec_ax])?;
-            match crtf_chans {
-                Some(existing) => {
-                    existing.extend(indices);
-                    existing.sort_unstable();
-                    existing.dedup();
-                }
-                None => *crtf_chans = Some(indices),
-            }
+            planes.channels = Some(indices);
         }
     }
     Ok(())
@@ -509,7 +566,10 @@ fn parse_spectral_endpoint(
     spec_axis: usize,
 ) -> Result<isize, ImageError> {
     let lower = text.trim().to_ascii_lowercase();
-    if let Some(ch_str) = lower.strip_suffix("chan") {
+    if let Some(ch_str) = lower
+        .strip_suffix("chan")
+        .or_else(|| lower.strip_suffix("pix"))
+    {
         return ch_str
             .trim()
             .parse::<f64>()
@@ -891,7 +951,7 @@ fn resolve_spatial_and_saved_bounds(
     full_shape: &[usize],
     ndim: usize,
     plane: [usize; 2],
-    shapes: &[SpatialShape],
+    shapes: &[&SpatialShape],
     saved_bounds: Option<&(Vec<usize>, Vec<usize>)>,
     saved_polygon_mask: Option<&ArrayD<bool>>,
 ) -> Result<SpatialResolution, ImageError> {
@@ -924,7 +984,7 @@ fn resolve_spatial_and_saved_bounds(
     // Fast path for single box with no saved WCPolygon.
     if shapes.len() == 1
         && saved_polygon_mask.is_none()
-        && let SpatialShape::Box([x0, y0, x1, y1]) = shapes[0]
+        && let SpatialShape::Box([x0, y0, x1, y1]) = *shapes[0]
     {
         if x1 >= nx || y1 >= ny || x1 < x0 || y1 < y0 {
             return Err(ImageError::CasaSelection(
@@ -1236,13 +1296,12 @@ struct StokesResolution {
 fn resolve_stokes(
     image: &dyn ImageInterface<impl ImagePixel>,
     stokes_arg: Option<&str>,
-    crtf_stokes: Option<&str>,
+    crtf_stokes: Option<&[usize]>,
     start: &mut [usize],
     shape: &mut [usize],
 ) -> Result<StokesResolution, ImageError> {
     let arg_trimmed = stokes_arg.map(str::trim).filter(|s| !s.is_empty());
-    let crtf_trimmed = crtf_stokes.map(str::trim).filter(|s| !s.is_empty());
-    if arg_trimmed.is_none() && crtf_trimmed.is_none() {
+    if arg_trimmed.is_none() && crtf_stokes.is_none() {
         return Ok(StokesResolution {
             axis: None,
             indices: None,
@@ -1252,21 +1311,10 @@ fn resolve_stokes(
     let axis = image.find_axis(CoordinateType::Stokes).ok_or_else(|| {
         ImageError::InvalidMetadata("Stokes selection requires a Stokes axis".into())
     })?;
-    let mut indices = match (arg_trimmed, crtf_trimmed) {
-        (Some(a), None) => parse_stokes_selection(image, a)?,
-        (None, Some(c)) => parse_stokes_selection(image, c)?,
-        (Some(a), Some(c)) => {
-            let sa = parse_stokes_selection(image, a)?;
-            let sc = parse_stokes_selection(image, c)?;
-            let intersected: Vec<usize> = sa.into_iter().filter(|i| sc.contains(i)).collect();
-            if intersected.is_empty() {
-                return Err(ImageError::CasaSelection(
-                    "stokes selection and CRTF corr have empty intersection".into(),
-                ));
-            }
-            intersected
-        }
-        (None, None) => unreachable!(),
+    let mut indices = if let Some(selection) = arg_trimmed {
+        parse_stokes_selection(image, selection)?
+    } else {
+        crtf_stokes.expect("at least one Stokes selection").to_vec()
     };
     indices.sort_unstable();
     indices.dedup();

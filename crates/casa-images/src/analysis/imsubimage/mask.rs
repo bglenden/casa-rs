@@ -9,9 +9,8 @@ use casa_coordinates::CoordinateSystem;
 use casa_types::{ArrayD, Complex32, Complex64};
 
 use crate::analysis::mask_error_wording;
-use crate::expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr, referenced_images};
-use crate::image_expr::ImageExprValue;
-use crate::image_expr_lel::can_broadcast_to;
+use crate::expr_parser::{HashMapResolver, parse_mixed_mask_expr, referenced_images};
+use crate::image_expr_lel::broadcast_array;
 use crate::{
     AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage, TempImage,
     TempStoragePolicy, read_fits_image,
@@ -31,11 +30,31 @@ impl<T: ImagePixel> MaskSource<T> {
     }
 }
 
+enum Operand {
+    Real(MaskSource<f64>),
+    Complex(MaskSource<Complex64>),
+}
+impl Operand {
+    fn geometry(&self) -> (&[usize], &CoordinateSystem) {
+        match self {
+            Self::Real(source) => (
+                source.as_interface().shape(),
+                source.as_interface().coordinates(),
+            ),
+            Self::Complex(source) => (
+                source.as_interface().shape(),
+                source.as_interface().coordinates(),
+            ),
+        }
+    }
+}
+
 /// Evaluates an optional `mask` expression over `window` `(start, shape)` of a
 /// parent image of shape `target_shape`.
 pub(super) fn evaluate_subimage_mask(
     mask_expr: Option<&str>,
     target_shape: &[usize],
+    target_coordinates: &CoordinateSystem,
     stretch: bool,
     window: (&[usize], &[usize]),
 ) -> Result<Option<ArrayD<bool>>, ImageError> {
@@ -54,39 +73,48 @@ pub(super) fn evaluate_subimage_mask(
         // Unquoted path:maskname expression in top-level `mask=` parameter.
         expr = format!("mask(\"{raw}\")");
     }
-    let ref_names = referenced_images(&expr).map_err(mask_parse_error)?;
-
-    let mut opened: Vec<(String, MaskSource<f64>)> = Vec::with_capacity(ref_names.len());
-    for name in &ref_names {
-        opened.push((name.clone(), open_mask_target_f64(name)?));
-    }
-
-    evaluate_typed::<f64>(&expr, target_shape, stretch, window, opened)
+    let opened = referenced_images(&expr)
+        .map_err(mask_parse_error)?
+        .into_iter()
+        .map(|name| {
+            let image = open_operand(&name)?;
+            Ok((name, image))
+        })
+        .collect::<Result<Vec<_>, ImageError>>()?;
+    evaluate(
+        &expr,
+        target_shape,
+        target_coordinates,
+        stretch,
+        window,
+        &opened,
+    )
 }
 
-fn evaluate_typed<T>(
+fn evaluate(
     expr: &str,
     target_shape: &[usize],
+    target_coordinates: &CoordinateSystem,
     stretch: bool,
     window: (&[usize], &[usize]),
-    opened: Vec<(String, MaskSource<T>)>,
-) -> Result<Option<ArrayD<bool>>, ImageError>
-where
-    T: ImagePixel + ImageExprValue + PartialOrd + ExprValueConvert + Copy + 'static,
-{
-    let mut map: HashMap<String, &dyn ImageInterface<T>> = HashMap::new();
-    for (name, img) in &opened {
-        map.insert(name.clone(), img.as_interface());
+    opened: &[(String, Operand)],
+) -> Result<Option<ArrayD<bool>>, ImageError> {
+    let mut real = HashMap::new();
+    let mut complex = HashMap::new();
+    for (name, operand) in opened {
+        match operand {
+            Operand::Real(source) => {
+                real.insert(name.clone(), source.as_interface());
+            }
+            Operand::Complex(source) => {
+                complex.insert(name.clone(), source.as_interface());
+            }
+        }
     }
-    let resolver = HashMapResolver(map);
-    let parsed = parse_mask_expr(expr, &resolver).map_err(mask_parse_error)?;
+    let parsed = parse_mixed_mask_expr(expr, &HashMapResolver(real), &HashMapResolver(complex))
+        .map_err(mask_parse_error)?;
     let mask_shape = parsed.shape();
     if mask_shape != target_shape && !mask_shape.is_empty() {
-        if !can_broadcast_to(mask_shape, target_shape) {
-            return Err(ImageError::CasaSelection(
-                "Unable to extend mask: ExtendSpecifier - lengths of old axis mismatch".into(),
-            ));
-        }
         if !stretch {
             return Err(ImageError::CasaSelection(format!(
                 "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) \
@@ -94,10 +122,77 @@ where
                  so the mask cannot be applied to the (sub)image"
             )));
         }
+        let source = opened
+            .iter()
+            .map(|(_, image)| image.geometry())
+            .find(|(shape, _)| *shape == mask_shape);
+        if let Some((_, coordinates)) = source {
+            let axes = stretch_axes(coordinates, target_coordinates, mask_shape, target_shape)?;
+            if axes.iter().copied().ne(0..axes.len()) {
+                let mut start = Vec::with_capacity(axes.len());
+                let mut shape = Vec::with_capacity(axes.len());
+                for (i, &axis) in axes.iter().enumerate() {
+                    let single = mask_shape[i] == 1;
+                    start.push(if single { 0 } else { window.0[axis] });
+                    shape.push(if single { 1 } else { window.1[axis] });
+                }
+                let mut data = parsed.get_slice(&start, &shape)?;
+                for axis in 0..target_shape.len() {
+                    if !axes.contains(&axis) {
+                        data = data.insert_axis(ndarray::Axis(axis));
+                    }
+                }
+                return broadcast_array(data, window.1).map(Some);
+            }
+        }
     }
     parsed
         .eval_window_for_shape(window.0, window.1, target_shape)
         .map(Some)
+}
+
+fn stretch_axes(
+    source: &CoordinateSystem,
+    target: &CoordinateSystem,
+    source_shape: &[usize],
+    target_shape: &[usize],
+) -> Result<Vec<usize>, ImageError> {
+    let axes = |coords: &CoordinateSystem| {
+        (0..coords.n_coordinates())
+            .flat_map(|i| {
+                let coord = coords.coordinate(i);
+                let kind = coord.coordinate_type();
+                coord.axis_names().into_iter().map(move |name| (kind, name))
+            })
+            .collect::<Vec<_>>()
+    };
+    let source_axes = axes(source);
+    let target_axes = axes(target);
+    let incompatible = || {
+        ImageError::CasaSelection(
+            "Unable to extend mask: coordinate axes or axis lengths do not conform".into(),
+        )
+    };
+    let mapped = source_axes
+        .iter()
+        .map(|axis| {
+            target_axes
+                .iter()
+                .position(|candidate| candidate == axis)
+                .ok_or_else(incompatible)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if mapped.len() != source_shape.len()
+        || target_axes.len() != target_shape.len()
+        || !mapped.is_sorted_by(|a, b| a < b)
+        || mapped
+            .iter()
+            .zip(source_shape)
+            .any(|(&i, &len)| len != 1 && len != target_shape[i])
+    {
+        return Err(incompatible());
+    }
+    Ok(mapped)
 }
 
 fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
@@ -107,7 +202,7 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
     ))
 }
 
-fn open_mask_target_f64(spec: &str) -> Result<MaskSource<f64>, ImageError> {
+fn open_operand(spec: &str) -> Result<Operand, ImageError> {
     let direct_path = Path::new(spec);
     if direct_path.exists() {
         return open_path_with_mask_name(direct_path, None, spec);
@@ -129,7 +224,7 @@ fn open_path_with_mask_name(
     path: &Path,
     mask_name: Option<String>,
     spec: &str,
-) -> Result<MaskSource<f64>, ImageError> {
+) -> Result<Operand, ImageError> {
     if path.is_file() {
         if mask_name.is_some() {
             return Err(ImageError::CasaSelection(format!(
@@ -148,7 +243,7 @@ fn open_path_with_mask_name(
             pixels,
             mask,
         )?;
-        return Ok(MaskSource::Memory(Box::new(temp)));
+        return Ok(Operand::Real(MaskSource::Memory(Box::new(temp))));
     }
 
     match AnyPagedImage::open(path)? {
@@ -159,29 +254,33 @@ fn open_path_with_mask_name(
                     path.display()
                 )));
             }
-            Ok(MaskSource::Paged(Box::new(img)))
+            Ok(Operand::Real(MaskSource::Paged(Box::new(img))))
         }
         AnyPagedImage::Float32(img) => {
-            convert_paged_to_f64_mask_source(&img, mask_name.as_deref(), f64::from)
+            convert_paged_mask_source(&img, mask_name.as_deref(), f64::from).map(Operand::Real)
+        }
+        AnyPagedImage::Complex64(img) if mask_name.is_none() => {
+            Ok(Operand::Complex(MaskSource::Paged(Box::new(img))))
         }
         AnyPagedImage::Complex64(img) => {
-            convert_paged_to_f64_mask_source(&img, mask_name.as_deref(), |c: Complex64| c.norm())
+            convert_paged_mask_source(&img, mask_name.as_deref(), |c| c).map(Operand::Complex)
         }
         AnyPagedImage::Complex32(img) => {
-            convert_paged_to_f64_mask_source(&img, mask_name.as_deref(), |c: Complex32| {
-                f64::from(c.re).hypot(f64::from(c.im))
+            convert_paged_mask_source(&img, mask_name.as_deref(), |c: Complex32| {
+                Complex64::new(f64::from(c.re), f64::from(c.im))
             })
+            .map(Operand::Complex)
         }
     }
 }
 
-fn convert_paged_to_f64_mask_source<S: ImagePixel + Copy>(
+fn convert_paged_mask_source<S: ImagePixel, T: ImagePixel>(
     img: &PagedImage<S>,
     mask_name: Option<&str>,
-    to_f64: impl Fn(S) -> f64,
-) -> Result<MaskSource<f64>, ImageError> {
+    convert: impl FnMut(S) -> T,
+) -> Result<MaskSource<T>, ImageError> {
     validate_mask_name(img, mask_name)?;
-    let data = img.get()?.mapv(to_f64);
+    let data = img.get()?.mapv(convert);
     let mask = match mask_name {
         Some(name) => Some(img.get_named_mask(name)?),
         None => img.default_mask()?,
