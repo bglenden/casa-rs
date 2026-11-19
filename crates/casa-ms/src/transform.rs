@@ -477,6 +477,8 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         &compact_metadata.spw_map,
         time_selection.as_ref(),
     )?;
+    let row_id_maps =
+        selection_metadata::reindex_observation_and_state(&input, request, antenna_id_map)?;
     maybe_log_transform_progress(
         "compact_spectral_subtables",
         stage_started_at.elapsed(),
@@ -511,7 +513,7 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         &request.output_ms,
         batch_rows,
         &mut write_session,
-        antenna_id_map.as_ref(),
+        &row_id_maps,
     )?;
     maybe_log_transform_progress(
         "load_main_column_overrides",
@@ -1260,7 +1262,7 @@ fn gather_selected_main_column_overrides(
     output_path: &Path,
     batch_rows: usize,
     write_session: &mut MeasurementSetWriteSession,
-    antenna_id_map: Option<&BTreeMap<i32, i32>>,
+    row_id_maps: &selection_metadata::RowIdMaps,
 ) -> Result<ColumnOverrides, MsTransformError> {
     let schema = table
         .schema()
@@ -1283,6 +1285,7 @@ fn gather_selected_main_column_overrides(
                     continue;
                 }
                 if column.data_type().and_then(streamed_scalar_type).is_some() {
+                    let id_map = row_id_maps.for_column(name);
                     for rows in selected_rows.chunks(batch_rows.max(1)) {
                         let values = table
                             .column_accessor(name)
@@ -1292,13 +1295,13 @@ fn gather_selected_main_column_overrides(
                                 source: Box::new(source),
                             })?;
                         for (row, value) in rows.iter().zip(values) {
-                            let value = match antenna_id_map {
-                                Some(ids) if matches!(name, "ANTENNA1" | "ANTENNA2") => {
+                            let value = match id_map {
+                                Some(ids) => {
                                     let old_id = scalar_i32(value.as_ref(), name, *row)?;
                                     let new_id = ids.get(&old_id).ok_or_else(|| {
                                         MsTransformError::SpectralMetadata {
                                             path: output_path.display().to_string(),
-                                            reason: format!("{name} {old_id} is absent from the selected ANTENNA table"),
+                                            reason: format!("{name} {old_id} is absent from the selected metadata"),
                                         }
                                     })?;
                                     Some(ScalarValue::Int32(*new_id))

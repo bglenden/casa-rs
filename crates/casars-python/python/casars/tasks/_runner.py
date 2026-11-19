@@ -221,6 +221,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "initweights":
         return _call_initweights(values)
     if name in ("split", "mstransform"):
+        _coerce_ms_transform_selectors(values)
         try:
             return run(name, **values).value
         except TaskParameterError as error:
@@ -299,6 +300,51 @@ def _call_initweights(values: dict[str, Any]) -> Any:
         raise
     except (TypeError, ValueError) as error:
         raise AssertionError(str(error)) from error
+
+
+def _coerce_ms_transform_selectors(values: dict[str, Any]) -> None:
+    for name in ("observation", "intent"):
+        value = values.get(name, "")
+        if isinstance(value, str):
+            continue
+        kind = _ms_transform_selector_type(name, value)
+        if name == "observation":
+            if kind == "numpy integer":
+                values[name] = int(value)
+            elif kind == "unknown":
+                import numpy as np
+
+                values[name] = value.tolist() if isinstance(value, np.ndarray) else list(value)
+        elif kind == "numpy integer":
+            # CASA's tool record conversion omits this scalar variant.
+            del values[name]
+        else:
+            raise RuntimeError(
+                "RecordRep::get_pointer - incorrect data type String   "
+                f"used for field intent with type {kind:<8}"
+            )
+
+
+def _ms_transform_selector_type(name: str, value: Any) -> str:
+    import numpy as np
+
+    if value is None:
+        raise AssertionError(str({name: ["null value not allowed"] * 5}))
+    if type(value) is bool:
+        return "Bool"
+    if type(value) is int:
+        return "Int"
+    if isinstance(value, (np.int32, np.int64)):
+        return "numpy integer"
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (list, tuple)) and (
+        all(isinstance(item, str) for item in value)
+        or all(isinstance(item, (int, np.int32, np.int64)) for item in value)
+    ):
+        return "unknown"
+    types = ("cStr", "cStrVec", "cInt", "cIntVec")
+    raise AssertionError(str({name: [f"must be of {kind} type" for kind in types]}))
 
 
 def _call_gencal(values: dict[str, Any]) -> Any:

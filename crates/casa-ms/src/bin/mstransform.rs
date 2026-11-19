@@ -10,7 +10,7 @@ use casa_ms::{
     MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform,
     mstransform_task_schema_bundle, task_selection_text,
 };
-use casa_provider_contracts::CasaValue;
+use casa_provider_contracts::{CasaValue, ParameterValue, python_repr};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -100,6 +100,11 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         scan: selector("scan")?,
         antenna: selector("antenna")?,
         timerange: selector("timerange")?,
+        observation: task.value("observation").and_then(|value| match value {
+            ParameterValue::String(text) => (!text.is_empty()).then(|| text.clone()),
+            other => Some(python_repr(other)),
+        }),
+        intent: task.text("intent")?.filter(|text| !text.is_empty()),
         msselect: selector(taql_name)?,
         ..MsSelection::default()
     };

@@ -21,15 +21,18 @@ from record_casa_returns import make_cal_ms
 
 
 MAIN = ("TIME", "SCAN_NUMBER", "ANTENNA1", "ANTENNA2", "FIELD_ID", "DATA_DESC_ID",
+        "OBSERVATION_ID", "STATE_ID",
         "DATA", "FLAG", "FLAG_ROW", "WEIGHT", "SIGMA", "UVW")
 SUBTABLES = {
     "ANTENNA": ("NAME", "POSITION"),
     "DATA_DESCRIPTION": ("SPECTRAL_WINDOW_ID", "POLARIZATION_ID"),
     "FEED": ("ANTENNA_ID", "SPECTRAL_WINDOW_ID"),
     "FIELD": ("NAME", "PHASE_DIR", "SOURCE_ID"),
+    "OBSERVATION": ("PROJECT", "TIME_RANGE"),
     "POINTING": ("ANTENNA_ID", "TIME"),
     "POLARIZATION": ("CORR_TYPE",),
     "SOURCE": ("SOURCE_ID", "SPECTRAL_WINDOW_ID", "NAME"),
+    "STATE": ("OBS_MODE", "FLAG_ROW"),
     "SPECTRAL_WINDOW": ("NAME", "NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION",
                         "EFFECTIVE_BW", "REF_FREQUENCY", "TOTAL_BANDWIDTH"),
 }
@@ -118,6 +121,22 @@ def add_second_window(source):
             tool.putcol(column, tool.getcol(predicate))
 
 
+def add_observation_and_intent(source):
+    for name, changes in {
+        "OBSERVATION": {"PROJECT": "Second observation"},
+        "STATE": {"OBS_MODE": "CALIBRATE_PHASE.ON_SOURCE"},
+    }.items():
+        with core_table(str(source / name), readonly=False, ack=False) as tool:
+            tool.addrows(1)
+            for column in tool.colnames():
+                if tool.iscelldefined(column, 0):
+                    tool.putcell(column, 1, changes.get(column, tool.getcell(column, 0)))
+    with core_table(str(source), readonly=False, ack=False) as tool:
+        fields = tool.getcol("FIELD_ID")
+        tool.putcol("OBSERVATION_ID", fields)
+        tool.putcol("STATE_ID", fields)
+
+
 def succeeds(root, source, name, case, options, subtables=SUBTABLES):
     paths = [root / f"{name}-{case}-{side}.ms" for side in ("casa", "native")]
     for module, path in zip((casatasks, tasks), paths):
@@ -155,6 +174,31 @@ def malformed_spw(root, source, name):
         assert not path.exists(), path
 
 
+def rejected_selector_types(root, source, name):
+    cases = (
+        ("observation", None, AssertionError, "null value not allowed"),
+        ("observation", 1.5, AssertionError, "must be of cInt type"),
+        ("observation", [1], RuntimeError, "["),
+        ("observation", np.array([1]), RuntimeError, "["),
+        ("observation", True, RuntimeError, "T"),
+        ("intent", True, RuntimeError, "used for field intent with type Bool"),
+        ("intent", 1, RuntimeError, "used for field intent with type Int"),
+        ("intent", ["OBSERVE*"], RuntimeError, "used for field intent with type unknown"),
+        ("intent", ["OBSERVE*", 1], AssertionError, "must be of cStrVec type"),
+    )
+    for index, (parameter, value, error_type, message) in enumerate(cases):
+        for module in (casatasks, tasks):
+            path = root / f"{name}-invalid-{index}-{module.__name__}.ms"
+            try:
+                getattr(module, name)(vis=str(source), outputvis=str(path), datacolumn="data", **{parameter: value})
+            except error_type as error:
+                assert message in str(error), str(error)
+            else:
+                raise AssertionError(f"{module.__name__}.{name} accepted {parameter}={value!r}")
+            assert not path.exists(), path
+    return len(cases)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14], casatasks.version()
     with TemporaryDirectory(prefix="ms-task-selection-") as scratch:
@@ -190,7 +234,22 @@ def main():
             succeeds(root, source, name, "unused-window", {"field": "PHASE"}, subtables)
             selected = succeeds(root, source, name, "compact-second-window", {"spw": "SPW1:2~6"}, subtables)
             succeeds(root, selected, name, "native-input", {"spw": "SPW1:0~2"}, subtables)
-        print(f"{(len(cases) + 3) * 2} selected products and 4 rejected calls matched CASA 6.7.6.14")
+        add_observation_and_intent(source)
+        observation_cases = {
+            "observation-id": {"observation": 1},
+            "observation-np-id": {"observation": np.int64(1)},
+            "observation-range": {"observation": "1~2"},
+            "observation-and-field": {"observation": "0,1", "field": "PH*"},
+            "intent-pattern": {"intent": "CALIBRATE*"},
+            "intent-np-id": {"intent": np.int32(1)},
+            "intent-and-spw": {"intent": "CALIBRATE*,OBSERVE*", "spw": "SPW1:2~6"},
+        }
+        rejected = 4
+        for name in ("split", "mstransform"):
+            for case, options in observation_cases.items():
+                succeeds(root, source, name, case, options, subtables)
+            rejected += rejected_selector_types(root, source, name)
+        print(f"{(len(cases) + len(observation_cases) + 3) * 2} selected products and {rejected} rejected calls matched CASA 6.7.6.14")
 
 
 if __name__ == "__main__":

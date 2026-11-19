@@ -6,11 +6,94 @@ use std::collections::BTreeMap;
 use casa_tables::{ColumnType, Table, TableError, TableOptions};
 use casa_types::{RecordValue, ScalarValue, Value};
 
+use crate::selection::parser::parse_state_selector;
+use crate::selection::syntax::parse_numeric_row_id_ranges;
 use crate::selection::{ResolvedMsSelectionRow, TimeSelection};
 use crate::subtables::{get_f64, get_i32};
 use crate::{MeasurementSet, MsError, SubtableId};
 
 use super::{MsTransformError, MsTransformRequest, rewrite_selected_table_rows};
+
+pub(super) struct RowIdMaps {
+    antenna: Option<BTreeMap<i32, i32>>,
+    observation: Option<BTreeMap<i32, i32>>,
+    state: Option<BTreeMap<i32, i32>>,
+}
+
+impl RowIdMaps {
+    pub(super) fn for_column(&self, column: &str) -> Option<&BTreeMap<i32, i32>> {
+        match column {
+            "ANTENNA1" | "ANTENNA2" => self.antenna.as_ref(),
+            "OBSERVATION_ID" => self.observation.as_ref(),
+            "STATE_ID" => self.state.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+pub(super) fn reindex_observation_and_state(
+    input: &MeasurementSet,
+    request: &MsTransformRequest,
+    antenna: Option<BTreeMap<i32, i32>>,
+) -> Result<RowIdMaps, MsTransformError> {
+    let observation = request
+        .selection
+        .observation
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| {
+            let table = input
+                .observation()
+                .map_err(|source| metadata_error(request, source))?;
+            let ranges = parse_numeric_row_id_ranges(text, "observation")
+                .map_err(|source| metadata_error(request, source))?;
+            let selected = (0..table.row_count() as i32)
+                .filter(|&id| {
+                    ranges
+                        .iter()
+                        .any(|&(first, last)| (first..=last).contains(&id))
+                })
+                .collect::<Vec<_>>();
+            reindex_table(request, SubtableId::Observation, selected)
+        })
+        .transpose()?;
+    let state = request
+        .selection
+        .intent
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| {
+            let selected = parse_state_selector(input, text)
+                .map_err(|source| metadata_error(request, source))?;
+            reindex_table(request, SubtableId::State, selected)
+        })
+        .transpose()?;
+    Ok(RowIdMaps {
+        antenna,
+        observation,
+        state,
+    })
+}
+
+fn reindex_table(
+    request: &MsTransformRequest,
+    id: SubtableId,
+    selected: Vec<i32>,
+) -> Result<BTreeMap<i32, i32>, MsTransformError> {
+    let name = id.name();
+    let rows = selected.iter().map(|&row| row as usize).collect::<Vec<_>>();
+    rewrite_selected_table_rows(
+        &request.input_ms.join(name),
+        &request.output_ms.join(name),
+        &rows,
+        |_, row| Ok(row),
+    )?;
+    Ok(selected
+        .into_iter()
+        .enumerate()
+        .map(|(out, input)| (input, out as i32))
+        .collect())
+}
 
 pub(super) fn reindex_fields_and_sources(
     input: &MeasurementSet,
