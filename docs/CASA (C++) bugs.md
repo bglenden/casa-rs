@@ -7030,3 +7030,26 @@ cumulative rows' scan and observation metadata. In local comparisons,
 the per-scan output matched two independent single-field CASA controls.
 An independent SciPy natural spline matched 52 valid complex factors
 in the spline comparison (#1525).
+
+## `exportfits` drops characters when wrapping long `HISTORY` cards
+
+- Date noted: 2026-11-19
+- Status: CASA silently loses history text; casa-rs wraps losslessly (#977).
+- Affected code: casacore `ImageFITSConverter` FITS `HISTORY` card continuation writer.
+
+In CASA 6.7.6.14, `exportfits(..., history=True)` wraps logtable lines across
+80-byte FITS `HISTORY` cards by placing 72 characters on the first card and
+`>` followed by 71 characters on continuation cards, but skips character index
+143 on card 3 and subsequent continuation cards when the wrapped line spans
+more than 143 characters. On `cube_i.im` (`crates/casa-images/tests/data/exportfits/cube_i.im`),
+CASA drops `'y'` from `csys={...}` in the 202-character `ia.fromshape(...)`
+message and drops the closing `')'` of the 144-character
+`ia.setrestoringbeam(...)` message (emitting 47 `HISTORY` cards instead of 48);
+on a synthetic 160-digit `"0123..."` history entry, CASA drops `'3'` at index
+143 between `>...012` and `>456...`.
+
+casa-rs (`crates/casa-images/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
+splits at 72 characters on the first card and `>` plus 71 characters on each
+continuation card without skipping characters, emitting all 48 cards on
+`cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
+all 17 original history entries intact (#977).
