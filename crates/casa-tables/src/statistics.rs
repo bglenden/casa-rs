@@ -43,13 +43,17 @@ fn record(values: &[f64]) -> Result<BTreeMap<&'static str, f64>, ColumnStatistic
     let count = values.len();
     let has_nan = values.iter().any(|v| v.is_nan());
     let sum: f64 = values.iter().copied().sum();
-    let sumsq: f64 = values.iter().map(|v| v * v).sum();
+    // CASA's lattice squares each float sample before accumulating as doubles.
+    let sumsq: f64 = values
+        .iter()
+        .map(|v| f64::from((*v as f32) * (*v as f32)))
+        .sum();
     let mean = sum / count as f64;
     let rms = (sumsq / count as f64).sqrt();
     let variance = if count <= 1 {
         0.0
     } else if values.iter().all(|v| v.is_finite()) {
-        // Welford two-pass keeps finite variance numerically accurate.
+        // Welford's recurrence avoids cancellation in the finite variance.
         let mut w_mean = 0.0;
         let mut m2 = 0.0;
         for (index, &value) in values.iter().enumerate() {

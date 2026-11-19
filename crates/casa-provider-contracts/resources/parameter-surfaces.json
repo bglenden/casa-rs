@@ -34728,7 +34728,7 @@
           },
           "reviewed_homonym": {
             "review_id": "#1526",
-            "reason": "calstat selects a numeric column or complex projection rather than a coordinate axis for image moments."
+            "reason": "calstat selects a numeric column or complex projection. The image moments axis selects a coordinate."
           }
         },
         {

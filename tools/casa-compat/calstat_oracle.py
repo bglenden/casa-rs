@@ -133,6 +133,8 @@ def run(root, native, native_table):
     expected = casa.calstat(str(legacy), 'VECTOR')['VECTOR_0']
     cast = (5_084_546_400.0 + np.arange(7)*80.0).astype(np.float32).astype(np.float64)
     np.testing.assert_allclose(expected['var'], cast.var(ddof=1), rtol=2e-7)
+    samples = cast.astype(np.float32)
+    assert expected['sumsq'] == np.square(samples).sum(dtype=np.float64)
     print(f'{len(successes) + 2} public statistics comparisons, {len(errors)} errors, '
           'four table-tool comparisons and an independent sample-variance check passed')
 
