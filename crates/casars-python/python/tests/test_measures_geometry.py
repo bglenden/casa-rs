@@ -17,7 +17,22 @@ def arguments(value):
 def compare(actual,expected):
     if isinstance(expected,dict):
         assert actual.keys()==expected.keys()
-        for name,value in expected.items():compare(actual[name],value)
+        if expected.get('type') in ['baseline','uvw'] and all('m'+str(i) in expected for i in range(3)):
+            # Compare physical vectors, retaining exact field/unit/array shapes.
+            # Longitude/latitude are undefined when an offset leaves zero length.
+            for i in range(3):
+                key='m'+str(i)
+                assert actual[key].keys()==expected[key].keys()
+                assert actual[key]['unit']==expected[key]['unit']
+                assert np.asarray(actual[key]['value']).shape==np.asarray(expected[key]['value']).shape
+            def xyz(record):
+                lon,lat,r=[np.asarray(record['m'+str(i)]['value']) for i in range(3)]
+                return np.array([r*np.cos(lat)*np.cos(lon),r*np.cos(lat)*np.sin(lon),r*np.sin(lat)])
+            np.testing.assert_allclose(xyz(actual),xyz(expected),rtol=2e-11,atol=2e-7,equal_nan=True)
+            for name,value in expected.items():
+                if name not in ['m0','m1','m2']:compare(actual[name],value)
+        else:
+            for name,value in expected.items():compare(actual[name],value)
     elif isinstance(expected,(list,tuple)):
         assert len(actual)==len(expected)
         for left,right in zip(actual,expected):compare(left,right)

@@ -4,12 +4,13 @@
 import argparse
 from copy import deepcopy
 import json
+import math
 from pathlib import Path
 import resource
 from casaconfig import config
 config.data_auto_update=False
 config.measures_auto_update=False
-from casatools import measures,version_string
+from casatools import measures,quanta,version_string
 import numpy as np
 resource.setrlimit(resource.RLIMIT_CORE,(0,0))
 p=argparse.ArgumentParser(description=__doc__)
@@ -98,6 +99,47 @@ for method in ['touvw','expand']:
         v=deepcopy(records['baseline'])
         for j,key in enumerate(['m0','m1','m2']):v[key]['value']=[v[key]['value']*(i+1)+j*.01 for i in range(n)]
         capture(method+'_baseline_vector_'+str(n),method,[v],frame=frame)
+# Qualify the observed CASA defects with independent quantity/record paths.
+qa=quanta()
+for case in cases:
+    result=case.get('result')
+    if case['method'] in ['touvw','expand'] and isinstance(result,list) and result and result[0]=={}:
+        case['native_result']=[{} for _ in result]
+        case['deviation']='A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call.'
+    if case['name'] in ['baseline_values_6','uvw_values_6']:
+        case['unit_controls']=[qa.compare(qa.quantity(v),qa.quantity('1m')) for v in ['1Hz','2Hz','3Hz']]
+        assert not any(case['unit_controls'])
+        case['native_result']={}
+        case['deviation']='Refuse incompatible dimensions rather than silently replacing invalid frequency-valued baselines with zero.'
+    if case['method']=='earthmagnetic' and isinstance(result,dict) and result and len(case['args'])>=4:
+        try:
+            q=[qa.quantity(v) for v in case['args'][1:4]]
+            if not qa.compare(q[0],qa.quantity('1nT')):continue
+            if not all(qa.compare(v,qa.quantity('1rad')) for v in q[1:]):continue
+            length=float(qa.convert(q[0],'nT')['value'])
+            lon,lat=[float(qa.convert(v,'rad')['value']) for v in q[1:]]
+            if length==0.:continue
+            xyz=[length*math.cos(lon)*math.cos(lat),length*math.sin(lon)*math.cos(lat),length*math.sin(lat)]
+            record=dict(type='earthmagnetic',refer=result['refer'],**{'m'+str(i):{'unit':'nT','value':v} for i,v in enumerate(xyz)})
+            control=m.measure(record,result['refer'])
+            case['record_control']=clean(control)
+            if 'offset' in result:control['offset']=deepcopy(result['offset'])
+            case['native_result']=clean(control)
+            case['deviation']='Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record.'
+        except Exception as error:raise RuntimeError(case['name']) from error
+    if case['method']=='uvw' and len(case['args'])==5 and case['args'][4].get('type')=='uvw' and isinstance(result,dict) and result:
+        absolute=m.uvw(*case['args'][:4])
+        case['native_result']=clean(m.measure(absolute,case['args'][0],case['args'][4]))
+        case['deviation']='Retain a valid UVW reference offset; CASA constructor discards it. The independent generic measure operation supplies the control.'
+    if case['method']=='addxvalue' and case['args'][0].get('type')=='earthmagnetic' and isinstance(result,dict) and result:
+        values=[float(np.asarray(qa.convert(case['args'][0]['m'+str(i)],'nT')['value']).reshape(-1)[0]) for i in range(3)]
+        case['native_result']={'unit':'nT','value':values}
+        case['deviation']='Magnetic Cartesian extras have nT units; CASA inherits the metre label from MVPosition.'
+for kind,base in [('direction',m.direction('J2000','10deg','20deg')),('position',m.position('ITRF','1m','2m','3m'))]:
+    vector=deepcopy(base)
+    for name,value in vector.items():
+        if name.startswith('m'):value['value']=[value['value'],value['value']*2]
+    capture('addxvalue_vector_'+kind,'addxvalue',[vector])
 m.done()
 a.out.write_text(json.dumps({'casatools':version_string(),'cases':cases},indent=2)+'\n')
 print(len(cases),'cases')

@@ -108,7 +108,10 @@ pub(super) fn show(v: &RecordArg, refcode: bool, lines: &mut Vec<LogLine>) -> Ca
             stream_double(value * crate::convert::holder::C_MPS)
         ),
         MeasureValue::RadialVelocity(value) => format!("{} m/s", stream_double(value)),
-        MeasureValue::Position(xyz) => {
+        MeasureValue::Position(xyz)
+        | MeasureValue::Baseline(xyz)
+        | MeasureValue::Uvw(xyz)
+        | MeasureValue::EarthMagnetic(xyz) => {
             let (longitude, latitude, length) = position_spherical(xyz);
             vector(&[length, longitude, latitude])
         }
@@ -136,6 +139,16 @@ pub(super) fn dirshow(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
         }
     };
     match measure.value {
+        MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) | MeasureValue::EarthMagnetic(xyz) => {
+            return CasaValue::Text(format!(
+                "{}: [{}, {}, {}]  {}",
+                measure.kind().tell_me(),
+                stream_double(xyz[0]),
+                stream_double(xyz[1]),
+                stream_double(xyz[2]),
+                measure.refer
+            ));
+        }
         MeasureValue::Doppler(value) => {
             return CasaValue::Text(format!(
                 "Doppler: {}  {}",

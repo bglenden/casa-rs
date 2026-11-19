@@ -36,6 +36,10 @@ pub enum EarthMagneticRef {
     JTRUE,
     APP,
     B1950,
+    /// Mean equator/equinox of date under FK4.
+    BMEAN,
+    /// True equator/equinox of date under FK4.
+    BTRUE,
     GALACTIC,
     HADEC,
     AZEL,
@@ -56,12 +60,14 @@ pub enum EarthMagneticRef {
 
 impl EarthMagneticRef {
     /// All supported Earth-magnetic reference types.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::J2000,
         Self::JMEAN,
         Self::JTRUE,
         Self::APP,
         Self::B1950,
+        Self::BMEAN,
+        Self::BTRUE,
         Self::GALACTIC,
         Self::HADEC,
         Self::AZEL,
@@ -87,6 +93,8 @@ impl EarthMagneticRef {
             Self::JTRUE => 2,
             Self::APP => 3,
             Self::B1950 => 4,
+            Self::BMEAN => 6,
+            Self::BTRUE => 7,
             Self::GALACTIC => 8,
             Self::HADEC => 9,
             Self::AZEL => 10,
@@ -113,6 +121,8 @@ impl EarthMagneticRef {
             2 => Some(Self::JTRUE),
             3 => Some(Self::APP),
             4 => Some(Self::B1950),
+            6 => Some(Self::BMEAN),
+            7 => Some(Self::BTRUE),
             8 => Some(Self::GALACTIC),
             9 => Some(Self::HADEC),
             10 => Some(Self::AZEL),
@@ -140,6 +150,8 @@ impl EarthMagneticRef {
             Self::JTRUE => "JTRUE",
             Self::APP => "APP",
             Self::B1950 => "B1950",
+            Self::BMEAN => "BMEAN",
+            Self::BTRUE => "BTRUE",
             Self::GALACTIC => "GALACTIC",
             Self::HADEC => "HADEC",
             Self::AZEL => "AZEL",
@@ -165,6 +177,8 @@ impl EarthMagneticRef {
             Self::JTRUE => DirectionRef::JTRUE,
             Self::APP => DirectionRef::APP,
             Self::B1950 => DirectionRef::B1950,
+            Self::BMEAN => DirectionRef::BMEAN,
+            Self::BTRUE => DirectionRef::BTRUE,
             Self::GALACTIC => DirectionRef::GALACTIC,
             Self::HADEC => DirectionRef::HADEC,
             Self::AZEL => DirectionRef::AZEL,
@@ -194,6 +208,8 @@ impl FromStr for EarthMagneticRef {
             "JTRUE" => Ok(Self::JTRUE),
             "APP" => Ok(Self::APP),
             "B1950" => Ok(Self::B1950),
+            "BMEAN" => Ok(Self::BMEAN),
+            "BTRUE" => Ok(Self::BTRUE),
             "GALACTIC" | "GAL" => Ok(Self::GALACTIC),
             "HADEC" => Ok(Self::HADEC),
             "AZEL" | "AZELNE" => Ok(Self::AZEL),
@@ -301,6 +317,24 @@ impl MEarthMagnetic {
     ) -> Result<Self, MeasureError> {
         if self.refer == target {
             return Ok(self.clone());
+        }
+        // casacore's R_MODEL0 only tags an explicit vector with the model.
+        if target == EarthMagneticRef::IGRF {
+            return Ok(Self {
+                vector_nt: self.vector_nt,
+                refer: target,
+            });
+        }
+        if self.refer == EarthMagneticRef::IGRF {
+            let position = frame.position().ok_or(MeasureError::MissingFrameData {
+                what: "position (for IGRF)",
+            })?;
+            let epoch = frame.epoch().ok_or(MeasureError::MissingFrameData {
+                what: "epoch (for IGRF)",
+            })?;
+            let (xyz, _) = igrf_field_xyz(position, epoch, frame)?;
+            return Self::from_xyz_nt(xyz[0], xyz[1], xyz[2], EarthMagneticRef::ITRF)
+                .convert_to(target, frame);
         }
         let src_dir =
             self.refer

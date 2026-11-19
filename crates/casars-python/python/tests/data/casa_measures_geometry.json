@@ -2282,7 +2282,14 @@
         "refer": "ITRF",
         "type": "baseline"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "unit_controls": [
+        false,
+        false,
+        false
+      ],
+      "native_result": {},
+      "deviation": "Refuse incompatible dimensions rather than silently replacing invalid frequency-valued baselines with zero."
     },
     {
       "name": "baseline_values_7",
@@ -5658,7 +5665,14 @@
         "refer": "ITRF",
         "type": "uvw"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "unit_controls": [
+        false,
+        false,
+        false
+      ],
+      "native_result": {},
+      "deviation": "Refuse incompatible dimensions rather than silently replacing invalid frequency-valued baselines with zero."
     },
     {
       "name": "uvw_values_7",
@@ -6142,7 +6156,40 @@
         "refer": "ITRF",
         "type": "uvw"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "native_result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m2": {
+          "unit": "m",
+          "value": 0.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154723
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.741657386773941
+          },
+          "refer": "ITRF",
+          "type": "uvw"
+        },
+        "refer": "ITRF",
+        "type": "uvw"
+      },
+      "deviation": "Retain a valid UVW reference offset; CASA constructor discards it. The independent generic measure operation supplies the control."
     },
     {
       "name": "uvw_offset_1",
@@ -6241,7 +6288,56 @@
         "refer": "ITRF",
         "type": "uvw"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "native_result": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.0344439357957027
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154723
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.741657386773941
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.9302740141154723
+            },
+            "m2": {
+              "unit": "m",
+              "value": 3.741657386773941
+            },
+            "refer": "ITRF",
+            "type": "uvw"
+          },
+          "refer": "ITRF",
+          "type": "uvw"
+        },
+        "refer": "ITRF",
+        "type": "uvw"
+      },
+      "deviation": "Retain a valid UVW reference offset; CASA constructor discards it. The independent generic measure operation supplies the control."
     },
     {
       "name": "uvw_offset_2",
@@ -6833,7 +6929,40 @@
         "refer": "J2000",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "J2000",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "J2000",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_JMEAN",
@@ -6900,7 +7029,40 @@
         "refer": "JMEAN",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "JMEAN",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "JMEAN",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_JTRUE",
@@ -6967,7 +7129,40 @@
         "refer": "JTRUE",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "JTRUE",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "JTRUE",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_APP",
@@ -7034,7 +7229,40 @@
         "refer": "APP",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "APP",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "APP",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_B1950",
@@ -7101,7 +7329,40 @@
         "refer": "B1950",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "B1950",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "B1950",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_BMEAN",
@@ -7168,7 +7429,40 @@
         "refer": "BMEAN",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "BMEAN",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "BMEAN",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_BTRUE",
@@ -7235,7 +7529,40 @@
         "refer": "BTRUE",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "BTRUE",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "BTRUE",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_GALACTIC",
@@ -7302,7 +7629,40 @@
         "refer": "GALACTIC",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "GALACTIC",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "GALACTIC",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_HADEC",
@@ -7369,7 +7729,40 @@
         "refer": "HADEC",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "HADEC",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "HADEC",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_AZEL",
@@ -7436,7 +7829,40 @@
         "refer": "AZEL",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZEL",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZEL",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_AZELSW",
@@ -7503,7 +7929,40 @@
         "refer": "AZELSW",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZELSW",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZELSW",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_AZELNE",
@@ -7570,7 +8029,40 @@
         "refer": "AZEL",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZEL",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZEL",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_AZELGEO",
@@ -7637,7 +8129,40 @@
         "refer": "AZELGEO",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZELGEO",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZELGEO",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_AZELSWGEO",
@@ -7704,7 +8229,40 @@
         "refer": "AZELSWGEO",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZELSWGEO",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZELSWGEO",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_AZELNEGEO",
@@ -7771,7 +8329,40 @@
         "refer": "AZELGEO",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZELGEO",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "AZELGEO",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_JNAT",
@@ -7838,7 +8429,40 @@
         "refer": "JNAT",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "JNAT",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "JNAT",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_ECLIPTIC",
@@ -7905,7 +8529,40 @@
         "refer": "ECLIPTIC",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "ECLIPTIC",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "ECLIPTIC",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_MECLIPTIC",
@@ -7972,7 +8629,40 @@
         "refer": "MECLIPTIC",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "MECLIPTIC",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "MECLIPTIC",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_TECLIPTIC",
@@ -8039,7 +8729,40 @@
         "refer": "TECLIPTIC",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "TECLIPTIC",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "TECLIPTIC",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_SUPERGAL",
@@ -8106,7 +8829,40 @@
         "refer": "SUPERGAL",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "SUPERGAL",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "SUPERGAL",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_ITRF",
@@ -8173,7 +8929,40 @@
         "refer": "ITRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_TOPO",
@@ -8240,7 +9029,40 @@
         "refer": "TOPO",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "TOPO",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "TOPO",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_ICRS",
@@ -8307,7 +9129,40 @@
         "refer": "ICRS",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "ICRS",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "ICRS",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_IGRF",
@@ -8374,7 +9229,40 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_bad",
@@ -8441,7 +9329,40 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_ref_",
@@ -8508,7 +9429,40 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_values_0",
@@ -8679,7 +9633,40 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_values_3",
@@ -9077,7 +10064,56 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic",
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 2.7762497351949706e-09
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 4.895277334996045e-10
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1.0260604299770064e-09
+          },
+          "refer": "IGRF",
+          "type": "earthmagnetic"
+        }
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_offset_1",
@@ -9208,7 +10244,72 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic",
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 2.7762497351949706e-09
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 4.895277334996045e-10
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1.0260604299770064e-09
+          },
+          "offset": {
+            "m0": {
+              "unit": "nT",
+              "value": 2.7762497351949706e-09
+            },
+            "m1": {
+              "unit": "nT",
+              "value": 4.895277334996045e-10
+            },
+            "m2": {
+              "unit": "nT",
+              "value": 1.0260604299770064e-09
+            },
+            "refer": "IGRF",
+            "type": "earthmagnetic"
+          },
+          "refer": "IGRF",
+          "type": "earthmagnetic"
+        }
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_offset_2",
@@ -9338,7 +10439,40 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_offset_4",
@@ -9406,7 +10540,40 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_protocol_rf_0",
@@ -9480,7 +10647,40 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "earthmagnetic_protocol_rf_1",
@@ -9655,7 +10855,40 @@
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "record_control": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949698
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 0.4895277334996045
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299770062
+        },
+        "refer": "IGRF",
+        "type": "earthmagnetic"
+      },
+      "deviation": "Correct the spherical magnetic constructor SI-to-nT mismatch; expected values use CASA quantity conversions and a separate explicit Cartesian measure record."
     },
     {
       "name": "baseline_inspect_0_getref",
@@ -12680,7 +13913,12 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "uvw_inspect_0_getref",
@@ -13466,7 +14704,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "uvw_expand_0",
@@ -14458,7 +15702,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "uvw_expand_1",
@@ -15555,7 +16805,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "uvw_expand_2",
@@ -16284,7 +17540,16 @@
           1.0260604299770064e-09
         ]
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "native_result": {
+        "unit": "nT",
+        "value": [
+          2.7762497351949706e-09,
+          4.895277334996045e-10,
+          1.0260604299770064e-09
+        ]
+      },
+      "deviation": "Magnetic Cartesian extras have nT units; CASA inherits the metre label from MVPosition."
     },
     {
       "name": "earthmagnetic_measure_0",
@@ -16446,7 +17711,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "earthmagnetic_expand_0",
@@ -17249,7 +18520,16 @@
           1.0260604299770064e-09
         ]
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "native_result": {
+        "unit": "nT",
+        "value": [
+          2.7762497351949706e-09,
+          4.895277334996045e-10,
+          1.0260604299770064e-09
+        ]
+      },
+      "deviation": "Magnetic Cartesian extras have nT units; CASA inherits the metre label from MVPosition."
     },
     {
       "name": "earthmagnetic_measure_1",
@@ -17438,7 +18718,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "earthmagnetic_expand_1",
@@ -18341,7 +19627,16 @@
           1.0260604299770064e-09
         ]
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "native_result": {
+        "unit": "nT",
+        "value": [
+          2.7762497351949706e-09,
+          4.895277334996045e-10,
+          1.0260604299770064e-09
+        ]
+      },
+      "deviation": "Magnetic Cartesian extras have nT units; CASA inherits the metre label from MVPosition."
     },
     {
       "name": "earthmagnetic_measure_2",
@@ -18535,7 +19830,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "earthmagnetic_expand_2",
@@ -18625,7 +19926,12 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "baseline_convert_J2000",
@@ -24935,7 +26241,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "touvw_empty_record",
@@ -24964,7 +26276,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "touvw_missing_frame",
@@ -25008,7 +26326,13 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "touvw_protocol_0",
@@ -25465,7 +26789,12 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "expand_empty_record",
@@ -25486,7 +26815,12 @@
           ]
         }
       ],
-      "python_type": "tuple"
+      "python_type": "tuple",
+      "native_result": [
+        {},
+        {}
+      ],
+      "deviation": "A failed conversion returns empty auxiliary records; CASA retains stale auxiliary values from an earlier call."
     },
     {
       "name": "expand_missing_frame",
@@ -25940,6 +27274,83 @@
         }
       ],
       "python_type": "tuple"
+    },
+    {
+      "name": "addxvalue_vector_direction",
+      "method": "addxvalue",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              0.17453292519943295,
+              0.3490658503988659
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.3490658503988659,
+              0.6981317007977318
+            ]
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "result": {
+        "unit": "",
+        "value": [
+          0.9254165783983234,
+          0.16317591116653482,
+          0.3420201433256687
+        ]
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "addxvalue_vector_position",
+      "method": "addxvalue",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1071487177940904,
+              2.214297435588181
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.9302740141154722,
+              1.8605480282309443
+            ]
+          },
+          "m2": {
+            "unit": "m",
+            "value": [
+              3.7416573867739413,
+              7.483314773547883
+            ]
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          1.9999999999999993,
+          3.0
+        ]
+      },
+      "python_type": "dict"
     }
   ]
 }
