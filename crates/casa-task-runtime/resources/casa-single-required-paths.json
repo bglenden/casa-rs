@@ -21,6 +21,7 @@
   "initweights": "vis",
   "mstransform": "vis",
   "split": "vis",
+  "statwt": "vis",
   "uvmodelfit": "vis",
   "uvsub": "vis"
 }

@@ -210,7 +210,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         if not _is_default(value, defaults.get(name, _MISSING))
     }
     name = wrapper.__name__
-    if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "uvmodelfit", "uvsub"):
+    if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_vis(values, arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)

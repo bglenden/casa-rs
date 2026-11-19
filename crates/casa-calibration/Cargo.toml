@@ -15,6 +15,7 @@ slow-tests = []
 casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
+casa-lattices = { path = "../casa-lattices" }
 casa-fft = { path = "../casa-fft" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }

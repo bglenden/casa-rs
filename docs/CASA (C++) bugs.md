@@ -6966,3 +6966,17 @@ time-ordered CASA control. It preserves the prior numerical payload
 at flagged cells. In a selected gain-field comparison, CASA replaced
 one flagged payload with complex unity. The flags and valid values
 matched (#1525).
+## `statwt` creates spectra then fails on an explicitly selected subset
+
+CASA 6.7.6.14 initializes a required `WEIGHT_SPECTRUM` or `SIGMA_SPECTRUM`
+column for the original MS when `chanbin` requests channel bins. When the
+selected table predates the new column, CASA then raises a `RuntimeError`
+and asks the caller to rerun the selection. The first call writes the
+initial spectrum across the MS and leaves the original flags and scalar
+columns intact.
+
+casa-rs initializes the physical MAIN tables and subsequently applies
+statistical weights to the requested rows in one call. Unselected rows
+retain the spectrum obtained by expanding their original scalar values.
+The paired fixture compares this result with CASA's documented two-call
+sequence and checks unselected rows (#1524).

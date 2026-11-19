@@ -355,16 +355,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (items = None, onlyparse = None), text_signature = "($self, items={}, onlyparse=False)")]
-    fn msselect(
-        &self,
-        items: Option<&Bound<'_, PyAny>>,
-        onlyparse: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("msselect")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn msselectedindices(&self) -> PyResult<Py<PyAny>> {
         stub("msselectedindices")
@@ -716,30 +706,6 @@ impl PyMsTool {
         obs: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("statisticsold")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (combine = None, timebin = None, slidetimebin = None, chanbin = None, minsamp = None, statalg = None, fence = None, center = None, lside = None, zscore = None, maxiter = None, fitspw = None, excludechans = None, wtrange = None, preview = None, datacolumn = None), text_signature = "($self, combine='', timebin=1, slidetimebin=False, chanbin='spw', minsamp=2, statalg='classic', fence=-1.0, center='mean', lside=True, zscore=-1.0, maxiter=-1, fitspw='', excludechans=False, wtrange=[], preview=False, datacolumn='corrected')")]
-    fn statwt(
-        &self,
-        combine: Option<&Bound<'_, PyAny>>,
-        timebin: Option<&Bound<'_, PyAny>>,
-        slidetimebin: Option<&Bound<'_, PyAny>>,
-        chanbin: Option<&Bound<'_, PyAny>>,
-        minsamp: Option<&Bound<'_, PyAny>>,
-        statalg: Option<&Bound<'_, PyAny>>,
-        fence: Option<&Bound<'_, PyAny>>,
-        center: Option<&Bound<'_, PyAny>>,
-        lside: Option<&Bound<'_, PyAny>>,
-        zscore: Option<&Bound<'_, PyAny>>,
-        maxiter: Option<&Bound<'_, PyAny>>,
-        fitspw: Option<&Bound<'_, PyAny>>,
-        excludechans: Option<&Bound<'_, PyAny>>,
-        wtrange: Option<&Bound<'_, PyAny>>,
-        preview: Option<&Bound<'_, PyAny>>,
-        datacolumn: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("statwt")
     }
 
     /// Not yet implemented in casa-rs.
