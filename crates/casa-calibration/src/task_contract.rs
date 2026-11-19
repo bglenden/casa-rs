@@ -173,12 +173,31 @@ pub struct GencalTaskRequest {
     /// Ordered CASA receptor selector. Empty applies the value to both receptors.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub polarization: String,
-    /// Explicit CASA gain-curve `infile`, which uses unmodified antenna names.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gaincurve_infile: Option<PathBuf>,
+    /// Explicit CASA input table for VLA curves or an ALMA position JSON file.
+    #[serde(
+        default,
+        alias = "gaincurve_infile",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub infile: Option<PathBuf>,
     /// Fill the full antenna grid when importing SYSCAL. CASA defaults to true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uniform: Option<bool>,
+}
+
+impl GencalTaskRequest {
+    pub(crate) fn generate(
+        &self,
+        mode: crate::CalibrationOutputMode,
+    ) -> Result<crate::gencal::GencalReport, crate::gencal::GencalError> {
+        crate::gencal::gencal_with_output_mode(
+            &self.prior,
+            &self.polarization,
+            self.infile.as_deref(),
+            self.uniform.unwrap_or(true),
+            mode,
+        )
+    }
 }
 
 /// Request for planning an `applycal`-class operation.
@@ -542,15 +561,10 @@ impl CalibrationTaskRequest {
             )
             .map(CalibrationTaskResult::FluxScale)
             .map_err(|error| error.to_string()),
-            Self::Gencal(request) => crate::gencal::gencal_with_output_mode(
-                &request.prior,
-                &request.polarization,
-                request.gaincurve_infile.as_deref(),
-                request.uniform.unwrap_or(true),
-                mode.unwrap_or(Update),
-            )
-            .map(CalibrationTaskResult::Gencal)
-            .map_err(|error| error.to_string()),
+            Self::Gencal(request) => request
+                .generate(mode.unwrap_or(Update))
+                .map(CalibrationTaskResult::Gencal)
+                .map_err(|error| error.to_string()),
         }
     }
 }

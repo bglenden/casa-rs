@@ -18420,7 +18420,6 @@
           "unimplemented": {"issue": 979, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "tecim"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "jyperk"}},
-            {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "antpos"}},
             {"kind": "equals", "parameter": "caltype", "value": {"kind": "string", "value": "eop"}}
           ]}}
         },

@@ -272,9 +272,16 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         other => return Err(not_yet("caltype", other)),
     };
     let antenna = task.text("antenna")?.unwrap_or_default();
+    let infile = if caltype.is_gain_curve() || caltype == GencalType::Antpos {
+        task.text("infile")?
+            .filter(|path| !path.is_empty() && !(caltype == GencalType::Antpos && path == "None"))
+            .map(PathBuf::from)
+    } else {
+        None
+    };
     // CASA looks the corrections up (the VLA's position database, the
     // ALMA tables) when no antenna is named.
-    if caltype == GencalType::Antpos && antenna.trim().is_empty() {
+    if caltype == GencalType::Antpos && antenna.trim().is_empty() && infile.is_none() {
         return Err(not_yet("antenna", &antenna));
     }
     Ok(GencalTaskRequest {
@@ -288,13 +295,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
             gaincurve_table: task.text("gaincurve_table")?.map(PathBuf::from),
         },
         polarization: task.text("pol")?.unwrap_or_default(),
-        gaincurve_infile: if caltype.is_gain_curve() {
-            task.text("infile")?
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from)
-        } else {
-            None
-        },
+        infile,
         uniform: (caltype == GencalType::Tsys)
             .then(|| task.flag("uniform"))
             .transpose()?,

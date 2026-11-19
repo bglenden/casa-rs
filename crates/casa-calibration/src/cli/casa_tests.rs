@@ -568,7 +568,7 @@ fn gencal_reads_casas_values() {
                 gaincurve_table: None,
             },
             polarization: String::new(),
-            gaincurve_infile: None,
+            infile: None,
             uniform: None,
         })
     );

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native generation of externally specified CASA calibration tables.
 
+mod antpos_file;
 mod power_curve;
 mod tsys;
 
@@ -206,6 +207,9 @@ pub enum GencalError {
     /// The request does not match the supported native surface.
     #[error("{0}")]
     InvalidRequest(String),
+    /// A supplied ALMA position file or its arguments are invalid.
+    #[error("{0}")]
+    PositionInput(String),
     /// A needed value in a CASA table had an unsupported type or shape.
     #[error("{0}")]
     UnsupportedTableValue(String),
@@ -239,7 +243,7 @@ pub fn gencal(request: &GencalRequest) -> Result<GencalReport, GencalError> {
 pub(crate) fn gencal_with_output_mode(
     request: &GencalRequest,
     polarization: &str,
-    gaincurve_infile: Option<&Path>,
+    infile: Option<&Path>,
     uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
@@ -250,14 +254,22 @@ pub(crate) fn gencal_with_output_mode(
         }
         _ => None,
     };
-    let linked_input = if request.caltype == GencalType::Tsys {
-        ms.subtable(SubtableId::SysCal).and_then(Table::path)
-    } else {
-        embedded.as_deref()
+    let linked_input = match request.caltype {
+        GencalType::Tsys => ms.subtable(SubtableId::SysCal).and_then(Table::path),
+        GencalType::Antpos => infile,
+        _ => embedded.as_deref(),
     };
     if let Some(path) = linked_input {
         refuse_prior_input_overlap(request, path)?;
     }
+    let from_file = if request.caltype == GencalType::Antpos
+        && let Some(path) = infile
+    {
+        Some(antpos_file::resolve(&ms, request, polarization, path)?)
+    } else {
+        None
+    };
+    let request = from_file.as_ref().unwrap_or(request);
     // Reserve before reading prior parameters, so concurrent updates cannot
     // both accumulate from the same old product and silently lose a correction.
     let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;
@@ -276,7 +288,7 @@ pub(crate) fn gencal_with_output_mode(
             if let Some(path) = embedded.as_deref() {
                 power_curve::rows(&ms, path)?
             } else {
-                gaincurve_rows(&ms, request, gaincurve_infile)?
+                gaincurve_rows(&ms, request, infile)?
             }
         }
         GencalType::Tsys => {
@@ -736,6 +748,9 @@ pub(crate) fn prior_input_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Option<PathBuf>, GencalError> {
+    if request.caltype == GencalType::Antpos {
+        return Ok(infile.map(Path::to_path_buf));
+    }
     if request.caltype == GencalType::Tsys {
         let ms = open_measurement_set(&request.measurement_set)?;
         return Ok(ms

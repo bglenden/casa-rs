@@ -121,6 +121,16 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
                     _ => failure,
                 }
             })?
+    } else if let CalibrationTaskRequest::Gencal(request) = &request {
+        request
+            .generate(mode.unwrap_or(crate::CalibrationOutputMode::Update))
+            .map(CalibrationTaskResult::Gencal)
+            .map_err(|error| match error {
+                crate::gencal::GencalError::PositionInput(reason) => {
+                    TaskFailure::validation(reason).at("infile")
+                }
+                error => TaskFailure::execution(error.to_string()),
+            })?
     } else {
         request
             .execute_with_output_mode(mode)
@@ -220,7 +230,7 @@ fn scientific_paths(
                 r.prior.output_table.clone(),
             ];
             paths.extend(
-                crate::gencal::prior_input_for_report(&r.prior, r.gaincurve_infile.as_deref())
+                crate::gencal::prior_input_for_report(&r.prior, r.infile.as_deref())
                     .map_err(|error| TaskFailure::validation(error.to_string()).at("vis"))?,
             );
             (paths, &[][..])
