@@ -271,54 +271,6 @@ pub(crate) fn set_measinfo_keyword(
     table.set_column_keywords(column, keywords);
 }
 
-#[cfg(test)]
-mod tests {
-
-    use tempfile::tempdir;
-
-    use crate::CalibrationOutputMode;
-    use crate::output::CalibrationOutput;
-    use std::fs;
-
-    #[test]
-    fn output_collision_is_rejected_without_modifying_existing_data() {
-        let temp = tempdir().expect("tempdir");
-        let output = temp.path().join("gain.cal");
-        fs::create_dir(&output).expect("create existing output");
-        let sentinel = output.join("sentinel");
-        fs::write(&sentinel, b"keep").expect("write sentinel");
-
-        let error = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
-            .expect_err("collision must fail");
-
-        assert!(error.to_string().contains("output already exists"));
-        assert_eq!(fs::read(&sentinel).expect("sentinel remains"), b"keep");
-    }
-
-    #[test]
-    fn interrupted_staging_output_is_visible_and_blocks_reuse() {
-        let temp = tempdir().expect("tempdir");
-        let output = temp.path().join("bandpass.cal");
-        let staging = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
-            .expect("reserve staging output");
-        fs::write(staging.staging.join("partial"), b"incomplete").expect("write partial output");
-
-        let error = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
-            .expect_err("staging collision must fail");
-
-        assert!(!output.exists());
-        assert_eq!(
-            fs::read(staging.staging.join("partial")).expect("partial remains"),
-            b"incomplete"
-        );
-        assert!(
-            error
-                .to_string()
-                .contains("another writer or interrupted publication")
-        );
-    }
-}
-
 pub(crate) enum SingleChannelFrequency {
     MiddleChannel,
     Mean,
@@ -410,4 +362,52 @@ pub(crate) fn new_calibration_table_schema(complex: bool) -> TableSchema {
         ColumnSchema::array_variable(COL_WEIGHT, PrimitiveType::Float32, None),
     ])
     .expect("valid simulated calibration schema")
+}
+
+#[cfg(test)]
+mod tests {
+
+    use tempfile::tempdir;
+
+    use crate::CalibrationOutputMode;
+    use crate::output::CalibrationOutput;
+    use std::fs;
+
+    #[test]
+    fn output_collision_is_rejected_without_modifying_existing_data() {
+        let temp = tempdir().expect("tempdir");
+        let output = temp.path().join("gain.cal");
+        fs::create_dir(&output).expect("create existing output");
+        let sentinel = output.join("sentinel");
+        fs::write(&sentinel, b"keep").expect("write sentinel");
+
+        let error = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
+            .expect_err("collision must fail");
+
+        assert!(error.to_string().contains("output already exists"));
+        assert_eq!(fs::read(&sentinel).expect("sentinel remains"), b"keep");
+    }
+
+    #[test]
+    fn interrupted_staging_output_is_visible_and_blocks_reuse() {
+        let temp = tempdir().expect("tempdir");
+        let output = temp.path().join("bandpass.cal");
+        let staging = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
+            .expect("reserve staging output");
+        fs::write(staging.staging.join("partial"), b"incomplete").expect("write partial output");
+
+        let error = CalibrationOutput::prepare(&output, CalibrationOutputMode::Create)
+            .expect_err("staging collision must fail");
+
+        assert!(!output.exists());
+        assert_eq!(
+            fs::read(staging.staging.join("partial")).expect("partial remains"),
+            b"incomplete"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("another writer or interrupted publication")
+        );
+    }
 }

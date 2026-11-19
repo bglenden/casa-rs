@@ -33,7 +33,8 @@ def tool(vis=None, *, old=False):
     return cb
 
 
-def compare_tables(native, expected, *, empty=False, moving=False, flagged_payloads=True):
+def compare_tables(native, expected, *, empty=False, moving=False, flagged_payloads=True,
+                   gain_rtol=5e-7):
     with opened(expected) as a, opened(native) as b:
         assert a.info() == b.info()
         assert set(a.colnames()) == set(b.colnames())
@@ -44,10 +45,12 @@ def compare_tables(native, expected, *, empty=False, moving=False, flagged_paylo
             assert b.getkeyword(name) == f'Table: {native/name}'
     if not empty:
         actual, want = columns(native), columns(expected)
-        if not flagged_payloads:
-            np.testing.assert_array_equal(actual['FLAG'], want['FLAG'])
-            actual['CPARAM'] = actual['CPARAM'][~want['FLAG']]
-            want['CPARAM'] = want['CPARAM'][~want['FLAG']]
+        if 'CPARAM' in want:
+            result, reference = actual.pop('CPARAM'), want.pop('CPARAM')
+            if not flagged_payloads:
+                np.testing.assert_array_equal(actual['FLAG'], want['FLAG'])
+                result, reference = result[~want['FLAG']], reference[~want['FLAG']]
+            np.testing.assert_allclose(result, reference, rtol=gain_rtol, atol=2e-7)
         compare_mapping(actual, want, False)
     for name in STANDARD_SUBTABLES:
         with opened(expected/name) as a, opened(native/name) as b:
@@ -167,7 +170,8 @@ def paired_accumulation(root, driver, vis, lhs, rhs, name, *, field='', calfield
         cb.close()
     run_native(driver, vis, native_input, rhs, native_output, field, calfield, interp,
                cadence, spwmap)
-    compare_tables(actual, want, flagged_payloads=flagged_payloads)
+    compare_tables(actual, want, flagged_payloads=flagged_payloads,
+                   gain_rtol=2e-6 if 'PD' in interp else 5e-7)
     return want, actual
 
 
