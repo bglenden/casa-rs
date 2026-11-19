@@ -4345,6 +4345,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#naming-a-removed-coordinate-axis-can-terminate-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Naming a removed coordinate axis can terminate CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -10895,6 +10906,12 @@ the beam, even when history is disabled.</p>
 <p>casa-rs validates the supplied record before it saves any changes, so a
 rejected call preserves the restoring beam and history. See
 <a href="https://github.com/bglenden/casa-rs/issues/1625">#1625</a>.</p>
+<h2 id="naming-a-removed-coordinate-axis-can-terminate-casa">Naming a removed coordinate axis can terminate CASA<a class="headerlink" href="#naming-a-removed-coordinate-axis-can-terminate-casa" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 can terminate when <code>coordsys.setnames</code> is called with
+<code>type="linear"</code> and two names for a linear coordinate whose world and
+pixel maps are <code>[0, -2]</code>. casa-rs raises <code>RuntimeError</code> before applying
+either name. Passing the one visible axis name without a coordinate type
+renames that axis and preserves the stored removed-axis name (#1626).</p>
 
 
 
