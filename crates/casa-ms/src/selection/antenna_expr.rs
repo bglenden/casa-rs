@@ -224,6 +224,31 @@ fn antenna_clauses(antennas: &[AntennaRow<'_>], text: &str) -> MsResult<Vec<Clau
 }
 
 impl MeasurementSet {
+    /// Antennas listed by `MSSelection` for reindexing a transformed MS.
+    pub(crate) fn transform_antenna_ids(&self, text: &str) -> MsResult<Vec<i32>> {
+        self.with_antenna_rows(|rows| {
+            let mut ids = std::collections::BTreeSet::new();
+            for clause in antenna_clauses(rows, text)? {
+                match clause.term {
+                    // Single-list terms put the whole ANTENNA table in the
+                    // second list (MSAntennaParse::selectAntennaIds).
+                    Term::Cross(_) | Term::AutoOnly(_) => {
+                        return Ok((0..rows.len() as i32).collect());
+                    }
+                    Term::Pair { first, second, .. } => ids.extend(
+                        first
+                            .into_iter()
+                            .chain(second)
+                            .filter(|&id| !clause.negate || id == 0)
+                            .map(|id| id as i32),
+                    ),
+                    Term::Ordered(_) => (),
+                }
+            }
+            Ok(ids.into_iter().collect())
+        })
+    }
+
     /// Resolve CASA antenna selection `text` against this MeasurementSet's
     /// ANTENNA table (NAME, STATION and POSITION), as
     /// [`resolve_antenna_selector`] does over rows a caller supplies.

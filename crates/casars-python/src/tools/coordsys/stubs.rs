@@ -97,12 +97,6 @@ impl PyCoordsys {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn done(&self) -> PyResult<Py<PyAny>> {
-        stub("done")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
     fn epoch(&self) -> PyResult<Py<PyAny>> {
         stub("epoch")
     }
@@ -252,12 +246,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None), text_signature = "($self, type='')")]
-    fn referencepixel(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("referencepixel")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (format = None, r#type = None), text_signature = "($self, format='n', type='')")]
     fn referencevalue(
         &self,
@@ -397,16 +385,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value, r#type = None), text_signature = "($self, value, type='')")]
-    fn setreferencepixel(
-        &self,
-        value: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setreferencepixel")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (value = None, r#type = None), text_signature = "($self, value=[], type='')")]
     fn setreferencevalue(
         &self,
@@ -540,12 +518,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn torecord(&self) -> PyResult<Py<PyAny>> {
-        stub("torecord")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (value = None, isworld = None), text_signature = "($self, value=[], isworld=-1)")]
     fn torel(
         &self,
@@ -585,12 +557,6 @@ impl PyCoordsys {
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn transpose(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("transpose")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn r#type(&self) -> PyResult<Py<PyAny>> {
-        stub("type")
     }
 
     /// Not yet implemented in casa-rs.

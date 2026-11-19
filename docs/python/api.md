@@ -34,6 +34,14 @@ does not implement yet is taken only at CASA's default; its docstring names
 the issue. The other wrappers take keyword arguments and return the
 `TaskCompletion`.
 
+On a single MeasurementSet, `split` and `mstransform` accept named field and
+spectral-window selections, antenna names and baseline expressions, scan
+predicates, and calendar time ranges. Channel selectors can include disjoint
+ranges and strides. The CASA comparison exercises unaveraged copies and
+checks selected visibilities, flags, weights, and remapped metadata. The
+remaining split and transform behaviors are tracked in
+[#978](https://github.com/bglenden/casa-rs/issues/978).
+
 A value the contract refuses raises `ValueError` before anything starts, or
 `TypeError` for a value of the wrong type. A task that refuses its
 parameters raises `TaskParameterError`, a `ValueError`, and one that starts

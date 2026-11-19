@@ -96,7 +96,7 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("copy", &[], R::Any, No),
-    method("done", &[], R::Any, No),
+    method("done", &[], R::Any, Yes),
     method("epoch", &[], R::Any, No),
     method(
         "findaxis",
@@ -212,7 +212,7 @@ const METHODS: &[Method] = &[
         "referencepixel",
         &[param("type", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "referencevalue",
@@ -335,7 +335,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setreferencevalue",
@@ -441,7 +441,7 @@ const METHODS: &[Method] = &[
     ),
     method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
     method("topixelmany", &[param("value", K::Any, Empty)], R::Any, No),
-    method("torecord", &[], R::Any, No),
+    method("torecord", &[], R::Any, Yes),
     method(
         "torel",
         &[
@@ -471,7 +471,7 @@ const METHODS: &[Method] = &[
     ),
     method("toworldmany", &[param("value", K::Any, Empty)], R::Any, No),
     method("transpose", &[param("order", K::Any, Required)], R::Any, No),
-    method("type", &[], R::Any, No),
+    method("type", &[], R::Any, Yes),
     method("units", &[param("type", K::Text, Text(""))], R::Any, No),
     method(
         "velocitytofrequency",
