@@ -319,13 +319,21 @@ mod tests {
     }
 }
 
+pub(crate) enum SingleChannelFrequency {
+    MiddleChannel,
+    Mean,
+}
+
 /// Reduce every spectral window of the SPECTRAL_WINDOW subtable at `path`
 /// to one channel, as CASA's `NewCalTable::makeSpwSingleChan` does for a
 /// term that does not depend on frequency: the middle channel's frequency
 /// (`CHAN_FREQ[n/2]`), and CHAN_WIDTH, EFFECTIVE_BW and RESOLUTION the
 /// window's TOTAL_BANDWIDTH. CASA's `applycal` refuses a table whose
 /// windows keep the MeasurementSet's channels.
-pub(crate) fn make_windows_single_channel(path: &Path) -> Result<(), CalibrationTableWriteError> {
+pub(crate) fn make_windows_single_channel(
+    path: &Path,
+    frequency: SingleChannelFrequency,
+) -> Result<(), CalibrationTableWriteError> {
     let failed = |source: TableError| CalibrationTableWriteError::Save {
         path: path.display().to_string(),
         source: Box::new(source),
@@ -356,14 +364,17 @@ pub(crate) fn make_windows_single_channel(path: &Path) -> Result<(), Calibration
                 ArrayD::from_shape_vec(IxDyn(&[1]), vec![value]).expect("one channel"),
             ))
         };
-        let middle = frequencies
-            .iter()
-            .nth(channels / 2)
-            .copied()
-            .unwrap_or_default();
+        let frequency = match frequency {
+            SingleChannelFrequency::MiddleChannel => frequencies
+                .iter()
+                .nth(channels / 2)
+                .copied()
+                .unwrap_or_default(),
+            SingleChannelFrequency::Mean => frequencies.iter().sum::<f64>() / channels as f64,
+        };
         for (column, cell) in [
             ("NUM_CHAN", Value::Scalar(ScalarValue::Int32(1))),
-            ("CHAN_FREQ", one(middle)),
+            ("CHAN_FREQ", one(frequency)),
             ("CHAN_WIDTH", one(bandwidth)),
             ("EFFECTIVE_BW", one(bandwidth)),
             ("RESOLUTION", one(bandwidth)),

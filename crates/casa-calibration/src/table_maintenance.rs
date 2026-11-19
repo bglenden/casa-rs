@@ -15,8 +15,8 @@ use crate::constants::{COL_OBSERVATION_ID, TABLE_INFO_TYPE};
 use crate::paths::overlap;
 use crate::solution_edit::{error_text, stage_calibration_table_edit};
 use crate::writer::{
-    CalibrationTableDescriptor, CalibrationTableWriter, make_windows_single_channel,
-    new_calibration_table_schema,
+    CalibrationTableDescriptor, CalibrationTableWriter, SingleChannelFrequency,
+    make_windows_single_channel, new_calibration_table_schema,
 };
 
 /// Create an empty calibration table against an open MeasurementSet.
@@ -39,7 +39,7 @@ pub fn create_calibration_table(
         destination,
         partype,
         caltype,
-        single_channel,
+        single_channel.then_some(SingleChannelFrequency::MiddleChannel),
     )?;
     let _destination_lock = if destination.exists() {
         Some(TableWriteLock::acquire_to_reread(destination, 1).map_err(error_text)?)
@@ -54,7 +54,7 @@ pub(crate) fn prepare_empty_calibration_table<'a>(
     destination: &Path,
     partype: &str,
     caltype: &str,
-    single_channel: bool,
+    single_channel: Option<SingleChannelFrequency>,
 ) -> Result<CalibrationTableWriter<'a>, String> {
     if destination.as_os_str().is_empty() {
         return Err("an output calibration table is required".into());
@@ -104,8 +104,8 @@ pub(crate) fn prepare_empty_calibration_table<'a>(
             .save(TableOptions::new(writer.output_path().join(id.name())))
             .map_err(error_text)?;
     }
-    if single_channel {
-        make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"))
+    if let Some(frequency) = single_channel {
+        make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"), frequency)
             .map_err(error_text)?;
     }
     Ok(writer)

@@ -36,7 +36,7 @@ use crate::constants::{
 };
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriteError, CalibrationTableWriter,
-    make_windows_single_channel, new_calibration_table_schema,
+    SingleChannelFrequency, make_windows_single_channel, new_calibration_table_schema,
 };
 
 /// Which simulated term a table holds.
@@ -314,7 +314,10 @@ fn finish_simulated_table(
         )?;
     }
     if !frequency_dependent {
-        make_windows_single_channel(&writer.output_path().join("SPECTRAL_WINDOW"))?;
+        make_windows_single_channel(
+            &writer.output_path().join("SPECTRAL_WINDOW"),
+            SingleChannelFrequency::MiddleChannel,
+        )?;
     }
     writer.save_main()
 }

@@ -18,6 +18,7 @@ use crate::lookup_frequency::relative_axis;
 use crate::solution_edit::{edit_calibration_table, error_text, update_spectral_window_flags};
 use crate::solve::grouping::collect_selected_rows;
 use crate::table_maintenance::prepare_empty_calibration_table;
+use crate::writer::SingleChannelFrequency;
 use crate::{ApplyCalibrationTableSpec, ApplyInterpolationMode, plan, summarize_table};
 
 /// Tables, selectors, and sampling for CASA's `calibrater.accumulate`.
@@ -107,8 +108,13 @@ pub fn accumulate_calibration(
         });
     }
 
-    let mut writer =
-        prepare_empty_calibration_table(ms, destination, "Complex", &subtype, !channelized)?;
+    let mut writer = prepare_empty_calibration_table(
+        ms,
+        destination,
+        "Complex",
+        &subtype,
+        (!channelized).then_some(SingleChannelFrequency::Mean),
+    )?;
     let _destination_lock = if destination.exists() {
         Some(TableWriteLock::acquire_to_reread(destination, 1).map_err(error_text)?)
     } else {
