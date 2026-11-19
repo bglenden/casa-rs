@@ -430,6 +430,7 @@ impl<T: ImagePixel> TempImage<T> {
         let time = ImageHistoryEntry::current_time()?;
         self.history.extend(messages.iter().map(|message| {
             ImageHistoryRow::informational(ImageHistoryEntry {
+                priority: "INFO".into(),
                 time_mjd_seconds: time,
                 location: location.into(),
                 message: message.clone(),
