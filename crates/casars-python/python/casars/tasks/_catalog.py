@@ -426,9 +426,6 @@ def exportfits(
     """Export CASA images to FITS
 
     CASA's ``exportfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``optical``, ``bitpix``, ``minpix``, ``maxpix``, ``dropstokes``,
-    ``stokeslast``, ``history``, ``dropdeg``.
     """
     return _call_casa(exportfits, locals())
 
