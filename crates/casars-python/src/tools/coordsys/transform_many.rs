@@ -2,11 +2,12 @@
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_types::quanta::Unit;
-use casa_types::{ArrayD, ArrayValue, Value};
+use casa_types::{ArrayD, ArrayValue, ScalarValue, Value};
 use ndarray::{Axis, Ix2};
+use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::convert::value::CasaValue;
 use crate::tools::table::casa_record;
@@ -57,19 +58,52 @@ fn capture(
     if value.cast::<PyDict>().is_ok() {
         return Err(output.wrong_type("ErRoR"));
     }
-    // Use the native record converter to retain the CASA input type and
-    // axis order. CASA requires a double array here.
+    if let Ok(array) = value.cast::<PyUntypedArray>() {
+        // The CASA wrapper distinguishes C long (an integer variant) from
+        // C long long (a double variant), even where both are 64 bits.
+        match array.dtype().char() {
+            b'q' | b'Q' | b'f' | b'd' | b'g' => {
+                let options = PyDict::new(py);
+                options.set_item("copy", false)?;
+                let doubles = value.call_method("astype", ("float64",), Some(&options))?;
+                let array = doubles.extract::<PyReadonlyArrayDyn<'_, f64>>()?;
+                return Ok(array.as_array().to_owned());
+            }
+            b'b' | b'B' | b'h' | b'H' | b'i' | b'I' | b'l' | b'L' => {
+                return Err(output.wrong_type("intvec"));
+            }
+            b'S' | b'U' => return Err(output.wrong_type("stringvec")),
+            b'F' | b'D' | b'G' => return Err(output.wrong_type("ErRoR")),
+            _ => return Err(output.wrong_type("boolvec")),
+        }
+    }
+    if (value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>())
+        && value
+            .try_iter()?
+            .any(|row| row.is_ok_and(|row| row.cast::<PyUntypedArray>().is_ok()))
+    {
+        return Err(output.wrong_type("boolvec"));
+    }
+    // For Python sequences keep the inferred type and axis order.
     let input = PyDict::new(py);
     input.set_item("coordinates", value)?;
     let raw = casa_record(py, Some(&input)).map_err(|_| output.wrong_type("ErRoR"))?;
     let mut fields = raw.into_fields();
     match fields.pop().map(|field| field.value) {
-        Some(Value::Array(ArrayValue::Float64(values))) => Ok(values),
+        Some(Value::Array(ArrayValue::Float64(values))) if !values.is_empty() => Ok(values),
         Some(Value::Array(ArrayValue::Int32(_) | ArrayValue::Int64(_))) => {
             Err(output.wrong_type("intvec"))
         }
-        Some(Value::Array(ArrayValue::Bool(_))) | None => Err(output.wrong_type("boolvec")),
+        Some(Value::Array(ArrayValue::Bool(_) | ArrayValue::Float64(_))) | None => {
+            Err(output.wrong_type("boolvec"))
+        }
         Some(Value::Array(ArrayValue::String(_))) => Err(output.wrong_type("stringvec")),
+        Some(Value::Scalar(ScalarValue::Bool(_))) => Err(output.wrong_type("bool")),
+        Some(Value::Scalar(ScalarValue::Int32(_) | ScalarValue::Int64(_))) => {
+            Err(output.wrong_type("int"))
+        }
+        Some(Value::Scalar(ScalarValue::Float64(_))) => Err(output.wrong_type("double")),
+        Some(Value::Scalar(ScalarValue::String(_))) => Err(output.wrong_type("string")),
         _ => Err(output.wrong_type("ErRoR")),
     }
 }
