@@ -154,9 +154,11 @@ def test_gencal_takes_casas_signature_and_returns_none(
         tasks.gencal(small_ms.name, "opacity.cal", "opac", spw="1", parameter=[0.05]) is None
     )
     assert (small_ms.parent / "opacity.cal").is_dir()
+    assert tasks.gencal(small_ms.name, "amp.cal", "amp", parameter=[2.0]) is None
+    assert (small_ms.parent / "amp.cal").is_dir()
     # A CASA caltype casa-rs does not implement yet is refused naming #979.
     with pytest.raises(tasks.TaskParameterError) as failure:
-        tasks.gencal(vis=small_ms.name, caltable="amp.cal", caltype="amp", parameter=[2.0])
+        tasks.gencal(vis=small_ms.name, caltable="tsys.cal", caltype="tsys")
     assert failure.value.completion.parameter == "caltype"
     assert "#979" in str(failure.value)
 
