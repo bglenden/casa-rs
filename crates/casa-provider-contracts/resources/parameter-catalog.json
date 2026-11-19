@@ -12765,9 +12765,7 @@
         "kind": "path",
         "resource_kind": "calibration_table"
       },
-      "normalization": {
-        "kind": "path"
-      },
+      "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "input_data",
@@ -12790,11 +12788,7 @@
         "max_items": null,
         "allow_scalar": true
       },
-      "normalization": {
-        "kind": "casa_selector",
-        "grammar": "field",
-        "capabilities": ["ids", "names", "ranges", "wildcards"]
-      },
+      "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
@@ -12989,6 +12983,52 @@
       "documentation": {
         "summary": "Create WEIGHT_SPECTRUM when it is absent.",
         "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.caltable",
+      "semantic_revision": 2,
+      "casa_name": "caltable",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Calibration table the task writes.",
+        "details": null,
+        "examples": [
+          "'gain.cal'"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "data.input.vis",
+      "semantic_revision": 3,
+      "casa_name": "vis",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "measurement_set"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "One input MeasurementSet path.",
+        "details": "CASA fluxscale opens one MeasurementSet; a sequence is not a scalar path.",
+        "examples": [
+          "'observation.ms'"
+        ]
       },
       "persistence_class": "profile"
     }

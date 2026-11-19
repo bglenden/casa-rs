@@ -49,7 +49,7 @@ def reference_fixture(vis, path, subtype, *, real=False, width=2, channels=1,
         data = .15 * pol + .3 * chan + .4 * antenna + .16 * slot
         if subtype == 'Fringe Jones':
             data = np.where(pol % 4 == 2, data * 1e-14, data).astype(np.float32)
-        elif subtype == 'D Jones':
+        elif subtype.startswith('D'):
             data = (.05 * data + .15j * data).astype(np.complex64)
         else:
             data = ((1. + .1 * antenna + .03 * pol) * np.exp(1j * data)).astype(np.complex64)
@@ -115,6 +115,9 @@ def main():
         ('bandpass', 'B Jones', False, 2, 8, False),
         ('single-pol', 'B Jones', False, 2, 8, True),
         ('leakage', 'D Jones', False, 2, 1, False),
+        ('leakage-frequency', 'Df Jones', False, 2, 8, False),
+        ('leakage-lls', 'DLLS Jones', False, 2, 1, False),
+        ('leakage-frequency-lls', 'DfLLS Jones', False, 2, 8, False),
         ('tscalar', 'T Jones', False, 1, 1, False),
         ('fringe', 'Fringe Jones', True, 8, 1, False),
         ('fringe-single-pol', 'Fringe Jones', True, 8, 1, True),
@@ -134,6 +137,32 @@ def main():
                 assert not output.exists()
             else:
                 raise AssertionError(f'{label} accepted {name} reference configuration')
+    duplicate = root/'duplicate-antenna.cal'
+    copy_ms(gains, duplicate)
+    with opened(duplicate, True) as t:
+        t.putcell('ANTENNA1', 1, 0)
+        t.putcell('FLAG', 0, np.ones((2, 1), dtype=bool))
+    compare(root, native, vis, duplicate, 'duplicate-antenna', 'A0', 'strict',
+            expected_references=[4, 4, 4, 4, 0, 0])
+
+    reference = root/'saved-reference.cal'
+    with opened(gains) as t:
+        view = t.query('ANTENNA1 < 3', name=str(reference))
+        view.close()
+    compare(root, native, vis, reference, 'saved-reference', 'A0', 'strict')
+    compare(root, native, vis, reference, 'absent-in-table', 'A4', 'strict')
+    assert columns(root/'native-absent-in-table.cal')['FLAG'].all()
+
+    for api, label in ((casa, 'casa'), (native, 'native')):
+        for position in (0, 1):
+            args = [str(vis), str(gains), str(root/f'{label}-invalid-list.cal')]
+            args[position] = [args[position]]
+            try:
+                api.rerefant(*args, refant='A0')
+            except AssertionError:
+                assert not (root/f'{label}-invalid-list.cal').exists()
+            else:
+                raise AssertionError(f'{label} accepted a list in input slot {position}')
     delay = root/'delay.cal'
     synthetic_table(vis, delay, 'K Jones', True, 2)
     output = root/'unsupported-delay.cal'
@@ -152,7 +181,7 @@ def main():
         raise AssertionError('native rerefant accepted an unsupported delay table')
     compare(root, native, vis, root/'solved.cal', 'apply-pair', 'A0,A1')
     apply_round_trip(root, native, vis, 'apply-pair')
-    print('15 paired CASA rerefant case groups and four downstream applications')
+    print('23 paired CASA rerefant case groups and four downstream applications')
 
 
 if __name__ == '__main__':

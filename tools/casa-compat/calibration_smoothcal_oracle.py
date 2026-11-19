@@ -189,6 +189,10 @@ def main():
         ('mean-edges', {'smoothtype': 'mean', 'smoothtime': 20}),
         ('median-edges', {'smoothtype': 'median', 'smoothtime': 20}),
         ('one-field', {'smoothtype': 'mean', 'field': 'FLUX'}),
+        ('blank-field', {'field': ''}),
+        ('blank-field-list', {'field': ['']}),
+        ('space-field', {'field': ' '}),
+        ('boolean-width', {'smoothtime': True}),
         ('field-list', {'field': ['FLUX', 'PHASE'], 'smoothtime': 20.}),
         ('flagged-singletons', {'smoothtime': 1.}),
         ('rate-switch-on-gains', {'ratesmooth': True}),
@@ -207,7 +211,8 @@ def main():
             options = {'smoothtype': method, 'smoothtime': 1536., 'ratesmooth': ratesmooth}
             compare(root, native, vis, fringe, f'fringe-{method}-{ratesmooth}', options,
                     fringe_median=(method == 'median'))
-    for name, options in [('field', {'field': 'missing-field'}), ('duration', {'smoothtime': 0.})]:
+    for name, options in [('field', {'field': 'missing-field'}), ('duration', {'smoothtime': 0.}),
+                          ('partly-blank', {'field': ['', 'FLUX']})]:
         for api, label in ((casa, 'casa'), (native, 'native')):
             output = root/f'{label}-invalid-{name}.cal'
             try:
@@ -216,8 +221,66 @@ def main():
                 assert not output.exists()
             else:
                 raise AssertionError(f'{label} accepted invalid smoothing {name}')
+    for engine, api in (('casa', casa), ('native', native)):
+        area = root/engine
+        area.mkdir()
+        separate = area/' '
+        assert api.smoothcal(str(vis), str(gains), str(separate)) is None
+        compare_mapping(columns(separate), columns(root/f'{engine}-defaults.cal'), False)
+        for position in (0, 1):
+            args = [str(vis), str(gains), str(area/'invalid-input.cal')]
+            args[position] = [args[position]]
+            try:
+                api.smoothcal(*args)
+            except AssertionError:
+                assert not (area/'invalid-input.cal').exists()
+            else:
+                raise AssertionError(f'{engine} accepted a list in required input slot {position}')
+
+    reference = root/'saved-reference.cal'
+    with opened(gains) as t:
+        view = t.query('ANTENNA1 < 3', name=str(reference))
+        view.close()
+    compare(root, native, vis, reference, 'saved-reference', {})
+
+    spw = root/'spw-flags.cal'
+    copy_ms(gains, spw)
+    with opened(spw/'SPECTRAL_WINDOW', True) as t:
+        t.addrows(1)
+        for name in t.colnames():
+            if t.iscelldefined(name, 0):
+                t.putcell(name, 1, t.getcell(name, 0))
+        t.putcol('FLAG_ROW', np.array([True, False]))
+    physical_spw = root/'shared-spectral-window.tab'
+    (spw/'SPECTRAL_WINDOW').rename(physical_spw)
+    (spw/'SPECTRAL_WINDOW').symlink_to(physical_spw, target_is_directory=True)
+    compare(root, native, vis, spw, 'spw-flag-reconciled', {})
+    for engine in ('casa', 'native'):
+        with opened(root/f'{engine}-spw-flag-reconciled.cal'/'SPECTRAL_WINDOW') as t:
+            np.testing.assert_array_equal(t.getcol('FLAG_ROW'), [False, True])
+    with opened(spw/'SPECTRAL_WINDOW') as t:
+        np.testing.assert_array_equal(t.getcol('FLAG_ROW'), [True, False])
+
+    locked = root/'locked-destination.cal'
+    copy_ms(gains, locked)
+    original = columns(locked)
+    handle = table()
+    assert handle.open(str(locked), nomodify=False, lockoptions={'option': 'user'})
+    try:
+        handle.lock(write=True, nattempts=1)
+        for api in (casa, native):
+            try:
+                api.smoothcal(str(vis), str(gains), str(locked))
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError('smoothcal replaced an actively write-locked destination')
+    finally:
+        handle.unlock()
+        handle.close()
+    compare_mapping(columns(locked), original, False)
     apply_round_trip(root, native, vis, 'mean-edges')
-    print('17 paired CASA smoothcal case groups and four downstream applications')
+    print('28 paired CASA smoothcal case groups and four downstream applications')
 
 
 if __name__ == '__main__':
