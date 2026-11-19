@@ -842,12 +842,25 @@ impl MsCalEngine {
         _antenna_id: usize,
         offset_m: [f64; 3],
     ) -> MsResult<[f64; 3]> {
-        let frame = self.make_frame(time_mjd_sec, 0)?;
-        let dir = self.direction_at(time_mjd_sec, field_id)?;
-        let source_itrf = dir.convert_to(DirectionRef::ITRF, &frame)?.cosines();
-        let w = offset_m[0] * source_itrf[0]
-            + offset_m[1] * source_itrf[1]
-            + offset_m[2] * source_itrf[2];
+        let antenna = self
+            .antenna_positions
+            .first()
+            .ok_or_else(|| MsError::InvalidIndex {
+                index: 0,
+                max: 0,
+                context: "antenna position correction reference".to_owned(),
+            })?;
+        let direction = self.direction_at(time_mjd_sec, field_id)?;
+        if offset_m == [0.0; 3] {
+            return Ok([0.0; 3]);
+        }
+        let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, self.time_reference);
+        let measures = self
+            .measures
+            .clone()
+            .map_or_else(crate::open_measures_runtime, Ok)?;
+        let projection = UvwFrame::new(direction.as_angles().into(), epoch, antenna, measures)?;
+        let w = projection.baseline_uvw(offset_m)[2];
         Ok([0.0, 0.0, w])
     }
 

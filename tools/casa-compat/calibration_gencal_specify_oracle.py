@@ -96,17 +96,18 @@ def generate(module, vis, table_path, stages):
 
 
 def apply_both(root, source, casa_table, native_table, native, *, calwt=True, spectral_weights=False,
-               weight_rtol=None, spw=''):
+               weight_rtol=None, spw='', spwmap=None):
     common = ('DATA', 'FLAG', 'FLAG_ROW', 'WEIGHT', 'CORRECTED_DATA')
     if spectral_weights:
         common += ('WEIGHT_SPECTRUM',)
     products = {}
+    mapping = {} if spwmap is None else {'spwmap': spwmap}
     for engine, module in (('casa', casa), ('native', native)):
         for writer, table_path in (('casa', casa_table), ('native', native_table)):
             dataset = root / f'apply-{engine}-{writer}.ms'
             copy_ms(source, dataset)
             module.applycal(str(dataset), spw=spw, gaintable=[str(table_path)], interp=['nearest'],
-                            calwt=[calwt])
+                            calwt=[calwt], **mapping)
             products[engine, writer] = columns(dataset, common)
     expected = products['casa', 'casa']
     errors = []
