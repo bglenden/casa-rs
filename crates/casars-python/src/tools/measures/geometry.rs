@@ -175,7 +175,7 @@ use casa_types::measures::earth_magnetic::{EarthMagneticRef, MEarthMagnetic};
 
 enum Operator {
     Matrix([[f64; 3]; 3]),
-    Magnetic(MeasFrame, EarthMagneticRef),
+    Magnetic(Box<MeasFrame>, EarthMagneticRef),
 }
 /// One operator for every element of a measure vector, compiled once per call.
 pub(super) struct Conversion {
@@ -195,7 +195,7 @@ impl Conversion {
         Ok((|| {
             let operator = if input.kind() == MeasureKind::EarthMagnetic {
                 Operator::Magnetic(
-                    frame,
+                    Box::new(frame),
                     target
                         .parse()
                         .map_err(|e: casa_types::measures::MeasureError| e.to_string())?,

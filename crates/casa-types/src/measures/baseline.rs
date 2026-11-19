@@ -114,14 +114,6 @@ impl UvwFrame {
     /// (first position minus second): its J2000 form projected on the phase
     /// centre, with w toward the source.
     pub fn baseline_uvw(&self, baseline_itrf_m: [f64; 3]) -> [f64; 3] {
-        j2000_baseline_uvw(self.baseline_j2000(baseline_itrf_m), &self.phase_center)
-    }
-
-    /// Rotate an ITRF baseline into J2000 coordinates before uvw projection.
-    ///
-    /// This uses the same source-dependent casacore baseline rotations as
-    /// [`Self::baseline_uvw`], and preserves the baseline length.
-    pub fn baseline_j2000(&self, baseline_itrf_m: [f64; 3]) -> [f64; 3] {
         let baseline_len = vector_norm(baseline_itrf_m);
         if baseline_len == 0.0 {
             return [0.0, 0.0, 0.0];
@@ -133,7 +125,7 @@ impl UvwFrame {
         unit = rotate(&self.precession_nutation_inverse, &unit);
         unit = rotate(&self.inverse_aberration_rotation, &unit);
         unit = rotate(&self.inverse_solar_deflection_rotation, &unit);
-        scale_vector(unit, baseline_len)
+        j2000_baseline_uvw(scale_vector(unit, baseline_len), &self.phase_center)
     }
 
     fn itrf_to_hadec(&self, vector: [f64; 3]) -> [f64; 3] {
