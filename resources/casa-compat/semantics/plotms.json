@@ -962,7 +962,7 @@
       ]
     },
     "callib": {
-      "scope": "Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated weights. Iterated figures and additional calibration plotting controls remain open.",
+      "scope": "Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated scalar or spectral weights. Iterated figures and additional calibration plotting controls remain open.",
       "evidence": [
         "callibrary",
         "remaining"
@@ -1193,14 +1193,14 @@
     "callibrary": {
       "kind": "Same-input callibrary plots",
       "state": "passed",
-      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on identical MeasurementSets and ordered calibration libraries.",
-      "result": "30 public text exports, 714 points, one missing-library error and 12 rendered coordinates matched. Source visibilities, stored corrections, flags and weights were preserved. The disabled selector fallback matched 1,920 CASA points.",
+      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on identical MeasurementSets with file and inline callibraries, independent data columns and averaged channel and time coordinates.",
+      "result": "43 public text exports, 874 points, one missing-library error and 12 rendered coordinates matched. The paired averages cover selected and strided channels and calibrated per-channel weights. Source visibilities, stored corrections, flags and weights were preserved. The disabled selector fallback matched 1,920 CASA points.",
       "casa_version": "6.7.6.14",
-      "revision": "93b953f4136a35cc851f9868344f78d48b16d3f0",
+      "revision": "f9215c62670dfc19138bd9d65a949d22065f1c59",
       "command": "casa-python tools/casa-compat/plotms_callibrary_oracle.py --work <new-dir> --native-bin <calibrate>",
       "receipt": "resources/casa-compat/evidence/plotms-callibrary-20261119.json",
       "links": [
-        "https://github.com/bglenden/casa-rs/blob/93b953f4136a35cc851f9868344f78d48b16d3f0/tools/casa-compat/plotms_callibrary_oracle.py"
+        "https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py"
       ]
     }
   }

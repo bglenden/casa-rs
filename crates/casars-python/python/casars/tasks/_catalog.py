@@ -918,7 +918,6 @@ def plotms(
     ``extchannel``, ``clearplots``.
     Accepted only at CASA's default, where CASA reads them, until #1526:
     ``colorizeoverlay``.
-    MeasurementSet atmospheric overlays remain open under #1526.
     """
     return _call_casa(plotms, locals())
 

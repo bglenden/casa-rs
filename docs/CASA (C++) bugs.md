@@ -7337,3 +7337,12 @@ and call `rename()` on the first tool. CASA can move the table, then raise
 the old name and can abort while closing that stale handle. casa-rs refuses
 the move before changing either path while another tool holds the image.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## PlotMS averages disjoint channel selections on a compressed sample grid
+
+With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and
+`avgchannel='2'`, PlotMS retains frequency bins for original
+channels 0–1 and 5–6. It averages visibility samples from original
+channels 0–1 and 2 and 5, in the order of its compressed channel
+buffer. casa-rs preserves the paired text coordinates and sample
+values so existing PlotMS diagnostics can be compared directly (#1526).
