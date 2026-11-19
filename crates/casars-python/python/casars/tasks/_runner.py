@@ -741,7 +741,7 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
             env=environment,
         )
     except OSError as error:
-        raise TaskInvocationError(f"cannot start {task} ({executable}): {error}") from error
+        raise TaskInvocationError(f"cannot start {task} ({command[0]}): {error}") from error
     stdout, stderr = _communicate(process, invocation.stdin or "")
 
     if payload is not None:

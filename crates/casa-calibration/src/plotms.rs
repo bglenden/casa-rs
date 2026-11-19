@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read-only application of PlotMS callibrary inputs.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_ms::msexplore::{PlotMsCalibratedRow, PlotMsCalibration};
@@ -43,11 +44,15 @@ pub fn load_calibration(
         .into_iter()
         .map(|row| row.row_index)
         .collect();
-    let channels = plan
-        .channel_selections
-        .into_iter()
-        .map(|(spw, selection)| (spw, selection.indices))
-        .collect();
+    let mut channels = BTreeMap::<_, Vec<_>>::new();
+    if let Some(spw) = selection.spw.as_deref().filter(|_| selection.selectdata) {
+        let windows = ms
+            .resolve_spw_selector(spw)
+            .map_err(|error| TaskFailure::validation(error.to_string()).at("spw"))?;
+        for &range in windows.channel_list() {
+            channels.entry(range.spw_id as i32).or_default().push(range);
+        }
+    }
     let rows = rows
         .into_iter()
         .map(|(index, row)| {

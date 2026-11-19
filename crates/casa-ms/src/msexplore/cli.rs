@@ -1125,8 +1125,17 @@ fn options_from_plotms(
     };
     let x_column = data_column(text("xdatacolumn")?)?;
     let y_column = data_column(plotms_column(task.value("ydatacolumn"))?)?;
-    let data_column = y_column.or(x_column).unwrap_or(MsDataColumn::Data);
-    let x_data_column = x_column.filter(|column| *column != data_column);
+    let data_column = if on_the_fly {
+        y_column.unwrap_or(MsDataColumn::Data)
+    } else {
+        y_column.or(x_column).unwrap_or(MsDataColumn::Data)
+    };
+    let x_data_column = if on_the_fly {
+        Some(x_column.unwrap_or(MsDataColumn::Data))
+    } else {
+        x_column
+    }
+    .filter(|column| *column != data_column);
     if x_data_column.is_some() && !on_the_fly {
         return Err(TaskFailure::validation(
             "distinct MeasurementSet X and Y data columns are pending #1032",

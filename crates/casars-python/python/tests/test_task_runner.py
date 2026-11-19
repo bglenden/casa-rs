@@ -236,6 +236,20 @@ def test_a_request_carries_only_the_values_set(
     assert sorted(sent()) == ["datacolumn", "page_spec", "vis"]
 
 
+def test_launch_error_identifies_the_resolved_provider(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake("CASARS_FLAGMANAGER_BIN")
+
+    def cannot_start(*args, **kwargs):
+        raise PermissionError("launch denied")
+
+    monkeypatch.setattr(_runner.subprocess, "Popen", cannot_start)
+    with pytest.raises(tasks.TaskInvocationError) as failure:
+        tasks.run("flagmanager", vis="input.ms", mode="list")
+    assert str(failure.value) == f"cannot start flagmanager ({tmp_path / 'fake-task'}): launch denied"
+
+
 def test_a_relative_override_names_a_file_where_the_caller_is(
     tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
 ) -> None:

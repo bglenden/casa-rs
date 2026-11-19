@@ -30,9 +30,11 @@ mod plotms_figure;
 mod plotms_text;
 pub mod task_contract;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use casa_tables::Table;
@@ -56,6 +58,7 @@ use crate::plot::{
 };
 use crate::selection::parser::parse_correlation_selector;
 use crate::selection::resolve_row_indices_with_system_budget;
+use crate::selection::spw_expr::ChannelRange;
 use crate::spectral_selection::{
     convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
 };
@@ -1994,6 +1997,17 @@ pub struct MsScatterSeries {
     pub points: Vec<(f64, f64)>,
     /// Provenance for each plotted point in `points`.
     pub provenance: Vec<MsScatterPointRef>,
+    /// Display metadata for calibrated PlotMS points, when available.
+    pub plotms_metadata: Vec<MsScatterPlotMsMetadata>,
+}
+
+/// Display metadata for one calibrated PlotMS export coordinate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MsScatterPlotMsMetadata {
+    /// Channel identifier after any channel averaging.
+    pub channel: usize,
+    /// Timestamp after time averaging, when enabled.
+    pub average_time: Option<f64>,
 }
 
 /// One plotted point's originating visibility sample range.
@@ -2214,12 +2228,21 @@ fn compact_scatter_series(
                 .iter()
                 .map(|&index| entry.provenance[index].clone())
                 .collect();
+            let plotms_metadata = if entry.plotms_metadata.is_empty() {
+                Vec::new()
+            } else {
+                indices
+                    .iter()
+                    .map(|&index| entry.plotms_metadata[index])
+                    .collect()
+            };
             Some(MsScatterSeries {
                 label: entry.label,
                 color_group: entry.color_group,
                 y_axis: entry.y_axis,
                 points,
                 provenance,
+                plotms_metadata,
             })
         })
         .collect();
@@ -2401,8 +2424,8 @@ pub struct PlotMsCalibration {
     pub row_order: Vec<usize>,
     /// Corrected visibility and flag cells keyed by their original MAIN row.
     pub rows: HashMap<usize, PlotMsCalibratedRow>,
-    /// Original channel indices for windows with a channel selection.
-    pub channels: BTreeMap<i32, Vec<usize>>,
+    /// Channel ranges preserving the requested bounds and strides.
+    pub channels: BTreeMap<i32, Vec<ChannelRange>>,
     /// The independent abscissa column when PlotMS has two column selectors.
     pub x_data_column: Option<MsDataColumn>,
 }
@@ -3435,6 +3458,7 @@ struct AveragingPointKeyInputs<'a> {
 #[derive(Debug, Default)]
 struct AveragedPointAccumulator {
     x_visibility_samples: Vec<Complex64>,
+    x_visibility_sample_weights: Vec<f64>,
     visibility_samples: Vec<Complex64>,
     visibility_sample_weights: Vec<f64>,
     numeric_axis_samples: Vec<(MsAxis, Vec<f64>)>,
@@ -3444,6 +3468,7 @@ struct AveragedPointAccumulator {
     has_flag_row_samples: bool,
     any_flag_row: bool,
     representative: Option<MsScatterPointRef>,
+    display_channel: usize,
 }
 
 #[derive(Debug)]
@@ -3788,12 +3813,16 @@ fn build_generic_visibility_scatter(
     }
 
     let iteraxis = spec.iteration.iteraxis;
+    let mut selected_channel_bins = HashMap::new();
     let mut panel_order = Vec::<String>::new();
     let mut panels = std::collections::BTreeMap::<String, ScatterPanelAccumulator>::new();
     let mut contributing_rows = 0usize;
     let mut contributing_points = 0usize;
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
+    let use_spectral_weights = calibration.is_some()
+        && needs_visibility_grid
+        && spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
             .y_axes
@@ -3806,7 +3835,7 @@ fn build_generic_visibility_scatter(
             .iter()
             .copied()
             .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
-    let selected_weight_spectrum = if needs_weight_spectrum {
+    let selected_weight_spectrum = if needs_weight_spectrum || use_spectral_weights {
         selected_plot_weight_spectrum(ms, &row_numbers, calibration)?
     } else {
         None
@@ -3914,14 +3943,15 @@ fn build_generic_visibility_scatter(
             .map(|column| float_axis_values(column.get(row_slot)?, corr_count, "SIGMA"))
             .transpose()?
             .unwrap_or_else(|| vec![0.0; corr_count]);
-        let weight_spectrum_grid = if needs_weight_spectrum {
-            Some(
-                selected_weight_spectrum
-                    .as_ref()
-                    .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
-                    .transpose()?
-                    .unwrap_or_else(|| scalar_values_to_grid(&weight_values, chan_count)),
-            )
+        let weight_spectrum_grid = selected_weight_spectrum
+            .as_ref()
+            .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
+            .transpose()?
+            .or_else(|| {
+                needs_weight_spectrum.then(|| scalar_values_to_grid(&weight_values, chan_count))
+            });
+        let averaging_weight_grid = if use_spectral_weights {
+            weight_spectrum_grid.as_ref()
         } else {
             None
         };
@@ -3972,10 +4002,13 @@ fn build_generic_visibility_scatter(
             vec![selected_correlations[0].clone()]
         };
 
-        let channels = calibration
-            .and_then(|input| input.channels.get(&spw_id))
-            .map(Vec::as_slice);
-        let channel_bins = plot_channel_bins_with_selection(chan_count, spec, channels)?;
+        let channel_bins = plot_channel_bins_for_window(
+            chan_count,
+            spec,
+            spw_id,
+            calibration,
+            &mut selected_channel_bins,
+        )?;
 
         let field_id_value = selected_field_ids[row_slot];
         let scan_number_value = selected_scan_numbers[row_slot];
@@ -4051,11 +4084,13 @@ fn build_generic_visibility_scatter(
                 scatter_timing.grouping += started.elapsed();
             }
             let mut x_samples = Vec::<Complex64>::new();
+            let mut x_visibility_weights = Vec::<f64>::new();
             let mut samples = Vec::<Complex64>::new();
+            let mut visibility_weights = Vec::<f64>::new();
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
-            for bin in &channel_bins {
+            for bin in channel_bins.iter() {
                 let bin_collect_started = timing_enabled.then(Instant::now);
                 if let Some(grid) = grid.as_ref() {
                     let flags = flags
@@ -4064,9 +4099,9 @@ fn build_generic_visibility_scatter(
                     collect_bin_samples_into(
                         grid,
                         flags,
-                        &[*corr_index],
-                        bin.start,
-                        bin.end,
+                        *corr_index,
+                        bin,
+                        averaging_weight_grid.map(|grid| (grid, &mut visibility_weights)),
                         &mut samples,
                     );
                 } else {
@@ -4076,20 +4111,14 @@ fn build_generic_visibility_scatter(
                     collect_bin_samples_into(
                         grid,
                         flags.as_ref().expect("X visibility data loads flags"),
-                        &[*corr_index],
-                        bin.start,
-                        bin.end,
+                        *corr_index,
+                        bin,
+                        averaging_weight_grid.map(|grid| (grid, &mut x_visibility_weights)),
                         &mut x_samples,
                     );
                 }
                 if let Some(flags) = flags.as_ref() {
-                    collect_bin_flags_into(
-                        flags,
-                        *corr_index,
-                        bin.start,
-                        bin.end,
-                        &mut flag_samples,
-                    );
+                    collect_bin_flags_into(flags, *corr_index, bin, &mut flag_samples);
                 } else {
                     flag_samples.clear();
                 }
@@ -4101,8 +4130,7 @@ fn build_generic_visibility_scatter(
                         grid,
                         flags,
                         *corr_index,
-                        bin.start,
-                        bin.end,
+                        bin,
                         &mut weight_spectrum_samples,
                     );
                 } else {
@@ -4116,8 +4144,7 @@ fn build_generic_visibility_scatter(
                         grid,
                         flags,
                         *corr_index,
-                        bin.start,
-                        bin.end,
+                        bin,
                         &mut sigma_spectrum_samples,
                     );
                 } else {
@@ -4133,6 +4160,11 @@ fn build_generic_visibility_scatter(
                         &x_samples
                     } else {
                         &samples
+                    },
+                    if x_grid.is_some() {
+                        &x_visibility_weights
+                    } else {
+                        &visibility_weights
                     },
                     &flag_samples,
                     &weight_spectrum_samples,
@@ -4159,6 +4191,7 @@ fn build_generic_visibility_scatter(
                     let Some(y_value) = compute_axis_value(
                         *y_axis,
                         &samples,
+                        &visibility_weights,
                         &flag_samples,
                         &weight_spectrum_samples,
                         &sigma_spectrum_samples,
@@ -4198,6 +4231,7 @@ fn build_generic_visibility_scatter(
                                 y_axis: *y_axis,
                                 points: Vec::new(),
                                 provenance: Vec::new(),
+                                plotms_metadata: Vec::new(),
                             });
                     let push_started = timing_enabled.then(Instant::now);
                     series.points.push((x_value, y_value));
@@ -4207,6 +4241,12 @@ fn build_generic_visibility_scatter(
                         chan_start: bin.start,
                         chan_end: bin.end,
                     });
+                    if calibration.is_some() && spec.averaging.avgchannel.is_some() {
+                        series.plotms_metadata.push(MsScatterPlotMsMetadata {
+                            channel: bin.display_channel(),
+                            average_time: None,
+                        });
+                    }
                     if let Some(started) = push_started {
                         scatter_timing.point_push += started.elapsed();
                     }
@@ -4511,15 +4551,21 @@ fn finalize_averaged_axis_value(
     accumulator: &AveragedPointAccumulator,
     scalar_average: bool,
     avgtime_enabled: bool,
-    visibility_samples: Option<&[Complex64]>,
+    use_x_samples: bool,
 ) -> Option<f64> {
     if axis.is_visibility_math() {
-        return compute_weighted_visibility_math(
-            axis,
-            visibility_samples.unwrap_or(&accumulator.visibility_samples),
-            &accumulator.visibility_sample_weights,
-            scalar_average,
-        );
+        let (samples, weights) = if use_x_samples {
+            (
+                &accumulator.x_visibility_samples,
+                &accumulator.x_visibility_sample_weights,
+            )
+        } else {
+            (
+                &accumulator.visibility_samples,
+                &accumulator.visibility_sample_weights,
+            )
+        };
+        return compute_weighted_visibility_math(axis, samples, weights, scalar_average);
     }
     match axis {
         MsAxis::Time => {
@@ -4648,6 +4694,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let iteraxis = spec.iteration.iteraxis;
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
+    let use_spectral_weights = calibration.is_some() && needs_visibility_grid;
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
             .y_axes
@@ -4660,7 +4707,7 @@ fn build_generic_visibility_scatter_with_averaging(
             .iter()
             .copied()
             .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
-    let selected_weight_spectrum = if needs_weight_spectrum {
+    let selected_weight_spectrum = if needs_weight_spectrum || use_spectral_weights {
         selected_plot_weight_spectrum(ms, &row_numbers, calibration)?
     } else {
         None
@@ -4733,6 +4780,7 @@ fn build_generic_visibility_scatter_with_averaging(
         }
     }
 
+    let mut selected_channel_bins = HashMap::new();
     let mut panel_order = Vec::<String>::new();
     let mut panels = std::collections::BTreeMap::<String, AveragedPanelAccumulator>::new();
     let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
@@ -4803,14 +4851,15 @@ fn build_generic_visibility_scatter_with_averaging(
         let weight_values =
             float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
         let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
-        let weight_spectrum_grid = if needs_weight_spectrum {
-            Some(
-                selected_weight_spectrum
-                    .as_ref()
-                    .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
-                    .transpose()?
-                    .unwrap_or_else(|| scalar_values_to_grid(&weight_values, chan_count)),
-            )
+        let weight_spectrum_grid = selected_weight_spectrum
+            .as_ref()
+            .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
+            .transpose()?
+            .or_else(|| {
+                needs_weight_spectrum.then(|| scalar_values_to_grid(&weight_values, chan_count))
+            });
+        let averaging_weight_grid = if use_spectral_weights {
+            weight_spectrum_grid.as_ref()
         } else {
             None
         };
@@ -4858,10 +4907,13 @@ fn build_generic_visibility_scatter_with_averaging(
             vec![selected_correlations[0].clone()]
         };
 
-        let channels = calibration
-            .and_then(|input| input.channels.get(&spw_id))
-            .map(Vec::as_slice);
-        let channel_bins = plot_channel_bins_with_selection(chan_count, spec, channels)?;
+        let channel_bins = plot_channel_bins_for_window(
+            chan_count,
+            spec,
+            spw_id,
+            calibration,
+            &mut selected_channel_bins,
+        )?;
 
         let field_id_value = selected_field_ids[row_slot];
         let scan_number_value = selected_scan_numbers[row_slot];
@@ -4899,20 +4951,24 @@ fn build_generic_visibility_scatter_with_averaging(
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
             let mut x_samples = Vec::<Complex64>::new();
+            let mut x_visibility_weights = Vec::<f64>::new();
             let mut samples = Vec::<Complex64>::new();
             let mut flag_samples = Vec::<bool>::new();
             let mut visibility_weight_samples = Vec::<f64>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
             for baseline_token in &baseline_tokens {
-                for bin in &channel_bins {
+                for bin in channel_bins.iter() {
+                    visibility_weight_samples.clear();
+                    x_visibility_weights.clear();
                     if let Some(grid) = grid.as_ref() {
                         collect_bin_samples_into(
                             grid,
                             &flags,
-                            &[*corr_index],
-                            bin.start,
-                            bin.end,
+                            *corr_index,
+                            bin,
+                            averaging_weight_grid
+                                .map(|grid| (grid, &mut visibility_weight_samples)),
                             &mut samples,
                         );
                     } else {
@@ -4922,28 +4978,23 @@ fn build_generic_visibility_scatter_with_averaging(
                         collect_bin_samples_into(
                             grid,
                             &flags,
-                            &[*corr_index],
-                            bin.start,
-                            bin.end,
+                            *corr_index,
+                            bin,
+                            averaging_weight_grid.map(|grid| (grid, &mut x_visibility_weights)),
                             &mut x_samples,
                         );
                     }
-                    collect_bin_flags_into(
-                        &flags,
-                        *corr_index,
-                        bin.start,
-                        bin.end,
-                        &mut flag_samples,
-                    );
-                    visibility_weight_samples.clear();
-                    visibility_weight_samples.resize(samples.len(), row_weight);
+                    collect_bin_flags_into(&flags, *corr_index, bin, &mut flag_samples);
+                    if averaging_weight_grid.is_none() {
+                        visibility_weight_samples.resize(samples.len(), row_weight);
+                        x_visibility_weights.resize(x_samples.len(), row_weight);
+                    }
                     if let Some(grid) = weight_spectrum_grid.as_ref() {
                         collect_bin_float_samples_into(
                             grid,
                             &flags,
                             *corr_index,
-                            bin.start,
-                            bin.end,
+                            bin,
                             &mut weight_spectrum_samples,
                         );
                     } else {
@@ -4954,8 +5005,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             grid,
                             &flags,
                             *corr_index,
-                            bin.start,
-                            bin.end,
+                            bin,
                             &mut sigma_spectrum_samples,
                         );
                     } else {
@@ -5025,6 +5075,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         });
                         let accumulator = series.points.entry(point_key.clone()).or_default();
                         if accumulator.representative.is_none() {
+                            accumulator.display_channel = bin.display_channel();
                             accumulator.representative = Some(MsScatterPointRef {
                                 row,
                                 corr: *corr_index,
@@ -5051,6 +5102,9 @@ fn build_generic_visibility_scatter_with_averaging(
                             series_used = true;
                         }
                         if x_grid.is_some() {
+                            accumulator
+                                .x_visibility_sample_weights
+                                .extend(x_visibility_weights.iter().copied());
                             accumulator.x_visibility_samples.extend(
                                 transform_visibility_samples_for_baseline_token(
                                     &x_samples,
@@ -5060,7 +5114,20 @@ fn build_generic_visibility_scatter_with_averaging(
                                 ),
                             );
                         }
+                        if calibration.is_some() && spec.averaging.avgtime.is_some() {
+                            push_numeric_axis_sample(
+                                accumulator,
+                                MsAxis::Time,
+                                shared_time_scope_value.unwrap_or(row_time_value),
+                            );
+                            push_time_interval_sample(accumulator, row_interval_value);
+                        }
                         match spec.x_axis {
+                            MsAxis::Time
+                                if calibration.is_some() && spec.averaging.avgtime.is_some() =>
+                            {
+                                series_used = true;
+                            }
                             MsAxis::Flag => {
                                 accumulator.has_flag_samples = true;
                                 accumulator.any_flag_sample |=
@@ -5076,6 +5143,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                 if let Some(value) = compute_axis_value(
                                     axis,
                                     &samples,
+                                    &[],
                                     &flag_samples,
                                     &weight_spectrum_samples,
                                     &sigma_spectrum_samples,
@@ -5106,6 +5174,11 @@ fn build_generic_visibility_scatter_with_averaging(
                             _ => {}
                         }
                         match y_axis {
+                            MsAxis::Time
+                                if calibration.is_some() && spec.averaging.avgtime.is_some() =>
+                            {
+                                series_used = true;
+                            }
                             MsAxis::Flag => {
                                 accumulator.has_flag_samples = true;
                                 accumulator.any_flag_sample |=
@@ -5121,6 +5194,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                 if let Some(value) = compute_axis_value(
                                     axis,
                                     &samples,
+                                    &[],
                                     &flag_samples,
                                     &weight_spectrum_samples,
                                     &sigma_spectrum_samples,
@@ -5210,6 +5284,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 y_axis: series.y_axis,
                 points: Vec::new(),
                 provenance: Vec::new(),
+                plotms_metadata: Vec::new(),
             };
             let mut points = series.points.into_values();
             let mut corrected_order = calibration.map(|_| {
@@ -5235,9 +5310,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     &accumulator,
                     spec.averaging.scalar,
                     spec.averaging.avgtime.is_some(),
-                    x_data_source
-                        .as_ref()
-                        .map(|_| accumulator.x_visibility_samples.as_slice()),
+                    x_data_source.is_some(),
                 ) else {
                     continue;
                 };
@@ -5246,12 +5319,26 @@ fn build_generic_visibility_scatter_with_averaging(
                     &accumulator,
                     spec.averaging.scalar,
                     spec.averaging.avgtime.is_some(),
-                    None,
+                    false,
                 ) else {
                     continue;
                 };
                 output.points.push((x_value, y_value));
                 output.provenance.push(representative);
+                if calibration.is_some() {
+                    output.plotms_metadata.push(MsScatterPlotMsMetadata {
+                        channel: accumulator.display_channel,
+                        average_time: spec.averaging.avgtime.and_then(|_| {
+                            finalize_averaged_axis_value(
+                                MsAxis::Time,
+                                &accumulator,
+                                false,
+                                true,
+                                false,
+                            )
+                        }),
+                    });
+                }
                 point_budget.record_points(
                     1,
                     spec.preset
@@ -5490,11 +5577,39 @@ fn resolve_selected_rows_with_msselect(
     resolve_row_indices_with_system_budget(ms, selection).map_err(|error| error.to_string())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct ChannelBin {
     start: usize,
     end: usize,
+    stride: usize,
     ordinal: usize,
+    averaged: bool,
+    selection: Option<Arc<[usize]>>,
+    selection_width: usize,
+}
+
+impl ChannelBin {
+    fn channels(&self) -> impl Iterator<Item = usize> + '_ {
+        let (range, stride) = if self.selection.is_some() {
+            let start = self.ordinal * self.selection_width;
+            (start..start + self.selection_width, 1)
+        } else {
+            (self.start..self.end, self.stride)
+        };
+        range.step_by(stride).map(|index| {
+            self.selection
+                .as_ref()
+                .map_or(index, |channels| channels[index])
+        })
+    }
+
+    fn display_channel(&self) -> usize {
+        if self.averaged {
+            self.ordinal
+        } else {
+            self.start
+        }
+    }
 }
 
 fn channel_bins(chan_count: usize, avgchannel: Option<usize>) -> Result<Vec<ChannelBin>, String> {
@@ -5505,56 +5620,118 @@ fn channel_bins(chan_count: usize, avgchannel: Option<usize>) -> Result<Vec<Chan
     if width == 0 {
         return Err("avgchannel must be a positive integer".to_string());
     }
-    let mut bins = Vec::new();
-    let mut ordinal = 0usize;
-    let mut start = 0usize;
-    while start < chan_count {
-        let end = start + width;
-        if end > chan_count {
-            if avgchannel.is_some() {
-                if start == 0 {
-                    bins.push(ChannelBin {
-                        start,
-                        end: chan_count,
-                        ordinal,
-                    });
-                }
-                break;
-            }
-            bins.push(ChannelBin {
-                start,
-                end: chan_count,
-                ordinal,
-            });
-            break;
-        }
-        bins.push(ChannelBin {
-            start,
-            end,
+    let width = width.min(chan_count);
+    Ok((0..chan_count / width)
+        .map(|ordinal| ChannelBin {
+            start: ordinal * width,
+            end: (ordinal + 1) * width,
+            stride: 1,
             ordinal,
-        });
-        start = end;
-        ordinal += 1;
-    }
-    Ok(bins)
+            averaged: width > 1,
+            selection: None,
+            selection_width: 0,
+        })
+        .collect())
 }
 
-fn plot_channel_bins_with_selection(
+fn plot_channel_bins_for_window<'a>(
     chan_count: usize,
     spec: &MsPlotSpec,
-    channels: Option<&[usize]>,
-) -> Result<Vec<ChannelBin>, String> {
-    let Some(channels) = channels else {
-        return plot_channel_bins(chan_count, spec);
+    spw_id: i32,
+    calibration: Option<&PlotMsCalibration>,
+    cache: &'a mut HashMap<(i32, usize), Vec<ChannelBin>>,
+) -> Result<Cow<'a, [ChannelBin]>, String> {
+    let Some(ranges) = calibration.and_then(|input| input.channels.get(&spw_id)) else {
+        return plot_channel_bins(chan_count, spec).map(Cow::Owned);
     };
+    let key = (spw_id, chan_count);
+    let bins = match cache.entry(key) {
+        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(plot_selected_channel_bins(chan_count, spec, ranges)?)
+        }
+    };
+    Ok(Cow::Borrowed(bins))
+}
+
+fn plot_selected_channel_bins(
+    chan_count: usize,
+    spec: &MsPlotSpec,
+    channels: &[ChannelRange],
+) -> Result<Vec<ChannelBin>, String> {
+    let mut ranges = channels
+        .iter()
+        .filter_map(|range| {
+            let start = usize::try_from(range.start).ok()?;
+            let end = (usize::try_from(range.stop).ok()? + 1).min(chan_count);
+            (start < end).then_some((start, end, range.step.max(1) as usize))
+        })
+        .collect::<Vec<_>>();
+    ranges.sort_unstable();
+    ranges.dedup();
+    let requested_width = spec.averaging.avgchannel.unwrap_or(1);
+    if requested_width == 0 {
+        return Err("avgchannel must be a positive integer".into());
+    }
+    if requested_width == 1 {
+        let channels = ranges
+            .into_iter()
+            .flat_map(|(start, end, stride)| (start..end).step_by(stride))
+            .collect::<std::collections::BTreeSet<_>>();
+        return Ok(channels
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, start)| ChannelBin {
+                start,
+                end: start + 1,
+                stride: 1,
+                ordinal,
+                averaged: false,
+                selection: None,
+                selection_width: 0,
+            })
+            .collect());
+    }
+
+    let selection: Option<Arc<[usize]>> = (ranges.len() > 1).then(|| {
+        ranges
+            .iter()
+            .flat_map(|&(start, end, stride)| (start..end).step_by(stride))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    });
+    let selected_count = selection.as_ref().map_or_else(
+        || {
+            ranges
+                .first()
+                .map_or(0, |&(start, end, stride)| (end - start).div_ceil(stride))
+        },
+        |channels| channels.len(),
+    );
+    if selected_count == 0 {
+        return Ok(Vec::new());
+    }
+    let width = requested_width.min(selected_count);
     let mut bins = Vec::new();
-    for run in channels.chunk_by(|first, second| *second == first + 1) {
-        let offset = run[0];
-        for mut bin in plot_channel_bins(run.len(), spec)? {
-            bin.start += offset;
-            bin.end += offset;
-            bin.ordinal = bins.len();
-            bins.push(bin);
+    for (start, end, stride) in ranges {
+        let span = width.saturating_mul(stride);
+        for offset in 0..(end - start) / span {
+            if (bins.len() + 1).saturating_mul(width) > selected_count {
+                break;
+            }
+            let start = start + offset * span;
+            // CASA constructs frequency bins from the physical selection ranges
+            // and averages the compressed visibility buffer in index order.
+            bins.push(ChannelBin {
+                start,
+                end: start + span,
+                stride,
+                ordinal: bins.len(),
+                averaged: true,
+                selection: selection.clone(),
+                selection_width: width,
+            });
         }
     }
     Ok(bins)
@@ -5570,7 +5747,11 @@ fn plot_channel_bins(chan_count: usize, spec: &MsPlotSpec) -> Result<Vec<Channel
         Ok(vec![ChannelBin {
             start: 0,
             end: chan_count,
+            stride: 1,
             ordinal: 0,
+            averaged: chan_count > 1,
+            selection: None,
+            selection_width: 0,
         }])
     }
 }
@@ -5766,6 +5947,7 @@ fn resolve_spectral_context(
 fn compute_axis_value(
     axis: MsAxis,
     samples: &[Complex64],
+    visibility_weights: &[f64],
     flag_samples: &[bool],
     weight_spectrum_samples: &[f64],
     sigma_spectrum_samples: &[f64],
@@ -5782,7 +5964,12 @@ fn compute_axis_value(
     geometry_engine: Option<&MsCalEngine>,
 ) -> Result<Option<f64>, String> {
     if axis.is_visibility_math() {
-        return Ok(compute_visibility_math(axis, samples, scalar_average));
+        return Ok(compute_weighted_visibility_math(
+            axis,
+            samples,
+            visibility_weights,
+            scalar_average,
+        ));
     }
     match axis {
         MsAxis::Time => Ok(Some(row_time_value)),
@@ -5802,13 +5989,7 @@ fn compute_axis_value(
             let [_u, _v, w] = row_uvw_value;
             Ok(Some(w))
         }
-        MsAxis::Channel => {
-            if channel_bin.end.saturating_sub(channel_bin.start) == 1 {
-                Ok(Some(channel_bin.start as f64))
-            } else {
-                Ok(Some(channel_bin.ordinal as f64))
-            }
-        }
+        MsAxis::Channel => Ok(Some(channel_bin.display_channel() as f64)),
         MsAxis::Frequency => {
             let Some(spectral_context) = spectral_context else {
                 return Ok(None);
@@ -6049,23 +6230,28 @@ fn compute_weighted_visibility_math(
 fn collect_bin_samples_into(
     grid: &ComplexGrid,
     flags: &ndarray::ArrayView2<'_, bool>,
-    corr_indices: &[usize],
-    chan_start: usize,
-    chan_end: usize,
+    corr_index: usize,
+    bin: &ChannelBin,
+    mut weights: Option<(&FloatGrid, &mut Vec<f64>)>,
     samples: &mut Vec<Complex64>,
 ) {
     samples.clear();
-    for &corr_index in corr_indices {
-        if corr_index >= grid.corr_count {
+    if let Some((_, values)) = &mut weights {
+        values.clear();
+    }
+    if corr_index >= grid.corr_count {
+        return;
+    }
+    for channel in bin.channels() {
+        if channel >= grid.chan_count || flags[(corr_index, channel)] {
             continue;
         }
-        for chan_index in chan_start..chan_end {
-            if chan_index >= grid.chan_count || flags[(corr_index, chan_index)] {
-                continue;
-            }
-            let value = grid.values[corr_index * grid.chan_count + chan_index];
-            if value.re.is_finite() && value.im.is_finite() {
-                samples.push(value);
+        let index = corr_index * grid.chan_count + channel;
+        let value = grid.values[index];
+        if value.re.is_finite() && value.im.is_finite() {
+            samples.push(value);
+            if let Some((spectrum, values)) = &mut weights {
+                values.push(spectrum.values[index]);
             }
         }
     }
@@ -6074,15 +6260,14 @@ fn collect_bin_samples_into(
 fn collect_bin_flags_into(
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
-    chan_start: usize,
-    chan_end: usize,
+    bin: &ChannelBin,
     out: &mut Vec<bool>,
 ) {
     out.clear();
     if corr_index >= flags.nrows() {
         return;
     }
-    for chan_index in chan_start..chan_end {
+    for chan_index in bin.channels() {
         if chan_index < flags.ncols() {
             out.push(flags[(corr_index, chan_index)]);
         }
@@ -6093,15 +6278,14 @@ fn collect_bin_float_samples_into(
     grid: &FloatGrid,
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
-    chan_start: usize,
-    chan_end: usize,
+    bin: &ChannelBin,
     samples: &mut Vec<f64>,
 ) {
     samples.clear();
     if corr_index >= grid.corr_count {
         return;
     }
-    for chan_index in chan_start..chan_end {
+    for chan_index in bin.channels() {
         if chan_index >= grid.chan_count
             || chan_index >= flags.ncols()
             || flags[(corr_index, chan_index)]
@@ -6730,6 +6914,7 @@ mod tests {
             color_group: color_group.to_string(),
             y_axis,
             points: points.to_vec(),
+            plotms_metadata: Vec::new(),
             provenance: (0..points.len())
                 .map(|offset| scatter_point_ref(row_base + offset))
                 .collect(),
@@ -7735,6 +7920,7 @@ mod tests {
             color_group: "all".to_string(),
             y_axis: MsAxis::Amplitude,
             points: (0..5).map(|index| (index as f64, index as f64)).collect(),
+            plotms_metadata: Vec::new(),
             provenance: (0..5)
                 .map(|index| MsScatterPointRef {
                     row: index,
@@ -7787,6 +7973,7 @@ mod tests {
                     color_group: "a".to_string(),
                     y_axis: MsAxis::Amplitude,
                     points: (0..5).map(|index| (index as f64, index as f64)).collect(),
+                    plotms_metadata: Vec::new(),
                     provenance: (0..5)
                         .map(|index| MsScatterPointRef {
                             row: index,
@@ -7801,6 +7988,7 @@ mod tests {
                     color_group: "b".to_string(),
                     y_axis: MsAxis::Amplitude,
                     points: (5..10).map(|index| (index as f64, index as f64)).collect(),
+                    plotms_metadata: Vec::new(),
                     provenance: (5..10)
                         .map(|index| MsScatterPointRef {
                             row: index,

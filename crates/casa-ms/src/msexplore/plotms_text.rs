@@ -36,7 +36,6 @@ pub(super) fn write_calibrated_export(
     write_header(&mut writer, task, &task.path("vis")?, library)?;
     let index = task.integer("plotindex")?;
     let verbose = task.flag("verbose")?;
-    let average_time = averaging::options(task)?.avgtime.is_some();
     let mut metadata = Metadata::new(ms).map_err(io)?;
     match payload {
         MsPlotPayload::Scatter(plot) => {
@@ -47,7 +46,6 @@ pub(super) fn write_calibrated_export(
                 plot.x_axis,
                 &plot.series,
                 verbose,
-                average_time,
             )
             .map_err(io)?;
         }
@@ -66,7 +64,6 @@ pub(super) fn write_calibrated_export(
                     grid.x_axis,
                     &plot.series,
                     verbose,
-                    average_time,
                 )
                 .map_err(io)?;
             }
@@ -147,7 +144,6 @@ fn write_series(
     x_axis: MsAxis,
     data: &[MsScatterSeries],
     verbose: bool,
-    average_time: bool,
 ) -> std::io::Result<()> {
     let mut previous_y = None;
     for series in data {
@@ -168,14 +164,8 @@ fn write_series(
                 writeln!(output, "# {x} {y}")?;
             }
         }
-        for (&(x, y), point) in series.points.iter().zip(&series.provenance) {
-            let time_coordinate = if average_time && x_axis == MsAxis::Time {
-                Some(x)
-            } else if average_time && series.y_axis == MsAxis::Time {
-                Some(y)
-            } else {
-                None
-            };
+        for (index, (&(x, y), point)) in series.points.iter().zip(&series.provenance).enumerate() {
+            let display = series.plotms_metadata.get(index);
             let x = coordinate(x_axis, x);
             let y = coordinate(series.y_axis, y);
             if verbose {
@@ -194,14 +184,16 @@ fn write_series(
                 writeln!(
                     output,
                     "{x} {y} {} {} {} {} {} {} {} {:.3} {freq:.9} {} {pol} {}",
-                    point.chan_start,
+                    display.map_or(point.chan_start, |point| point.channel),
                     row.scan,
                     row.field,
                     row.ant1,
                     row.ant2,
                     row.ant1name,
                     row.ant2name,
-                    time_coordinate.unwrap_or(row.time),
+                    display
+                        .and_then(|point| point.average_time)
+                        .unwrap_or(row.time),
                     row.spw,
                     row.observation
                 )?;
