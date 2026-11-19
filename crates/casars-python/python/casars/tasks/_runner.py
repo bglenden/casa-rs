@@ -220,6 +220,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_getantposalma(values)
     if name == "initweights":
         return _call_initweights(values)
+    if name == "plotweather":
+        return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
         try:
             return run(name, **values).value
@@ -265,6 +267,37 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    import numpy as np
+
+    vis = arguments["vis"]
+    if vis is None:
+        raise AssertionError("{'vis': ['null value not allowed']}")
+    if not isinstance(vis, str):
+        raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+    _validate_required_vis(values, vis)
+    types = {
+        "seasonal_weight": ((float, int, np.int32, np.int64, np.float32, np.float64), "cFloat", float),
+        "doPlot": ((bool, np.bool_), "cBool", bool),
+        "plotName": ((str,), "cStr", str),
+    }
+    for name, (expected, casa_type, convert) in types.items():
+        value = arguments[name]
+        if value is None:
+            raise AssertionError(str({name: ["null value not allowed"]}))
+        if not isinstance(value, expected):
+            raise AssertionError(str({name: [f"must be of {casa_type} type"]}))
+        if name in values:
+            values[name] = convert(value)
+    try:
+        value = run("plotweather", **values).value
+    except TaskExecutionError as error:
+        if error.completion.message == "array of sample points is empty":
+            raise ValueError(error.completion.message) from error
+        raise
+    return [np.float64(item) for item in value]
 
 
 def _call_initweights(values: dict[str, Any]) -> Any:
@@ -552,6 +585,14 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         raise TaskParameterError(completion)
     if not completion.successful:
         raise TaskExecutionError(completion)
+    if task == "plotweather":
+        import json
+
+        plot = json.loads(stdout)["result"]["plot"]
+        if plot is not None:
+            from ._weather_plot import render_weather
+
+            render_weather(plot, workspace)
     return completion
 
 

@@ -247,6 +247,7 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-lattices",
+ "casa-measures-data",
  "casa-ms",
  "casa-numerics",
  "casa-observation",

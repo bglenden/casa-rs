@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Weather-station and seasonal zenith opacity from EVLA Memo 143.
 
+mod figure;
 mod opacity;
 
 use std::path::Path;
@@ -10,29 +11,28 @@ use casa_tables::{Table, TableOptions};
 use casa_types::ScalarValue;
 use casa_types::quanta::format::{YMD, format_time};
 
-use opacity::OpacityFit;
+pub(crate) use figure::WeatherFigure;
 
 #[derive(serde::Serialize)]
 pub(crate) struct WeatherEstimate {
-    pub(crate) opacity: Vec<f64>,
+    pub(crate) opacity: Vec<casa_provider_contracts::CasaFloat>,
     pub(crate) windows_ghz: Vec<f64>,
-    pub(crate) plot: Option<WeatherPlotData>,
+    pub(crate) plot: Option<WeatherFigure>,
 }
 
-#[derive(serde::Serialize)]
-pub(crate) struct WeatherPlotData {
-    pub(crate) time_seconds: Vec<f64>,
-    pub(crate) temperature_c: Vec<f64>,
-    pub(crate) dew_point_c: Vec<f64>,
-    pub(crate) wind_m_s: Vec<f64>,
-    pub(crate) wind_arrow_degrees: Vec<f64>,
-    pub(crate) station_water_mm: Vec<f64>,
-    pub(crate) seasonal_water_mm: Vec<f64>,
-    pub(crate) weighted_water_mm: Vec<f64>,
-    pub(crate) frequency_ghz: Vec<f64>,
-    pub(crate) station_opacity: Vec<f64>,
-    pub(crate) seasonal_opacity: Vec<f64>,
-    pub(crate) weighted_opacity: Vec<f64>,
+struct WeatherPlotData {
+    time_seconds: Vec<f64>,
+    temperature_c: Vec<f64>,
+    dew_point_c: Vec<f64>,
+    wind_m_s: Vec<f64>,
+    wind_arrow_degrees: Vec<f64>,
+    station_water_mm: Vec<f64>,
+    seasonal_water_mm: Vec<f64>,
+    weighted_water_mm: Vec<f64>,
+    frequency_ghz: Vec<f64>,
+    station_opacity: Vec<f64>,
+    seasonal_opacity: Vec<f64>,
+    weighted_opacity: Vec<f64>,
 }
 
 struct WeatherRows {
@@ -48,6 +48,8 @@ pub(crate) fn estimate_weather(
     path: &Path,
     seasonal_weight: f64,
     do_plot: bool,
+    vis: &str,
+    plot_name: &str,
 ) -> Result<WeatherEstimate, String> {
     let windows = ms.spectral_window().map_err(display)?;
     let windows_ghz = (0..windows.row_count())
@@ -57,10 +59,7 @@ pub(crate) fn estimate_weather(
     let rows = weather_rows(path)?;
     let first_time = match &rows {
         Some(rows) => rows.seconds[0],
-        None => numbers(ms.main_table(), "TIME")?
-            .into_iter()
-            .reduce(f64::min)
-            .ok_or("MeasurementSet has no visibility times")?,
+        None => first_visibility_time(ms.main_table())?,
     };
     let seasonal = seasonal_water(first_time)?;
     let (station, weighted) = match &rows {
@@ -80,10 +79,12 @@ pub(crate) fn estimate_weather(
         None => (vec![seasonal], vec![seasonal]),
     };
     let plot_rows = rows.filter(|_| do_plot);
-    let curves = OpacityFit::new(&windows_ghz, plot_rows.is_some())?;
     let mean_weighted = mean(&weighted);
-    let opacity = curves.windows(&windows_ghz, mean_weighted);
-    let plot = plot_rows.map(|rows| WeatherPlotData {
+    let opacity = opacity::windows(&windows_ghz, mean_weighted)?
+        .into_iter()
+        .map(casa_provider_contracts::CasaFloat)
+        .collect();
+    let plot_data = plot_rows.map(|rows| WeatherPlotData {
         seasonal_water_mm: vec![seasonal; rows.seconds.len()],
         time_seconds: rows.seconds,
         temperature_c: rows.temperature,
@@ -94,13 +95,17 @@ pub(crate) fn estimate_weather(
             .into_iter()
             .map(|rad| 270.0 - rad.to_degrees())
             .collect(),
-        station_opacity: curves.evaluate(mean(&station)),
-        seasonal_opacity: curves.evaluate(seasonal),
-        weighted_opacity: curves.evaluate(mean_weighted),
+        station_opacity: opacity::spectrum(mean(&station)),
+        seasonal_opacity: opacity::spectrum(seasonal),
+        weighted_opacity: opacity::spectrum(mean_weighted),
         station_water_mm: station,
         weighted_water_mm: weighted,
-        frequency_ghz: curves.frequencies_ghz(),
+        frequency_ghz: opacity::frequencies(),
     });
+    let plot = plot_data
+        .as_ref()
+        .map(|data| figure::prepare(data, vis, plot_name))
+        .transpose()?;
     Ok(WeatherEstimate {
         opacity,
         windows_ghz,
@@ -148,12 +153,37 @@ fn numbers(table: &Table, column: &str) -> Result<Vec<f64>, String> {
         .map_err(display)?
         .into_iter()
         .enumerate()
-        .map(|(row, value)| match value {
-            Some(ScalarValue::Float32(number)) => Ok(f64::from(number)),
-            Some(ScalarValue::Float64(number)) => Ok(number),
-            _ => Err(format!("invalid {column} at row {row}")),
-        })
+        .map(|(row, value)| number(value, column, row))
         .collect()
+}
+
+fn first_visibility_time(table: &Table) -> Result<f64, String> {
+    let column = table.column_accessor("TIME").map_err(display)?;
+    let mut earliest = f64::INFINITY;
+    const ROWS_PER_READ: usize = 65_536;
+    for start in (0..table.row_count()).step_by(ROWS_PER_READ) {
+        let stop = start.saturating_add(ROWS_PER_READ).min(table.row_count());
+        let indices = (start..stop).collect::<Vec<_>>();
+        let cells = column
+            .scalar_cells_owned_for_rows(&indices)
+            .map_err(display)?;
+        for (row, value) in indices.into_iter().zip(cells) {
+            earliest = earliest.min(number(value, "TIME", row)?);
+        }
+    }
+    if earliest.is_infinite() {
+        Err("MeasurementSet has no visibility times".into())
+    } else {
+        Ok(earliest)
+    }
+}
+
+fn number(value: Option<ScalarValue>, column: &str, row: usize) -> Result<f64, String> {
+    match value {
+        Some(ScalarValue::Float32(number)) => Ok(f64::from(number)),
+        Some(ScalarValue::Float64(number)) => Ok(number),
+        _ => Err(format!("invalid {column} at row {row}")),
+    }
 }
 
 fn station_water(dew_c: f64, temperature_c: f64) -> f64 {
