@@ -23,8 +23,8 @@ finite and non-zero, and there must be at least one channel.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.with_reporting_conversion" class="method"><a class="src rightside" href="../src/casa_imaging_operator/resample.rs.html#178-192">Source</a><h4 class="code-header">pub fn <a href="#method.with_reporting_conversion" class="fn">with_reporting_conversion</a>(
     self,
     [reference_pixel, reference_hz, increment_hz]: [<a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f64.html">f64</a>; <a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.array.html">3</a>],
-    to_lsrk: PreparedFrequencyConversion,
-    to_reporting: PreparedFrequencyConversion,
+    to_lsrk: <a class="struct" href="../casa_types/measures/frequency_conversion/struct.PreparedFrequencyConversion.html" title="struct casa_types::measures::frequency_conversion::PreparedFrequencyConversion">PreparedFrequencyConversion</a>,
+    to_reporting: <a class="struct" href="../casa_types/measures/frequency_conversion/struct.PreparedFrequencyConversion.html" title="struct casa_types::measures::frequency_conversion::PreparedFrequencyConversion">PreparedFrequencyConversion</a>,
 ) -&gt; Self</h4></section></summary><div class="docblock"><p>Evaluate unrefined channel centres through the image’s reporting
 coordinate. The axis’s first-two spacing still sets the fine grid.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.first_hz" class="method"><a class="src rightside" href="../src/casa_imaging_operator/resample.rs.html#196-198">Source</a><h4 class="code-header">pub const fn <a href="#method.first_hz" class="fn">first_hz</a>(&amp;self) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.100.0/std/primitive.f64.html">f64</a></h4></section></summary><div class="docblock"><p>Centre of the first channel in Hz.</p>

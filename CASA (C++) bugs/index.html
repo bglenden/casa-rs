@@ -3828,6 +3828,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#explicit-gencal-wildcards-can-index-outside-the-calibration-array" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explicit gencal wildcards can index outside the calibration array
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#fluxscale-history-can-contain-uninitialized-object-identifiers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9959,6 +9970,17 @@ their direct numerical comparisons. Existing stricter order-one checks remain.</
 Reproduction: <code>tools/casa-compat/fluxscale_oracle.py</code> builds the three-window
 input; the negative-order crash must be run in a separate Python process.
 Regression: <code>casa-calibration</code>'s spectral-fit tests and captured CASA gain data.</p>
+<h2 id="explicit-gencal-wildcards-can-index-outside-the-calibration-array">Explicit gencal wildcards can index outside the calibration array<a class="headerlink" href="#explicit-gencal-wildcards-can-index-outside-the-calibration-array" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>gencal(vis, caltable, 'amp', antenna='*', parameter=2.0)</code>
+passes <code>-1</code> as an antenna index and aborts in <code>ArrayBase</code>. With <code>spw='*'</code>
+CASA similarly passes a negative window index and segfaults. A negated
+antenna clause such as <code>A1;!A3</code> can pass <code>-3</code> and abort after processing A1.</p>
+<p>For the specified gain, phase and delay types, casa-rs treats each whole-axis
+<code>*</code> as that axis's empty selector, which broadcasts the value. It refuses a
+negative antenna index before publishing the table, preserving any existing
+product. The paired <code>calibration_gencal_specify_oracle.py</code> compares the wildcard
+results to CASA's empty selectors and checks safe rejection of the negated
+clause (#32).</p>
 <h2 id="fluxscale-history-can-contain-uninitialized-object-identifiers">Fluxscale history can contain uninitialized object identifiers<a class="headerlink" href="#fluxscale-history-can-contain-uninitialized-object-identifiers" title="Permanent link">&para;</a></h2>
 <p><code>MSHistoryHandler::addMessage</code> writes every required HISTORY column except
 <code>OBJECT_ID</code>. Repeated CASA 6.7.6.14 fluxscale calls return arbitrary integers
