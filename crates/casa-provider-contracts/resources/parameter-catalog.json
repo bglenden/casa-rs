@@ -933,6 +933,18 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.correlation",
+      "semantic_revision": 2,
+      "casa_name": "correlation",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA correlation product selection with optional spectral-window qualifiers.", "details": null, "examples": ["", "XX,YY"]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.feed",
       "semantic_revision": 1,
       "casa_name": "feed",

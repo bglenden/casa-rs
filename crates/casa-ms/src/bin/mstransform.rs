@@ -104,6 +104,7 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         timerange: selector("timerange")?,
         observation: task.value("observation").and_then(variant_selector_text),
         intent: task.text("intent")?.filter(|text| !text.is_empty()),
+        correlation: variant_selector(task, "correlation")?,
         array: variant_selector(task, "array")?,
         uvrange: variant_selector(task, "uvrange")?,
         feed: variant_selector(task, "feed")?,
@@ -125,6 +126,23 @@ fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<Stri
     };
     if task.surface() == "split" && matches!(name, "array" | "feed") {
         return Ok(variant_selector_text(value));
+    }
+    if task.surface() == "split" && name == "correlation" {
+        match value {
+            ParameterValue::EmptyArray { .. } => return Ok(None),
+            ParameterValue::Array(values) => {
+                let labels = values
+                    .iter()
+                    .map(|value| match value {
+                        ParameterValue::String(text) => Ok(text.as_str()),
+                        _ => Err(TaskFailure::validation("correlation expects strings").at(name)),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let text = labels.join(", ").to_uppercase();
+                return Ok((!text.is_empty()).then_some(text));
+            }
+            _ => {}
+        }
     }
     let record_type = match value {
         ParameterValue::String(text) => return Ok((!text.is_empty()).then(|| text.clone())),

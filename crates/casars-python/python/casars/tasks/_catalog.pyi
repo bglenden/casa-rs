@@ -455,7 +455,7 @@ def split(
     spw: str = ...,
     scan: str = ...,
     antenna: str = ...,
-    correlation: str = ...,
+    correlation: str | list[str] = ...,
     timerange: str = ...,
     intent: str = ...,
     array: str | int = ...,

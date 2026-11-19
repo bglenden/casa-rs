@@ -491,14 +491,14 @@ def mstransform(
     CASA's ``mstransform``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,
-    ``correlation``, ``realmodelcol``, ``usewtspectrum``, ``combinespws``,
-    ``hanning``, ``regridms``, ``mode``, ``nchan``, ``start``, ``width``,
-    ``nspw``, ``interpolation``, ``phasecenter``, ``restfreq``,
-    ``outframe``, ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``,
-    ``timespan``, ``maxuvwdistance``, ``docallib``, ``callib``,
-    ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,
-    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,
-    ``ddistart``, ``monolithic_processing``, ``reindex``.
+    ``realmodelcol``, ``usewtspectrum``, ``combinespws``, ``hanning``,
+    ``regridms``, ``mode``, ``nchan``, ``start``, ``width``, ``nspw``,
+    ``interpolation``, ``phasecenter``, ``restfreq``, ``outframe``,
+    ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,
+    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,
+    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,
+    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,
+    ``monolithic_processing``, ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -510,7 +510,7 @@ def split(
     spw: str = '',
     scan: str = '',
     antenna: str = '',
-    correlation: str = '',
+    correlation: str | list[str] = '',
     timerange: str = '',
     intent: str = '',
     array: str | int = '',
@@ -529,7 +529,7 @@ def split(
 
     CASA's ``split``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``, ``correlation``, ``timebin``, ``combine``.
+    ``keepmms``, ``timebin``, ``combine``.
     """
     return _call_casa(split, locals())
 
