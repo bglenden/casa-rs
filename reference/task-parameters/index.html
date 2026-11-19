@@ -1751,7 +1751,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-mstransform">MSTransform</a><br><code>mstransform</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>mstransform</code></td>
 <td style="text-align: right;">55</td>
 <td>Materialize a selected MeasurementSet into a new output MS.</td>
@@ -1759,7 +1759,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-split">Split</a><br><code>split</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>mstransform</code></td>
 <td style="text-align: right;">20</td>
 <td>Create a selected MeasurementSet subset, equivalent to CASA split.</td>
@@ -4881,7 +4881,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="mstransform-mstransform">MSTransform (<code>mstransform</code>)<a class="headerlink" href="#mstransform-mstransform" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: MeasurementSet</li>
 <li>Provider family: <code>mstransform</code></li>
 <li>Summary: Materialize a selected MeasurementSet into a new output MS.</li>
@@ -4996,7 +4996,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>intent</code></td>
-<td><code>ms.selection.intent@r1</code></td>
+<td><code>ms.selection.intent@r3</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
@@ -5020,11 +5020,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.observation@r4</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
+<td>Accepts selector text or an observation ID. Preserve the input type for HISTORY.</td>
 </tr>
 <tr>
 <td><code>feed</code></td>
@@ -5344,7 +5344,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="split-split">Split (<code>split</code>)<a class="headerlink" href="#split-split" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: MeasurementSet</li>
 <li>Provider family: <code>mstransform</code></li>
 <li>Summary: Create a selected MeasurementSet subset, equivalent to CASA split.</li>
@@ -5435,7 +5435,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>intent</code></td>
-<td><code>ms.selection.intent@r1</code></td>
+<td><code>ms.selection.intent@r3</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
@@ -5459,11 +5459,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.observation@r4</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
+<td>Accepts selector text or an observation ID. Preserve the input type for HISTORY.</td>
 </tr>
 <tr>
 <td><code>feed</code></td>

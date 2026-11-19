@@ -6881,15 +6881,15 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <p>CASA's <code>mstransform</code>: its parameters, defaults and return value.
 Accepted only at CASA's default, where CASA reads them, until #978:
 <code>createmms</code>, <code>separationaxis</code>, <code>numsubms</code>, <code>tileshape</code>,
-<code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>, <code>observation</code>,
-<code>feed</code>, <code>realmodelcol</code>, <code>usewtspectrum</code>, <code>combinespws</code>,
-<code>hanning</code>, <code>regridms</code>, <code>mode</code>, <code>nchan</code>, <code>start</code>, <code>width</code>,
-<code>nspw</code>, <code>interpolation</code>, <code>phasecenter</code>, <code>restfreq</code>,
-<code>outframe</code>, <code>veltype</code>, <code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>,
-<code>timespan</code>, <code>maxuvwdistance</code>, <code>docallib</code>, <code>callib</code>,
-<code>douvcontsub</code>, <code>fitspw</code>, <code>fitorder</code>, <code>want_cont</code>,
-<code>denoising_lib</code>, <code>nthreads</code>, <code>niter</code>, <code>disableparallel</code>,
-<code>ddistart</code>, <code>monolithic_processing</code>, <code>reindex</code>.</p>
+<code>correlation</code>, <code>array</code>, <code>uvrange</code>, <code>feed</code>, <code>realmodelcol</code>,
+<code>usewtspectrum</code>, <code>combinespws</code>, <code>hanning</code>, <code>regridms</code>, <code>mode</code>,
+<code>nchan</code>, <code>start</code>, <code>width</code>, <code>nspw</code>, <code>interpolation</code>,
+<code>phasecenter</code>, <code>restfreq</code>, <code>outframe</code>, <code>veltype</code>,
+<code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>, <code>timespan</code>,
+<code>maxuvwdistance</code>, <code>docallib</code>, <code>callib</code>, <code>douvcontsub</code>,
+<code>fitspw</code>, <code>fitorder</code>, <code>want_cont</code>, <code>denoising_lib</code>,
+<code>nthreads</code>, <code>niter</code>, <code>disableparallel</code>, <code>ddistart</code>,
+<code>monolithic_processing</code>, <code>reindex</code>.</p>
 
 
             <details class="mkdocstrings-source">
@@ -6982,7 +6982,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
     <span class="n">intent</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">array</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">uvrange</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
-    <span class="n">observation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">observation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">feed</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">datacolumn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'corrected'</span><span class="p">,</span>
     <span class="n">realmodelcol</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
@@ -7028,15 +7028,15 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="sd">    CASA's ``mstransform``: its parameters, defaults and return value.</span>
 <span class="sd">    Accepted only at CASA's default, where CASA reads them, until #978:</span>
 <span class="sd">    ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,</span>
-<span class="sd">    ``correlation``, ``intent``, ``array``, ``uvrange``, ``observation``,</span>
-<span class="sd">    ``feed``, ``realmodelcol``, ``usewtspectrum``, ``combinespws``,</span>
-<span class="sd">    ``hanning``, ``regridms``, ``mode``, ``nchan``, ``start``, ``width``,</span>
-<span class="sd">    ``nspw``, ``interpolation``, ``phasecenter``, ``restfreq``,</span>
-<span class="sd">    ``outframe``, ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``,</span>
-<span class="sd">    ``timespan``, ``maxuvwdistance``, ``docallib``, ``callib``,</span>
-<span class="sd">    ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,</span>
-<span class="sd">    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,</span>
-<span class="sd">    ``ddistart``, ``monolithic_processing``, ``reindex``.</span>
+<span class="sd">    ``correlation``, ``array``, ``uvrange``, ``feed``, ``realmodelcol``,</span>
+<span class="sd">    ``usewtspectrum``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,</span>
+<span class="sd">    ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,</span>
+<span class="sd">    ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,</span>
+<span class="sd">    ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,</span>
+<span class="sd">    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,</span>
+<span class="sd">    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,</span>
+<span class="sd">    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,</span>
+<span class="sd">    ``monolithic_processing``, ``reindex``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">mstransform</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -7744,8 +7744,8 @@ Accepted only at CASA's default, where CASA reads them, until #980:
         <p>Create a selected MeasurementSet subset, equivalent to CASA split.</p>
 <p>CASA's <code>split</code>: its parameters, defaults and return value.
 Accepted only at CASA's default, where CASA reads them, until #978:
-<code>keepmms</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>uvrange</code>,
-<code>observation</code>, <code>feed</code>, <code>timebin</code>, <code>combine</code>.</p>
+<code>keepmms</code>, <code>correlation</code>, <code>array</code>, <code>uvrange</code>, <code>feed</code>,
+<code>timebin</code>, <code>combine</code>.</p>
 
 
             <details class="mkdocstrings-source">
@@ -7793,7 +7793,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
     <span class="n">intent</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">array</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">uvrange</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
-    <span class="n">observation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">observation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">feed</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">datacolumn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'corrected'</span><span class="p">,</span>
     <span class="n">keepflags</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
@@ -7807,8 +7807,8 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
 <span class="sd">    CASA's ``split``: its parameters, defaults and return value.</span>
 <span class="sd">    Accepted only at CASA's default, where CASA reads them, until #978:</span>
-<span class="sd">    ``keepmms``, ``correlation``, ``intent``, ``array``, ``uvrange``,</span>
-<span class="sd">    ``observation``, ``feed``, ``timebin``, ``combine``.</span>
+<span class="sd">    ``keepmms``, ``correlation``, ``array``, ``uvrange``, ``feed``,</span>
+<span class="sd">    ``timebin``, ``combine``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">split</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
