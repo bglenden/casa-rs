@@ -6382,6 +6382,16 @@ CASA error and compares the two native append products. Invalid boolean
 arguments retain the native exception policy documented in
 `docs/python/api.md`.
 
+## Fitting through the legacy calibrater can crash without CORRECTED_DATA
+
+In CASA 6.7.6.14, use `calibrater.setvi(old=True)`, open a MeasurementSet
+without `CORRECTED_DATA` with `addcorr=False`, and select one populated field.
+Calling `calibrater.modelfit([], niter=0)` exits with a segmentation fault.
+The `uvmodelfit` task opens with `addcorr=True` and initializes the column.
+
+The native fitter reports an error when the corrected samples are missing.
+The task initializes the column before fitting, as CASA does (#1520).
+
 ## Fluxscale negative and underdetermined spectral-fit orders
 
 CASA 6.7.6.14 `fluxscale` allocates coefficient arrays with `fitorder+1`

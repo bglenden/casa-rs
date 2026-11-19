@@ -50,6 +50,7 @@ mod stats;
 mod summary;
 mod task_contract;
 mod timing;
+mod uvmodelfit;
 mod uvsub;
 mod writer;
 
@@ -131,5 +132,8 @@ pub use task_contract::{
     GencalTaskRequest, PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest,
     StatsTaskRequest, SummaryTaskRequest, calibration_protocol_descriptor,
     calibration_task_schema_bundle,
+};
+pub use uvmodelfit::{
+    VisibilityComponentFit, VisibilityFitRequest, VisibilityFitShape, fit_visibility_component,
 };
 pub use writer::CalibrationTableWriteError;

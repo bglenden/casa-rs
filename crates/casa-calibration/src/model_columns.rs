@@ -10,6 +10,7 @@ use casa_ms::schema::main_table::{
     OptionalMainColumn, VisibilityDataColumn, initial_model_visibility,
 };
 use casa_ms::scratch_columns;
+use casa_ms::selection::syntax::ChannelSelection;
 use casa_ms::selection::{ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_ms::write_session::{
     MeasurementSetMutationBatch, MeasurementSetWritePlan, MeasurementSetWriteResources,
@@ -64,16 +65,17 @@ pub(crate) fn reset_scratch_columns(
     Ok(lock)
 }
 
-/// Add the imager's model scratch column before data selection.
-pub(crate) fn initialize_model_column(
+/// Add one absent visibility scratch column before data selection.
+pub(crate) fn initialize_scratch_column(
     ms: &mut MeasurementSet,
+    column: VisibilityDataColumn,
     lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
-    if has_column(ms, MODEL) {
+    if has_column(ms, column) {
         return Ok(lock);
     }
     let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
-    reset(ms, all, &[MODEL], true, lock)
+    reset(ms, all, &[column], true, lock)
 }
 
 pub(crate) fn delete_model(
@@ -116,6 +118,21 @@ pub(crate) fn observed_column(ms: &MeasurementSet) -> &'static str {
     }
 }
 
+/// Legacy calibration iterators visit the inclusive span of all selected segments.
+pub(crate) fn calibration_channel_span(selection: &ChannelSelection) -> Option<Range<usize>> {
+    let first = selection
+        .segments
+        .iter()
+        .map(|segment| segment.start.min(segment.end))
+        .min()?;
+    let last = selection
+        .segments
+        .iter()
+        .map(|segment| segment.start.max(segment.end))
+        .max()?;
+    Some(first as usize..last as usize + 1)
+}
+
 fn reset(
     ms: &mut MeasurementSet,
     selected: ResolvedMsSelection,
@@ -139,19 +156,7 @@ fn reset(
     let ranges = selected
         .channel_selections
         .iter()
-        .filter_map(|(&spw, selection)| {
-            let first = selection
-                .segments
-                .iter()
-                .map(|segment| segment.start.min(segment.end))
-                .min()?;
-            let last = selection
-                .segments
-                .iter()
-                .map(|segment| segment.start.max(segment.end))
-                .max()?;
-            Some((spw, first as usize..last as usize + 1))
-        })
+        .filter_map(|(&spw, selection)| Some((spw, calibration_channel_span(selection)?)))
         .collect::<BTreeMap<_, _>>();
     let mut session =
         MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, lock)

@@ -256,6 +256,7 @@ dependencies = [
  "casa-test-support",
  "casa-types",
  "flate2",
+ "libm",
  "ndarray",
  "num-complex",
  "schemars",

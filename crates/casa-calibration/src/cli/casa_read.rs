@@ -367,7 +367,7 @@ pub(super) fn selector_text(value: Option<&ParameterValue>) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-fn uv_selector_text(value: Option<&ParameterValue>) -> Option<String> {
+pub(super) fn uv_selector_text(value: Option<&ParameterValue>) -> Option<String> {
     match value? {
         ParameterValue::Array(values) => {
             let text = values

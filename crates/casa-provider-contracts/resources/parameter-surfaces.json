@@ -17321,6 +17321,604 @@
     },
     {
       "kind": "task",
+      "id": "uvmodelfit",
+      "contract_version": 1,
+      "display_name": "Fit Visibility Component",
+      "category": "Calibration",
+      "summary": "Fit a single sky component to selected visibilities.",
+      "provider_family": "calibration",
+      "casa_task": "uvmodelfit",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "uvmodelfit"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "field",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "spw",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "selectdata",
+          "concept": {
+            "id": "parameter.selectdata",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--selectdata"
+              ]
+            },
+            "provider": {
+              "field": "selectdata"
+            },
+            "python": {
+              "name": "selectdata"
+            },
+            "presentation": {
+              "label": "selectdata",
+              "group": "Component fit"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "ms.selection.timerange",
+            "semantic_revision": 4
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ]
+            },
+            "provider": {
+              "field": "timerange"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "timerange",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "uvrange",
+          "concept": {
+            "id": "ms.selection.uvrange",
+            "semantic_revision": 4
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--uvrange"
+              ]
+            },
+            "provider": {
+              "field": "uvrange"
+            },
+            "python": {
+              "name": "uvrange",
+              "type_hint": "str | int | float | list[str]"
+            },
+            "presentation": {
+              "label": "uvrange",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ]
+            },
+            "provider": {
+              "field": "antenna"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "antenna",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "scan",
+          "concept": {
+            "id": "ms.selection.scan",
+            "semantic_revision": 4
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scan"
+              ]
+            },
+            "provider": {
+              "field": "scan"
+            },
+            "python": {
+              "name": "scan"
+            },
+            "presentation": {
+              "label": "scan",
+              "group": "Data selection"
+            }
+          }
+        },
+        {
+          "name": "msselect",
+          "concept": {
+            "id": "ms.selection.msselect",
+            "semantic_revision": 2
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--msselect"
+              ]
+            },
+            "provider": {
+              "field": "msselect"
+            },
+            "python": {
+              "name": "msselect"
+            },
+            "presentation": {
+              "label": "msselect",
+              "group": "Component fit"
+            }
+          }
+        },
+        {
+          "name": "niter",
+          "concept": {
+            "id": "uvmodelfit.niter",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 5
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--niter"
+              ]
+            },
+            "provider": {
+              "field": "niter"
+            },
+            "python": {
+              "name": "niter"
+            },
+            "presentation": {
+              "label": "niter",
+              "group": "Component fit"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Iteration limit for the visibility component least-squares solver."
+          }
+        },
+        {
+          "name": "comptype",
+          "concept": {
+            "id": "uvmodelfit.comptype",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "P"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--comptype"
+              ]
+            },
+            "provider": {
+              "field": "comptype"
+            },
+            "python": {
+              "name": "comptype"
+            },
+            "presentation": {
+              "label": "comptype",
+              "group": "Component fit"
+            }
+          }
+        },
+        {
+          "name": "sourcepar",
+          "concept": {
+            "id": "uvmodelfit.sourcepar",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "float",
+                  "value": 1.0
+                },
+                {
+                  "kind": "float",
+                  "value": 0.0
+                },
+                {
+                  "kind": "float",
+                  "value": 0.0
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--sourcepar"
+              ]
+            },
+            "provider": {
+              "field": "sourcepar"
+            },
+            "python": {
+              "name": "sourcepar"
+            },
+            "presentation": {
+              "label": "sourcepar",
+              "group": "Component fit"
+            }
+          }
+        },
+        {
+          "name": "varypar",
+          "concept": {
+            "id": "uvmodelfit.varypar",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--varypar"
+              ]
+            },
+            "provider": {
+              "field": "varypar"
+            },
+            "python": {
+              "name": "varypar"
+            },
+            "presentation": {
+              "label": "varypar",
+              "group": "Component fit"
+            }
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "uvmodelfit.outfile",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ]
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "outfile",
+              "group": "Component fit"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "CASA component-list output table."
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "clearcal",
       "contract_version": 1,
       "display_name": "Clear Calibration",

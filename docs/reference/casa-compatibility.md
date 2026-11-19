@@ -47,6 +47,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 3 | 22 | 0 |
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
+| uvmodelfit | uvmodelfit | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | uvsub | uvsub | yes | 2 | 2 | 0 | 0 | 0 | 0 |
 
 ## Tasks
@@ -2150,6 +2151,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Accepted only at CASA's default until #938: `field`, `scan`, `timerange`, `outframe`, `mode`, `veltype`, `specmode`, `interpolation`, `pointingcolumn`, `convertfirst`, `projection`, `stokes`, `clipminmax`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 33, in CASA's order: yes
+- Defaults that differ: none
+
+### uvmodelfit
+
+- CASA source: `casatasks/uvmodelfit.py`, 14 parameters
+- Implementation: `casatasks/private/task_uvmodelfit.py`, `uvmodelfit` (line 6): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 14, in CASA's order: yes
 - Defaults that differ: none
 
 ### uvsub

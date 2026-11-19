@@ -2,22 +2,24 @@
 //! CASA ft task selection, prediction and provenance.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use casa_components::ComponentList;
+use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::{put_virtual_model_holding, virtual_model_target};
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
 use casa_provider_contracts::CasaValue;
-use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::Quantity;
 
 use crate::ft::image::{ImageModel, TaylorTerm, prepare_image, reference_frequency};
 use crate::ft::{model_entry, write_model_scratch};
-use crate::model_columns::initialize_model_column;
 use crate::session::resolve_casa_calibration_selection;
+
+use super::multi_ms::OpenedMs;
+
+const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let selection = selection(task)?;
@@ -40,14 +42,21 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .at("usescratch"));
     }
     let path = task.input_path("vis")?;
-    let mut ms = OpenedMs::open(&path, false)?;
+    let mut ms = OpenedMs::open(&path)?;
     let mut parts = super::multi_ms::partition_paths(&path)?
         .unwrap_or_default()
         .iter()
-        .map(|path| OpenedMs::open(path, scratch))
+        .map(|path| {
+            let opened = OpenedMs::open(path)?;
+            if scratch {
+                opened.initialize(MODEL)
+            } else {
+                Ok(opened)
+            }
+        })
         .collect::<Result<Vec<_>, _>>()?;
     if scratch && parts.is_empty() {
-        ms = ms.initialize()?;
+        ms = ms.initialize(MODEL)?;
     }
     let selected =
         resolve_casa_calibration_selection(&ms.measurement_set, &selection).map_err(execution)?;
@@ -70,38 +79,6 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     ms.release()?;
     super::history::record_task(task, &path);
     TaskSuccess::new(CasaValue::None, &())
-}
-
-struct OpenedMs {
-    measurement_set: MeasurementSet,
-    lock: TableWriteLock,
-}
-
-impl OpenedMs {
-    fn open(path: &Path, scratch: bool) -> Result<Self, TaskFailure> {
-        let lock = TableWriteLock::acquire_to_reread(path, 0).map_err(execution)?;
-        let measurement_set = MeasurementSet::open(path).map_err(execution)?;
-        let opened = Self {
-            measurement_set,
-            lock,
-        };
-        if scratch {
-            opened.initialize()
-        } else {
-            Ok(opened)
-        }
-    }
-
-    fn initialize(mut self) -> Result<Self, TaskFailure> {
-        self.lock =
-            initialize_model_column(&mut self.measurement_set, self.lock).map_err(execution)?;
-        Ok(self)
-    }
-
-    fn release(self) -> Result<(), TaskFailure> {
-        drop(self.measurement_set);
-        self.lock.release().map_err(execution)
-    }
 }
 
 struct ModelRequest {
