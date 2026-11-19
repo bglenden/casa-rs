@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-19",
+  "revision": "93b953f4136a35cc851f9868344f78d48b16d3f0",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_callibrary_oracle.py --work <new-dir> --native-bin <calibrate>",
+  "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on identical MeasurementSets and ordered calibration libraries.",
+  "result": "passed",
+  "text_exports": 30,
+  "points": 714,
+  "paired_errors": 1,
+  "rendered_coordinates": 12,
+  "unfiltered_points": 1920,
+  "source_columns_preserved": [
+    "DATA",
+    "CORRECTED_DATA",
+    "FLAG",
+    "FLAG_ROW",
+    "WEIGHT",
+    "SIGMA"
+  ],
+  "local_debug_smoke": {
+    "native_elapsed_range_seconds": [
+      0.058,
+      0.135
+    ],
+    "casa_elapsed_range_seconds": [
+      0.6,
+      0.932
+    ],
+    "scope": "Small same-input exports. Matched release qualification remains under #979."
+  }
+}
