@@ -20,6 +20,7 @@
 //! storage stack, so every on-disk assumption made here is exercised against
 //! the same table reader/writer substrate used elsewhere in the repo.
 
+mod antpos_vla;
 mod bandpass;
 mod callib;
 mod casa_return;
@@ -29,7 +30,6 @@ mod corrected_export;
 mod execute;
 mod fluxscale;
 mod ft;
-mod antpos_vla;
 mod gencal;
 mod interpolation;
 mod lookup;

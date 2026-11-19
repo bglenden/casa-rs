@@ -39,12 +39,18 @@ impl TropoDelay {
                     return Ok(None);
                 };
                 let position = antennas.position(row)?;
-                let radius = position.into_iter().zip(center)
+                let radius = position
+                    .into_iter()
+                    .zip(center)
                     .map(|(position, center)| (position - center).powi(2))
                     .sum::<f64>()
                     .sqrt();
-                let distance_m = radius * (-1.0e-15 * scale) * crate::execute::SPEED_OF_LIGHT_M_PER_S;
-                Ok(Some(Arm { azimuth_rad, distance_m }))
+                let distance_m =
+                    radius * (-1.0e-15 * scale) * crate::execute::SPEED_OF_LIGHT_M_PER_S;
+                Ok(Some(Arm {
+                    azimuth_rad,
+                    distance_m,
+                }))
             })
             .collect::<MsResult<_>>()?;
         Ok(Self { arms })
@@ -69,7 +75,11 @@ fn arm_azimuth(station: &str, has_prefix: bool) -> Option<f64> {
     [('N', 355.0_f64), ('E', 115.0), ('W', 236.0)]
         .into_iter()
         .find(|(arm, _)| {
-            if has_prefix { station.starts_with(*arm) } else { station.contains(*arm) }
+            if has_prefix {
+                station.starts_with(*arm)
+            } else {
+                station.contains(*arm)
+            }
         })
         .map(|(_, degrees)| degrees.to_radians())
 }

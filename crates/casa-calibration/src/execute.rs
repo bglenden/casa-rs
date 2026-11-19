@@ -2990,8 +2990,16 @@ fn fast_antpos_delay_ns(
             return Ok(delay_ns);
         }
     }
-    let delay_ns = antpos_delay_ns(engine, field_id, antenna_id, time_seconds, offset_m,
-        path, tropo, reborrow_geometry_cache(&mut geometry_cache))?;
+    let delay_ns = antpos_delay_ns(
+        engine,
+        field_id,
+        antenna_id,
+        time_seconds,
+        offset_m,
+        path,
+        tropo,
+        reborrow_geometry_cache(&mut geometry_cache),
+    )?;
     if let (Some(cache), Some(antenna_index)) =
         (reborrow_geometry_cache(&mut geometry_cache), antenna_index)
     {
@@ -3018,11 +3026,17 @@ fn antpos_delay_ns(
         source,
     };
     let uvw = match cache {
-        Some(cache) => cache.project_itrf_offset_to_uvw(engine, time_seconds, field, antenna, offset_m),
+        Some(cache) => {
+            cache.project_itrf_offset_to_uvw(engine, time_seconds, field, antenna, offset_m)
+        }
         None => engine.project_itrf_offset_to_uvw(time_seconds, field_id, antenna_id, offset_m),
-    }.map_err(failed)?;
-    let tropo_m = tropo.map(|tropo| tropo.metres(engine, time_seconds, field_id, antenna_id))
-        .transpose().map_err(failed)?.unwrap_or(0.0);
+    }
+    .map_err(failed)?;
+    let tropo_m = tropo
+        .map(|tropo| tropo.metres(engine, time_seconds, field_id, antenna_id))
+        .transpose()
+        .map_err(failed)?
+        .unwrap_or(0.0);
     Ok((uvw[2] + tropo_m) / SPEED_OF_LIGHT_M_PER_S * 1.0e9)
 }
 
@@ -3177,8 +3191,14 @@ fn materialize_row_dependent_grid(
                 });
             };
             let delay_ns = antpos_delay_ns(
-                engine, field_id, antenna_id, time_seconds, grid.offsets_m.map(f64::from),
-                path, table.antpos_tropo.as_ref(), geometry_cache.as_deref_mut(),
+                engine,
+                field_id,
+                antenna_id,
+                time_seconds,
+                grid.offsets_m.map(f64::from),
+                path,
+                table.antpos_tropo.as_ref(),
+                geometry_cache.as_deref_mut(),
             )?;
             let values = data_spw
                 .channel_frequencies_hz
@@ -3566,13 +3586,9 @@ impl CalibrationGrid {
                 context.cal_ref_frequency_hz,
                 context.path,
             ),
-            Self::Antpos(grid) => grid.sample(
-                data_chan_index,
-                field_id,
-                antenna_id,
-                time_seconds,
-                context,
-            ),
+            Self::Antpos(grid) => {
+                grid.sample(data_chan_index, field_id, antenna_id, time_seconds, context)
+            }
             Self::GainCurve(grid) => {
                 grid.sample(receptor, field_id, antenna_id, time_seconds, context)
             }
@@ -3888,8 +3904,14 @@ impl AntposGrid {
             });
         };
         let delay_ns = antpos_delay_ns(
-            engine, field_id, antenna_id, time_seconds, self.offsets_m.map(f64::from),
-            path, context.antpos_tropo, None,
+            engine,
+            field_id,
+            antenna_id,
+            time_seconds,
+            self.offsets_m.map(f64::from),
+            path,
+            context.antpos_tropo,
+            None,
         )?;
         let phase_rad = 2.0 * std::f64::consts::PI * delay_ns * (frequency_hz / 1.0e9);
         Ok(GainSample {
@@ -4215,7 +4237,11 @@ fn load_parameters(
             table_plan.summary.table_subtype.as_str(),
             "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS"
         );
-    let antpos_tropo = match (table_plan.summary.table_subtype.as_str(), ms, geometry_engine) {
+    let antpos_tropo = match (
+        table_plan.summary.table_subtype.as_str(),
+        ms,
+        geometry_engine,
+    ) {
         ("KAntPos Jones", Some(ms), Some(engine)) => load_antpos_tropo(&table, ms, engine)?,
         _ => None,
     };
@@ -4384,12 +4410,19 @@ fn load_antpos_tropo(
         Value::Scalar(ScalarValue::Float64(scale)) => *scale,
         Value::Scalar(ScalarValue::Float32(scale)) => f64::from(*scale),
         Value::Scalar(ScalarValue::Int32(scale)) => f64::from(*scale),
-        _ => return Err(ApplyExecutionError::UnsupportedCalibrationTable {
-            path: table.path().map_or_else(String::new, |path| path.display().to_string()),
-            reason: format!("{TROPO_KEYWORD} must be a numeric keyword"),
-        }),
+        _ => {
+            return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                path: table
+                    .path()
+                    .map_or_else(String::new, |path| path.display().to_string()),
+                reason: format!("{TROPO_KEYWORD} must be a numeric keyword"),
+            });
+        }
     };
-    (scale != 0.0).then(|| TropoDelay::new(ms, engine, scale)).transpose().map_err(failed)
+    (scale != 0.0)
+        .then(|| TropoDelay::new(ms, engine, scale))
+        .transpose()
+        .map_err(failed)
 }
 
 fn load_bpoly_calibration_table(

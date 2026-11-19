@@ -99,7 +99,11 @@ pub(super) fn observation_start(ms: &MeasurementSet) -> Result<MvTime, GencalErr
     let ArrayValue::Float64(times) = value else {
         return Err(invalid("OBSERVATION.TIME_RANGE must contain UTC times"));
     };
-    let start = times.iter().next().copied().filter(|time| time.is_finite())
+    let start = times
+        .iter()
+        .next()
+        .copied()
+        .filter(|time| time.is_finite())
         .ok_or_else(|| invalid("missing observation start time"))?;
     Ok(MvTime::from_mjd_seconds(start))
 }
@@ -121,7 +125,10 @@ pub(super) fn tropo_keyword(
     }
     if mode == crate::CalibrationOutputMode::Update && request.output_table.exists() {
         let previous = crate::output_merge::open(&request.output_table)?;
-        return Ok(previous.keywords().get(crate::antpos_vla::TROPO_KEYWORD).cloned());
+        return Ok(previous
+            .keywords()
+            .get(crate::antpos_vla::TROPO_KEYWORD)
+            .cloned());
     }
     Ok(None)
 }
@@ -136,7 +143,13 @@ fn load_antennas(ms: &MeasurementSet) -> Result<Vec<Antenna>, GencalError> {
                 .and_then(|suffix| suffix.parse().ok())
                 .ok_or_else(|| invalid(format!("invalid EVLA antenna name {name:?}")))?;
             let station = antennas.station(row).map_err(invalid)?;
-            Ok(Antenna { number, name, station, offset: [0.0; 3], moved_after_observation: false })
+            Ok(Antenna {
+                number,
+                name,
+                station,
+                offset: [0.0; 3],
+                moved_after_observation: false,
+            })
         })
         .collect()
 }
@@ -153,7 +166,9 @@ fn accumulate(
         !line.starts_with(['<', ';']) && MONTHS.iter().any(|month| line.contains(month))
     }) {
         let correction = parse_correction(year, line)?;
-        let Some(antenna) = antennas.iter_mut().find(|antenna| antenna.number == correction.number)
+        let Some(antenna) = antennas
+            .iter_mut()
+            .find(|antenna| antenna.number == correction.number)
         else {
             continue;
         };
@@ -188,7 +203,9 @@ fn parse_correction(year: i32, line: &str) -> Result<Correction<'_>, GencalError
         } else {
             (None, fields.as_slice())
         };
-        let [_, posted, clock, number, station, x, y, z] = fields else { return None };
+        let [_, posted, clock, number, station, x, y, z] = fields else {
+            return None;
+        };
         Some(Correction {
             moved,
             posted: parse_date(year, posted, clock)?,
@@ -204,7 +221,14 @@ fn parse_date(year: i32, date: &str, clock: &str) -> Option<MvTime> {
     let month = MONTHS.iter().position(|month| date.starts_with(month))? as u32 + 1;
     let day = date.get(3..)?.parse().ok()?;
     let (hour, minute) = clock.split_once(':')?;
-    MvTime::from_ymd_hms_utc(year, month, day, hour.parse().ok()?, minute.parse().ok()?, 0.0)
+    MvTime::from_ymd_hms_utc(
+        year,
+        month,
+        day,
+        hour.parse().ok()?,
+        minute.parse().ok()?,
+        0.0,
+    )
 }
 
 fn invalid(detail: impl std::fmt::Display) -> GencalError {
