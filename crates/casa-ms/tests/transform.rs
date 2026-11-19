@@ -99,6 +99,50 @@ fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {
 }
 
 #[test]
+fn rust_transform_preserves_subset_export_uv_and_array_semantics() {
+    let dir = tempfile::tempdir().unwrap();
+    let input_ms = common::create_msexplore_spectrum_fixture_ms(dir.path(), false, &[]);
+    let output_ms = dir.path().join("subset.ms");
+    let mut input = MeasurementSet::open(&input_ms).unwrap();
+    for row in 0..input.row_count() {
+        input
+            .main_table_mut()
+            .column_accessor_mut("ARRAY_ID")
+            .unwrap()
+            .set(row, casa_types::Value::Scalar(ScalarValue::Int32(5)))
+            .unwrap();
+    }
+    input.save_main_table_only().unwrap();
+    drop(input);
+
+    let report = mstransform(&MsTransformRequest {
+        input_ms,
+        output_ms: output_ms.clone(),
+        spw: String::new(),
+        width: 1,
+        data_column: TransformDataColumn::Data,
+        selection: MsSelection {
+            array: Some("5".into()),
+            uvrange: Some("<=50m".into()),
+            ..MsSelection::default()
+        },
+        keep_flags: true,
+    })
+    .unwrap();
+    assert_eq!(report.row_count, 1);
+    let output = MeasurementSet::open(output_ms).unwrap();
+    assert_eq!(
+        output
+            .main_table()
+            .cell_accessor(0, "ARRAY_ID")
+            .unwrap()
+            .scalar()
+            .unwrap(),
+        &ScalarValue::Int32(5)
+    );
+}
+
+#[test]
 fn mstransform_filters_rows_by_selected_spw_and_preserves_time_order() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input_ms = common::create_msexplore_averaging_fixture_ms(dir.path());

@@ -29,7 +29,8 @@ use crate::ms::{measurement_set_main_table_bindings, measurement_set_table_optio
 use crate::schema::SubtableId;
 use crate::schema::main_table::VisibilityDataColumn;
 use crate::selection::{
-    MsSelection, MsSelectionError, MsSelectionIoBudget, ResolvedMsSelectionRow, SpwSelection,
+    MsSelection, MsSelectionError, MsSelectionIoBudget, ResolvedMsSelectionRow, RowGrammar,
+    SpwSelection,
 };
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
@@ -222,6 +223,20 @@ pub enum MsTransformError {
 
 /// Materialize a selected/channel-subset MeasurementSet.
 pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, MsTransformError> {
+    materialize_transform(request, RowGrammar::Casa)
+}
+
+/// Materialize the selection with the CASA split and mstransform task grammar.
+pub fn mstransform_task(
+    request: &MsTransformRequest,
+) -> Result<MsTransformReport, MsTransformError> {
+    materialize_transform(request, RowGrammar::Transform)
+}
+
+fn materialize_transform(
+    request: &MsTransformRequest,
+    grammar: RowGrammar,
+) -> Result<MsTransformReport, MsTransformError> {
     if request.input_ms == request.output_ms {
         return Err(MsTransformError::SameInputOutput {
             path: request.input_ms.display().to_string(),
@@ -241,7 +256,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         })?;
     let mut physical_request = request.clone();
     physical_request.output_ms = target.staging_path().to_path_buf();
-    let mut report = mstransform_staged(&physical_request)?;
+    let mut report = mstransform_staged(&physical_request, grammar)?;
     target
         .commit()
         .map_err(|error| MsTransformError::PrepareOutput {
@@ -256,7 +271,10 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     clippy::too_many_lines,
     reason = "predates the function-length limit; #705"
 )]
-fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport, MsTransformError> {
+fn mstransform_staged(
+    request: &MsTransformRequest,
+    grammar: RowGrammar,
+) -> Result<MsTransformReport, MsTransformError> {
     let started_at = Instant::now();
     tracing::info!(
         input_ms = %request.input_ms.display(),
@@ -318,7 +336,7 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         selection.spw = Some(spw.to_string());
     }
     let (resolved_rows, time_selection) = input
-        .resolve_casa_selection_with_time(&selection, budget)
+        .resolve_selection_with_time(&selection, budget, grammar)
         .map_err(selection_error)?;
     maybe_log_transform_progress(
         "select_rows",
@@ -454,8 +472,12 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         &compact_metadata.spw_map,
         time_selection.as_ref(),
     )?;
-    let row_id_maps =
-        selection_metadata::reindex_observation_and_state(&input, request, antenna_id_map)?;
+    let row_id_maps = selection_metadata::reindex_selected_row_ids(
+        &input,
+        request,
+        antenna_id_map,
+        grammar == RowGrammar::Transform,
+    )?;
     maybe_log_transform_progress(
         "compact_spectral_subtables",
         stage_started_at.elapsed(),
@@ -1263,6 +1285,7 @@ fn gather_selected_main_column_overrides(
                 }
                 if column.data_type().and_then(streamed_scalar_type).is_some() {
                     let id_map = row_id_maps.for_column(name);
+                    let array_selection = row_id_maps.array.as_ref().filter(|_| name == "ARRAY_ID");
                     for rows in selected_rows.chunks(batch_rows.max(1)) {
                         let values = table
                             .column_accessor(name)
@@ -1272,8 +1295,8 @@ fn gather_selected_main_column_overrides(
                                 source: Box::new(source),
                             })?;
                         for (row, value) in rows.iter().zip(values) {
-                            let value = match id_map {
-                                Some(ids) => {
+                            let value = match (id_map, array_selection) {
+                                (Some(ids), _) => {
                                     let old_id = scalar_i32(value.as_ref(), name, *row)?;
                                     let new_id = ids.get(&old_id).ok_or_else(|| {
                                         MsTransformError::SpectralMetadata {
@@ -1282,6 +1305,16 @@ fn gather_selected_main_column_overrides(
                                         }
                                     })?;
                                     Some(ScalarValue::Int32(*new_id))
+                                }
+                                (_, Some(selection)) => {
+                                    let old_id = scalar_i32(value.as_ref(), name, *row)?;
+                                    let new_id = selection.reindex(old_id).map_err(|source| {
+                                        MsTransformError::SpectralMetadata {
+                                            path: output_path.display().to_string(),
+                                            reason: source.to_string(),
+                                        }
+                                    })?;
+                                    Some(ScalarValue::Int32(new_id))
                                 }
                                 _ => value,
                             };

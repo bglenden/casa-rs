@@ -6326,6 +6326,15 @@ looking it up in FIELD, so it cannot select an unrelated field.
 [Issue #54](https://github.com/bglenden/casa-rs/issues/54) and
 [the casacore FIELD grammar](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.yy).
 
+## A reversed feed interval aborts MeasurementSet selection
+
+With FEED_ID 0 and 2 present, CASA 6.7.6.14 `split(feed="2~0&&")` aborts
+the Python process. The feed grammar builds an array with negative length
+and the uncaught `ArrayShapeError` terminates the process.
+
+The native transform checks the range before reading MAIN. It returns a
+feed selector error and leaves the input and output paths untouched (#1614).
+
 ## A bare FIELD escape can silently change the selection
 
 Outside a quoted pattern or slash regex, the casacore FIELD scanner prints

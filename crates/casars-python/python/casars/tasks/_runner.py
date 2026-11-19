@@ -183,6 +183,13 @@ def run(
     else:
         resolved = TaskParameters.defaults(task, workspace=resolved_workspace)
     if values:
+        if task in ("split", "mstransform"):
+            for selector in ("array", "uvrange", "feed"):
+                if selector in values and not isinstance(values[selector], str):
+                    try:
+                        _ms_transform_selector_variant(selector, values[selector])
+                    except AssertionError as error:
+                        raise ValueError(str(error)) from error
         resolved.set_many(values)
     return _execute(task, resolved, resolved_workspace)
 
@@ -234,7 +241,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "initweights":
         return _call_initweights(values)
     if name in ("split", "mstransform"):
-        _coerce_ms_transform_selectors(values)
+        _coerce_ms_transform_selectors(name, values)
         try:
             return run(name, **values).value
         except TaskParameterError as error:
@@ -366,13 +373,15 @@ def _call_initweights(values: dict[str, Any]) -> Any:
         raise AssertionError(str(error)) from error
 
 
-def _coerce_ms_transform_selectors(values: dict[str, Any]) -> None:
-    for name in ("observation", "intent"):
-        value = values.get(name, "")
+def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
+    for name in ("observation", "intent", "array", "uvrange", "feed"):
+        if name not in values:
+            continue
+        value = values[name]
         if isinstance(value, str):
             continue
         converted, record_type = _ms_transform_selector_variant(name, value)
-        if name == "observation":
+        if name == "observation" or (task == "split" and name in ("array", "feed")):
             values[name] = converted
         elif record_type is None:
             # CASA's tool record conversion omits this scalar variant.
@@ -380,7 +389,7 @@ def _coerce_ms_transform_selectors(values: dict[str, Any]) -> None:
         else:
             raise RuntimeError(
                 "RecordRep::get_pointer - incorrect data type String   "
-                f"used for field intent with type {record_type:<8}"
+                f"used for field {name} with type {record_type:<8}"
             )
 
 
