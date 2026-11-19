@@ -2185,7 +2185,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 61 | 0 | 0 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
-| [measures](#measures) | `casars.tools` | 48 | yes | 30 | 7 | 11 | 0 | 0 | 0 |
+| [measures](#measures) | `casars.tools` | 48 | yes | 38 | 5 | 5 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 57 | 0 | 0 | 0 | 0 | 0 |
@@ -2887,37 +2887,37 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Implemented: 30, Partial: 7, Not implemented: 11, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `5174d43c3bb74b538b0477741ed412792b2d7926`. Status counts: Implemented: 38, Partial: 5, Not implemented: 5, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
-| `addxvalue` | `a` | Partial (#1252) | Returns direction cosines or the position vector for scalar supported records, resolving nested offsets; returns an empty record for epoch, frequency, Doppler and radial velocity. Vector direction/position extras and remaining measure kinds are unfinished; cyclic or excessively deep records are rejected safely. | [signature](#measures-evidence-signature), [addxvalue-casa](#measures-evidence-addxvalue-casa), [spectral-casa](#measures-evidence-spectral-casa) |
-| `asbaseline` | `pos` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
-| `baseline` | `rf='ITRF', v0=[], v1=[], v2=[], off={}` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `addxvalue` | `a` | Implemented | Returns the first Cartesian vector for direction, position, baseline, uvw and magnetic measures, and an empty record for epoch, frequency, Doppler and radial velocity. Cyclic and excessively deep records are rejected safely. | [signature](#measures-evidence-signature), [addxvalue-casa](#measures-evidence-addxvalue-casa), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
+| `asbaseline` | `pos` | Implemented | Passes through baselines and converts scalar/vector positions through ITRF into J2000 baselines. | [signature](#measures-evidence-signature), [geometry-casa](#measures-evidence-geometry-casa) |
+| `baseline` | `rf='ITRF', v0=[], v1=[], v2=[], off={}` | Implemented | Defines scalar/vector baselines from Cartesian or spherical quantities and supports a reference origin. Rigid reference changes use the explicit frame. | [signature](#measures-evidence-signature), [geometry-casa](#measures-evidence-geometry-casa) |
 | `cometangdiam` |  | Partial (#1252) | Returns CASA's -1 rad sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
 | `cometdist` |  | Partial (#1252) | Returns CASA's -1 AU sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
 | `cometname` |  | Partial (#1252) | Returns the empty name and CASA warning when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
 | `comettopo` |  | Partial (#1252) | Returns CASA's dimensionless zero vector and warning when no topocentric comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
 | `comettype` |  | Partial (#1252) | Returns CASA's none type when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
 | `direction` | `rf='J2000', v0=[], v1=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `dirshow` | `v` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa) |
+| `dirshow` | `v` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
 | `doframe` | `v` | Implemented | Sets explicit epoch, position, direction and radial-velocity frame elements. The initial frame is empty under the recorded owner decision. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa) |
 | `done` |  | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `doppler` | `rf='RADIO', v0=[], off={}` | Implemented | Defines Doppler measures in all CASA conventions and aliases, including scalar quantities, reference offsets, default/invalid-reference behavior and CASA Python argument forms. | [signature](#measures-evidence-signature), [spectral-casa](#measures-evidence-spectral-casa) |
-| `earthmagnetic` | `rf='IGRF', v0=[], v1=[], v2=[], off={}` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `earthmagnetic` | `rf='IGRF', v0=[], v1=[], v2=[], off={}` | Implemented | Defines field strength and direction in the supported reference, reads explicit magnetic vectors and evaluates IGRF at the frame position and exact TDB epoch. Explicit IGRF outputs use ITRF coordinates. Reference changes preserve the input field strength. | [signature](#measures-evidence-signature), [geometry-casa](#measures-evidence-geometry-casa) |
 | `epoch` | `rf='UTC', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `expand` | `v={}` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `expand` | `v={}` | Implemented | Returns ordered pair differences for position, baseline and uvw vectors with the original type and reference. Single input returns its coordinates. Failures return empty records. | [signature](#measures-evidence-signature), [geometry-casa](#measures-evidence-geometry-casa) |
 | `framecomet` | `v=''` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `framenow` |  | Implemented | Sets the frame's epoch, position and direction. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `frequency` | `rf='LSRK', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [undefined-frequency-casa](#measures-evidence-undefined-frequency-casa) |
-| `getoffset` | `v` | Partial (#1252) | Copies valid scalar/vector/nested offsets for direction, epoch, position, frequency, Doppler and radial velocity without aliasing mutable containers or losing large integers. Remaining measure kinds are unfinished; recursive and object-array records are rejected safely. | [signature](#measures-evidence-signature), [getoffset-casa](#measures-evidence-getoffset-casa), [spectral-casa](#measures-evidence-spectral-casa) |
-| `getref` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa) |
-| `gettype` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa) |
-| `getvalue` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa) |
-| `ismeasure` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa) |
+| `getoffset` | `v` | Implemented | Copies offsets for all nine measure kinds, retaining scalar/vector/nested values and large integers. Recursive and object-array records are rejected safely. | [signature](#measures-evidence-signature), [getoffset-casa](#measures-evidence-getoffset-casa), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
+| `getref` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
+| `gettype` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
+| `getvalue` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
+| `ismeasure` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
 | `linelist` |  | Implemented | The rest lines of the measures data, their names joined by spaces in the table's order, with CASA's deprecation warning. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
-| `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa) |
-| `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [undefined-frequency-casa](#measures-evidence-undefined-frequency-casa), [spectral-casa](#measures-evidence-spectral-casa) |
+| `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
+| `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. Reads and converts baseline, UVW and earth magnetic measures. Generic output reference offsets are still unfinished (#1252). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [undefined-frequency-casa](#measures-evidence-undefined-frequency-casa), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
 | `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, found by name as casacore's MeasTable finds them (ignoring case, or by a unique prefix), and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-observatories](#measures-evidence-casa-observatories), [casa-names](#measures-evidence-casa-names) |
 | `obslist` |  | Implemented | The observatories of the measures data, by name in the table's order, as CASA lists them; CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists), [casa-values](#measures-evidence-casa-values) |
 | `posangle` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -2927,7 +2927,7 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 | `riseset` | `crd=[], ev=[]` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simutil.ephemeris calls it; ephemeris is not implemented either. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `separation` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `shift` | `v={}, offset=[], pa=[]` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
-| `show` | `v, refcode=True` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa) |
+| `show` | `v, refcode=True` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [spectral-casa](#measures-evidence-spectral-casa), [geometry-casa](#measures-evidence-geometry-casa) |
 | `showframe` |  | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `source` | `name=[]` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-names](#measures-evidence-casa-names) |
 | `sourcelist` |  | Implemented | The sources of the measures data, their names joined by spaces in the table's order, as CASA lists them. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
@@ -2936,9 +2936,9 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 | `tofrequency` | `rf, v0, rfq` | Implemented | Converts Doppler records to frequencies using CASA QuantumHolder rest-frequency units, resolving Doppler offsets and preserving vector elements rather than CASA truncation. | [signature](#measures-evidence-signature), [spectral-casa](#measures-evidence-spectral-casa) |
 | `toradialvelocity` | `rf, v0` | Implemented | Converts Doppler records to radial-velocity references, resolving Doppler offsets and preserving all vector elements, checked against independent CASA scalar calls. | [signature](#measures-evidence-signature), [spectral-casa](#measures-evidence-spectral-casa) |
 | `torestfrequency` | `v0, d0` | Implemented | Derives rest frequency from raw frequency and resolved Doppler records, with scalar broadcasting and every vector result checked against independent CASA scalar calls. | [signature](#measures-evidence-signature), [spectral-casa](#measures-evidence-spectral-casa) |
-| `touvw` | `v={}` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `touvw` | `v={}` | Implemented | Converts scalar/vector baselines to J2000 uvw, flattened Cartesian coordinates and sidereal rates using the explicit frame. | [signature](#measures-evidence-signature), [geometry-casa](#measures-evidence-geometry-casa) |
 | `type` |  | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `uvw` | `rf='ITRF', v0=[], v1=[], v2=[], off={}` | Not implemented (#1252) | Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `uvw` | `rf='ITRF', v0=[], v1=[], v2=[], off={}` | Implemented | Defines scalar/vector uvw measures from Cartesian or spherical quantities and retains valid reference offsets. | [signature](#measures-evidence-signature), [geometry-casa](#measures-evidence-geometry-casa) |
 
 #### measures interacting modes and tool behavior
 
@@ -2946,7 +2946,7 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 
 ##### measures-tool-default-frame: Previously agreed
 
-- Record: [The measures tool converts with a frame at MJD 0 and the geocentre](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre)
+- Record: [The measures tool converts with a frame at MJD 0 and the geocentre](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre)
 - Inputs: me.measure(me.direction('J2000','12h00m00','45d00m00'),'AZEL') in a fresh measures tool, with no doframe call.
 - CASA: The tool starts with a default frame (MJD 0 UTC, zero-vector position, J2000 pole) and converts using it without a warning, returning AZEL for 1858-11-17 at the Earth's centre.
 - casa-rs: Starts with an empty frame, so the conversion fails with 'Cannot convert due to missing frame information' until doframe sets the element.
@@ -2957,7 +2957,7 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 
 ##### iau2000-keeps-iau1980-sidereal: Previously agreed
 
-- Record: [IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities)
+- Record: [IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities)
 - Inputs: Conversions to HADEC, AZEL, ITRF, MECLIPTIC or TECLIPTIC with measures.iau2000.b_use set.
 - CASA: casacore still forms GAST from IAU 1982 GMST and the IAU 1980 equation of the equinoxes, and uses IAU 1980 obliquities (fundArg T^2 term -0.0059 arcsec, 0.37 mas in MECLIPTIC by 2026).
 - casa-rs: Computes all of these as casacore does (casacore_sidereal, casacore_frames).
@@ -2968,7 +2968,7 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 
 ##### direction-latitude-unnormalized: Previously agreed
 
-- Record: [Direction latitudes come from an unnormalized vector](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#direction-latitudes-come-from-an-unnormalized-vector)
+- Record: [Direction latitudes come from an unnormalized vector](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#direction-latitudes-come-from-an-unnormalized-vector)
 - Inputs: Direction conversions that use the galactic or FK4 matrices, e.g. B1950 to GALACTIC or J2000 to B1950 near a pole.
 - CASA: The 10-digit literal matrices are orthogonal only to about 7e-11 and doConvert does not renormalize, so getLat's asin(z) is off by (|v|-1)tan(b) and becomes NaN once z exceeds 1.
 - casa-rs: Converts with the same matrices, renormalizes and reports the latitude of the unit vector.
@@ -2979,7 +2979,7 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 
 ##### iau2000-jmean-j2000-order: Previously agreed
 
-- Record: [IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order)
+- Record: [IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order)
 - Inputs: MECLIPTIC or TECLIPTIC to J2000 conversion under IAU 2000.
 - CASA: deapplyPrecession applies B then P giving P*B*v', not the inverse B*P*v', so JMEAN to J2000 is not the inverse of J2000 to JMEAN (0.14 mas off in 2026, growing).
 - casa-rs: Inverts exactly.
@@ -2990,7 +2990,7 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 
 ##### iau2000-gmst1-tt-fraction: Previously agreed
 
-- Record: [IAU 2000 GMST1 adds the TT day fraction](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-gmst1-adds-the-tt-day-fraction)
+- Record: [IAU 2000 GMST1 adds the TT day fraction](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-gmst1-adds-the-tt-day-fraction)
 - Inputs: UT1 to GMST1 (and so LMST) under IAU 2000.
 - CASA: UT1_GMST1 adds GMST00/(2pi), already a sidereal time of day, to the TT epoch, counting the TT day fraction twice: UT1 51544.5 gives GMST1 58258.280 against 58257.779, and GMST1_UT1 does not undo it.
 - casa-rs: Uses the IAU 1976 GMST1 under either model, as casacore's own GAST does.
@@ -3001,7 +3001,7 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 
 ##### spectral-vector-data-loss: Previously agreed
 
-- Record: [Measures spectral conversions reject or truncate valid vectors](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#measures-spectral-conversions-reject-or-truncate-valid-vectors)
+- Record: [Measures spectral conversions reject or truncate valid vectors](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#measures-spectral-conversions-reject-or-truncate-valid-vectors)
 - Inputs: Frequency/Doppler vectors passed to spectral helpers; cyclic list/dictionary arguments passed to doppler or todoppler.
 - CASA: CASA 6.7.6.14 truncates tofrequency, toradialvelocity and torestfrequency vectors, rejects a valid unframed todoppler frequency vector, and terminates with SIGSEGV on the recorded cyclic arguments.
 - casa-rs: Preserves every scalar-control result with scalar broadcasting; rejects cyclic/deep inputs with catchable ValueError and restores capture state after failure.
@@ -3009,6 +3009,39 @@ Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Imple
 - User impact: Vector callers receive all requested results. Invalid cyclic arguments no longer terminate the process.
 - Owner decision: Standing rule, AGENTS.md CASA deviations: correct CASA crashes, data loss and contradictions of evident intent.
 - Evidence: [spectral-casa](#measures-evidence-spectral-casa), [bugs-record](#measures-evidence-bugs-record).
+
+##### geometry-unit-offset-loss: Previously agreed
+
+- Record: [Measures geometry constructors lose values and mislabel units](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#measures-geometry-constructors-lose-values-and-mislabel-units)
+- Inputs: Length-first baseline/UVW quantities, incompatible dimensions, valid UVW reference offsets and spherical magnetic fields.
+- CASA: Can replace valid geometry with zero, discard the UVW offset, or mislabel tesla as nanotesla and magnetic extra values as metres.
+- casa-rs: Retains geometry and its reference origin, checks dimensions, and returns magnetic components in nanotesla.
+- Rationale: The angle-first constructor, generic measure offset and explicit Cartesian magnetic records supply independent controls for data and unit corruption.
+- User impact: Geometry and magnetic field strengths are preserved with consistent units.
+- Owner decision: Standing rule, AGENTS.md CASA deviations: correct data loss, corruption and contradictions of evident intent.
+- Evidence: [geometry-casa](#measures-evidence-geometry-casa), [bugs-record](#measures-evidence-bugs-record).
+
+##### geometry-stale-auxiliary-results: Previously agreed
+
+- Record: [Failed measures geometry calls can expose earlier outputs](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#failed-measures-geometry-calls-can-expose-earlier-outputs)
+- Inputs: Failed touvw or expand following a successful call, and expand with an incompatible magnetic measure.
+- CASA: Can return stale auxiliary results or relabel an incompatible record with zero length coordinates.
+- casa-rs: Returns empty records for all outputs on failure and refuses non-geometric expansion.
+- Rationale: Auxiliary values must correspond to the requested inputs.
+- User impact: Callers can identify missing or incompatible results from all outputs.
+- Owner decision: Standing rule, AGENTS.md CASA deviations: correct data loss, corruption and contradictions of evident intent.
+- Evidence: [geometry-casa](#measures-evidence-geometry-casa), [bugs-record](#measures-evidence-bugs-record).
+
+##### geometry-magnetic-strength: Previously agreed
+
+- Record: [Magnetic reference changes can corrupt field strength](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md#magnetic-reference-changes-can-corrupt-field-strength)
+- Inputs: Physical-strength fields transformed through diurnal aberration or directly between B1950 and APP.
+- CASA: Changes field strength. For 37416.574 nT in B1950, the APP result has norm 22289.454 nT. A physical-strength reverse input produces NaNs.
+- casa-rs: Uses the casacore conversion route on a unit vector, then restores the original field strength.
+- Rationale: Direction corrections should leave field strength invariant. Independent CASA direction conversions supply the control.
+- User impact: Corrects the changed magnitudes and finite-input NaNs.
+- Owner decision: Standing rule, AGENTS.md CASA deviations: correct data loss, corruption and contradictions of evident intent.
+- Evidence: [geometry-casa](#measures-evidence-geometry-casa), [bugs-record](#measures-evidence-bugs-record).
 
 #### measures evidence
 
@@ -3019,17 +3052,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Signature inventory — recorded.** CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.
 
-- [crates/casars-python/python/tests/data/casa_measures_signatures.json](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/crates/casars-python/python/tests/data/casa_measures_signatures.json)
-- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/crates/casars-python/python/tests/test_tools_measures.py)
-- [crates/casars-python/src/tools/measures/surface.rs](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/crates/casars-python/src/tools/measures/surface.rs)
+- [crates/casars-python/python/tests/data/casa_measures_signatures.json](https://github.com/bglenden/casa-rs/blob/6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4/crates/casars-python/python/tests/data/casa_measures_signatures.json)
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4/crates/casars-python/python/tests/test_tools_measures.py)
+- [crates/casars-python/src/tools/measures/surface.rs](https://github.com/bglenden/casa-rs/blob/6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4/crates/casars-python/src/tools/measures/surface.rs)
 
 <a id="measures-evidence-refusals"></a>
 ##### refusals
 
 **Refusal test — recorded.** Each method casa-rs does not implement raises NotImplementedError naming #1252.
 
-- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/crates/casars-python/python/tests/test_tools_measures.py)
-- [crates/casars-python/src/tools/mod.rs](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/crates/casars-python/src/tools/mod.rs)
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4/crates/casars-python/python/tests/test_tools_measures.py)
+- [crates/casars-python/src/tools/mod.rs](https://github.com/bglenden/casa-rs/blob/6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4/crates/casars-python/src/tools/mod.rs)
 
 <a id="measures-evidence-casa-values"></a>
 ##### casa-values
@@ -3046,7 +3079,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
 
-- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 <a id="measures-evidence-casa-lists"></a>
 ##### casa-lists
@@ -3129,6 +3162,20 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `cecd62488304f66d95405494bbe2eae2de115e55`; CASA: `casatools 6.7.6-14 / casatasks 6.7.6.14`.
 - Command: `target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_spectral.py; CASAPY tools/simulation/measures_spectral_benchmark.py --backend casa --repeat 1000 --samples 7; CASAPY tools/simulation/measures_spectral_benchmark.py --backend casars --repeat 1000 --samples 7`.
 - Receipt: `resources/casa-compat/evidence/me-spectral-equivalence-20261119.json`.
+
+<a id="measures-evidence-geometry-casa"></a>
+##### geometry-casa
+
+**CASA 6.7.6.14 direct geometry comparisons and release performance — passed.** 380 CASA geometry cases or independent controls pass on the bundled snapshot. The affected Python selection passes 1153 tests. All 24 release benchmark calls are faster than CASA, with a minimum 1.98x speedup. Six geometry methods, their common record consumers, and rigid reference conversions on the bundled measures snapshot.
+
+- [tools/simulation/measures_geometry_oracle.py](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/tools/simulation/measures_geometry_oracle.py)
+- [tools/simulation/measures_geometry_benchmark.py](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/tools/simulation/measures_geometry_benchmark.py)
+- [crates/casars-python/python/tests/data/casa_measures_geometry.json](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/crates/casars-python/python/tests/data/casa_measures_geometry.json)
+- [crates/casars-python/python/tests/test_measures_geometry.py](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/crates/casars-python/python/tests/test_measures_geometry.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/5174d43c3bb74b538b0477741ed412792b2d7926/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- Revision: `5174d43c3bb74b538b0477741ed412792b2d7926`; CASA: `casatools 6.7.6-14 / casatasks 6.7.6.14`.
+- Command: `CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_geometry.py; CASAPY tools/simulation/measures_geometry_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --repeat 1000 --samples 7`.
+- Receipt: `resources/casa-compat/evidence/me-geometry-equivalence-20261118.json`.
 
 ### quanta
 

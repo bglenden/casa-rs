@@ -20,6 +20,8 @@
 
 use std::sync::Arc;
 
+pub use super::direction::vector_rotation::baseline_rotation;
+
 use super::direction::{DirectionRef, MDirection};
 use super::epoch::{EpochRef, MEpoch};
 use super::error::MeasureError;
@@ -168,7 +170,7 @@ fn ephemeris_error(what: &str) -> MeasureError {
     }
 }
 
-fn inverse_aberration_shift(
+pub(super) fn inverse_aberration_shift(
     phase_center: &MDirection,
     frame: &MeasFrame,
 ) -> Result<[f64; 3], MeasureError> {
@@ -206,7 +208,7 @@ fn inverse_aberration_shift(
     Ok(subtract_vectors(solution, source))
 }
 
-fn inverse_solar_deflection_shift(
+pub(super) fn inverse_solar_deflection_shift(
     phase_center: &MDirection,
     frame: &MeasFrame,
 ) -> Result<[f64; 3], MeasureError> {
@@ -324,13 +326,13 @@ fn casacore_apply_single_euler(matrix: &mut [[f64; 3]; 3], angle: f64, axis: usi
     }
 }
 
-fn diurnal_aberration_factor(radius_m: f64) -> f64 {
+pub(super) fn diurnal_aberration_factor(radius_m: f64) -> f64 {
     const C: f64 = 299_792_458.0;
     const SIDEREAL_RATIO: f64 = 1.002_737_909_35;
     (2.0 * std::f64::consts::PI * radius_m) / 86_400.0 * SIDEREAL_RATIO / C
 }
 
-fn rotate_shift_matrix(shift: [f64; 3], reference_direction: [f64; 3]) -> [[f64; 3]; 3] {
+pub(super) fn rotate_shift_matrix(shift: [f64; 3], reference_direction: [f64; 3]) -> [[f64; 3]; 3] {
     let reference = normalize(reference_direction);
     let reference_long = reference[1].atan2(reference[0]);
     let reference_lat = reference[2].asin();
@@ -393,7 +395,7 @@ fn rotate_t(matrix: &[[f64; 3]; 3], vector: &[f64; 3]) -> [f64; 3] {
     ]
 }
 
-fn multiply_matrices(left: &[[f64; 3]; 3], right: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+pub(super) fn multiply_matrices(left: &[[f64; 3]; 3], right: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
     let mut result = [[0.0; 3]; 3];
     for row in 0..3 {
         for col in 0..3 {

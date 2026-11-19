@@ -2209,6 +2209,8 @@ impl MDirection {
     }
 }
 
+pub(super) mod vector_rotation;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,7 +9,9 @@
 //! Hz; then, with `refcode`, its reference code.
 
 use crate::convert::RecordArg;
-use crate::convert::holder::{Measure, MeasureValue, direction_angles, position_spherical};
+use crate::convert::holder::{
+    Measure, MeasureValue, direction_angles, position_spherical, spatial_spherical,
+};
 use crate::convert::value::{CasaValue, stream_double};
 use crate::tools::LogLine;
 
@@ -112,6 +114,10 @@ pub(super) fn show(v: &RecordArg, refcode: bool, lines: &mut Vec<LogLine>) -> Ca
             let (longitude, latitude, length) = position_spherical(xyz);
             vector(&[length, longitude, latitude])
         }
+        MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) | MeasureValue::EarthMagnetic(xyz) => {
+            let (longitude, latitude, length) = spatial_spherical(xyz);
+            vector(&[length, longitude, latitude])
+        }
     };
     if refcode {
         text.push(' ');
@@ -136,6 +142,16 @@ pub(super) fn dirshow(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
         }
     };
     match measure.value {
+        MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) | MeasureValue::EarthMagnetic(xyz) => {
+            return CasaValue::Text(format!(
+                "{}: [{}, {}, {}]  {}",
+                measure.kind().tell_me(),
+                stream_double(xyz[0]),
+                stream_double(xyz[1]),
+                stream_double(xyz[2]),
+                measure.refer
+            ));
+        }
         MeasureValue::Doppler(value) => {
             return CasaValue::Text(format!(
                 "Doppler: {}  {}",

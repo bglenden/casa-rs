@@ -73,7 +73,11 @@ pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>
         MeasureKind::Position => &mut frame.position,
         MeasureKind::Direction => &mut frame.direction,
         MeasureKind::RadialVelocity => unreachable!("handled with reference offsets above"),
-        MeasureKind::Frequency | MeasureKind::Doppler => return CasaValue::Bool(false),
+        MeasureKind::Frequency
+        | MeasureKind::Doppler
+        | MeasureKind::Baseline
+        | MeasureKind::Uvw
+        | MeasureKind::EarthMagnetic => return CasaValue::Bool(false),
     };
     *slot = Some(measure);
     CasaValue::Bool(true)
@@ -151,6 +155,12 @@ pub(super) fn convert(
     if measure.refer == target {
         return Ok(Ok(*measure));
     }
+    if matches!(
+        measure.value,
+        MeasureValue::Baseline(_) | MeasureValue::Uvw(_) | MeasureValue::EarthMagnetic(_)
+    ) {
+        return super::geometry::convert(state, measure, target);
+    }
     if let MeasureValue::Doppler(value) = measure.value {
         let converted = casa_types::measures::doppler::MDoppler::new(
             value,
@@ -169,26 +179,11 @@ pub(super) fn convert(
             })
             .map_err(|error| error.to_string()));
     }
-    let measures = state.measures().map_err(no_measures)?;
+    let frame = match native_frame(state)? {
+        Ok(frame) => frame,
+        Err(error) => return Ok(Err(error)),
+    };
     let converted = (|| {
-        let mut frame = MeasFrame::new().with_measures(measures);
-        let elements = &state.frame;
-        for element in [elements.epoch, elements.position, elements.direction]
-            .into_iter()
-            .flatten()
-        {
-            frame = match element.to_casa()? {
-                CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
-                CasaMeasure::Position(position) => frame.with_position(position),
-                CasaMeasure::Direction(direction) => frame.with_direction(direction),
-                CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
-                CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
-            };
-        }
-        if let Some(velocity) = &elements.radial_velocity {
-            let value = velocity.radial_velocity(&frame)?;
-            frame = frame.with_radial_velocity(value);
-        }
         let unsupported =
             |kind: &str| format!("the {target} {kind} frame is not yet implemented in casa-rs");
         let error = |error: casa_types::measures::MeasureError| error.to_string();
@@ -238,6 +233,32 @@ pub(super) fn convert(
         })
     })();
     Ok(converted.map(|converted| Measure::from_casa(&converted)))
+}
+
+/// Build the explicit native frame once for a conversion or vector plan.
+pub(super) fn native_frame(state: &mut State) -> PyResult<Result<MeasFrame, String>> {
+    let measures = state.measures().map_err(no_measures)?;
+    Ok((|| {
+        let mut frame = MeasFrame::new().with_measures(measures);
+        let elements = &state.frame;
+        for element in [elements.epoch, elements.position, elements.direction]
+            .into_iter()
+            .flatten()
+        {
+            frame = match element.to_casa()? {
+                CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
+                CasaMeasure::Position(position) => frame.with_position(position),
+                CasaMeasure::Direction(direction) => frame.with_direction(direction),
+                CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
+                CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
+            };
+        }
+        if let Some(velocity) = &elements.radial_velocity {
+            let value = velocity.radial_velocity(&frame)?;
+            frame = frame.with_radial_velocity(value);
+        }
+        Ok::<_, String>(frame)
+    })())
 }
 
 /// What `me.separation` and `me.posangle` compute.

@@ -116,6 +116,12 @@ pub trait MeasuresProvider: Debug + Send + Sync {
         Err("IGRF data is unavailable from this measures provider".to_string())
     }
 
+    /// Return coefficients interpolated at the exact TDB MJD, as EarthField
+    /// reads the casacore IGRF table.
+    fn igrf_coefficients_at_mjd(&self, _tdb_mjd: f64) -> Result<(Vec<f64>, usize), String> {
+        Err("MJD-based IGRF data is unavailable from this measures provider".into())
+    }
+
     /// The observatory `name` finds.
     ///
     /// A provider finds `name` as casacore's `MeasTable` does

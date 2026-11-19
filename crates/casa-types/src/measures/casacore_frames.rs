@@ -9,7 +9,9 @@
 //! results are renormalized, which leaves every angle unchanged.
 
 mod fk4;
+mod fk4_aberration;
 pub(super) use fk4::{nutation as besselian_nutation, precession as besselian_precession};
+pub(super) use fk4_aberration::velocity as besselian_aberration;
 
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -223,7 +225,7 @@ fn current_mjd() -> f64 {
 }
 
 /// The E-terms vector for an epoch (`MeasMath::applyETerms`).
-fn e_terms(epoch_centuries: f64) -> Vector {
+pub(super) fn e_terms(epoch_centuries: f64) -> Vector {
     let scale = (epoch_centuries + 0.5) * ARCSEC_RAD;
     std::array::from_fn(|k| E_TERMS[k] + scale * E_TERMS_RATE[k])
 }
@@ -245,6 +247,20 @@ fn b1950_to_j2000_with(b1950: Vector, epoch_centuries: f64, normalize: bool) -> 
     let shift = epoch_centuries * ARCSEC_RAD;
     let j2000 = std::array::from_fn(|k| rotated[k] + shift * rate[k]);
     if normalize { normalized(j2000) } else { j2000 }
+}
+
+/// FK4 to FK5 rotation at the frame epoch, with the aberration E-terms
+/// applied as a rigid rotation around the phase centre for baseline vectors.
+pub(super) fn fk4_baseline_rotation(phase_center: Vector, epoch_centuries: f64) -> Matrix {
+    let terms = e_terms(epoch_centuries);
+    let projection = dot(&phase_center, &terms);
+    let shift = std::array::from_fn(|i| projection * phase_center[i] - terms[i]);
+    let correction = super::baseline::rotate_shift_matrix(shift, phase_center);
+    let rate = epoch_centuries * ARCSEC_RAD;
+    let frame = std::array::from_fn(|i| {
+        std::array::from_fn(|j| B1950_TO_J2000[i][j] + rate * B1950_TO_J2000_RATE[i][j])
+    });
+    multiply(&frame, &correction)
 }
 
 /// FK4 B1950 to J2000 (`MeasMath::deapplyJ2000toB1950`).

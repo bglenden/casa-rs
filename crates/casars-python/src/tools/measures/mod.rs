@@ -31,6 +31,7 @@
 mod arguments;
 mod define;
 mod frame;
+mod geometry;
 mod inspect;
 mod offset;
 mod record;
@@ -313,30 +314,6 @@ impl PyMeasures {
         self.call(py, move |_, lines| xvalue::addxvalue(&record, lines))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (pos), text_signature = "($self, pos)")]
-    fn asbaseline(&self, pos: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("asbaseline")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (rf = None, v0 = None, v1 = None, v2 = None, off = None),
-        text_signature = "($self, rf='ITRF', v0=[], v1=[], v2=[], off={})"
-    )]
-    fn baseline(
-        &self,
-        rf: Option<&Bound<'_, PyAny>>,
-        v0: Option<&Bound<'_, PyAny>>,
-        v1: Option<&Bound<'_, PyAny>>,
-        v2: Option<&Bound<'_, PyAny>>,
-        off: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("baseline")
-    }
-
     /// CASA's sentinel angular diameter when no comet table is loaded.
     fn cometangdiam(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "rad")))
@@ -373,30 +350,6 @@ impl PyMeasures {
     /// CASA's comet type when no comet table is loaded.
     fn comettype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.call(py, |_, _| Ok(CasaValue::Text("none".to_string())))
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (rf = None, v0 = None, v1 = None, v2 = None, off = None),
-        text_signature = "($self, rf='IGRF', v0=[], v1=[], v2=[], off={})"
-    )]
-    fn earthmagnetic(
-        &self,
-        rf: Option<&Bound<'_, PyAny>>,
-        v0: Option<&Bound<'_, PyAny>>,
-        v1: Option<&Bound<'_, PyAny>>,
-        v2: Option<&Bound<'_, PyAny>>,
-        off: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("earthmagnetic")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v={})")]
-    fn expand(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("expand")
     }
 
     /// Not yet implemented in casa-rs.
@@ -492,29 +445,5 @@ impl PyMeasures {
             let measures = state.measures().map_err(no_measures)?;
             Ok(define::spectralline(name, &*measures, lines))
         })
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v={})")]
-    fn touvw(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("touvw")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (rf = None, v0 = None, v1 = None, v2 = None, off = None),
-        text_signature = "($self, rf='ITRF', v0=[], v1=[], v2=[], off={})"
-    )]
-    fn uvw(
-        &self,
-        rf: Option<&Bound<'_, PyAny>>,
-        v0: Option<&Bound<'_, PyAny>>,
-        v1: Option<&Bound<'_, PyAny>>,
-        v2: Option<&Bound<'_, PyAny>>,
-        off: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("uvw")
     }
 }

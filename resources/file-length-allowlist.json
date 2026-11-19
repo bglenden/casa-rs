@@ -15,7 +15,6 @@
     "crates/casa-imaging-model/tests/compiled_problem.rs",
     "crates/casa-imaging-runtime/src/managed_cube_blocks.rs",
     "crates/casa-lattices/src/statistics.rs",
-    "crates/casa-measures-data/src/lib.rs",
     "crates/casa-ms/src/derived/engine.rs",
     "crates/casa-ms/src/flagging.rs",
     "crates/casa-ms/src/listobs.rs",

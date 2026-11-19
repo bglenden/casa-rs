@@ -70,19 +70,12 @@ pub(super) fn addxvalue(record: &RecordArg, lines: &mut Vec<LogLine>) -> PyResul
     if let Some(warning) = read.warning {
         lines.push(LogLine::warning(warning));
     }
-    if read.vector
-        && matches!(
-            read.values[0].value,
-            MeasureValue::Direction(_) | MeasureValue::Position(_)
-        )
-    {
-        return Err(PyNotImplementedError::new_err(
-            "vector Cartesian extra values are not implemented (#1252)",
-        ));
-    }
     let (unit, values) = match read.values[0].value {
         MeasureValue::Direction(values) => ("", values),
-        MeasureValue::Position(values) => ("m", values),
+        MeasureValue::Position(values)
+        | MeasureValue::Baseline(values)
+        | MeasureValue::Uvw(values) => ("m", values),
+        MeasureValue::EarthMagnetic(values) => ("nT", values),
         MeasureValue::Epoch(_)
         | MeasureValue::Frequency(_)
         | MeasureValue::Doppler(_)

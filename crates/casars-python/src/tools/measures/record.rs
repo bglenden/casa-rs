@@ -130,6 +130,38 @@ impl Measures {
         Ok(MRadialVelocity::new(ms, refer))
     }
 
+    /// Express absolute values relative to one output reference origin.
+    pub(super) fn relative_to(
+        mut self,
+        origin: Self,
+        state: &mut State,
+    ) -> pyo3::PyResult<Result<Self, String>> {
+        let origin = origin.into_reference_origin();
+        let resolved = match origin.resolve(state, self.values[0].refer)? {
+            Ok(values) => values.values[0],
+            Err(error) => return Ok(Err(error)),
+        };
+        let negative = match resolved.value {
+            MeasureValue::Baseline(v) => MeasureValue::Baseline(v.map(|x| -x)),
+            MeasureValue::Uvw(v) => MeasureValue::Uvw(v.map(|x| -x)),
+            _ => return Ok(Err("Non-conforming offset measure type".into())),
+        };
+        for value in &mut self.values {
+            *value = match add(
+                *value,
+                Measure {
+                    value: negative,
+                    ..resolved
+                },
+            ) {
+                Ok(value) => value,
+                Err(error) => return Ok(Err(error)),
+            };
+        }
+        self.offset = Some(Box::new(origin));
+        Ok(Ok(self))
+    }
+
     pub(super) fn scalar(value: Measure) -> Self {
         Self {
             values: vec![value],
@@ -212,6 +244,18 @@ impl Measures {
         } else {
             None
         };
+        let plan = if self.values[0].refer != target
+            && matches!(
+                self.values[0].value,
+                MeasureValue::Baseline(_) | MeasureValue::Uvw(_) | MeasureValue::EarthMagnetic(_)
+            ) {
+            match super::geometry::Conversion::new(state, self.values[0], target)? {
+                Ok(plan) => Some(plan),
+                Err(error) => return Ok(Err(error)),
+            }
+        } else {
+            None
+        };
         let mut converted = Vec::with_capacity(self.values.len());
         for value in &self.values {
             let value = if let Some(offset) = &offset {
@@ -222,7 +266,12 @@ impl Measures {
             } else {
                 *value
             };
-            match super::frame::convert(state, &value, target)? {
+            let result = if let Some(plan) = &plan {
+                plan.apply(value)
+            } else {
+                super::frame::convert(state, &value, target)?
+            };
+            match result {
                 Ok(value) => converted.push(value),
                 Err(error) => return Ok(Err(error)),
             }
@@ -238,6 +287,15 @@ impl Measures {
 
 fn add(mut base: Measure, offset: Measure) -> Result<Measure, String> {
     base.value = match (base.value, offset.value) {
+        (MeasureValue::Baseline(a), MeasureValue::Baseline(b)) => {
+            MeasureValue::Baseline(std::array::from_fn(|i| a[i] + b[i]))
+        }
+        (MeasureValue::Uvw(a), MeasureValue::Uvw(b)) => {
+            MeasureValue::Uvw(std::array::from_fn(|i| a[i] + b[i]))
+        }
+        (MeasureValue::EarthMagnetic(a), MeasureValue::EarthMagnetic(b)) => {
+            MeasureValue::EarthMagnetic(std::array::from_fn(|i| a[i] + b[i]))
+        }
         (MeasureValue::Frequency(a), MeasureValue::Frequency(b)) => MeasureValue::Frequency(a + b),
         (MeasureValue::RadialVelocity(a), MeasureValue::RadialVelocity(b)) => {
             MeasureValue::RadialVelocity(a + b)

@@ -56,6 +56,9 @@ pub(crate) enum MeasureKind {
     Frequency,
     Doppler,
     RadialVelocity,
+    Baseline,
+    Uvw,
+    EarthMagnetic,
 }
 
 /// A kind's reference codes, in casacore's `allMyTypes` order: the normal
@@ -215,6 +218,72 @@ pub(crate) fn doppler_ref(code: &str) -> Result<DopplerRef, String> {
         .map_err(|e: casa_types::measures::MeasureError| e.to_string())
 }
 
+/// CASA geometry reference codes and aliases.
+pub(crate) const BASELINE_CODES: Codes = Codes {
+    all: &[
+        "J2000",
+        "JMEAN",
+        "JTRUE",
+        "APP",
+        "B1950",
+        "B1950_VLA",
+        "BMEAN",
+        "BTRUE",
+        "GALACTIC",
+        "HADEC",
+        "AZEL",
+        "AZELSW",
+        "AZELNE",
+        "AZELGEO",
+        "AZELSWGEO",
+        "AZELNEGEO",
+        "JNAT",
+        "ECLIPTIC",
+        "MECLIPTIC",
+        "TECLIPTIC",
+        "SUPERGAL",
+        "ITRF",
+        "TOPO",
+        "ICRS",
+    ],
+    extra: 0,
+    aliases: &[("AZELNE", "AZEL"), ("AZELNEGEO", "AZELGEO")],
+    default: "ITRF",
+};
+
+/// CASA geometry reference codes and aliases.
+pub(crate) const EARTH_MAGNETIC_CODES: Codes = Codes {
+    all: &[
+        "J2000",
+        "JMEAN",
+        "JTRUE",
+        "APP",
+        "B1950",
+        "BMEAN",
+        "BTRUE",
+        "GALACTIC",
+        "HADEC",
+        "AZEL",
+        "AZELSW",
+        "AZELNE",
+        "AZELGEO",
+        "AZELSWGEO",
+        "AZELNEGEO",
+        "JNAT",
+        "ECLIPTIC",
+        "MECLIPTIC",
+        "TECLIPTIC",
+        "SUPERGAL",
+        "ITRF",
+        "TOPO",
+        "ICRS",
+        "IGRF",
+    ],
+    extra: 0,
+    aliases: &[("AZELNE", "AZEL"), ("AZELNEGEO", "AZELGEO")],
+    default: "IGRF",
+};
+
 impl MeasureKind {
     /// The kind's reference codes.
     pub(crate) fn codes(self) -> &'static Codes {
@@ -225,6 +294,8 @@ impl MeasureKind {
             Self::Frequency => &FREQUENCY_CODES,
             Self::Doppler => &DOPPLER_CODES,
             Self::RadialVelocity => &RADIAL_VELOCITY_CODES,
+            Self::Baseline | Self::Uvw => &BASELINE_CODES,
+            Self::EarthMagnetic => &EARTH_MAGNETIC_CODES,
         }
     }
 
@@ -237,6 +308,9 @@ impl MeasureKind {
             Self::Frequency => "frequency",
             Self::Doppler => "doppler",
             Self::RadialVelocity => "radialvelocity",
+            Self::Baseline => "baseline",
+            Self::Uvw => "uvw",
+            Self::EarthMagnetic => "earthmagnetic",
         }
     }
 
@@ -249,6 +323,9 @@ impl MeasureKind {
             Self::Frequency => "Frequency",
             Self::Doppler => "Doppler",
             Self::RadialVelocity => "Radialvelocity",
+            Self::Baseline => "Baseline",
+            Self::Uvw => "uvw",
+            Self::EarthMagnetic => "EarthMagnetic",
         }
     }
 }
@@ -269,6 +346,12 @@ pub(crate) enum MeasureValue {
     Doppler(f64),
     /// Radial velocity in m/s.
     RadialVelocity(f64),
+    /// Cartesian baseline components, m.
+    Baseline([f64; 3]),
+    /// Cartesian uvw components, m.
+    Uvw([f64; 3]),
+    /// Cartesian magnetic-field components, nT.
+    EarthMagnetic([f64; 3]),
 }
 
 /// A measure: a value and a canonical reference code of its kind.
@@ -341,6 +424,9 @@ impl Measure {
             MeasureValue::Frequency(_) => MeasureKind::Frequency,
             MeasureValue::Doppler(_) => MeasureKind::Doppler,
             MeasureValue::RadialVelocity(_) => MeasureKind::RadialVelocity,
+            MeasureValue::Baseline(_) => MeasureKind::Baseline,
+            MeasureValue::Uvw(_) => MeasureKind::Uvw,
+            MeasureValue::EarthMagnetic(_) => MeasureKind::EarthMagnetic,
         }
     }
 
@@ -371,11 +457,9 @@ impl Measure {
             "frequency" => MeasureKind::Frequency,
             "doppler" => MeasureKind::Doppler,
             "radialvelocity" => MeasureKind::RadialVelocity,
-            "baseline" | "uvw" | "earthmagnetic" => {
-                return Err(HolderError::Invalid(format!(
-                    "{kind} measures are not yet implemented in casa-rs"
-                )));
-            }
+            "baseline" => MeasureKind::Baseline,
+            "uvw" => MeasureKind::Uvw,
+            "earthmagnetic" => MeasureKind::EarthMagnetic,
             _ => {
                 return Err(HolderError::Invalid(format!(
                     "{kind} is an unknown measure typeUnknown Measure record in \
@@ -418,6 +502,9 @@ impl Measure {
         values: &[Quantity],
     ) -> Result<Self, HolderError> {
         let value = match kind {
+            MeasureKind::Baseline => MeasureValue::Baseline(spatial_value(values, false)?),
+            MeasureKind::Uvw => MeasureValue::Uvw(spatial_value(values, false)?),
+            MeasureKind::EarthMagnetic => MeasureValue::EarthMagnetic(spatial_value(values, true)?),
             MeasureKind::Epoch => epoch_value(values)?,
             MeasureKind::Direction => direction_value(values)?,
             MeasureKind::Position => position_value(values)?,
@@ -442,9 +529,14 @@ impl Measure {
                 let (lon, lat, length) = position_spherical(xyz);
                 [lon, lat, length]
             }
+            MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) => {
+                let (lon, lat, length) = spatial_spherical(xyz);
+                [lon, lat, length]
+            }
             MeasureValue::Frequency(hz) => [hz, 0.0, 0.0],
             MeasureValue::Doppler(value) => [value * C_MPS, 0.0, 0.0],
             MeasureValue::RadialVelocity(value) => [value, 0.0, 0.0],
+            MeasureValue::EarthMagnetic(xyz) => xyz,
         }
     }
 
@@ -453,7 +545,10 @@ impl Measure {
         match self.kind() {
             MeasureKind::Epoch => &["d"],
             MeasureKind::Direction => &["rad", "rad"],
-            MeasureKind::Position => &["rad", "rad", "m"],
+            MeasureKind::Position | MeasureKind::Baseline | MeasureKind::Uvw => {
+                &["rad", "rad", "m"]
+            }
+            MeasureKind::EarthMagnetic => &["nT", "nT", "nT"],
             MeasureKind::Frequency => &["Hz"],
             MeasureKind::Doppler | MeasureKind::RadialVelocity => &["m/s"],
         }
@@ -485,6 +580,11 @@ impl Measure {
             )
         };
         Ok(match self.value {
+            MeasureValue::Baseline(_) | MeasureValue::Uvw(_) | MeasureValue::EarthMagnetic(_) => {
+                return Err(
+                    "geometry values use the native geometry conversion operator (#1252)".into(),
+                );
+            }
             MeasureValue::Epoch(mjd) => CasaMeasure::Epoch(MEpoch::new(
                 mjd,
                 EpochRef::from_str(self.refer).map_err(|_| unsupported("epoch"))?,
@@ -555,6 +655,44 @@ impl Measure {
             },
         }
     }
+}
+
+// MVBaseline/MVuvw putValue, and coherent magnetic-field record quantities.
+fn spatial_value(values: &[Quantity], magnetic: bool) -> Result<[f64; 3], HolderError> {
+    let [a, b, c] = values else {
+        return Err(illegal_quantity());
+    };
+    let magnitude = if magnetic {
+        casa_types::quanta::Unit::new("T").expect("tesla").val().dim
+    } else {
+        UnitDim::basis(Dimension::Length)
+    };
+    let angle = UnitDim::basis(Dimension::Angle);
+    let is_magnitude = |q: &Quantity| q.unit().val().dim == magnitude;
+    let is_angle = |q: &Quantity| q.unit().val().dim == angle;
+    let scale = if magnetic { 1e9 } else { 1.0 };
+    if values.iter().all(is_magnitude) {
+        return Ok([
+            a.get_si_value() * scale,
+            b.get_si_value() * scale,
+            c.get_si_value() * scale,
+        ]);
+    }
+    let (length, lon, lat) = if is_magnitude(a) && is_angle(b) && is_angle(c) {
+        (a, b, c)
+    } else if is_angle(a) && is_angle(b) && is_magnitude(c) {
+        (c, a, b)
+    } else {
+        return Err(illegal_quantity());
+    };
+    let length = length.get_si_value() * scale;
+    let length = if length == 0.0 {
+        if magnetic { 1e-6 } else { 1e-12 }
+    } else {
+        length
+    };
+    let unit = direction_cosines(lon.get_si_value(), lat.get_si_value());
+    Ok(unit.map(|x| x * length))
 }
 
 fn velocity_value(values: &[Quantity], doppler: bool) -> Result<f64, HolderError> {
@@ -736,16 +874,22 @@ pub(crate) fn position_vector(longitude: f64, latitude: f64, length_m: f64) -> [
 
 /// `MVPosition::get`: longitude, latitude and the (decoded) length.
 pub(crate) fn position_spherical(xyz: [f64; 3]) -> (f64, f64, f64) {
-    let mut length = norm(xyz);
+    let (longitude, latitude, mut length) = spatial_spherical(xyz);
+    if length > LO_LIMIT_M && length < HI_LIMIT_M {
+        length = (length - HI_LIMIT_M) * 1e7;
+    }
+    (longitude, latitude, length)
+}
+
+/// Raw vector angles and magnitude without position height decoding.
+pub(crate) fn spatial_spherical(xyz: [f64; 3]) -> (f64, f64, f64) {
+    let length = norm(xyz);
     let longitude = if xyz[0] != 0.0 || xyz[1] != 0.0 {
         xyz[1].atan2(xyz[0])
     } else {
         0.0
     };
     let latitude = (xyz[2] / if length == 0.0 { 1.0 } else { length }).asin();
-    if length > LO_LIMIT_M && length < HI_LIMIT_M {
-        length = (length - HI_LIMIT_M) * 1e7;
-    }
     (longitude, latitude, length)
 }
 
