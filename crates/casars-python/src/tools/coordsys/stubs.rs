@@ -165,16 +165,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value, r#type = None), text_signature = "($self, value, type='')")]
-    fn setnames(
-        &self,
-        value: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setnames")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type, parameters = None), text_signature = "($self, type, parameters=[-1.0])")]
     fn setprojection(
         &self,
@@ -238,12 +228,6 @@ impl PyCoordsys {
         velocities: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("setspectral")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (stokes), text_signature = "($self, stokes)")]
-    fn setstokes(&self, stokes: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setstokes")
     }
 
     /// Not yet implemented in casa-rs.

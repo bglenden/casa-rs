@@ -21,7 +21,10 @@ fn raised(message: impl Into<String>) -> PyErr {
     PyRuntimeError::new_err(message.into())
 }
 
-fn stokes_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
+pub(super) fn string_arguments(
+    value: Option<&Bound<'_, PyAny>>,
+    argument: &str,
+) -> PyResult<Vec<String>> {
     let Some(value) = value
         .filter(|value| value.is_instance_of::<PyList>() || value.is_instance_of::<PyString>())
     else {
@@ -30,7 +33,7 @@ fn stokes_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
     value
         .extract::<StringList>()
         .map(|names| names.0)
-        .map_err(|_| PyTypeError::new_err("list _stokes must contain strings"))
+        .map_err(|_| PyTypeError::new_err(format!("list _{argument} must contain strings")))
 }
 
 fn stokes_coordinate(names: Vec<String>) -> PyResult<Option<StokesCoordinate>> {
@@ -47,7 +50,9 @@ fn stokes_coordinate(names: Vec<String>) -> PyResult<Option<StokesCoordinate>> {
     Ok((!values.is_empty()).then(|| StokesCoordinate::new(values)))
 }
 
-fn stokes_values<'a>(names: impl IntoIterator<Item = &'a str>) -> PyResult<Vec<StokesType>> {
+pub(super) fn stokes_values<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> PyResult<Vec<StokesType>> {
     let values = names
         .into_iter()
         .map(|name| StokesType::from_name(name).unwrap_or(StokesType::Undefined))
@@ -305,7 +310,7 @@ impl PyCoordsys {
         linear: i32,
         tabular: bool,
     ) -> PyResult<Py<Self>> {
-        let stokes = stokes_argument(stokes)?;
+        let stokes = string_arguments(stokes, "stokes")?;
         let child = py.detach(|| {
             let mut state = self.state();
             let parent_name = std::mem::take(&mut state.parent_name);
@@ -343,7 +348,7 @@ impl PyCoordsys {
         linear: i32,
         tabular: bool,
     ) -> PyResult<bool> {
-        let stokes = stokes_argument(stokes)?;
+        let stokes = string_arguments(stokes, "stokes")?;
         py.detach(|| {
             self.state()
                 .add_defaults(direction, spectral, stokes, linear, tabular)?;

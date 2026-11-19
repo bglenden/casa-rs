@@ -40,6 +40,9 @@ persist the edits to the image.
 Use `cs.projection()` to inspect the direction projection and
 `cs.referencecode()` to list stored frames in coordinate order.
 `cs.getconversiontype("direction")` reports the current conversion frame.
+Use `cs.setnames(values)` to replace the world-axis labels in order, or
+pass `type` to replace one coordinate's labels. `cs.setstokes(values)`
+sets the polarization labels in pixel order.
 
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
