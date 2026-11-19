@@ -7,8 +7,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::{
-    StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions, StatWtTimeBin,
-    estimate_statwt,
+    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions,
+    StatWtTimeBin, estimate_statwt,
 };
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -64,14 +64,15 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 }
 
 fn options(task: &TaskInvocation<'_>) -> Result<StatWtOptions, TaskFailure> {
-    if !task
-        .text("statalg")?
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .starts_with("cl")
-    {
-        return Err(unavailable("statalg"));
-    }
+    let algorithm = StatWtAlgorithm::parse(
+        &task.text("statalg")?.unwrap_or_default(),
+        task.number("fence")?,
+        &task.text("center")?.unwrap_or_default(),
+        task.flag("lside")?,
+        task.number("zscore")?,
+        task.integer("maxiter")?,
+    )
+    .map_err(runtime_error)?;
     let combined = task.text("combine")?.unwrap_or_default();
     let folded = combined.to_ascii_lowercase();
     let combine = StatWtCombine {
@@ -100,6 +101,7 @@ fn options(task: &TaskInvocation<'_>) -> Result<StatWtOptions, TaskFailure> {
     let data_column = parse_data_column(&task.text("datacolumn")?.unwrap_or_default())?;
     Ok(StatWtOptions {
         data_column,
+        algorithm,
         minimum_samples,
         combine,
         time_bin: time_bin(task)?,
@@ -178,9 +180,4 @@ fn parse_data_column(value: &str) -> Result<StatWtDataColumn, TaskFailure> {
 
 fn runtime_error(error: impl std::fmt::Display) -> TaskFailure {
     TaskFailure::execution(error.to_string())
-}
-
-fn unavailable(parameter: &str) -> TaskFailure {
-    TaskFailure::validation(format!("statwt {parameter} behavior is tracked in #1524"))
-        .at(parameter)
 }

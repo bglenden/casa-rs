@@ -34205,9 +34205,6 @@
               "label": "statalg",
               "group": "Weights"
             }
-          },
-          "unimplemented": {
-            "issue": 1524
           }
         },
         {

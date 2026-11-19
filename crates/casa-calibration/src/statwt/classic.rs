@@ -5,10 +5,10 @@ use casa_types::Complex32;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Moments {
-    count: usize,
-    total_weight: f64,
-    mean: f64,
-    squared_deviation: f64,
+    pub(super) count: usize,
+    pub(super) total_weight: f64,
+    pub(super) mean: f64,
+    pub(super) squared_deviation: f64,
 }
 
 impl Moments {
@@ -19,7 +19,7 @@ impl Moments {
         }
     }
 
-    fn add_weighted(&mut self, value: f64, weight: f64) {
+    pub(super) fn add_weighted(&mut self, value: f64, weight: f64) {
         if weight <= 0.0 {
             return;
         }

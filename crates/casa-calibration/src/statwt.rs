@@ -5,6 +5,7 @@ mod channels;
 mod classic;
 mod grouping;
 mod output;
+mod robust;
 
 use casa_ms::{MeasurementSet, MsError, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableWriteLock};
@@ -14,6 +15,7 @@ use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 use channels::Channels;
 use classic::{Moments, VisibilityMoments};
 use output::Output;
+pub use robust::StatWtAlgorithm;
 
 /// Main-table data column contributing samples to a classical weight estimate.
 #[derive(Clone, Copy)]
@@ -83,6 +85,8 @@ pub enum StatWtChannelBin {
 pub struct StatWtOptions {
     /// The main-table data to estimate weights from.
     pub data_column: StatWtDataColumn,
+    /// Estimate classical moments or use a robust algorithm.
+    pub algorithm: StatWtAlgorithm,
     /// The minimum number of unflagged samples in a bin.
     pub minimum_samples: usize,
     /// Combine correlations or data across selected boundaries.
@@ -471,28 +475,45 @@ fn estimate_variances(
     let mut variances = Vec::with_capacity(channels.bins.len() * correlations);
     let mut estimates = vec![VisibilityMoments::default(); if combine { 1 } else { correlations }];
     let mut counts = vec![0usize; estimates.len()];
+    let mut robust_samples =
+        (!options.algorithm.uses_classical_moments()).then(|| vec![Vec::new(); estimates.len()]);
     for bounds in &channels.bins {
         estimates.fill(VisibilityMoments::default());
         counts.fill(0);
+        if let Some(samples) = &mut robust_samples {
+            for sample in samples {
+                sample.clear();
+            }
+        }
         for (row, &exposure) in samples.iter().zip(exposures) {
             for channel in bounds.clone().filter(|&channel| channels.fit[channel]) {
                 for correlation in 0..correlations {
                     let bin = if combine { 0 } else { correlation };
                     if !row.flags[[correlation, channel]] {
                         counts[bin] += 1;
-                        estimates[bin].add(row.values[[correlation, channel]], exposure);
+                        let visibility = row.values[[correlation, channel]];
+                        if let Some(samples) = &mut robust_samples {
+                            samples[bin].push((visibility, exposure));
+                        } else {
+                            estimates[bin].add(visibility, exposure);
+                        }
                     }
                 }
             }
         }
-        variances.extend((0..correlations).map(|correlation| {
-            let bin = if combine { 0 } else { correlation };
-            if counts[bin] < options.minimum_samples {
+        let bin_start = variances.len();
+        variances.extend((0..estimates.len()).map(|correlation| {
+            if counts[correlation] < options.minimum_samples {
                 0.0
+            } else if let Some(samples) = &robust_samples {
+                options.algorithm.variance(&samples[correlation])
             } else {
-                estimates[bin].variance()
+                estimates[correlation].variance()
             }
         }));
+        if combine {
+            variances.resize(bin_start + correlations, variances[bin_start]);
+        }
     }
     variances
 }

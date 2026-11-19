@@ -60,8 +60,8 @@ mod weight_spectra;
 mod writer;
 
 pub use statwt::{
-    StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions, StatWtSummary, StatWtTimeBin,
-    estimate_statwt,
+    StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions,
+    StatWtSummary, StatWtTimeBin, estimate_statwt,
 };
 
 pub use uvsub::{

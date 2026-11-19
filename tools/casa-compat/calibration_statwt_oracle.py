@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare classical scalar statwt previews and persisted MS columns."""
+"""Compare statwt previews and persisted scalar, spectral, and flag columns."""
 
 import argparse
 import inspect
@@ -16,6 +16,7 @@ from record_casa_returns import make_cal_ms
 
 
 COLUMNS = ("DATA", "CORRECTED_DATA", "MODEL_DATA", "WEIGHT", "SIGMA", "FLAG", "FLAG_ROW")
+SPECTRA = ("WEIGHT_SPECTRUM", "SIGMA_SPECTRUM")
 
 
 def fixture(path):
@@ -44,7 +45,8 @@ def fixture(path):
 
 def read(path):
     with opened(path) as table:
-        return {name: table.getcol(name) for name in COLUMNS}
+        return {name: table.getcol(name) for name in (*COLUMNS, *SPECTRA)
+                if name in table.colnames()}
 
 
 def compare_case(root, base, native, name, options):
@@ -57,23 +59,27 @@ def compare_case(root, base, native, name, options):
         preview = api.statwt(str(vis), flagbackup=True, preview=True, **options)
         assert list(preview) == ["mean", "variance"]
         assert not Path(str(vis) + ".flagversions").exists()
-        for column, values in read(vis).items():
+        after = read(vis)
+        assert after.keys() == before.keys()
+        for column, values in after.items():
             np.testing.assert_array_equal(values, before[column], err_msg=column)
         report = api.statwt(str(vis), flagbackup=False, **options)
         assert report == preview
         reports.append(report)
         result = read(vis)
-        for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA"):
+        for column in (name for name in ("DATA", "CORRECTED_DATA", "MODEL_DATA") if name in before):
             np.testing.assert_array_equal(result[column], before[column], err_msg=column)
         if options.get("field") and options.get("selectdata", True):
             with opened(vis) as table:
                 excluded = table.getcol("FIELD_ID") != 0
-            for column in ("WEIGHT", "SIGMA", "FLAG", "FLAG_ROW"):
-                np.testing.assert_array_equal(result[column][..., excluded], before[column][..., excluded])
+            for column in ("WEIGHT", "SIGMA", "FLAG", "FLAG_ROW", *SPECTRA):
+                if column in before:
+                    np.testing.assert_array_equal(result[column][..., excluded], before[column][..., excluded])
         products.append(result)
     for key in reports[0]:
         np.testing.assert_allclose(reports[1][key], reports[0][key], rtol=2e-7, atol=0, err_msg=key)
-    for column in COLUMNS:
+    assert products[1].keys() == products[0].keys()
+    for column in products[0]:
         np.testing.assert_allclose(products[1][column], products[0][column], rtol=2e-7, atol=0,
                                    err_msg=column)
 
@@ -125,7 +131,43 @@ def main():
     ]
     for name, options in timed:
         compare_case(root, gapped, native, name, {"datacolumn": "data", **options})
-    print(f"{len(cases) + len(timed)} matched CASA classical statwt workflows")
+
+    weighted = root / 'unequal-exposures.ms'
+    copy_ms(gapped, weighted)
+    with opened(weighted, True) as table:
+        times = table.getcol('TIME')
+        indices = np.searchsorted(np.unique(times), times)
+        table.putcol('EXPOSURE', 2.0 + indices)
+    channels = [
+        ('uneven-exposures-sliding', weighted, {'timebin': 3, 'slidetimebin': True}),
+        ('uneven-exposures-blocks', weighted, {'timebin': '25s', 'combine': 'field,scan,state'}),
+        ('channel-count', base, {'chanbin': 3}),
+        ('channel-frequency', base, {'chanbin': '1MHz', 'combine': 'corr'}),
+        ('data-channel-count', base, {'chanbin': 2, 'datacolumn': 'data', 'wtrange': [3.0, .01]}),
+        ('fit-selected', base, {'fitspw': '0:1~6^2;2~3'}),
+        ('fit-excluded', base, {'chanbin': 4, 'fitspw': '0:0~1;6~7', 'excludechans': True}),
+        ('spw-channel-selector', base, {'spw': '0:2~5'}),
+        ('classical-empty-bin', base, {'timebin': '1s', 'minsamp': 30}),
+    ]
+    raw = root / 'raw-only.ms'
+    copy_ms(base, raw)
+    with opened(raw, True) as table:
+        table.removecols('CORRECTED_DATA')
+    channels.extend([
+        ('raw-only', raw, {'datacolumn': 'data'}),
+        ('raw-only-spectra', raw, {'datacolumn': 'data', 'chanbin': 3}),
+    ])
+    spectra = root / 'spectra.ms'
+    copy_ms(base, spectra)
+    casa.statwt(str(spectra), chanbin=3, flagbackup=False)
+    casa.statwt(str(spectra), chanbin=3, datacolumn='data', flagbackup=False)
+    channels.extend([
+        ('existing-corrected-spectrum', spectra, {'field': 'FLUX', 'chanbin': '1MHz', 'combine': 'corr'}),
+        ('existing-raw-spectrum', spectra, {'datacolumn': 'data', 'timebin': 2, 'slidetimebin': True}),
+    ])
+    for name, source_ms, options in channels:
+        compare_case(root, source_ms, native, name, options)
+    print(f"{len(cases) + len(timed) + len(channels)} matched CASA classical statwt workflows")
 
 
 if __name__ == "__main__":
