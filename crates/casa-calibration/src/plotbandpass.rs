@@ -4,6 +4,7 @@
 mod document;
 mod selection;
 mod spectrum;
+mod statistics;
 mod table;
 
 use std::collections::BTreeMap;
@@ -15,6 +16,7 @@ pub(crate) use document::{BandpassPage, DisplayOptions, pages};
 use selection::{GroupKey, SelectedRow, groups};
 pub(crate) use selection::{Overlay, Selectors};
 use spectrum::{Curve, Derivative, Ordinate};
+pub(crate) use statistics::derivative_record;
 use table::{SolutionWindow, Solutions};
 
 pub(crate) struct PlotRequest<'a> {
@@ -38,6 +40,7 @@ pub(crate) struct BandpassPlots {
 }
 
 pub(crate) struct BandpassPanel {
+    ordinate: Ordinate,
     pub(crate) title: String,
     pub(crate) x_label: String,
     pub(crate) y_label: &'static str,
@@ -47,7 +50,7 @@ pub(crate) struct BandpassPanel {
 }
 
 pub(crate) struct BandpassSeries {
-    pub(crate) antenna: i32,
+    pub(crate) antenna_name: String,
     pub(crate) window: i32,
     pub(crate) time_index: usize,
     pub(crate) receptor: usize,
@@ -61,8 +64,8 @@ pub(crate) struct BandpassCurve {
     pub(crate) y: Vec<f64>,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct DerivativeStatistics {
-    pub(crate) median: f64,
     pub(crate) mad: f64,
     pub(crate) stdev: f64,
 }
@@ -149,14 +152,12 @@ fn panel(
             let (curve, statistics) = if derivative {
                 let Derivative {
                     curve,
-                    median,
                     deviation,
                     rms,
                 } = raw.differentiate(ordinate == Ordinate::Amplitude, request.edge);
                 (
                     curve,
                     Some(DerivativeStatistics {
-                        median,
                         mad: deviation,
                         stdev: rms,
                     }),
@@ -166,7 +167,7 @@ fn panel(
             };
             let Curve { x, y } = curve;
             series.push(BandpassSeries {
-                antenna: address.antenna,
+                antenna_name: antenna_name(source, address.antenna),
                 window: address.window,
                 time_index: row.time_index,
                 receptor,
@@ -180,6 +181,7 @@ fn panel(
     let (title, suffix) = captions(source, key, selected[0])?;
     let x_limits = metadata.x_limits();
     Ok(BandpassPanel {
+        ordinate,
         title,
         suffix,
         x_label: metadata.label,
@@ -307,6 +309,14 @@ fn select_polarizations(available: &[&str], requested: &[&str]) -> Vec<usize> {
     selected
 }
 
+fn antenna_name(source: &Solutions, antenna: i32) -> String {
+    usize::try_from(antenna)
+        .ok()
+        .and_then(|id| source.antennas.get(id))
+        .cloned()
+        .unwrap_or_else(|| format!("{antenna:02}"))
+}
+
 fn captions(
     source: &Solutions,
     key: GroupKey,
@@ -316,11 +326,7 @@ fn captions(
     let mut title = Vec::new();
     let mut suffix = Vec::new();
     if let Some(antenna) = key.antenna {
-        let written = usize::try_from(antenna)
-            .ok()
-            .and_then(|id| source.antennas.get(id))
-            .cloned()
-            .unwrap_or_else(|| format!("{antenna:02}"));
+        let written = antenna_name(source, antenna);
         title.push(format!("Ant {antenna}: {written}"));
         suffix.push(written);
     }

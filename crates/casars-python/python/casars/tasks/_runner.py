@@ -223,7 +223,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "plotbandpass":
         _validate_required_path(values, "caltable", arguments["caltable"])
         completion = run(name, **values)
-        return () if completion.value is None else completion.value
+        return () if completion.value is None else _bandpass_statistics(completion.value)
     if name in ("split", "mstransform"):
         _coerce_ms_transform_selectors(values)
         try:
@@ -270,6 +270,16 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _bandpass_statistics(value):
+    import numpy as np
+
+    if isinstance(value, dict):
+        return {key: _bandpass_statistics(item) for key, item in value.items()}
+    if isinstance(value, float):
+        return np.float64(value)
+    return value
 
 
 def _call_initweights(values: dict[str, Any]) -> Any:

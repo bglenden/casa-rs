@@ -13184,8 +13184,8 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.pwv",
-      "semantic_revision": 2,
+      "id": "visualization.pwv",
+      "semantic_revision": 1,
       "casa_name": "pwv",
       "value_domain": {
         "kind": "variant"

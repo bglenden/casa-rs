@@ -8,7 +8,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 use crate::plotbandpass::{
-    BandpassPage, DisplayOptions, Overlay, PlotRequest, Selectors, pages, prepare_bandpass,
+    BandpassPage, DisplayOptions, Overlay, PlotRequest, Selectors, derivative_record, pages,
+    prepare_bandpass,
 };
 
 #[derive(Serialize)]
@@ -24,7 +25,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         "chan" | "channel" => false,
         "freq" | "frequency" => true,
         _ => {
-            return Err(TaskFailure::validation("xaxis must name channel or frequency").at("xaxis"));
+            return Err(
+                TaskFailure::validation("xaxis must name channel or frequency").at("xaxis"),
+            );
         }
     };
     let polarization = selector(task, "poln")?;
@@ -72,10 +75,15 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         resample: unsigned(task, "resample")?,
     };
     let plan = prepare_bandpass(&request).map_err(TaskFailure::execution)?;
+    let value = if request.derivative_sigma > 0.0 {
+        derivative_record(&plan)
+    } else {
+        CasaValue::None
+    };
     let reply = Reply {
         pages: pages(plan, &display).map_err(TaskFailure::execution)?,
     };
-    TaskSuccess::new(CasaValue::None, &reply)
+    TaskSuccess::new(value, &reply)
         .map(|success| success.with_note("Use casars.tasks.plotbandpass to render the figures."))
 }
 

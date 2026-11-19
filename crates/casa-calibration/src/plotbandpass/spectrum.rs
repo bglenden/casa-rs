@@ -20,7 +20,6 @@ pub(super) struct Curve {
 
 pub(super) struct Derivative {
     pub(super) curve: Curve,
-    pub(super) median: f64,
     pub(super) deviation: f64,
     pub(super) rms: f64,
 }
@@ -117,7 +116,6 @@ impl Curve {
             / central.len() as f64;
         Derivative {
             curve,
-            median: typical,
             deviation,
             rms: variance.sqrt(),
         }
@@ -143,7 +141,7 @@ fn channel_differences(source: &Curve) -> Curve {
     Curve { x, y }
 }
 
-fn median(values: &[f64]) -> f64 {
+pub(super) fn median(values: &[f64]) -> f64 {
     if values.is_empty() || values.iter().any(|value| value.is_nan()) {
         return f64::NAN;
     }

@@ -33935,6 +33935,10 @@
               "label": "antenna",
               "group": "Plot"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "The plotbandpass task accepts antenna IDs and a list of IDs or names alongside a scalar selection."
           }
         },
         {
@@ -33975,6 +33979,10 @@
               "label": "field",
               "group": "Plot"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "The plotbandpass task accepts field IDs and a list of IDs or names alongside a scalar selection."
           }
         },
         {
@@ -34015,6 +34023,10 @@
               "label": "spw",
               "group": "Plot"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "The plotbandpass task selects calibration-table window IDs and accepts integers or lists."
           }
         },
         {
@@ -34783,8 +34795,8 @@
         {
           "name": "pwv",
           "concept": {
-            "id": "parameter.pwv",
-            "semantic_revision": 2
+            "id": "visualization.pwv",
+            "semantic_revision": 1
           },
           "order": 23,
           "default": {
@@ -34818,6 +34830,10 @@
               "label": "pwv",
               "group": "Plot"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "Bandpass plot overlays accept a measured or automatic water-vapour column. The simulation control specifies the observation model column."
           }
         },
         {
