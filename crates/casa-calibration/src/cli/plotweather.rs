@@ -25,7 +25,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             .opacity
             .iter()
             .copied()
-            .map(CasaValue::from)
+            .map(|value| CasaValue::Float { value })
             .collect(),
     };
     TaskSuccess::new(value, &estimate)

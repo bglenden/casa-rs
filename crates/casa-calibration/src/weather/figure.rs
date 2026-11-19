@@ -9,7 +9,8 @@ use casa_ms::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAnnotation, PlotDocumentAxis, PlotDocumentLayer,
     PlotDocumentPanel, PlotLayerKind, PlotLayerStyle, PlotPayloadStrategy, PlotTextStyle,
 };
-use casa_types::measures::{DirectionRef, EpochRef, MDirection, MEpoch, MPosition, MeasFrame};
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
 use serde::Serialize;
 
 use super::{WeatherPlotData, weather_date};
