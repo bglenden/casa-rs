@@ -94,6 +94,10 @@ def requests(root, amplitude, bandpass, flagged, flagged_gain):
     yield "library-field-slices", {
         "callib": [amplitude_inline + " field='0'", amplitude_inline + " field='1'"],
     }
+    yield "library-covers-one-field", {"callib": amplitude_inline + " field='0'"}
+    yield "library-covers-no-selected-field", {
+        "field": "1", "callib": amplitude_inline + " field='0'",
+    }
     yield "flagged-solution-channel", {
         "callib": library_entry(flagged), "spw": "0:0~2",
     }
@@ -115,7 +119,8 @@ def requests(root, amplitude, bandpass, flagged, flagged_gain):
 
 
 def compare(root, vis, tests, native):
-    before = snapshot(vis)
+    sources = {Path(options.get("vis", vis)) for _, options in tests}
+    snapshots = {source: snapshot(source) for source in sources}
     defaults = dict(vis=str(vis), xaxis="time", yaxis="amp", ydatacolumn="corrected",
                     antenna="A0&A1", spw="0:0", correlation="XX", showgui=False,
                     expformat="txt", overwrite=True)
@@ -125,16 +130,18 @@ def compare(root, vis, tests, native):
         expected = root / f"{name}.casa.txt"
         actual = root / f"{name}.native.txt"
         args = defaults | options
+        source = Path(args["vis"])
+        before = snapshots[source]
         start = perf_counter()
         assert reference(**args, plotfile=str(expected)) is None
         casa_seconds = perf_counter() - start
-        verify_source(vis, before)
+        verify_source(source, before)
         start = perf_counter()
         assert native(**args, plotfile=str(actual)) is None
         native_seconds = perf_counter() - start
         count = compare_text(actual, expected)
         assert count > 0
-        verify_source(vis, before)
+        verify_source(source, before)
         print(f"{name}: {count} points, CASA {casa_seconds:.3f}s, casa-rs {native_seconds:.3f}s",
               flush=True)
         cases += 1
@@ -150,6 +157,31 @@ def compare(root, vis, tests, native):
             raise AssertionError("PlotMS accepted a missing callibrary")
         assert not out.exists()
     print(f"{cases} exports, {points} points and the missing-file error matched.")
+
+
+def disabled_selection(root, vis, amplitude, native):
+    controls = dict(vis=str(vis), xaxis="time", yaxis="amp", ydatacolumn="corrected",
+                    callib=library_entry(amplitude), showgui=False, expformat="txt")
+    expected = root / "unselected.casa.txt"
+    actual = root / "unselected.native.txt"
+    assert reference(**controls, plotfile=str(expected)) is None
+    before = snapshot(vis)
+    assert native(**controls, selectdata=False, field="missing", antenna="wrong",
+                  plotfile=str(actual)) is None
+    verify_source(vis, before)
+    # PlotMS groups the unfiltered MS by its visibility iterator. Compare its
+    # coordinates by their complete source metadata when the order differs.
+    def points(path):
+        return sorted((tokens[2:], [float(value) for value in tokens[:2]])
+                      for line in path.read_text().splitlines() if not line.startswith("#")
+                      for tokens in [line.split()])
+
+    expected_points = points(expected)
+    actual_points = points(actual)
+    assert [info for info, _ in actual_points] == [info for info, _ in expected_points]
+    np.testing.assert_allclose([xy for _, xy in actual_points], [xy for _, xy in expected_points],
+                               rtol=1.2e-5, atol=1e-7)
+    print(f"Disabled selector fallback matched {len(expected_points)} unfiltered CASA points.")
 
 
 def figures(root, vis, amplitude):
@@ -199,13 +231,23 @@ def main():
 
     assert casa.version_string() == "6.7.6.14"
     vis, amplitude, bandpass, flagged, flagged_gain = fixture(root)
+    persisted = root / "persisted-correction.ms"
+    copy_ms(vis, persisted)
+    casa.clearcal(str(persisted))
+    with opened(persisted, True) as table:
+        table.putcol("CORRECTED_DATA", 7 * table.getcol("DATA"))
+    cases = list(requests(root, amplitude, bandpass, flagged, flagged_gain))
+    cases.append(("preserve-existing-corrected-data", {
+        "vis": str(persisted), "callib": library_entry(amplitude),
+    }))
     # CASA can create temporary sorted MeasurementSets in its working directory.
     previous = Path.cwd()
     os.chdir(root)
     try:
         with plotms_launcher(args.app_run):
-            compare(root, vis, requests(root, amplitude, bandpass, flagged, flagged_gain), native)
+            compare(root, vis, cases, native)
             figures(root, vis, amplitude)
+            disabled_selection(root, vis, amplitude, native)
     finally:
         os.chdir(previous)
 
