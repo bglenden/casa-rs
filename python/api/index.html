@@ -1411,6 +1411,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.plotbandpass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plotbandpass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.plotms" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2442,6 +2453,17 @@
     <span class="md-ellipsis">
       
         mstransform
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.plotbandpass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plotbandpass
       
     </span>
   </a>
@@ -7185,6 +7207,140 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="sd">    ``ddistart``, ``monolithic_processing``, ``reindex``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">mstransform</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.plotbandpass" class="doc doc-heading">
+            <code class=" language-python"><span class="n">plotbandpass</span><span class="p">(</span><span class="n">caltable</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">antenna</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">spw</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">yaxis</span><span class="o">=</span><span class="s1">'amp'</span><span class="p">,</span> <span class="n">xaxis</span><span class="o">=</span><span class="s1">'chan'</span><span class="p">,</span> <span class="n">figfile</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">plotrange</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span> <span class="n">caltable2</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">overlay</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">showflagged</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">timeranges</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">buildpdf</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">caltable3</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">markersize</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">108</span><span class="p">,</span> <span class="n">interactive</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">showpoints</span><span class="o">=</span><span class="s1">'auto'</span><span class="p">,</span> <span class="n">showlines</span><span class="o">=</span><span class="s1">'auto'</span><span class="p">,</span> <span class="n">subplot</span><span class="o">=</span><span class="s1">'22'</span><span class="p">,</span> <span class="n">zoom</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">poln</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">showatm</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">pwv</span><span class="o">=</span><span class="s1">'auto'</span><span class="p">,</span> <span class="n">gs</span><span class="o">=</span><span class="s1">'gs'</span><span class="p">,</span> <span class="n">convert</span><span class="o">=</span><span class="s1">'convert'</span><span class="p">,</span> <span class="n">chanrange</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">solutionTimeThresholdSeconds</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span> <span class="n">debug</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">phase</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">vis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">showtsky</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">showfdm</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">showatmfield</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">lo1</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">showimage</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">showatmpoints</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">parentms</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">pdftk</span><span class="o">=</span><span class="s1">'pdftk'</span><span class="p">,</span> <span class="n">channeldiff</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">edge</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">resample</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">platformingThreshold</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">platformingSigma</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">basebands</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">showBasebandNumber</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">scans</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">figfileSequential</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">chanrangeSetXrange</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.plotbandpass" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Plot calibration spectra and channel derivatives.</p>
+<p>CASA's <code>plotbandpass</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1440</span>
+<span class="normal">1441</span>
+<span class="normal">1442</span>
+<span class="normal">1443</span>
+<span class="normal">1444</span>
+<span class="normal">1445</span>
+<span class="normal">1446</span>
+<span class="normal">1447</span>
+<span class="normal">1448</span>
+<span class="normal">1449</span>
+<span class="normal">1450</span>
+<span class="normal">1451</span>
+<span class="normal">1452</span>
+<span class="normal">1453</span>
+<span class="normal">1454</span>
+<span class="normal">1455</span>
+<span class="normal">1456</span>
+<span class="normal">1457</span>
+<span class="normal">1458</span>
+<span class="normal">1459</span>
+<span class="normal">1460</span>
+<span class="normal">1461</span>
+<span class="normal">1462</span>
+<span class="normal">1463</span>
+<span class="normal">1464</span>
+<span class="normal">1465</span>
+<span class="normal">1466</span>
+<span class="normal">1467</span>
+<span class="normal">1468</span>
+<span class="normal">1469</span>
+<span class="normal">1470</span>
+<span class="normal">1471</span>
+<span class="normal">1472</span>
+<span class="normal">1473</span>
+<span class="normal">1474</span>
+<span class="normal">1475</span>
+<span class="normal">1476</span>
+<span class="normal">1477</span>
+<span class="normal">1478</span>
+<span class="normal">1479</span>
+<span class="normal">1480</span>
+<span class="normal">1481</span>
+<span class="normal">1482</span>
+<span class="normal">1483</span>
+<span class="normal">1484</span>
+<span class="normal">1485</span>
+<span class="normal">1486</span>
+<span class="normal">1487</span>
+<span class="normal">1488</span>
+<span class="normal">1489</span>
+<span class="normal">1490</span>
+<span class="normal">1491</span>
+<span class="normal">1492</span>
+<span class="normal">1493</span>
+<span class="normal">1494</span>
+<span class="normal">1495</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotbandpass</span><span class="p">(</span>
+    <span class="n">caltable</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">antenna</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">spw</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">yaxis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'amp'</span><span class="p">,</span>
+    <span class="n">xaxis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'chan'</span><span class="p">,</span>
+    <span class="n">figfile</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">plotrange</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>
+    <span class="n">caltable2</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">overlay</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">showflagged</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">timeranges</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">buildpdf</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">caltable3</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">markersize</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+    <span class="n">density</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">108</span><span class="p">,</span>
+    <span class="n">interactive</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">showpoints</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">bool</span> <span class="o">=</span> <span class="s1">'auto'</span><span class="p">,</span>
+    <span class="n">showlines</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">bool</span> <span class="o">=</span> <span class="s1">'auto'</span><span class="p">,</span>
+    <span class="n">subplot</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="s1">'22'</span><span class="p">,</span>
+    <span class="n">zoom</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">poln</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">showatm</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">pwv</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'auto'</span><span class="p">,</span>
+    <span class="n">gs</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'gs'</span><span class="p">,</span>
+    <span class="n">convert</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'convert'</span><span class="p">,</span>
+    <span class="n">chanrange</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">solutionTimeThresholdSeconds</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">30.0</span><span class="p">,</span>
+    <span class="n">debug</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">phase</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">showtsky</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">showfdm</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">showatmfield</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">lo1</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">float</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">showimage</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">showatmpoints</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">parentms</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">pdftk</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'pdftk'</span><span class="p">,</span>
+    <span class="n">channeldiff</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">float</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">edge</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+    <span class="n">resample</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="n">platformingThreshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span><span class="p">,</span>
+    <span class="n">platformingSigma</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span><span class="p">,</span>
+    <span class="n">basebands</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">showBasebandNumber</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">scans</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">figfileSequential</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">chanrangeSetXrange</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Plot calibration spectra and channel derivatives.</span>
+
+<span class="sd">    CASA's ``plotbandpass``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">plotbandpass</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

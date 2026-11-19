@@ -885,6 +885,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#plot-bandpass-plotbandpass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plot Bandpass (plotbandpass)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1698,6 +1709,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#plot-bandpass-plotbandpass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plot Bandpass (plotbandpass)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1726,9 +1748,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 680</li>
-<li>Surfaces: 44 (44 task, 0 session)</li>
-<li>Surface bindings: 1004</li>
+<li>Concepts: 726</li>
+<li>Surfaces: 45 (45 task, 0 session)</li>
+<li>Surface bindings: 1053</li>
 </ul>
 <table>
 <thead>
@@ -2093,6 +2115,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">7</td>
 <td>List selected antenna calibration solutions and flags.</td>
+</tr>
+<tr>
+<td><a href="#surface-plotbandpass">Plot Bandpass</a><br><code>plotbandpass</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">49</td>
+<td>Plot calibration spectra and channel derivatives.</td>
 </tr>
 </tbody>
 </table>
@@ -11137,6 +11167,421 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>50</code>; optional</td>
 <td>Output</td>
 <td>Maximum rows per page. Zero or a negative value prints a continuous listing.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-plotbandpass"></a></p>
+<h2 id="plot-bandpass-plotbandpass">Plot Bandpass (<code>plotbandpass</code>)<a class="headerlink" href="#plot-bandpass-plotbandpass" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Plot calibration spectra and channel derivatives.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>caltable</code></td>
+<td><code>parameter.caltable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input calibration table.</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r5</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>A comma-delimited string list of antennas (either names or integer indices) for which to display solutions. Default = all antennas.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r6</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>A comma-delimited string list of fields (either names or integer indices) for which to display solutions. Default = all fields.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r4</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>A comma-delimited string list of spws for which to display solutions. Default = all spws.</td>
+</tr>
+<tr>
+<td><code>yaxis</code></td>
+<td><code>plotbandpass.yaxis@r1</code></td>
+<td><code>string</code></td>
+<td><code>"amp"</code>; optional</td>
+<td>Plot</td>
+<td>The quantity to plot on the y-axis ("amp", "phase", "both", "tsys", append "db" for dB).</td>
+</tr>
+<tr>
+<td><code>xaxis</code></td>
+<td><code>plotbandpass.xaxis@r1</code></td>
+<td><code>string</code></td>
+<td><code>"chan"</code>; optional</td>
+<td>Plot</td>
+<td>The quantity to plot on the x-axis ("chan" or "freq").</td>
+</tr>
+<tr>
+<td><code>figfile</code></td>
+<td><code>plotbandpass.figfile@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>Base name used to derive each saved plot and PDF name.</td>
+</tr>
+<tr>
+<td><code>plotrange</code></td>
+<td><code>plotbandpass.plotrange@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[0.0,0.0,0.0,0.0]</code>; optional</td>
+<td>Plot</td>
+<td>The axes limits to use [x0,x1,y0,y1].</td>
+</tr>
+<tr>
+<td><code>caltable2</code></td>
+<td><code>plotbandpass.caltable2@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>A second cal table, of type BPOLY or B, to overlay on a B table</td>
+</tr>
+<tr>
+<td><code>overlay</code></td>
+<td><code>plotbandpass.overlay@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>Show multiple solutions in same frame in different colors (time, antenna, spw, baseband, or time,antenna)</td>
+</tr>
+<tr>
+<td><code>showflagged</code></td>
+<td><code>plotbandpass.showflagged@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>Show the values of the solution, even if flagged</td>
+</tr>
+<tr>
+<td><code>timeranges</code></td>
+<td><code>plotbandpass.timeranges@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>Show only these timeranges, the first timerange being 0</td>
+</tr>
+<tr>
+<td><code>buildpdf</code></td>
+<td><code>plotbandpass.buildpdf@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>If True, assemble all the pngs into a pdf</td>
+</tr>
+<tr>
+<td><code>caltable3</code></td>
+<td><code>plotbandpass.caltable3@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>A third cal table, of type BPOLY, to overlay on the first two tables</td>
+</tr>
+<tr>
+<td><code>markersize</code></td>
+<td><code>plotbandpass.markersize@r1</code></td>
+<td><code>integer</code></td>
+<td><code>3</code>; optional</td>
+<td>Plot</td>
+<td>Size of points</td>
+</tr>
+<tr>
+<td><code>density</code></td>
+<td><code>plotbandpass.density@r1</code></td>
+<td><code>integer</code></td>
+<td><code>108</code>; optional</td>
+<td>Plot</td>
+<td>dpi to use in creating PNGs and PDFs (default=108)</td>
+</tr>
+<tr>
+<td><code>interactive</code></td>
+<td><code>parameter.interactive@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Plot</td>
+<td>Interactive clean.</td>
+</tr>
+<tr>
+<td><code>showpoints</code></td>
+<td><code>plotbandpass.showpoints@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Plot</td>
+<td>Draw points for the data (default=F for amp, T for phase)</td>
+</tr>
+<tr>
+<td><code>showlines</code></td>
+<td><code>plotbandpass.showlines@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Plot</td>
+<td>Draw lines connecting the data (default=T for amp, F for phase)</td>
+</tr>
+<tr>
+<td><code>subplot</code></td>
+<td><code>plotbandpass.subplot@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"22"</code>; optional</td>
+<td>Plot</td>
+<td>11..81,22,32 or 42 for RowsxColumns (default=22), any 3rd digit is ignored</td>
+</tr>
+<tr>
+<td><code>zoom</code></td>
+<td><code>plotbandpass.zoom@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>"intersect" will zoom to overlap region of caltable with caltable2</td>
+</tr>
+<tr>
+<td><code>poln</code></td>
+<td><code>plotbandpass.poln@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>Polarizations to plot: "" = all, or "RR","RL","LR","LL","XX","XY","YX","YY","RR,LL","XX,YY"</td>
+</tr>
+<tr>
+<td><code>showatm</code></td>
+<td><code>plotbandpass.showatm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>Compute and overlay the atmospheric transmission curve</td>
+</tr>
+<tr>
+<td><code>pwv</code></td>
+<td><code>visualization.pwv@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Plot</td>
+<td>Define the pwv to use for the showatm option: "auto" or value in mm</td>
+</tr>
+<tr>
+<td><code>gs</code></td>
+<td><code>plotbandpass.gs@r1</code></td>
+<td><code>string</code></td>
+<td><code>"gs"</code>; optional</td>
+<td>Plot</td>
+<td>For buildpdf=T, full path for ghostscript command (in case it is not found)</td>
+</tr>
+<tr>
+<td><code>convert</code></td>
+<td><code>plotbandpass.convert@r1</code></td>
+<td><code>string</code></td>
+<td><code>"convert"</code>; optional</td>
+<td>Plot</td>
+<td>For buildpdf=T, full path for the ImageMagick convert command (in case it is not found)</td>
+</tr>
+<tr>
+<td><code>chanrange</code></td>
+<td><code>plotbandpass.chanrange@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>Set xrange ("5~100") over which to autoscale y-axis for xaxis="freq"</td>
+</tr>
+<tr>
+<td><code>solutionTimeThresholdSeconds</code></td>
+<td><code>plotbandpass.solution_time_threshold_seconds@r1</code></td>
+<td><code>variant</code></td>
+<td><code>30.0</code>; optional</td>
+<td>Plot</td>
+<td>Consider 2 solutions simultaneous if within this interval in seconds</td>
+</tr>
+<tr>
+<td><code>debug</code></td>
+<td><code>plotbandpass.debug@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>Print verbose messages for debugging purposes</td>
+</tr>
+<tr>
+<td><code>phase</code></td>
+<td><code>plotbandpass.phase@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>The y-axis limits to use for phase plots when yaxis="both"</td>
+</tr>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r3</code></td>
+<td><code>path (measurement_set)</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>One input MeasurementSet path.</td>
+</tr>
+<tr>
+<td><code>showtsky</code></td>
+<td><code>plotbandpass.showtsky@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>Compute and overlay the sky temperature curve instead of transmission</td>
+</tr>
+<tr>
+<td><code>showfdm</code></td>
+<td><code>plotbandpass.showfdm@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>when showing TDM spws, draw the locations of the corresponding FDM spws</td>
+</tr>
+<tr>
+<td><code>showatmfield</code></td>
+<td><code>plotbandpass.showatmfield@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>for overlay="time", use first observation of this fieldID or name</td>
+</tr>
+<tr>
+<td><code>lo1</code></td>
+<td><code>plotbandpass.lo1@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>specify the LO1 setting (in GHz) for the observation ('' = automatic)</td>
+</tr>
+<tr>
+<td><code>showimage</code></td>
+<td><code>plotbandpass.showimage@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>also show the atmospheric curve for the image sideband (in black)</td>
+</tr>
+<tr>
+<td><code>showatmpoints</code></td>
+<td><code>plotbandpass.showatmpoints@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>Draw atmospheric curve with points instead of a line</td>
+</tr>
+<tr>
+<td><code>parentms</code></td>
+<td><code>plotbandpass.parentms@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>if showimage=T, name of the parent ms (only needed if the ms has been previously split)</td>
+</tr>
+<tr>
+<td><code>pdftk</code></td>
+<td><code>plotbandpass.pdftk@r1</code></td>
+<td><code>string</code></td>
+<td><code>"pdftk"</code>; optional</td>
+<td>Plot</td>
+<td>For buildpdf=T, full path for pdftk command (in case it is not found)</td>
+</tr>
+<tr>
+<td><code>channeldiff</code></td>
+<td><code>plotbandpass.channeldiff@r1</code></td>
+<td><code>variant</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>Set to a value &gt; 0 (sigma) to plot derivatives of the solutions</td>
+</tr>
+<tr>
+<td><code>edge</code></td>
+<td><code>plotbandpass.edge@r1</code></td>
+<td><code>integer</code></td>
+<td><code>8</code>; optional</td>
+<td>Plot</td>
+<td>The number of edge channels to ignore in finding outliers (for channeldiff&gt;0)</td>
+</tr>
+<tr>
+<td><code>resample</code></td>
+<td><code>plotbandpass.resample@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Plot</td>
+<td>The channel expansion factor to use when computing MAD of derivative (for channeldiff&gt;0)</td>
+</tr>
+<tr>
+<td><code>platformingThreshold</code></td>
+<td><code>plotbandpass.platforming_threshold@r1</code></td>
+<td><code>variant</code></td>
+<td><code>10.0</code>; optional</td>
+<td>Plot</td>
+<td>if platformingSigma=0, then declare platforming if the amplitude derivative exceeds this percentage of the median</td>
+</tr>
+<tr>
+<td><code>platformingSigma</code></td>
+<td><code>plotbandpass.platforming_sigma@r1</code></td>
+<td><code>variant</code></td>
+<td><code>10.0</code>; optional</td>
+<td>Plot</td>
+<td>declare platforming if the amplitude derivative exceeds this many times the MAD</td>
+</tr>
+<tr>
+<td><code>basebands</code></td>
+<td><code>plotbandpass.basebands@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>A baseband number or list of baseband numbers for which to display solutions. Default = all.</td>
+</tr>
+<tr>
+<td><code>showBasebandNumber</code></td>
+<td><code>plotbandpass.show_baseband_number@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>Put the baseband converter number (BBC_NO) in the title of each plot</td>
+</tr>
+<tr>
+<td><code>scans</code></td>
+<td><code>plotbandpass.scans@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Plot</td>
+<td>A scan or list of scans for which to display solutions. Default = all. Does not work with overlay="time".</td>
+</tr>
+<tr>
+<td><code>figfileSequential</code></td>
+<td><code>plotbandpass.figfile_sequential@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc.</td>
+</tr>
+<tr>
+<td><code>chanrangeSetXrange</code></td>
+<td><code>plotbandpass.chanrange_set_xrange@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Plot</td>
+<td>If True, then chanrange also sets the xrange to display</td>
 </tr>
 </tbody>
 </table>

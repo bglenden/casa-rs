@@ -4302,10 +4302,43 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#plotbandpass-passes-a-fractional-platforming-channel-to-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plotbandpass passes a fractional platforming channel to range
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plotbandpass-references-an-undefined-name-when-weather-is-absent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plotbandpass references an undefined name when WEATHER is absent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#listing-an-incomplete-antenna-integration-can-terminate-casa" class="md-nav__link">
     <span class="md-ellipsis">
       
         Listing an incomplete antenna integration can terminate CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#beam-removal-can-delete-metadata-before-rejecting-a-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Beam removal can delete metadata before rejecting a record
       
     </span>
   </a>
@@ -4348,6 +4381,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#beam-removal-can-delete-metadata-before-rejecting-a-record">restoring-beam removal with a malformed record</a>,
 <a href="#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable">a Gaussian beam fit to collinear PSF samples</a>,
 <a href="#a-non-frequency-component-unit-corrupts-casas-spectrum">non-frequency component frequency units</a>,
 <a href="#component-flux-conversion-can-relabel-incompatible-units-or-crash">nonconforming component flux conversion</a>,
@@ -10829,6 +10863,20 @@ splits at 72 characters on the first card and <code>&gt;</code> plus 71 characte
 continuation card without skipping characters, emitting all 48 cards on
 <code>cube_i.im</code> so both casa-rs and CASA 6.7.6.14 <code>ia.history(list=False)</code> read back
 all 17 original history entries intact (#977).</p>
+<h2 id="plotbandpass-passes-a-fractional-platforming-channel-to-range">plotbandpass passes a fractional platforming channel to range<a class="headerlink" href="#plotbandpass-passes-a-fractional-platforming-channel-to-range" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 raises <code>TypeError</code> while checking a wide bandpass for
+platforming. The check computes the two interior channel offsets with
+floating-point division, then passes those offsets to Python <code>range()</code>.
+The paired 64-channel fixture enters this branch.</p>
+<p>casa-rs evaluates the check at integer channel indices. In the fixture,
+a step at channel 32 produces a platforming report at the 10 percent
+threshold and a clean result at the 100 percent threshold (#1526).</p>
+<h2 id="plotbandpass-references-an-undefined-name-when-weather-is-absent">plotbandpass references an undefined name when WEATHER is absent<a class="headerlink" href="#plotbandpass-references-an-undefined-name-when-weather-is-absent" title="Permanent link">&para;</a></h2>
+<p>An atmospheric overlay on the paired bandpass with no associated WEATHER
+table raises <code>NameError</code> in CASA 6.7.6.14 when it tries to read
+<code>needToClose_mymsmd</code>. casa-rs evaluates the native atmospheric profile
+with the station defaults and plots the original calibration spectra
+with the resulting curve (#1526).</p>
 <h2 id="listing-an-incomplete-antenna-integration-can-terminate-casa">Listing an incomplete antenna integration can terminate CASA<a class="headerlink" href="#listing-an-incomplete-antenna-integration-can-terminate-casa" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14's <code>listcal</code> reshapes each spectral window's solution
 rows into complete antenna integrations. Removing the last antenna
@@ -10838,6 +10886,15 @@ CASA subprocess after opening the requested listing file.</p>
 same input raises a recoverable error and leaves the destination absent.
 Complete integrations retain their original order, even when two have
 the same time and field (#1526).</p>
+<h2 id="beam-removal-can-delete-metadata-before-rejecting-a-record">Beam removal can delete metadata before rejecting a record<a class="headerlink" href="#beam-removal-can-delete-metadata-before-rejecting-a-record" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>ia.setrestoringbeam(remove=True, beam={'junk': 2})</code>
+on a native image with a restoring beam raises <code>RuntimeError</code> because the
+record has no <code>major</code> field. Reopening the image shows the beam was already
+removed. The call validates the record while preparing history after deleting
+the beam, even when history is disabled.</p>
+<p>casa-rs validates the supplied record before it saves any changes, so a
+rejected call preserves the restoring beam and history. See
+<a href="https://github.com/bglenden/casa-rs/issues/1625">#1625</a>.</p>
 
 
 
