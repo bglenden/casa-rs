@@ -7,7 +7,7 @@ use casa_tables::ColumnType;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{PrimitiveType, ScalarValue, Value};
 
-use crate::{MeasuresDataError, MeasuresRuntime, RuntimeTable};
+use crate::{DEFAULT_MEASURES_ENV, MeasuresDataError, RuntimeTable, default_measures_path};
 
 const REQUIRED_COLUMNS: [&str; 5] = ["MJD", "RA", "DEC", "Rho", "RadVel"];
 
@@ -34,7 +34,7 @@ struct Bracket {
 
 impl CometTable {
     /// Open an explicit table or a path relative to the detected runtime's
-    /// ephemerides directory, using the casacore fixed-grid table metadata.
+    /// ephemerides or geodetic directory, using casacore's fixed-grid metadata.
     pub fn open(path: &Path) -> Result<Self, MeasuresDataError> {
         let path = resolve(path)?;
         let table = RuntimeTable::open(&path)?;
@@ -212,9 +212,14 @@ fn resolve(path: &Path) -> Result<PathBuf, MeasuresDataError> {
         return Ok(path.to_owned());
     }
     if !path.as_os_str().is_empty() && path.is_relative() {
-        let candidates = MeasuresRuntime::discover_candidates()?;
-        if let Some(runtime) = candidates.into_iter().find(|candidate| candidate.complete) {
-            let table = runtime.path.join("ephemerides").join(path);
+        // MeasIERS::findTab checks only the requested table in these two
+        // directories. Opening an ephemeris needs no other measures catalogs.
+        let root = match std::env::var_os(DEFAULT_MEASURES_ENV) {
+            Some(root) => PathBuf::from(root),
+            None => default_measures_path()?,
+        };
+        for directory in ["ephemerides", "geodetic"] {
+            let table = root.join(directory).join(path);
             if table.is_dir() {
                 return Ok(table);
             }

@@ -102,3 +102,22 @@ def test_upstream_ganymede_distance_and_diameter(snapshot, monkeypatch):
         assert diameter["value"] == pytest.approx(6.868e-6, abs=1e-9)
     finally:
         tool.done()
+
+
+def test_relative_lookup_uses_named_tables_in_both_data_directories(
+    snapshot, tmp_path, monkeypatch
+):
+    bundled = snapshot / "ephemerides/JPL-Horizons/Ganymede_55437-56293dUTC.tab"
+    for directory, name in (("ephemerides", "local-eph.tab"), ("geodetic", "local-geo.tab")):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / name).symlink_to(bundled, target_is_directory=True)
+    iers = snapshot / "geodetic/IERSeop2000"
+    (tmp_path / "geodetic/IERSeop2000").symlink_to(iers, target_is_directory=True)
+    monkeypatch.setenv("CASA_RS_MEASURESPATH", str(tmp_path))
+    tool = measures()
+    try:
+        for name in ("local-eph.tab", "local-geo.tab"):
+            assert tool.framecomet(name)
+            assert tool.cometname() == "Ganymede"
+    finally:
+        tool.done()
