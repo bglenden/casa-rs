@@ -80,6 +80,11 @@ fn transform_request(
         time_averaging: time_average_options(task)?,
         history: Some(task_history(task)),
         flag_command_widths: flag_command_widths(task),
+        keep_mms: if task.surface() == "split" {
+            Some(task.flag("keepmms")?)
+        } else {
+            None
+        },
     };
     Ok((request, options))
 }
