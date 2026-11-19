@@ -111,6 +111,20 @@ impl PyImageTool {
         }
     }
 
+    #[pyo3(signature = (name, overwrite=false), text_signature = "($self, name, overwrite=False)")]
+    fn rename(&self, py: Python<'_>, name: &str, overwrite: bool) -> PyResult<bool> {
+        py.detach(|| {
+            let mut state = self.state();
+            let Some(current) = state.image.as_ref() else {
+                return Ok(false);
+            };
+            current.lock().check_single_precision("rename")?;
+            let current = state.image.take().expect("an attached image");
+            state.image = Some(current.rename(name, overwrite, state.history)?);
+            Ok(true)
+        })
+    }
+
     fn isopen(&self, py: Python<'_>) -> bool {
         py.detach(|| self.state().image.is_some())
     }
