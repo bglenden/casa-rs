@@ -113,7 +113,7 @@ pub(super) fn resolve(
                 })?;
             resolved.parameter.push(value - nominal);
         }
-        names.push(name);
+        names.push(name.as_str());
     }
     resolved.antenna = names.join(",");
     Ok(resolved)
