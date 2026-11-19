@@ -18,6 +18,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
+| calstat | calstat | yes | 3 | 3 | 0 | 0 | 0 | 0 |
 | clearcal | clearcal | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
@@ -219,6 +220,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 35, in CASA's order: yes
+- Defaults that differ: none
+
+### calstat
+
+- CASA source: `casatasks/calstat.py`, 3 parameters
+- Implementation: `casatasks/private/task_calstat.py`, `calstat` (line 6): 1 return statements, 0 raise statements
+  - returns at line 53: `s`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the caltable parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 3, in CASA's order: yes
 - Defaults that differ: none
 
 ### clearcal
