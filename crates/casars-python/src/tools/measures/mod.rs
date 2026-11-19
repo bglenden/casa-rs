@@ -37,6 +37,7 @@ mod inspect;
 mod offset;
 mod record;
 mod shift;
+mod showframe;
 mod spectral;
 pub(crate) mod surface;
 mod xvalue;
@@ -63,6 +64,9 @@ struct Frame {
     position: Option<Measure>,
     direction: Option<Measure>,
     radial_velocity: Option<record::Measures>,
+    comet: Option<Arc<CometTable>>,
+    // Formatted display of these frame elements, cleared when an element changes.
+    rendered: Option<String>,
 }
 
 /// The tool's state: the frame and the measures data.
@@ -71,7 +75,7 @@ pub(crate) struct State {
     frame: Frame,
     measures: Option<Arc<dyn MeasuresProvider>>,
     // The comet queries retain their table when done clears the coordinate frame.
-    comet: Option<CometTable>,
+    comet: Option<Arc<CometTable>>,
 }
 
 impl State {
@@ -366,11 +370,6 @@ impl PyMeasures {
         ev: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("riseset")
-    }
-
-    /// Not yet implemented in casa-rs.
-    fn showframe(&self) -> PyResult<Py<PyAny>> {
-        stub("showframe")
     }
 
     /// The sources of the measures data, their names joined by spaces in

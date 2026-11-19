@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_measures_data::{CometTable, MeasuresDataError};
@@ -24,6 +25,9 @@ fn load(state: &mut State, name: &str, lines: &mut Vec<LogLine>) -> CasaValue {
         .and_then(|table| CometTable::open(&table));
     match loaded {
         Ok(comet) => {
+            let comet = Arc::new(comet);
+            state.frame.comet = Some(Arc::clone(&comet));
+            state.frame.rendered = None;
             state.comet = Some(comet);
             CasaValue::Bool(true)
         }
@@ -113,7 +117,7 @@ fn read_distance_or_diameter(
     lines: &mut Vec<LogLine>,
 ) -> CasaValue {
     let unit = if angular_diameter { "rad" } else { "AU" };
-    let Some(comet) = state.comet.as_mut() else {
+    let Some(comet) = state.comet.as_ref() else {
         return CasaValue::quantity(-1.0, unit);
     };
     let mjd = match state.frame.epoch.map(|epoch| epoch.value) {
@@ -209,7 +213,7 @@ impl PyMeasures {
     fn comettopo(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.call(py, |state, lines| {
             let (xyz, unit) =
-                if let Some(topo) = state.comet.as_ref().and_then(CometTable::topocentre_m) {
+                if let Some(topo) = state.comet.as_ref().and_then(|comet| comet.topocentre_m()) {
                     (topo.to_vec(), "m")
                 } else {
                     lines.push(LogLine::warning(

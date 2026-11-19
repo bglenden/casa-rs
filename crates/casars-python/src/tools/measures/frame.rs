@@ -53,6 +53,7 @@ pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>
                     lines.push(LogLine::warning(warning.clone()));
                 }
                 state.frame.radial_velocity = Some(values.into_reference_origin());
+                state.frame.rendered = None;
                 CasaValue::Bool(true)
             }
             Err(error) => {
@@ -80,6 +81,7 @@ pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>
         | MeasureKind::EarthMagnetic => return CasaValue::Bool(false),
     };
     *slot = Some(measure);
+    frame.rendered = None;
     CasaValue::Bool(true)
 }
 
@@ -95,6 +97,7 @@ pub(super) fn framenow(state: &mut State) -> CasaValue {
         EpochRef::UTC,
     ));
     state.frame.epoch = Some(Measure::from_casa(&now));
+    state.frame.rendered = None;
     CasaValue::Bool(true)
 }
 
@@ -238,27 +241,33 @@ pub(super) fn convert(
 /// Build the explicit native frame once for a conversion or vector plan.
 pub(super) fn native_frame(state: &mut State) -> PyResult<Result<MeasFrame, String>> {
     let measures = state.measures().map_err(no_measures)?;
-    Ok((|| {
-        let mut frame = MeasFrame::new().with_measures(measures);
-        let elements = &state.frame;
-        for element in [elements.epoch, elements.position, elements.direction]
-            .into_iter()
-            .flatten()
-        {
-            frame = match element.to_casa()? {
-                CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
-                CasaMeasure::Position(position) => frame.with_position(position),
-                CasaMeasure::Direction(direction) => frame.with_direction(direction),
-                CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
-                CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
-            };
-        }
-        if let Some(velocity) = &elements.radial_velocity {
-            let value = velocity.radial_velocity(&frame)?;
-            frame = frame.with_radial_velocity(value);
-        }
-        Ok::<_, String>(frame)
-    })())
+    Ok(materialize(
+        &state.frame,
+        MeasFrame::new().with_measures(measures),
+    ))
+}
+
+pub(super) fn materialize(
+    elements: &super::Frame,
+    mut frame: MeasFrame,
+) -> Result<MeasFrame, String> {
+    for element in [elements.epoch, elements.position, elements.direction]
+        .into_iter()
+        .flatten()
+    {
+        frame = match element.to_casa()? {
+            CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
+            CasaMeasure::Position(position) => frame.with_position(position),
+            CasaMeasure::Direction(direction) => frame.with_direction(direction),
+            CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
+            CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
+        };
+    }
+    if let Some(velocity) = &elements.radial_velocity {
+        let value = velocity.radial_velocity(&frame)?;
+        frame = frame.with_radial_velocity(value);
+    }
+    Ok(frame)
 }
 
 /// What `me.separation` and `me.posangle` compute.

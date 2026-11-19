@@ -159,7 +159,7 @@ const METHODS: &[Method] = &[
         R::Text,
         Yes,
     ),
-    method("showframe", &[], R::Text, No),
+    method("showframe", &[], R::Text, Yes),
     method(
         "source",
         &[param("name", K::Measure, Empty)],

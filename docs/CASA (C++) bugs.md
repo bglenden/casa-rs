@@ -5380,6 +5380,21 @@ controls alongside the raw shift results. This follows the standing rule
 for results that contradict the documented operation (#1252).
 [CASA measures documentation](https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html)
 
+## Frame display can discard the radial-velocity conversion context
+
+In CASA 6.7.6.14, `showframe()` fails to display many radial-velocity
+references even after the epoch, observatory, and direction have all
+been set. For a TOPO velocity of 15.123 km/s at ALMA on
+2011-01-03 17:00 UTC with a J2000 direction of (10°, 20°),
+it reports that the frame epoch is missing. On that same tool,
+`measure(velocity, "LSRK")` returns approximately -12.87952549 km/s.
+
+Casa-rs evaluates the displayed LSRK velocity with the explicit frame,
+using the same native conversion as `measure`. The fixture retains
+CASA's raw display errors and separately records the direct conversion
+for all seven affected references. The missing-frame errors still apply
+when the required epoch or direction is absent (#1252).
+
 ## Component spectrum changes can discard data
 
 - Date noted: 2026-11-06
