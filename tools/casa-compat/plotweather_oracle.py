@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import time
 from unittest.mock import patch
 
@@ -48,6 +49,10 @@ def fixtures(root):
     for name, values in columns.items():
         tool.putcol(name, values)
     tool.close()
+    subsecond = root / "subsecond.ms"
+    shutil.copytree(source, subsecond)
+    with opened(subsecond / "WEATHER", True) as t:
+        t.putcol("TIME", [5084545936.5, 5084545937.5, 5084545938.5, 5084545939.5])
     empty = root / "empty.ms"
     shutil.copytree(missing, empty)
     assert tool.create(str(empty / "WEATHER"), description, nrow=0)
@@ -118,6 +123,7 @@ def evaluate(task):
     cases = [
         ("explicit", ("station.ms", 0.25, True, "weather.png"), {}, "weather.png"),
         ("defaults", (), {"vis": "station.ms"}, "station.ms.plotweather.png"),
+        ("subsecond", ("subsecond.ms", 0.25, True, "subsecond.png"), {}, "subsecond.png"),
         ("station", ("station.ms", 0.0, False, "unused.png"), {}, None),
         ("seasonal", ("station.ms", True, np.bool_(False)), {}, None),
         ("extrapolated", (), {"vis": "station.ms", "seasonal_weight": np.float32(1.25), "doPlot": False}, None),
@@ -146,6 +152,8 @@ def evaluate(task):
         (("station.ms", 0.5, False, Path("bad.png")), {}, AssertionError),
         (("station.ms", 0.5, False, None), {}, AssertionError),
         (("low.ms", 0.5, False), {}, ValueError),
+        (("station.ms", float("nan"), True, "nan.png"), {}, ValueError),
+        (("station.ms", "bad", None, 13), {}, AssertionError),
     ]
     output["errors"] = []
     for args, keywords, expected in errors:
@@ -155,6 +163,7 @@ def evaluate(task):
             output["errors"].append([type(error).__name__, str(error)])
         else:
             raise AssertionError(f"invalid plotweather call succeeded: {args}")
+    assert not Path("nan.png").exists()
     return output
 
 
@@ -165,7 +174,7 @@ def compare_plots(native, casa_plot):
         for key in ("x_ticks", "limits", "position"):
             np.testing.assert_allclose(actual[key], expected[key], rtol=0, atol=1e-9)
         for actual_line, expected_line in zip(actual["lines"], expected["lines"], strict=True):
-            for key in ("color", "marker"):
+            for key in ("color", "marker", "width"):
                 assert actual_line[key] == expected_line[key], (key, actual_line[key], expected_line[key])
             np.testing.assert_allclose(actual_line["x"], expected_line["x"], rtol=0, atol=1e-9)
             tolerance = 1e-6 if panel == 0 else 1e-12
@@ -191,7 +200,7 @@ def compare(native, casa_results):
     np.testing.assert_array_equal(native["missing"]["opacity"], seasonal)
     np.testing.assert_array_equal(native["empty"]["opacity"], seasonal)
     np.testing.assert_array_equal(native["broken"]["opacity"], seasonal)
-    print("9 paired opacity cases, 10 matched panels, 11 exact errors, 5 numerical laws", flush=True)
+    print("10 paired opacity cases, 15 matched panels, 13 exact errors, 5 numerical laws", flush=True)
 
 
 def main():
@@ -219,6 +228,14 @@ def main():
         with chdir(root):
             native = evaluate(plotweather)
         compare(native, json.loads((root / "reference.json").read_text()))
+        cli = subprocess.run(
+            [str(args.native_bin.resolve()), "plotweather", "--vis", "station.ms",
+             "--plot-name", "cli.png", "--no-save-last"],
+            cwd=root, capture_output=True, text=True, check=True,
+        )
+        assert "Use casars.tasks.plotweather for the weather figure." in cli.stderr
+        assert not (root / "cli.png").exists()
+        np.testing.assert_allclose(json.loads(cli.stdout), native["defaults"]["opacity"])
 
 
 if __name__ == "__main__":

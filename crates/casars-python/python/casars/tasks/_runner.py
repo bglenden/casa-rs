@@ -272,12 +272,14 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
 def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
     import numpy as np
 
+    errors: dict[str, list[str]] = {}
     vis = arguments["vis"]
     if vis is None:
-        raise AssertionError("{'vis': ['null value not allowed']}")
-    if not isinstance(vis, str):
+        errors["vis"] = ["null value not allowed"]
+    elif not isinstance(vis, str):
         raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
-    _validate_required_path(values, "vis", vis, search_data=True)
+    else:
+        _validate_required_path(values, "vis", vis, search_data=True)
     types = {
         "seasonal_weight": ((float, int, np.int32, np.int64, np.float32, np.float64), "cFloat", float),
         "doPlot": ((bool, np.bool_), "cBool", bool),
@@ -286,15 +288,17 @@ def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> A
     for name, (expected, casa_type, convert) in types.items():
         value = arguments[name]
         if value is None:
-            raise AssertionError(str({name: ["null value not allowed"]}))
-        if not isinstance(value, expected):
-            raise AssertionError(str({name: [f"must be of {casa_type} type"]}))
-        if name in values:
+            errors[name] = ["null value not allowed"]
+        elif not isinstance(value, expected):
+            errors[name] = [f"must be of {casa_type} type"]
+        elif name in values:
             values[name] = convert(value)
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
     try:
         value = run("plotweather", **values).value
     except TaskExecutionError as error:
-        if error.completion.message == "array of sample points is empty":
+        if error.completion.message in {"array of sample points is empty", "Axis limits cannot be NaN or Inf"}:
             raise ValueError(error.completion.message) from error
         raise
     return [np.float64(item) for item in value]

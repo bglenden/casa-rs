@@ -121,17 +121,20 @@ pub(crate) fn estimate_weather(
 fn weather_rows(path: &Path) -> Result<Option<WeatherRows>, String> {
     let weather = path.join("WEATHER");
     if !weather.is_dir() {
+        tracing::info!(
+            "could not find a weather table, using seasonal model only and turning off plots"
+        );
         return Ok(None);
     }
-    let Ok(table) = Table::open(TableOptions::new(weather)) else {
+    let station = Table::open(TableOptions::new(weather))
+        .ok()
+        .and_then(|table| numbers(&table, "TIME").ok().map(|seconds| (table, seconds)));
+    let Some((table, seconds)) = station.filter(|(_, seconds)| !seconds.is_empty()) else {
+        tracing::info!(
+            "could not open weather table, using seasonal model only and turning off plots"
+        );
         return Ok(None);
     };
-    let Ok(seconds) = numbers(&table, "TIME") else {
-        return Ok(None);
-    };
-    if seconds.is_empty() {
-        return Ok(None);
-    }
     let celsius = |column| {
         numbers(&table, column)
             .map(|values| values.into_iter().map(|kelvin| kelvin - 273.15).collect())

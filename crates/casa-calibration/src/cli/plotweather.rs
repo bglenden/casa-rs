@@ -24,5 +24,10 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             .map(|value| CasaValue::Float { value })
             .collect(),
     };
-    TaskSuccess::new(value, &estimate)
+    let success = TaskSuccess::new(value, &estimate)?;
+    if estimate.plot.is_some() {
+        Ok(success.with_note("Use casars.tasks.plotweather for the weather figure."))
+    } else {
+        Ok(success)
+    }
 }

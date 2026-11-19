@@ -12,6 +12,7 @@ use casa_ms::plot_document::{
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+use casa_types::quanta::Quantity;
 use serde::Serialize;
 
 use super::{WeatherPlotData, weather_date};
@@ -30,29 +31,33 @@ pub(super) fn prepare(
     vis: &str,
     plot_name: &str,
 ) -> Result<WeatherFigure, String> {
-    let time = data
+    const UNIX_EPOCH_MJD: f64 = 40_587.0;
+    let dates = data
         .time_seconds
         .iter()
-        .map(|value| (value.round() - 3_506_716_800.0) / 86_400.0)
+        .map(|&seconds| weather_date(seconds))
         .collect::<Vec<_>>();
+    let time = dates
+        .iter()
+        .map(|date| Quantity::read_at(date, 0.0).map(|days| days.value() - UNIX_EPOCH_MJD))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
     let first = time[0];
     let last = time[time.len() - 1];
     let pad = (last - first) * 0.03;
     let xlim = [first - pad, last + pad];
     let [earliest, latest] = bounds(&time);
     let time_ticks = [earliest, (earliest + latest) * 0.5, latest];
-    let labels =
-        [0, time.len() / 2, time.len() - 1].map(|row| weather_date(data.time_seconds[row]));
-    let [first_label, mid, end] = labels;
+    let [first_label, mid, end] = [0, dates.len() / 2, dates.len() - 1].map(|row| &dates[row]);
     let time_labels = [
-        first_label,
+        first_label.to_owned(),
         mid.get(11..).unwrap_or_default().into(),
         end.get(11..).unwrap_or_default().into(),
     ];
 
     let mut sun = solar_panel(&time, &data.time_seconds, xlim)?;
     sun.title = format!("Weather Summary for {vis}");
-    let (wind, wind_rotations) = wind_panel(&time, data, xlim);
+    let (wind, wind_rotations) = wind_panel(&time, data, xlim)?;
     let temperature = panel(
         "temperature",
         "",
@@ -69,13 +74,16 @@ pub(super) fn prepare(
         &data.station_water_mm,
         &data.weighted_water_mm,
     ];
-    let [min, max] = bounds_all(&pwv);
+    let [season, station, blend] = pwv.map(|values| ordered_bounds(values.iter().copied()));
+    let [min, _] = ordered_bounds([blend[0], station[0], season[0]].into_iter());
+    let [_, max] = ordered_bounds([blend[1], station[1], season[1]].into_iter());
+    let water_limits = finite_limits([0.8 * min, 1.2 * max])?;
     let water = panel(
         "water",
         "",
         "PWV (mm)",
         xlim,
-        [0.8 * min, 1.2 * max],
+        water_limits,
         models(&time, pwv),
     );
     let opacity = panel(
@@ -157,18 +165,21 @@ fn solar_panel(time: &[f64], seconds: &[f64], xlim: [f64; 2]) -> Result<PlotDocu
             &[height; 2],
             color,
         );
+        markers.line_width = 1.5;
         let style = markers.style.as_mut().expect("weather marker style");
         style.marker = Some("H".into());
         style.line_style = Some("None".into());
         layers.push(markers);
     }
-    layers.push(line(
+    let mut horizon = line(
         "horizon",
         "",
         &[time[0], time[time.len() - 1]],
         &[0.0; 2],
         "brown",
-    ));
+    );
+    horizon.line_width = 1.5;
+    layers.push(horizon);
     Ok(panel("solar", "", "solar el", xlim, [-90.0, 90.0], layers))
 }
 
@@ -176,8 +187,8 @@ fn wind_panel(
     time: &[f64],
     data: &WeatherPlotData,
     xlim: [f64; 2],
-) -> (PlotDocumentPanel, Vec<f64>) {
-    let [lower, upper] = bounds(&data.wind_m_s);
+) -> Result<(PlotDocumentPanel, Vec<f64>), String> {
+    let [lower, upper] = ordered_bounds(data.wind_m_s.iter().copied());
     let range = upper - lower;
     let x_offset = -(time[time.len() - 1] - time[0]) * 0.01;
     let y_offset = -range * 0.08;
@@ -193,6 +204,7 @@ fn wind_panel(
         "black",
     );
     invisible_marker.opacity = 0.0;
+    invisible_marker.line_width = 1.5;
     let style = invisible_marker
         .style
         .as_mut()
@@ -204,7 +216,7 @@ fn wind_panel(
         "",
         "wind (m/s)",
         xlim,
-        [lower - range * 0.03, upper + range * 0.03],
+        finite_limits([lower - range * 0.03, upper + range * 0.03])?,
         vec![invisible_marker],
     );
     let mut rotations = Vec::with_capacity(60);
@@ -224,7 +236,7 @@ fn wind_panel(
             }),
         });
     }
-    (panel, rotations)
+    Ok((panel, rotations))
 }
 
 fn samples(length: usize, count: usize) -> impl Iterator<Item = usize> {
@@ -256,6 +268,26 @@ fn bounds_all(values: &[&[f64]]) -> [f64; 2] {
             [f64::INFINITY, f64::NEG_INFINITY],
             |[lower, upper], value| [lower.min(value), upper.max(value)],
         )
+}
+
+// Python's min/max compare each new element to the current extremum, so a
+// NaN in the first position remains the extremum, while later NaNs are skipped.
+fn ordered_bounds(mut values: impl Iterator<Item = f64>) -> [f64; 2] {
+    let first = values.next().expect("nonempty weather data");
+    values.fold([first, first], |[lower, upper], value| {
+        [
+            if value < lower { value } else { lower },
+            if value > upper { value } else { upper },
+        ]
+    })
+}
+
+fn finite_limits(limits: [f64; 2]) -> Result<[f64; 2], String> {
+    if limits.iter().all(|limit| limit.is_finite()) {
+        Ok(limits)
+    } else {
+        Err("Axis limits cannot be NaN or Inf".into())
+    }
 }
 
 fn axis(id: &str, label: &str, [lower, upper]: [f64; 2]) -> PlotDocumentAxis {
