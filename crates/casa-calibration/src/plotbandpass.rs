@@ -545,16 +545,6 @@ fn panel(
             .replace(" channels)", &format!(", {count} channels)")),
         None => metadata.label,
     };
-    let legend_times = if request.overlay.time {
-        selected
-            .iter()
-            .map(|row| (row.time_index, source.rows[row.row].time))
-            .collect::<BTreeMap<_, _>>()
-            .into_iter()
-            .collect()
-    } else {
-        Vec::new()
-    };
     Ok(BandpassPanel {
         ordinate,
         title,
@@ -577,8 +567,23 @@ fn panel(
         diagnostics,
         epoch: source.rows[selected[0].row].time,
         overlay: request.overlay,
-        legend_times,
+        legend_times: overlay_legend_times(context, selected),
     })
+}
+
+fn overlay_legend_times(
+    context: &PanelContext<'_, '_>,
+    selected: &[SelectedRow],
+) -> Vec<(usize, f64)> {
+    if !context.request.overlay.time {
+        return Vec::new();
+    }
+    selected
+        .iter()
+        .map(|row| (row.time_index, context.source.rows[row.row].time))
+        .collect::<BTreeMap<_, _>>()
+        .into_iter()
+        .collect()
 }
 
 fn outlier_message(
