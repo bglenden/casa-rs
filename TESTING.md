@@ -71,10 +71,10 @@ Verification: just docs-check (policy); applicable domain gates below (code)
 - During development, use the cheapest meaningful regression/demonstration
   check. Before pushing a stable diff, run one affected validation batch as
   described in `AGENTS.md`, "Checks And Merging". Docs-only changes need
-  `just docs-check`. CI supplies full-crate/workspace coverage; do not repeat
-  it locally by default. `just quick` reproduces the broad local gate;
-  `just verify` is for an explicitly required milestone or release, not
-  every review.
+  `just docs-check`. CI supplies affected or workspace coverage; avoid
+  repeating its green results locally. `just quick` reproduces the broad
+  local gate. Use `just verify` for an explicitly required milestone or
+  release.
 - Imaging T1 end-to-end tier: `CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1`
 - Performance and evidence tool tests (`tools/perf/imager`, pytest):
   `just perf-tools-test`. CI's `perf_tools` job enforces them; `just quick`
@@ -108,17 +108,43 @@ Verification: just docs-check (policy); applicable domain gates below (code)
   at the process boundary
 - Heavy parity suites: `scripts/test-slow.sh`
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
-- GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
-- GitHub PR CI: lint/test, Python package (editable checkout, built wheel and
-  sdist), performance-tool tests, the suite install
-  (`scripts/test-install-suite.sh --hide-checkout`), and strict docs (rustdoc
-  built twice, public and with `--document-private-items`, with broken and
-  private intra-doc links denied in both, then MkDocs). The required checks
-  are `lint_test`, `python_package` and `docs`; the suite install is
-  informational and does not block merge (#975)
-- GitHub tag CI: lint/test, Python package and performance-tool checks plus
-  smoke, suite-install, and CI-like coverage
-- Main-branch pushes run the rustdoc and MkDocs deployment workflow
+- `scripts/ci-local.sh pr` runs the broad Rust, Python package and installer
+  jobs locally. `scripts/ci-local.sh tag` adds smoke and coverage. For selected
+  Rust packages, use `scripts/test-workspace.sh -p PACKAGE` and repeat `-p`
+  for additional packages.
+
+### GitHub Actions coverage
+
+Every PR run reports its selected checks. Architecture, SPDX and formatting
+checks run on every change. Drafts run those checks and selected Rust package
+or developer-tool tests where applicable. Marking a PR ready selects the
+merge checks for that revision. The draft summary uses a separate status.
+
+| Change | Additional checks on a ready PR |
+|---|---|
+| Prose documentation | Repository docs and generated reference checks |
+| Rust source or crate resources | Clippy, tests and doctests for changed packages and their direct Cargo consumers |
+| Rust tests, examples or benchmarks | Clippy and tests for the owning packages |
+| Python bindings, package, provider schema or task runtime | Rust and editable Python package checks |
+| CASA compatibility references and oracle scripts | Compatibility and evidence checks in the architecture gate, plus any needed domain checks |
+| Developer tools covered by `test-perf-tools.sh` | Performance and oracle tool tests |
+| Workspace or package build configuration, CI infrastructure, or an unclassified path | Full CI |
+
+The selection uses the PR merge commit's diff against its first parent and
+Cargo's workspace dependency graph, including direct normal, build and dev
+dependencies. Mixed changes combine coverage. An incomplete diff or dependency
+graph uses full coverage on a ready PR. Broader integration failures may first
+surface in nightly CI. Paired CASA, casacore interchange, real-data, performance
+and platform-specific gates still follow their domain rules below.
+
+`lint_test` reports the selected Rust, Python and docs results. It retains
+its required status alongside `python_package` and `docs`. A deliberately
+unselected job reports as skipped. The suite installer and performance-tool
+jobs remain informational for PR merges. Nightly and manual CI run the full
+workspace, editable Python, wheel and sdist, strict public and private rustdoc,
+MkDocs, tool and installer checks. The docs deployment still runs on `main`
+pushes. Version tags run the full CI suite plus smoke and coverage. Release
+asset publication waits for all of those checks to pass.
 
 ## Evidence source and turnaround
 
@@ -446,10 +472,10 @@ scientific failure.
 
 ## Releases and waivers
 
-- Release work also runs the smoke gate, the blocking C++ interop gate, and
-  the suite-install gate; CI-like coverage remains a version-tag CI gate and
-  is run locally only for `scripts/release.sh --full` or explicit coverage
-  reproduction.
+- The local release command runs the smoke, blocking C++ interop, suite install
+  and slow parity gates. Version-tag CI adds full hosted checks and coverage.
+  Use `scripts/release.sh --full` for local coverage reproduction and the
+  informational performance suite.
 - Release performance evidence is informational by default and becomes
   blocking only when `CASA_RS_ENFORCE_PERF=1`.
 - Slow CASA parity checks run when the work touches those concerns.

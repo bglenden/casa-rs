@@ -2,12 +2,12 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    # Runs on main warm the Rust build caches that pull requests restore.
-    branches: [main]
-    tags:
-      - "v*.*.*"
+    types: [opened, synchronize, reopened, converted_to_draft, ready_for_review]
+  schedule:
+    # Check main broadly and refresh the build caches once per night.
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -17,7 +17,68 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  ci_scope:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.plan.outputs.rust }}
+      packages: ${{ steps.plan.outputs.packages }}
+      python: ${{ steps.plan.outputs.python }}
+      docs: ${{ steps.plan.outputs.docs }}
+      perf: ${{ steps.plan.outputs.perf }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - uses: dtolnay/rust-toolchain@stable
+        if: github.event_name == 'pull_request'
+      - name: Select checks
+        id: plan
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          args=()
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            args+=(--base "$PR_BASE")
+            if [[ "$PR_DRAFT" == true ]]; then args+=(--draft); fi
+          fi
+          python3 -B scripts/test-ci-scope.py
+          python3 scripts/ci_scope.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Preserve the required lint_test status on ready PRs. A draft check on the
+  # same commit cannot satisfy that status before the ready run has started.
   lint_test:
+    name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft_checks' || 'lint_test' }}
+    if: ${{ always() }}
+    needs: [ci_scope, rust_checks, python_package, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify selected checks
+        env:
+          SCOPE_RESULT: ${{ needs.ci_scope.result }}
+          RUST_RESULT: ${{ needs.rust_checks.result }}
+          PYTHON_SELECTED: ${{ needs.ci_scope.outputs.python != 'none' }}
+          PYTHON_RESULT: ${{ needs.python_package.result }}
+          DOCS_SELECTED: ${{ needs.ci_scope.outputs.docs == 'true' }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+        run: |
+          check_job() {
+            local expected=skipped
+            if [[ "$2" == true ]]; then expected=success; fi
+            echo "$1: $3 (expected $expected)" | tee -a "$GITHUB_STEP_SUMMARY"
+            [[ "$3" == "$expected" ]]
+          }
+
+          failed=0
+          check_job scope true "$SCOPE_RESULT" || failed=1
+          check_job rust true "$RUST_RESULT" || failed=1
+          check_job python "$PYTHON_SELECTED" "$PYTHON_RESULT" || failed=1
+          check_job docs "$DOCS_SELECTED" "$DOCS_RESULT" || failed=1
+          exit "$failed"
+
+  rust_checks:
+    needs: ci_scope
     runs-on: ubuntu-latest
     env:
       # Line tables keep file:line in panic backtraces while avoiding full
@@ -28,6 +89,7 @@ jobs:
       # invalidates sit side by side, which can fill the runner's disk: the
       # runner then dies with no log (#1115, #1119). These tools go unused here.
       - name: Free disk space
+        if: needs.ci_scope.outputs.rust != 'static'
         run: |
           df -h /
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
@@ -46,11 +108,13 @@ jobs:
           components: rustfmt, clippy
 
       - name: Set up Python for Rust tests
+        if: needs.ci_scope.outputs.rust != 'static'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install NumPy for Rust tests
+        if: needs.ci_scope.outputs.rust != 'static'
         run: python -m pip install 'numpy>=2,<3'
 
       # PyO3 configures itself once per build cache: the restored cache keeps
@@ -60,12 +124,15 @@ jobs:
       # its rerun triggers); a fixed `python3` linked against a directory
       # the new runner no longer has.
       - name: Point PyO3 at the interpreter installed
+        if: needs.ci_scope.outputs.rust != 'static'
         run: echo "PYO3_PYTHON=$pythonLocation/bin/python3" >> "$GITHUB_ENV"
 
       - name: Install FFTW development libraries
+        if: needs.ci_scope.outputs.rust != 'static'
         run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
 
       - name: Cache Rust build
+        if: needs.ci_scope.outputs.rust != 'static'
         uses: Swatinem/rust-cache@v2
         with:
           # Only main saves; pull requests restore main's cache.
@@ -80,10 +147,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
-
       - name: Install explicit measures runtime for integration tests
+        if: needs.ci_scope.outputs.rust != 'static'
         run: |
           mkdir -p "$RUNNER_TEMP/casa-measures"
           tar -xzf crates/casa-measures-data/data/casa-measures-runtime.tar.gz -C "$RUNNER_TEMP/casa-measures"
@@ -91,17 +156,33 @@ jobs:
           echo "CASA_RS_MEASURESPATH=$RUNNER_TEMP/casa-measures" >> "$GITHUB_ENV"
 
       - name: Install cargo-nextest
+        if: needs.ci_scope.outputs.rust != 'static'
         uses: taiki-e/install-action@nextest
 
-      - name: Run tests
+      - name: Lint and test selected packages
+        if: needs.ci_scope.outputs.rust != 'static'
         env:
+          RUST_SCOPE: ${{ needs.ci_scope.outputs.rust }}
+          AFFECTED_PACKAGES: ${{ needs.ci_scope.outputs.packages }}
           NEXTEST_PROFILE: ci
           # Debug builds of the bounded imaging stack legitimately exceed the
           # default test-thread stack; production uses release frames.
           RUST_MIN_STACK: 33554432
-        run: scripts/test-workspace.sh
+        run: |
+          if [[ "$RUST_SCOPE" == full ]]; then
+            scope=(--workspace)
+          else
+            read -r -a packages <<< "$AFFECTED_PACKAGES"
+            test "${#packages[@]}" -gt 0
+            scope=()
+            for package in "${packages[@]}"; do scope+=(--package "$package"); done
+          fi
+          cargo clippy "${scope[@]}" --all-targets --keep-going -- -D warnings
+          scripts/test-workspace.sh "${scope[@]}"
 
   python_package:
+    needs: ci_scope
+    if: needs.ci_scope.outputs.python != 'none'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -125,9 +206,18 @@ jobs:
           python-version: "3.10"
 
       - name: Test Python package
-        run: scripts/test-python-package.sh --plot
+        env:
+          PYTHON_SCOPE: ${{ needs.ci_scope.outputs.python }}
+        run: |
+          if [[ "$PYTHON_SCOPE" == editable ]]; then
+            scripts/test-python-package.sh --plot --editable-only
+          else
+            scripts/test-python-package.sh --plot
+          fi
 
   perf_tools:
+    needs: ci_scope
+    if: needs.ci_scope.outputs.perf == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -145,45 +235,50 @@ jobs:
         run: scripts/test-perf-tools.sh
 
   docs:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    needs: ci_scope
+    if: needs.ci_scope.outputs.docs == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Rust toolchain
+        if: needs.ci_scope.outputs.rust == 'full'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install FFTW development libraries
+        if: needs.ci_scope.outputs.rust == 'full'
         run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config
 
       - name: Cache Rust build
+        if: needs.ci_scope.outputs.rust == 'full'
         uses: Swatinem/rust-cache@v2
         with:
           # Only main saves; pull requests restore main's cache.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up Python
+        if: needs.ci_scope.outputs.rust == 'full'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Build rustdoc
-        # A broken or private intra-doc link fails the build rather than
-        # warning (#775, #776).
-        env:
-          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
-        run: cargo doc --workspace --no-deps
+      - name: Check repository docs and generated references
+        run: scripts/docs-check.sh
 
-      - name: Build rustdoc with private items
+      - name: Build public and private rustdoc
+        if: needs.ci_scope.outputs.rust == 'full'
         # The public build never resolves links in private items; this one
         # does, with the same lints (#805). Keep the public build too: only
         # it reports a public item that links to a private one.
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
-        run: cargo doc --workspace --no-deps --document-private-items
+        run: |
+          cargo doc --workspace --no-deps
+          cargo doc --workspace --no-deps --document-private-items
 
       - name: Build MkDocs site
+        if: needs.ci_scope.outputs.rust == 'full'
         run: scripts/build-python-docs.sh site
 
   smoke:
@@ -204,9 +299,10 @@ jobs:
       - name: Run smoke gate
         run: scripts/test-smoke.sh
 
-  # Before merge too (#931): the real release binaries end to end, from the
-  # command line and the suite's Python, with the checkout moved aside.
+  # Exercise the installed release binaries and Python with the checkout moved aside.
   suite_install:
+    needs: ci_scope
+    if: needs.ci_scope.outputs.rust == 'full'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

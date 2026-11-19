@@ -57,9 +57,12 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 - Rust at least `Cargo.toml`'s `rust-version` (`rustup update stable`); set
   `CARGO_INCREMENTAL=0` for raw cargo. Install `cargo-nextest` so tests run
   in parallel; without it `scripts/test-workspace.sh` runs them serially.
-- Use focused local checks for the selected behavior; CI runs the broad
-  gates. `just quick` reproduces the broad local gate; `just verify` is
-  for milestones and releases; `just --list` shows everything else.
+- Use focused local checks for the selected behavior. PR CI selects checks
+  for changed packages, direct consumers and affected interfaces. Build or
+  unclear changes get full coverage on ready PRs. Nightly CI and release
+  tags run the broad gates.
+  `just quick` reproduces the broad local gate. Use `just verify` for
+  milestones and releases. `just --list` shows the other commands.
 - Python package tests: `scripts/test-python-package.sh`. Python binds Rust
   through PyO3 only, in `casars._core` (`crates/casars-python/src`).
 - `scripts/check-imaging-dependencies.py` (in `just arch-check`) enforces the
@@ -343,17 +346,16 @@ isolated, strengthen its demonstration test instead of adding a review.
 - During implementation, run the cheapest meaningful test that distinguishes
   the selected behavior. On a stable diff, run one affected validation batch:
   `cargo fmt`, clippy `-D warnings`, relevant tests and `just arch-check`.
-  Docs-only changes need `just docs-check`. Leave full-crate/workspace suites
-  to CI unless the change's risk or an explicit `TESTING.md` requirement
-  needs them locally. Preserve scientific, interop, performance and memory
-  acceptance. Reuse green results; rerun only gates invalidated under
-  `TESTING.md`'s evidence-reuse rules. Do not rebuild or revalidate an
+  Docs-only changes need `just docs-check`. Batch related changes on one PR
+  and use draft pushes for focused checks. Leave broad suites to CI unless
+  the change's risk or `TESTING.md` calls for them locally. Preserve
+  scientific, interop, performance and memory acceptance. Reuse green results
+  under `TESTING.md`'s evidence-reuse rules. Do not rebuild or revalidate an
   unchanged component per case.
-- A PR may open as a draft while work continues. Once its checks pass and
-  any review is resolved, mark it ready and set
-  `gh pr merge --auto --squash`: ready means merge when green, and GitHub
-  merges it once its required checks pass. Additional implementation follows
-  the bounded assignment and progress-check rules, not the duration of CI.
+- A PR may open as a draft while work continues. Once its focused checks
+  pass and any review is resolved, mark it ready and set
+  `gh pr merge --auto --squash`. Ready triggers the merge checks. Additional
+  implementation follows the bounded assignment and progress-check rules.
 - Keep responsibility for the PR until it merges or is explicitly handed
   off. When CI fails, investigate and fix failures caused by the change;
   rerun a known flaky job (noting it on the flake's issue) or a timing gate
