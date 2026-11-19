@@ -41,7 +41,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             })?;
         file.write_all(text.as_bytes())
             .map_err(|error| TaskFailure::execution(error.to_string()).at("listfile"))?;
-        let message = format!("Writing output to file: {path}");
+        let message = format!("Writing output to file: {path}\n");
         return Ok(TaskSuccess::new(
             CasaValue::None,
             &Report {

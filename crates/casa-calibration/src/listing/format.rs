@@ -131,7 +131,7 @@ impl<'a> Window<'a> {
             .ok_or("invalid time in calibration listing")?;
         write!(
             text,
-            "{time:<10} {:<width$} {:>channels$}|",
+            "{time:<10} {:>width$} {:>channels$}|",
             line.field,
             line.channel,
             width = self.field_width,

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import functools
 from http import HTTPStatus
 import inspect
-from json import JSONDecodeError
+from json import JSONDecodeError, loads
 import os
 from os import PathLike
 from pathlib import Path
@@ -293,9 +293,7 @@ def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
         completion = run("listcal", **values)
     except (TypeError, ValueError) as error:
         raise AssertionError(str(error)) from error
-    report = completion.result
-    if not isinstance(report, dict):
-        raise TaskResultError("listcal did not produce its listing report")
+    report = loads(completion.stdout)["result"]
     if report["listfile"] is not None:
         print(f"Writing output to file: {report['listfile']}")
         return
