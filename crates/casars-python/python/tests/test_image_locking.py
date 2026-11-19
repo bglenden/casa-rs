@@ -83,6 +83,134 @@ def test_explicit_lock_methods_refuse_double_images(casa, kind):
         assert ia.done()
 
 
+@pytest.mark.parametrize("method", ["remove", "rename"])
+def test_lifecycle_operation_preserves_external_replacement(tmp_path, method):
+    path = tmp_path / "attached.im"
+    other = tmp_path / "replacement.im"
+    backup = tmp_path / "original.im"
+    original, replacement = tools.image(), tools.image()
+    assert original.fromshape(str(path), [2, 2])
+    assert original.setmiscinfo({"identity": "original"})
+    assert replacement.fromshape(str(other), [2, 2])
+    assert replacement.setmiscinfo({"identity": "replacement"})
+    assert replacement.done()
+    assert_locks(original, True, True)
+    path.rename(backup)
+    other.rename(path)
+    arguments = (str(tmp_path / "unexpected.im"),) if method == "rename" else ()
+    with pytest.raises(RuntimeError, match="has changed"):
+        getattr(original, method)(*arguments)
+    assert replacement.open(str(path))
+    assert replacement.miscinfo() == {"identity": "replacement"}
+    assert replacement.done()
+
+
+def test_locked_complex_native_image_keeps_the_casa_tiled_layout(casa, tmp_path):
+    path = str(tmp_path / "tiled-complex.im")
+    creator = casa.image()
+    assert creator.fromshape(path, [200, 90, 4, 6], type="c")
+    assert creator.done()
+
+    def tile_shape():
+        table = casa.table()
+        assert table.open(path)
+        result = table.getdminfo()["*1"]["SPEC"]["HYPERCUBES"]["*1"]["TileShape"].tolist()
+        assert table.done()
+        return result
+
+    expected = tile_shape()
+    assert expected == [100, 45, 2, 3]
+    tool = tools.image()
+    assert tool.open(path)
+    assert tool.lock(writelock=True, nattempts=1)
+    assert tool.unlock()
+    assert tool.done()
+    assert tile_shape() == expected
+
+
+def test_image_observes_a_same_process_table_writer(casa, tmp_path):
+    pixels = np.full((2, 2), 7, dtype=np.float32)
+    for module in (tools, casa):
+        path = str(tmp_path / f"{module.__name__}-shared.im")
+        image = module.image()
+        assert image.fromshape(path, [2, 2])
+        assert image.done() and image.open(path)
+        np.testing.assert_array_equal(image.getchunk(), np.zeros((2, 2)))
+        table = module.table()
+        assert table.open(path, nomodify=False, lockoptions={"option": "auto"})
+        assert table.lock(True, 1)
+        assert table.putcell("map", 0, pixels)
+        assert table.flush()
+        assert table.unlock() and table.done()
+        assert image.lock(nattempts=1)
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+        assert image.done()
+
+
+def test_opening_a_shared_image_reacquires_its_read_lock(casa, tmp_path):
+    for module in (tools, casa):
+        path = str(tmp_path / f"{module.__name__}-reopen.im")
+        first, second = module.image(), module.image()
+        assert first.fromshape(path, [2, 2]) and first.unlock()
+        assert_locks(first, False, False)
+        assert second.open(path)
+        assert_locks(first, True, False)
+        assert_locks(second, True, False)
+        assert second.done() and first.done()
+
+
+def test_noop_write_lock_preserves_native_generation(casa, tmp_path):
+    path = tmp_path / "unchanged.im"
+    creator = casa.image()
+    assert creator.fromshape(str(path), [2, 2]) and creator.done()
+    for module in (casa, tools):
+        tool = module.image()
+        assert tool.open(str(path))
+        table_date = (path / "table.dat").stat().st_mtime_ns
+        lock_contents = (path / "table.lock").read_bytes()
+        assert tool.lock(writelock=True, nattempts=1)
+        assert tool.unlock()
+        assert (path / "table.dat").stat().st_mtime_ns == table_date
+        assert (path / "table.lock").read_bytes() == lock_contents
+        assert tool.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+@pytest.mark.parametrize("backend", ["casars.tools", "casatools"])
+def test_native_image_open_waits_for_external_writer(casa, tmp_path, backend):
+    path = tmp_path / "wait-open.im"
+    ready = tmp_path / "opening"
+    owner = tools.image()
+    assert owner.fromshape(str(path), [2, 2])
+    child = subprocess.Popen(
+        [sys.executable, "-c", """
+import sys
+from importlib import import_module
+from pathlib import Path
+image = import_module(sys.argv[3]).image()
+Path(sys.argv[2]).touch()
+assert image.open(sys.argv[1])
+assert image.haslock().tolist() == [True, False]
+assert image.done()
+""", str(path), str(ready), backend],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.03)
+        assert ready.exists()
+        time.sleep(0.2)
+        assert child.poll() is None, child.stderr.read() if child.poll() is not None else ""
+        assert owner.unlock()
+        assert child.wait(timeout=10) == 0, child.stderr.read()
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=5)
+        owner.done()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
 def test_native_image_exchanges_locks_and_generations_with_casa(casa, tmp_path):
     path = tmp_path / "exchange.im"

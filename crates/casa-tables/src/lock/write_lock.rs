@@ -23,7 +23,16 @@ impl TableUseLock {
     /// Returns an error if the table cannot be opened or a writer holds an
     /// access lock while this handle attaches.
     pub fn acquire(path: &Path) -> Result<Self, TableError> {
-        Self::open(path, false)
+        Self::open(path, false, 1)
+    }
+
+    /// Marks the table open, waiting if another process holds its write lock.
+    ///
+    /// Like an automatic casacore open, a wait registers this process in
+    /// the table's request list. The temporary read lock is released after
+    /// the in-use marker is established.
+    pub fn acquire_waiting(path: &Path) -> Result<Self, TableError> {
+        Self::open(path, false, 0)
     }
 
     /// Mark a read-only attachment as open where locking is available.
@@ -33,10 +42,10 @@ impl TableUseLock {
     /// # Errors
     /// Returns an error for an unreadable table or a conflicting writer.
     pub fn acquire_readonly(path: &Path) -> Result<Self, TableError> {
-        Self::open(path, true)
+        Self::open(path, true, 1)
     }
 
-    fn open(path: &Path, readonly: bool) -> Result<Self, TableError> {
+    fn open(path: &Path, readonly: bool, attempts: u32) -> Result<Self, TableError> {
         #[cfg(unix)]
         {
             let lock_io = |error: std::io::Error| TableError::LockIo {
@@ -67,11 +76,13 @@ impl TableUseLock {
                 }
                 Err(error) => return Err(lock_io(error)),
             };
-            let outcome = lock_file.acquire(LockType::Read, 1).map_err(lock_io)?;
+            let outcome = lock_file
+                .acquire(LockType::Read, attempts)
+                .map_err(lock_io)?;
             if !outcome.is_acquired() {
                 return Err(TableError::LockFailed {
                     path: path.display().to_string(),
-                    message: outcome.refusal(LockType::Read, 1),
+                    message: outcome.refusal(LockType::Read, attempts),
                 });
             }
             lock_file.release().map_err(lock_io)?;
@@ -82,7 +93,7 @@ impl TableUseLock {
         }
         #[cfg(not(unix))]
         {
-            let _ = (path, readonly);
+            let _ = (path, readonly, attempts);
             Ok(Self {})
         }
     }

@@ -35,11 +35,35 @@ impl Table {
         Self::open_with_lock_using(options, lock_opts, Self::open)
     }
 
+    /// Opens a locked table with an explicit limit on its initial lock wait.
+    ///
+    /// Acquisition uses the attempt count of [`Table::lock`]. A publisher
+    /// can attach a new table in automatic mode while holding a guard
+    /// without waiting for another process to release its lock.
+    #[cfg(unix)]
+    pub fn open_with_lock_attempts(
+        options: TableOptions,
+        lock_opts: LockOptions,
+        attempts: u32,
+    ) -> Result<Self, TableError> {
+        Self::open_with_lock_loading(options, lock_opts, Self::open, Some(attempts))
+    }
+
     #[cfg(unix)]
     pub(super) fn open_with_lock_using(
         options: TableOptions,
         lock_opts: LockOptions,
         load: impl FnOnce(TableOptions) -> Result<Self, TableError>,
+    ) -> Result<Self, TableError> {
+        Self::open_with_lock_loading(options, lock_opts, load, None)
+    }
+
+    #[cfg(unix)]
+    fn open_with_lock_loading(
+        options: TableOptions,
+        lock_opts: LockOptions,
+        load: impl FnOnce(TableOptions) -> Result<Self, TableError>,
+        initial_attempts: Option<u32>,
     ) -> Result<Self, TableError> {
         if lock_opts.mode == LockMode::NoLocking {
             return load(options);
@@ -76,6 +100,7 @@ impl Table {
             | LockMode::NoLocking => None,
         };
         if let Some((lock_type, nattempts)) = initial {
+            let nattempts = initial_attempts.unwrap_or(nattempts);
             let outcome =
                 lock_file
                     .acquire(lock_type, nattempts)
@@ -441,10 +466,12 @@ impl Table {
         self.resync()
     }
 
-    /// Whether the handle holds changes the disk does not have, which the
-    /// release of its write lock would write in full.
+    /// Whether this locked table holds changes which have yet to reach disk.
+    ///
+    /// Tools backed by a separate data manager use this before flushing the
+    /// table metadata and their own payload at a lock release.
     #[cfg(unix)]
-    pub(super) fn holds_unflushed_changes(&self) -> bool {
+    pub fn holds_unflushed_changes(&self) -> bool {
         self.lock_state
             .as_ref()
             .is_some_and(|state| state.has_unflushed_changes(&self.inner))
