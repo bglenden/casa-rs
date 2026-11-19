@@ -7083,6 +7083,26 @@ continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
 all 17 original history entries intact (#977).
 
+## imsubimage aborts for an out-of-range keepaxes index
+
+On a four-axis image, CASA 6.7.6.14 aborts the process with
+`itsAxes(i) >= naxes` for `imsubimage(dropdeg=True, keepaxes=[4])`.
+The check is in casacore's `AxesSpecifier::apply`. casa-rs returns an
+out-of-range error before creating or replacing the output image. With
+`dropdeg=False`, CASA and casa-rs ignore `keepaxes`.
+
+## imsubimage permutes coordinate labels after dropping transposed axes
+
+In CASA 6.7.6.14, take a cube in RA, Dec, Stokes, frequency order and
+apply `imtrans(order="3012")`. Then run
+`imsubimage(box="1,2,4,5", chans="2", stokes="Q", dropdeg=True, keepaxes=[0])`.
+The resulting shape is `[1, 4, 4]`, with pixels in frequency, RA, Dec order.
+CASA labels the axes Dec, frequency, RA. In
+`CoordinateUtil::dropRemovedAxes`, the permutation passed to
+`CoordinateSystem::transpose` maps from creation order to pixel order,
+while `transpose` expects the inverse. casa-rs keeps the coordinates on
+their original pixel axes as it removes Stokes.
+
 ## plotbandpass passes a fractional platforming channel to range
 
 CASA 6.7.6.14 raises `TypeError` while checking a wide bandpass for
@@ -7114,26 +7134,6 @@ casa-rs validates the antenna blocks before publishing a listing. The
 same input raises a recoverable error and leaves the destination absent.
 Complete integrations retain their original order, even when two have
 the same time and field (#1526).
-
-## imsubimage aborts for an out-of-range keepaxes index
-
-On a four-axis image, CASA 6.7.6.14 aborts the process with
-`itsAxes(i) >= naxes` for `imsubimage(dropdeg=True, keepaxes=[4])`.
-The check is in casacore's `AxesSpecifier::apply`. casa-rs returns an
-out-of-range error before creating or replacing the output image. With
-`dropdeg=False`, CASA and casa-rs ignore `keepaxes`.
-
-## imsubimage permutes coordinate labels after dropping transposed axes
-
-In CASA 6.7.6.14, take a cube in RA, Dec, Stokes, frequency order and
-apply `imtrans(order="3012")`. Then run
-`imsubimage(box="1,2,4,5", chans="2", stokes="Q", dropdeg=True, keepaxes=[0])`.
-The resulting shape is `[1, 4, 4]`, with pixels in frequency, RA, Dec order.
-CASA labels the axes Dec, frequency, RA. In
-`CoordinateUtil::dropRemovedAxes`, the permutation passed to
-`CoordinateSystem::transpose` maps from creation order to pixel order,
-while `transpose` expects the inverse. casa-rs keeps the coordinates on
-their original pixel axes as it removes Stokes.
 
 ## Beam removal can delete metadata before rejecting a record
 
