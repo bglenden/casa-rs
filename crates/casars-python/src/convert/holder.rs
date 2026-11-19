@@ -88,6 +88,33 @@ pub(crate) const EPOCH_CODES: Codes = Codes {
     default: "UTC",
 };
 
+const RAZED_EPOCH_CODES: [&str; 12] = [
+    "R_LAST", "R_LMST", "R_GMST1", "R_GAST", "R_UT1", "R_UT2", "R_UTC", "R_TAI", "R_TDT", "R_TCG",
+    "R_TDB", "R_TCB",
+];
+
+/// Resolve the optional R_ epoch prefix without changing listcodes output.
+pub(crate) fn resolve_epoch_code(input: &str) -> Option<&'static str> {
+    if let Some(code) = input
+        .strip_prefix("R_")
+        .or_else(|| input.strip_prefix("r_"))
+    {
+        let canonical = EPOCH_CODES.resolve(code)?;
+        let reference = EpochRef::from_str(canonical).ok()?;
+        Some(RAZED_EPOCH_CODES[reference.casacore_code() as usize])
+    } else {
+        EPOCH_CODES.resolve(input)
+    }
+}
+
+/// Interpret a canonical epoch code stored in a measure record.
+pub(crate) fn epoch_ref(
+    code: &str,
+) -> Result<(EpochRef, bool), casa_types::measures::MeasureError> {
+    let base = code.strip_prefix("R_");
+    Ok((EpochRef::from_str(base.unwrap_or(code))?, base.is_some()))
+}
+
 /// casacore's `MDirection` reference codes.
 pub(crate) const DIRECTION_CODES: Codes = Codes {
     all: &[
@@ -285,6 +312,15 @@ pub(crate) const EARTH_MAGNETIC_CODES: Codes = Codes {
 };
 
 impl MeasureKind {
+    /// Resolve the canonical reference, including the epoch R_ flag.
+    pub(crate) fn resolve_code(self, input: &str) -> Option<&'static str> {
+        if self == Self::Epoch {
+            resolve_epoch_code(input)
+        } else {
+            self.codes().resolve(input)
+        }
+    }
+
     /// The kind's reference codes.
     pub(crate) fn codes(self) -> &'static Codes {
         match self {
@@ -468,7 +504,7 @@ impl Measure {
             }
         };
         let codes = kind.codes();
-        let (code, warning) = match codes.resolve(refer) {
+        let (code, warning) = match kind.resolve_code(refer) {
             Some(code) => (code, None),
             None => (
                 codes.default,
@@ -585,10 +621,10 @@ impl Measure {
                     "geometry values use the native geometry conversion operator (#1252)".into(),
                 );
             }
-            MeasureValue::Epoch(mjd) => CasaMeasure::Epoch(MEpoch::new(
-                mjd,
-                EpochRef::from_str(self.refer).map_err(|_| unsupported("epoch"))?,
-            )),
+            MeasureValue::Epoch(mjd) => {
+                let (refer, raze) = epoch_ref(self.refer).map_err(|_| unsupported("epoch"))?;
+                CasaMeasure::Epoch(MEpoch::new(mjd, refer).with_razing(raze))
+            }
             MeasureValue::Direction(cosines) => CasaMeasure::Direction(MDirection::from_cosines(
                 cosines,
                 DirectionRef::from_str(self.refer).map_err(|_| unsupported("direction"))?,
@@ -621,7 +657,11 @@ impl Measure {
     pub(crate) fn from_casa(measure: &CasaMeasure) -> Self {
         match measure {
             CasaMeasure::Epoch(epoch) => Self {
-                refer: EPOCH_CODES.resolve_or_default(epoch.refer().casacore_name()),
+                refer: if epoch.is_razing() {
+                    RAZED_EPOCH_CODES[epoch.refer().casacore_code() as usize]
+                } else {
+                    epoch.refer().casacore_name()
+                },
                 value: MeasureValue::Epoch(epoch.value()),
             },
             CasaMeasure::Direction(direction) => Self {

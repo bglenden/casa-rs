@@ -14,7 +14,7 @@ use crate::tools::LogLine;
 
 const MISSING_FRAME: &str = "Missing information in Frame specified for conversion";
 
-fn epoch_text(mjd: MjdHighPrec) -> String {
+pub(super) fn epoch_text(mjd: MjdHighPrec) -> String {
     let fraction = mjd.frac();
     let hours = (24.0 * fraction).floor() as u32;
     let minutes = (60.0 * (24.0 * fraction - f64::from(hours))).floor() as u32;
@@ -25,7 +25,7 @@ fn epoch_text(mjd: MjdHighPrec) -> String {
     )
 }
 
-fn vector<const N: usize>(values: [f64; N]) -> String {
+pub(super) fn vector<const N: usize>(values: [f64; N]) -> String {
     format!("[{}]", values.map(stream_double).join(", "))
 }
 
@@ -49,13 +49,22 @@ fn render(state: &mut State, mut native: MeasFrame) -> Result<String, String> {
             Err(error) => Err(error.to_string()),
         };
         let (tdb, ut1, tt) = (to(EpochRef::TDB)?, to(EpochRef::UT1)?, to(EpochRef::TT)?);
+        let Some(MeasureValue::Epoch(raw)) =
+            state.frame.epoch.as_ref().map(|epoch| epoch.measure.value)
+        else {
+            unreachable!("the explicit frame has an epoch");
+        };
         elements.push(format!(
             "Epoch: {} (TDB = {tdb}, UT1 = {ut1}, TT = {tt})",
-            epoch_text(epoch.value())
+            epoch_text(raw)
         ));
     }
     if let (Some(MeasureValue::Position(xyz)), Some(position)) = (
-        state.frame.position.map(|measure| measure.value),
+        state
+            .frame
+            .position
+            .as_ref()
+            .map(|position| position.measure.value),
         native.position(),
     ) {
         let (longitude, latitude, _) = spatial_spherical(position.as_itrf());
@@ -76,9 +85,17 @@ fn render(state: &mut State, mut native: MeasFrame) -> Result<String, String> {
                 error => error.to_string(),
             })?;
         let (longitude, latitude) = direction_angles(converted.cosines());
+        let Some(MeasureValue::Direction(raw)) = state
+            .frame
+            .direction
+            .as_ref()
+            .map(|direction| direction.measure.value)
+        else {
+            unreachable!("the explicit frame has a direction");
+        };
         elements.push(format!(
             "Direction: {}\n        (J2000 = {} deg)",
-            vector(direction.cosines()),
+            vector(raw),
             vector([longitude.to_degrees(), latitude.to_degrees()])
         ));
         if direction.refer() == DirectionRef::COMET && native.radial_velocity().is_some() {

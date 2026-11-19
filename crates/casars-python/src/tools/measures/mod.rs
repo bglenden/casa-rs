@@ -21,12 +21,8 @@
 //!   with CASA's "Cannot convert due to missing frame information", where
 //!   CASA's tool starts with a frame at MJD 0 at the geocentre and converts
 //!   with it (`measure(dir, 'AZEL')` with no `doframe`);
-//! - codes casa-types does not convert (`B1950_VLA`, `BMEAN`, `BTRUE`,
-//!   `COMET`, `Undefined`) define and show but do not convert, and
-//!   `R_` (razing) codes are not read;
-//! - scalar constructors for epoch/direction/position/frequency still refuse
-//!   offsets; the spectral constructors and record conversion/query paths
-//!   support offsets and vectors. Remaining kinds stay explicitly refused.
+//! - Undefined frequencies retain their reference, and conversions between
+//!   Undefined and a physical frequency scale fail as in CASA.
 
 mod arguments;
 mod comet;
@@ -61,13 +57,29 @@ const LOGGER: &str = "casars.tools.measures";
 /// The frame `doframe` sets.
 #[derive(Debug, Clone, Default)]
 struct Frame {
-    epoch: Option<Measure>,
-    position: Option<Measure>,
-    direction: Option<Measure>,
+    epoch: Option<FrameValue>,
+    position: Option<FrameValue>,
+    direction: Option<FrameValue>,
     radial_velocity: Option<record::Measures>,
     comet: Option<Arc<CometTable>>,
     // Formatted display of these frame elements, cleared when an element changes.
     rendered: Option<String>,
+}
+
+/// A scalar frame item, keeping its displayed coordinates and its origin.
+#[derive(Debug, Clone)]
+struct FrameValue {
+    measure: Measure,
+    origin: Option<Box<record::Measures>>,
+}
+
+impl From<Measure> for FrameValue {
+    fn from(measure: Measure) -> Self {
+        Self {
+            measure,
+            origin: None,
+        }
+    }
 }
 
 /// The tool's state: the frame and the measures data.
@@ -144,7 +156,9 @@ impl PyMeasures {
         text_signature = "($self, rf='UTC', v0=[], off={})"
     )]
     fn epoch(&self, py: Python<'_>, rf: &str, v0: Variant, off: RecordArg) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, lines| Ok(define::epoch(rf, &v0, &off, lines)))
+        self.call(py, |state, lines| {
+            define::epoch(state, rf, &v0, &off, lines)
+        })
     }
 
     /// A direction measure.
@@ -160,8 +174,8 @@ impl PyMeasures {
         v1: Variant,
         off: RecordArg,
     ) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, lines| {
-            Ok(define::direction(rf, &v0, &v1, &off, lines))
+        self.call(py, |state, lines| {
+            define::direction(state, rf, &v0, &v1, &off, lines)
         })
     }
 
@@ -179,8 +193,8 @@ impl PyMeasures {
         v2: Variant,
         off: RecordArg,
     ) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, lines| {
-            Ok(define::position(rf, [&v0, &v1, &v2], &off, lines))
+        self.call(py, |state, lines| {
+            define::position(state, rf, [&v0, &v1, &v2], &off, lines)
         })
     }
 
@@ -196,7 +210,9 @@ impl PyMeasures {
         v0: Variant,
         off: RecordArg,
     ) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, lines| Ok(define::frequency(rf, &v0, &off, lines)))
+        self.call(py, |state, lines| {
+            define::frequency(state, rf, &v0, &off, lines)
+        })
     }
 
     /// The position of an observatory.

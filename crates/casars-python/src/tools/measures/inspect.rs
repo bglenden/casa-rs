@@ -126,10 +126,7 @@ pub(super) fn show(v: &RecordArg, refcode: bool, lines: &mut Vec<LogLine>) -> Ca
     CasaValue::Text(text)
 }
 
-/// `me.dirshow(v)`: a direction's angles in degrees and its code.
-///
-/// Not yet implemented in casa-rs for other measures, which CASA writes
-/// with casacore's `Measure` output operator.
+/// `me.dirshow(v)`: direction in degrees or another measure in stream format.
 pub(super) fn dirshow(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
     let measure = match super::record::Measures::read(v) {
         Ok(read) => read.values[0],
@@ -141,48 +138,30 @@ pub(super) fn dirshow(v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
             return CasaValue::Text(String::new());
         }
     };
-    match measure.value {
-        MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) | MeasureValue::EarthMagnetic(xyz) => {
-            return CasaValue::Text(format!(
-                "{}: [{}, {}, {}]  {}",
+    let text = match measure.value {
+        MeasureValue::Direction(cosines) => {
+            let (longitude, latitude) = direction_angles(cosines);
+            let degrees = |radians: f64| stream_double(radians * (1.0 / DEGREE));
+            format!("[{}, {}] deg", degrees(longitude), degrees(latitude))
+        }
+        MeasureValue::Epoch(value) => format!("Epoch: {}", super::showframe::epoch_text(value)),
+        MeasureValue::Position(xyz)
+        | MeasureValue::Baseline(xyz)
+        | MeasureValue::Uvw(xyz)
+        | MeasureValue::EarthMagnetic(xyz) => {
+            format!(
+                "{}: {}",
                 measure.kind().tell_me(),
-                stream_double(xyz[0]),
-                stream_double(xyz[1]),
-                stream_double(xyz[2]),
-                measure.refer
-            ));
+                super::showframe::vector(xyz)
+            )
         }
-        MeasureValue::Doppler(value) => {
-            return CasaValue::Text(format!(
-                "Doppler: {}  {}",
-                stream_double(value),
-                measure.refer
-            ));
+        MeasureValue::Frequency(value)
+        | MeasureValue::Doppler(value)
+        | MeasureValue::RadialVelocity(value) => {
+            format!("{}: {}", measure.kind().tell_me(), stream_double(value))
         }
-        MeasureValue::RadialVelocity(value) => {
-            return CasaValue::Text(format!(
-                "Radialvelocity: {}  {}",
-                stream_double(value),
-                measure.refer
-            ));
-        }
-        _ => {}
-    }
-    let MeasureValue::Direction(cosines) = measure.value else {
-        lines.push(LogLine::warning(format!(
-            "dirshow of {} measures is not yet implemented in casa-rs",
-            measure.kind().record_type()
-        )));
-        return CasaValue::Text(String::new());
     };
-    let (longitude, latitude) = direction_angles(cosines);
-    let degrees = |radians: f64| stream_double(radians * (1.0 / DEGREE));
-    CasaValue::Text(format!(
-        "[{}, {}] deg  {}",
-        degrees(longitude),
-        degrees(latitude),
-        measure.refer
-    ))
+    CasaValue::Text(format!("{text}  {}", measure.refer))
 }
 
 /// `me.listcodes(ms)`: the kind's normal and extra (planet) codes.

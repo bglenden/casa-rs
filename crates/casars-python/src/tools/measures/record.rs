@@ -168,30 +168,42 @@ impl Measures {
         origin: Self,
         state: &mut State,
     ) -> pyo3::PyResult<Result<Self, String>> {
+        if origin.values[0].kind() != self.values[0].kind() {
+            return Ok(Err("Non-conforming offset measure type".into()));
+        }
         let origin = origin.into_reference_origin();
         let resolved = match origin.resolve(state, self.values[0].refer)? {
             Ok(values) => values.values[0],
             Err(error) => return Ok(Err(error)),
         };
-        let negative = match resolved.value {
-            MeasureValue::Baseline(v) => MeasureValue::Baseline(v.map(|x| -x)),
-            MeasureValue::Uvw(v) => MeasureValue::Uvw(v.map(|x| -x)),
-            _ => return Ok(Err("Non-conforming offset measure type".into())),
-        };
         for value in &mut self.values {
-            *value = match add(
-                *value,
-                Measure {
-                    value: negative,
-                    ..resolved
-                },
-            ) {
+            *value = match offset_value(*value, resolved, -1.0) {
                 Ok(value) => value,
                 Err(error) => return Ok(Err(error)),
             };
         }
         self.offset = Some(Box::new(origin));
         Ok(Ok(self))
+    }
+
+    /// Convert absolute coordinates and, when supplied, subtract the output
+    /// reference origin after the rotation or scale conversion.
+    pub(super) fn resolve_relative(
+        &self,
+        state: &mut State,
+        target: &'static str,
+        origin: Option<Self>,
+    ) -> pyo3::PyResult<Result<Self, String>> {
+        if origin
+            .as_ref()
+            .is_some_and(|offset| offset.values[0].kind() != self.values[0].kind())
+        {
+            return Ok(Err("Non-conforming offset measure type".into()));
+        }
+        match (self.resolve(state, target)?, origin) {
+            (Ok(converted), Some(origin)) => converted.relative_to(origin, state),
+            (result, _) => Ok(result),
+        }
     }
 
     pub(super) fn scalar(value: Measure) -> Self {
@@ -317,30 +329,52 @@ impl Measures {
     }
 }
 
-fn add(mut base: Measure, offset: Measure) -> Result<Measure, String> {
+fn add(base: Measure, offset: Measure) -> Result<Measure, String> {
+    offset_value(base, offset, 1.0)
+}
+
+/// Materialize the first value of a measure and its nested origins in a
+/// supplied frame without rebuilding that frame from the tool state.
+pub(super) fn absolute_value(
+    base: Measure,
+    origin: Option<&Measures>,
+    convert: &mut impl FnMut(Measure, &'static str) -> Result<Measure, String>,
+) -> Result<Measure, String> {
+    let Some(origin) = origin else {
+        return Ok(base);
+    };
+    let absolute = absolute_value(origin.values[0], origin.offset.as_deref(), convert)?;
+    add(base, convert(absolute, base.refer)?)
+}
+
+fn offset_value(mut base: Measure, offset: Measure, sign: f64) -> Result<Measure, String> {
+    let vector = |a: [f64; 3], b: [f64; 3]| std::array::from_fn(|i| a[i] + sign * b[i]);
     base.value = match (base.value, offset.value) {
         (MeasureValue::Baseline(a), MeasureValue::Baseline(b)) => {
-            MeasureValue::Baseline(std::array::from_fn(|i| a[i] + b[i]))
+            MeasureValue::Baseline(vector(a, b))
         }
-        (MeasureValue::Uvw(a), MeasureValue::Uvw(b)) => {
-            MeasureValue::Uvw(std::array::from_fn(|i| a[i] + b[i]))
-        }
+        (MeasureValue::Uvw(a), MeasureValue::Uvw(b)) => MeasureValue::Uvw(vector(a, b)),
         (MeasureValue::EarthMagnetic(a), MeasureValue::EarthMagnetic(b)) => {
-            MeasureValue::EarthMagnetic(std::array::from_fn(|i| a[i] + b[i]))
+            MeasureValue::EarthMagnetic(vector(a, b))
         }
-        (MeasureValue::Frequency(a), MeasureValue::Frequency(b)) => MeasureValue::Frequency(a + b),
+        (MeasureValue::Frequency(a), MeasureValue::Frequency(b)) => {
+            MeasureValue::Frequency(a + sign * b)
+        }
         (MeasureValue::RadialVelocity(a), MeasureValue::RadialVelocity(b)) => {
-            MeasureValue::RadialVelocity(a + b)
+            MeasureValue::RadialVelocity(a + sign * b)
         }
-        (MeasureValue::Doppler(a), MeasureValue::Doppler(b)) => MeasureValue::Doppler(a + b),
-        (MeasureValue::Epoch(a), MeasureValue::Epoch(b)) => MeasureValue::Epoch(
-            casa_types::measures::MjdHighPrec::new(a.day() + b.day(), a.frac() + b.frac()),
-        ),
+        (MeasureValue::Doppler(a), MeasureValue::Doppler(b)) => MeasureValue::Doppler(a + sign * b),
+        (MeasureValue::Epoch(a), MeasureValue::Epoch(b)) => {
+            MeasureValue::Epoch(casa_types::measures::MjdHighPrec::new(
+                a.day() + sign * b.day(),
+                a.frac() + sign * b.frac(),
+            ))
+        }
         (MeasureValue::Position(a), MeasureValue::Position(b)) => {
-            MeasureValue::Position(std::array::from_fn(|i| a[i] + b[i]))
+            MeasureValue::Position(vector(a, b))
         }
         (MeasureValue::Direction(a), MeasureValue::Direction(b)) => {
-            let v: [f64; 3] = std::array::from_fn(|i| a[i] + b[i]);
+            let v = vector(a, b);
             let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt();
             MeasureValue::Direction(if norm == 0.0 {
                 [0.0, 0.0, 1.0]

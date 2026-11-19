@@ -1,0 +1,6106 @@
+{
+  "casa_version": "6.7.6-14",
+  "frame": [
+    {
+      "m0": {
+        "unit": "rad",
+        "value": -1.1825465955049892
+      },
+      "m1": {
+        "unit": "rad",
+        "value": -0.4018251640113072
+      },
+      "m2": {
+        "unit": "m",
+        "value": 5056.8
+      },
+      "refer": "WGS84",
+      "type": "position"
+    },
+    {
+      "m0": {
+        "unit": "d",
+        "value": 55564.708333333336
+      },
+      "refer": "UTC",
+      "type": "epoch"
+    },
+    {
+      "m0": {
+        "unit": "rad",
+        "value": 0.17453292519943295
+      },
+      "m1": {
+        "unit": "rad",
+        "value": 0.3490658503988659
+      },
+      "refer": "J2000",
+      "type": "direction"
+    }
+  ],
+  "cases": [
+    {
+      "name": "epoch_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "UTC",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 2.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "TAI",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 2.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "refer": "TAI",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "UTC",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch",
+          "offset": {
+            "m0": {
+              "unit": "d",
+              "value": 55562.708333333336
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": -55560.708333333336
+        },
+        "offset": {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "offset": {
+            "m0": {
+              "unit": "d",
+              "value": 55562.708333333336
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": [
+              55564.708333333336,
+              61121.179166666676
+            ]
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "UTC",
+        {
+          "m0": {
+            "unit": "d",
+            "value": [
+              55562.708333333336,
+              61118.97916666667
+            ]
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": [
+            2.0,
+            5558.47083333334
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch",
+          "offset": {
+            "m0": {
+              "unit": "d",
+              "value": 55562.708333333336
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          }
+        },
+        "UTC",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "offset": {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "UTC",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "UTC",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "epoch_define_offset",
+      "method": "epoch",
+      "args": [
+        "UTC",
+        "2011/01/03/17:00:00",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 2.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "d",
+            "value": 55562.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_define_malformed",
+      "method": "epoch",
+      "args": [
+        "UTC",
+        "2011/01/03/17:00:00",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_define_mismatch",
+      "method": "epoch",
+      "args": [
+        "UTC",
+        "2011/01/03/17:00:00",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "direction_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.3811306831071302
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9197791717429267
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "direction_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "ICRS",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.3811308659261323
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9197791544637991
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "refer": "ICRS",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "direction_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.3811306831071302
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9197791717429267
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "direction_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              0.17453292519943295,
+              0.19198621771937627
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.3490658503988659,
+              0.38397243543875254
+            ]
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              0.5235987755982988,
+              0.5759586531581288
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              -0.10471975511965978,
+              -0.11519173063162577
+            ]
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": [
+            -1.3811306831071302,
+            -1.4194168510074585
+          ]
+        },
+        "m1": {
+          "unit": "rad",
+          "value": [
+            0.9197791717429267,
+            0.976135854928669
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "direction_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.1450229528021967
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9356299822857078
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "direction_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "direction_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "direction_define_offset",
+      "method": "direction",
+      "args": [
+        "J2000",
+        "10deg",
+        "20deg",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.1450229528021967
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9356299822857078
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "direction_define_malformed",
+      "method": "direction",
+      "args": [
+        "J2000",
+        "10deg",
+        "20deg",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "direction_define_mismatch",
+      "method": "direction",
+      "args": [
+        "J2000",
+        "10deg",
+        "20deg",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "position_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 336.7491648096547
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "WGS84",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.0028445496166838473
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.463233468831194
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "refer": "WGS84",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "ITRF",
+            "type": "position"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940902
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 299.33259094191527
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "ITRF",
+            "type": "position"
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1071487177940904,
+              1.2178635895734995
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.9302740141154722,
+              1.0233014155270195
+            ]
+          },
+          "m2": {
+            "unit": "m",
+            "value": [
+              374.16573867739413,
+              411.58231254513356
+            ]
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1071487177940904,
+              1.2178635895734995
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.930274014115472,
+              1.0233014155270193
+            ]
+          },
+          "m2": {
+            "unit": "m",
+            "value": [
+              37.416573867739416,
+              41.15823125451336
+            ]
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": [
+            1.1071487177940904,
+            1.2307289147779894
+          ]
+        },
+        "m1": {
+          "unit": "rad",
+          "value": [
+            0.9302740141154722,
+            1.0322360619002562
+          ]
+        },
+        "m2": {
+          "unit": "m",
+          "value": [
+            336.7491648096547,
+            374.422009379427
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "position",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "ITRF",
+            "type": "position"
+          }
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.1657386773941
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.1657386773941
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "position_define_offset",
+      "method": "position",
+      "args": [
+        "ITRF",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 336.7491648096547
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_define_malformed",
+      "method": "position",
+      "args": [
+        "ITRF",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.16573867739413
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_define_mismatch",
+      "method": "position",
+      "args": [
+        "ITRF",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "frequency_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 999000000.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "frequency_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "BARY",
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 999002876.9069381
+        },
+        "offset": {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "frequency_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency",
+          "offset": {
+            "m0": {
+              "unit": "Hz",
+              "value": 1000000.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 998000000.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "Hz",
+              "value": 1000000.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "frequency_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": [
+              1000000000.0,
+              1100000000.0
+            ]
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": [
+              1000000.0,
+              1100000.0
+            ]
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": [
+            999000000.0,
+            1099000000.0
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "frequency_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency",
+          "offset": {
+            "m0": {
+              "unit": "Hz",
+              "value": 1000000.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          }
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "frequency_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "frequency_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "frequency_define_offset",
+      "method": "frequency",
+      "args": [
+        "LSRK",
+        "1GHz",
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "frequency_define_malformed",
+      "method": "frequency",
+      "args": [
+        "LSRK",
+        "1GHz",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      }
+    },
+    {
+      "name": "frequency_define_mismatch",
+      "method": "frequency",
+      "args": [
+        "LSRK",
+        "1GHz",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "radialvelocity_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 1000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 990.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "radialvelocity_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 1000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "BARY",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 990.0000000013946
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "refer": "BARY",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "radialvelocity_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 1000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity",
+          "offset": {
+            "m0": {
+              "unit": "m/s",
+              "value": 10.0
+            },
+            "refer": "LSRK",
+            "type": "radialvelocity"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 980.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "m/s",
+              "value": 10.0
+            },
+            "refer": "LSRK",
+            "type": "radialvelocity"
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "radialvelocity_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": [
+              1000.0,
+              1100.0
+            ]
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": [
+              10.0,
+              11.0
+            ]
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": [
+            990.0,
+            1090.0
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "radialvelocity_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 1000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity",
+          "offset": {
+            "m0": {
+              "unit": "m/s",
+              "value": 10.0
+            },
+            "refer": "LSRK",
+            "type": "radialvelocity"
+          }
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 1000.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "radialvelocity_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 1000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 1000.0
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "radialvelocity_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 1000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "LSRK",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "radialvelocity_define_offset",
+      "method": "radialvelocity",
+      "args": [
+        "LSRK",
+        "1km/s",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 1000.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 10.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "radialvelocity_define_malformed",
+      "method": "radialvelocity",
+      "args": [
+        "LSRK",
+        "1km/s",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 1000.0
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "radialvelocity_define_mismatch",
+      "method": "radialvelocity",
+      "args": [
+        "LSRK",
+        "1km/s",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 1000.0
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      }
+    },
+    {
+      "name": "doppler_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10000.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "RADIO",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 9900.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "refer": "RADIO",
+        "type": "doppler"
+      }
+    },
+    {
+      "name": "doppler_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10000.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "BETA",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 9900.166765360886
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "refer": "TRUE",
+        "type": "doppler"
+      }
+    },
+    {
+      "name": "doppler_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10000.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "RADIO",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler",
+          "offset": {
+            "m0": {
+              "unit": "m/s",
+              "value": 100.0
+            },
+            "refer": "RADIO",
+            "type": "doppler"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 9800.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "m/s",
+              "value": 100.0
+            },
+            "refer": "RADIO",
+            "type": "doppler"
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "refer": "RADIO",
+        "type": "doppler"
+      }
+    },
+    {
+      "name": "doppler_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": [
+              10000.0,
+              11000.0
+            ]
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "RADIO",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": [
+              100.0,
+              110.00000000000001
+            ]
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": [
+            9900.0,
+            10900.0
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "refer": "RADIO",
+        "type": "doppler"
+      }
+    },
+    {
+      "name": "doppler_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10000.0
+          },
+          "refer": "RADIO",
+          "type": "doppler",
+          "offset": {
+            "m0": {
+              "unit": "m/s",
+              "value": 100.0
+            },
+            "refer": "RADIO",
+            "type": "doppler"
+          }
+        },
+        "RADIO",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 10000.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "refer": "RADIO",
+        "type": "doppler"
+      }
+    },
+    {
+      "name": "doppler_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10000.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "RADIO",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 10000.0
+        },
+        "refer": "RADIO",
+        "type": "doppler"
+      }
+    },
+    {
+      "name": "doppler_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10000.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "RADIO",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "doppler_define_offset",
+      "method": "doppler",
+      "args": [
+        "RADIO",
+        "10km/s",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 10000.0
+        },
+        "offset": {
+          "m0": {
+            "unit": "m/s",
+            "value": 100.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        "refer": "RADIO",
+        "type": "doppler"
+      }
+    },
+    {
+      "name": "doppler_define_malformed",
+      "method": "doppler",
+      "args": [
+        "RADIO",
+        "10km/s",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "m/s",
+          "value": 10000.0
+        },
+        "refer": "RADIO",
+        "type": "doppler"
+      }
+    },
+    {
+      "name": "doppler_define_mismatch",
+      "method": "doppler",
+      "args": [
+        "RADIO",
+        "10km/s",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "baseline_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 336.7491648096547
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "baseline_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.0678999478910238
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9297269132015643
+        },
+        "m2": {
+          "unit": "m",
+          "value": 336.74916480965453
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "refer": "J2000",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "baseline_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "ITRF",
+            "type": "baseline"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940902
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 299.33259094191527
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "ITRF",
+            "type": "baseline"
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "baseline_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1071487177940904,
+              1.2178635895734995
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.9302740141154722,
+              1.0233014155270195
+            ]
+          },
+          "m2": {
+            "unit": "m",
+            "value": [
+              374.16573867739413,
+              411.58231254513356
+            ]
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1071487177940904,
+              1.2178635895734995
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.930274014115472,
+              1.0233014155270193
+            ]
+          },
+          "m2": {
+            "unit": "m",
+            "value": [
+              37.416573867739416,
+              41.15823125451336
+            ]
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": [
+            1.1071487177940904,
+            1.2307289147779894
+          ]
+        },
+        "m1": {
+          "unit": "rad",
+          "value": [
+            0.9302740141154722,
+            1.0322360619002562
+          ]
+        },
+        "m2": {
+          "unit": "m",
+          "value": [
+            336.7491648096547,
+            374.422009379427
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "baseline_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "baseline",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "ITRF",
+            "type": "baseline"
+          }
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.1657386773941
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "baseline_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.1657386773941
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "baseline_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "baseline_define_offset",
+      "method": "baseline",
+      "args": [
+        "ITRF",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 336.7491648096547
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "baseline_define_malformed",
+      "method": "baseline",
+      "args": [
+        "ITRF",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.16573867739413
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "baseline_define_mismatch",
+      "method": "baseline",
+      "args": [
+        "ITRF",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.16573867739413
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      }
+    },
+    {
+      "name": "uvw_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 336.7491648096547
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "refer": "J2000",
+        "type": "uvw"
+      }
+    },
+    {
+      "name": "uvw_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "ICRS",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487375544575
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 336.74916480965464
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "refer": "ICRS",
+        "type": "uvw"
+      }
+    },
+    {
+      "name": "uvw_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "J2000",
+            "type": "uvw"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940902
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 299.33259094191527
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "J2000",
+            "type": "uvw"
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "refer": "J2000",
+        "type": "uvw"
+      }
+    },
+    {
+      "name": "uvw_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1071487177940904,
+              1.2178635895734995
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.9302740141154722,
+              1.0233014155270195
+            ]
+          },
+          "m2": {
+            "unit": "m",
+            "value": [
+              374.16573867739413,
+              411.58231254513356
+            ]
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1071487177940904,
+              1.2178635895734995
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.930274014115472,
+              1.0233014155270193
+            ]
+          },
+          "m2": {
+            "unit": "m",
+            "value": [
+              37.416573867739416,
+              41.15823125451336
+            ]
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": [
+            1.1071487177940904,
+            1.2307289147779894
+          ]
+        },
+        "m1": {
+          "unit": "rad",
+          "value": [
+            0.9302740141154722,
+            1.0322360619002562
+          ]
+        },
+        "m2": {
+          "unit": "m",
+          "value": [
+            336.7491648096547,
+            374.422009379427
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "refer": "J2000",
+        "type": "uvw"
+      }
+    },
+    {
+      "name": "uvw_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "J2000",
+          "type": "uvw",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.1071487177940904
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.930274014115472
+            },
+            "m2": {
+              "unit": "m",
+              "value": 37.416573867739416
+            },
+            "refer": "J2000",
+            "type": "uvw"
+          }
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.1657386773941
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "refer": "J2000",
+        "type": "uvw"
+      }
+    },
+    {
+      "name": "uvw_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154723
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.1657386773941
+        },
+        "refer": "J2000",
+        "type": "uvw"
+      }
+    },
+    {
+      "name": "uvw_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "uvw_define_offset",
+      "method": "uvw",
+      "args": [
+        "J2000",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.16573867739413
+        },
+        "refer": "J2000",
+        "type": "uvw"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 336.7491648096547
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "J2000",
+          "type": "uvw"
+        },
+        "refer": "J2000",
+        "type": "uvw"
+      }
+    },
+    {
+      "name": "uvw_define_malformed",
+      "method": "uvw",
+      "args": [
+        "J2000",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.16573867739413
+        },
+        "refer": "J2000",
+        "type": "uvw"
+      }
+    },
+    {
+      "name": "uvw_define_mismatch",
+      "method": "uvw",
+      "args": [
+        "J2000",
+        "100m",
+        "200m",
+        "300m",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "earthmagnetic_measure_same",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 2776.24973519497
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 489.52773349960444
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1026.0604299770062
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2762.4049820241944
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 491.47348666647383
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1025.327726589605
+        },
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      }
+    },
+    {
+      "name": "earthmagnetic_measure_cross",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 2776.24973519497
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 489.52773349960444
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1026.0604299770062
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "J2000",
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2780.2067490450268
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 386.39311548425576
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1022.1900138408594
+        },
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "refer": "J2000",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2780.2069590165834
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 386.3931473345384
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1022.1900936849902
+        },
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "refer": "J2000",
+        "type": "earthmagnetic"
+      },
+      "rotation_controls": [
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 2793.968642599942
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 383.9242913184071
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1022.9075955397982
+          },
+          "refer": "J2000",
+          "type": "earthmagnetic"
+        },
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 13.761893554915194
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -2.4688241658486785
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7175816989388147
+          },
+          "refer": "J2000",
+          "type": "earthmagnetic"
+        }
+      ]
+    },
+    {
+      "name": "earthmagnetic_measure_nested",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 2776.24973519497
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 489.52773349960444
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1026.0604299770062
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic",
+          "offset": {
+            "m0": {
+              "unit": "nT",
+              "value": 13.844753170775865
+            },
+            "m1": {
+              "unit": "nT",
+              "value": -1.9457531668694206
+            },
+            "m2": {
+              "unit": "nT",
+              "value": 0.7327033874012137
+            },
+            "refer": "ITRF",
+            "type": "earthmagnetic"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2748.5602288534183
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 493.4192398333433
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1024.5950232022037
+        },
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "offset": {
+            "m0": {
+              "unit": "nT",
+              "value": 13.844753170775865
+            },
+            "m1": {
+              "unit": "nT",
+              "value": -1.9457531668694206
+            },
+            "m2": {
+              "unit": "nT",
+              "value": 0.7327033874012137
+            },
+            "refer": "ITRF",
+            "type": "earthmagnetic"
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      }
+    },
+    {
+      "name": "earthmagnetic_measure_vector",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "nT",
+            "value": [
+              2776.24973519497,
+              3053.8747087144675
+            ]
+          },
+          "m1": {
+            "unit": "nT",
+            "value": [
+              489.52773349960444,
+              538.4805068495649
+            ]
+          },
+          "m2": {
+            "unit": "nT",
+            "value": [
+              1026.0604299770062,
+              1128.666472974707
+            ]
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "nT",
+            "value": [
+              13.844753170775865,
+              15.229228487853453
+            ]
+          },
+          "m1": {
+            "unit": "nT",
+            "value": [
+              -1.9457531668694206,
+              -2.1403284835563627
+            ]
+          },
+          "m2": {
+            "unit": "nT",
+            "value": [
+              0.7327033874012137,
+              0.8059737261413351
+            ]
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": [
+            2762.4049820241944,
+            3040.029955543692
+          ]
+        },
+        "m1": {
+          "unit": "nT",
+          "value": [
+            491.47348666647383,
+            540.4262600164343
+          ]
+        },
+        "m2": {
+          "unit": "nT",
+          "value": [
+            1025.327726589605,
+            1127.9337695873057
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      }
+    },
+    {
+      "name": "earthmagnetic_measure_both",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 2776.24973519497
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 489.52773349960444
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1026.0604299770062
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic",
+          "offset": {
+            "m0": {
+              "unit": "nT",
+              "value": 13.844753170775865
+            },
+            "m1": {
+              "unit": "nT",
+              "value": -1.9457531668694206
+            },
+            "m2": {
+              "unit": "nT",
+              "value": 0.7327033874012137
+            },
+            "refer": "ITRF",
+            "type": "earthmagnetic"
+          }
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2776.24973519497
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 489.52773349960444
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1026.0604299770062
+        },
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      }
+    },
+    {
+      "name": "earthmagnetic_measure_malformed",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 2776.24973519497
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 489.52773349960444
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1026.0604299770062
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2776.24973519497
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 489.52773349960444
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1026.0604299770062
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      }
+    },
+    {
+      "name": "earthmagnetic_measure_mismatch",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 2776.24973519497
+          },
+          "m1": {
+            "unit": "nT",
+            "value": 489.52773349960444
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 1026.0604299770062
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "ITRF",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "earthmagnetic_define_offset",
+      "method": "earthmagnetic",
+      "args": [
+        "ITRF",
+        "3000nT",
+        "10deg",
+        "20deg",
+        {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497349925752e-06
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 4.895277334604486e-07
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.0260604299539011e-06
+        },
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2776.24973519497
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 489.52773349960444
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1026.0604299770062
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic",
+        "offset": {
+          "m0": {
+            "unit": "nT",
+            "value": 13.844753170775865
+          },
+          "m1": {
+            "unit": "nT",
+            "value": -1.9457531668694206
+          },
+          "m2": {
+            "unit": "nT",
+            "value": 0.7327033874012137
+          },
+          "refer": "ITRF",
+          "type": "earthmagnetic"
+        }
+      }
+    },
+    {
+      "name": "earthmagnetic_define_malformed",
+      "method": "earthmagnetic",
+      "args": [
+        "ITRF",
+        "3000nT",
+        "10deg",
+        "20deg",
+        {
+          "m0": {
+            "unit": "m",
+            "value": 1.0
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2.7762497351949703e-06
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 4.895277334996044e-07
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1.026060429977006e-06
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "nT",
+          "value": 2776.24973519497
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 489.52773349960444
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 1026.0604299770062
+        },
+        "refer": "ITRF",
+        "type": "earthmagnetic"
+      }
+    },
+    {
+      "name": "earthmagnetic_define_mismatch",
+      "method": "earthmagnetic",
+      "args": [
+        "ITRF",
+        "3000nT",
+        "10deg",
+        "20deg",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "epoch_define_R_UTC",
+      "method": "epoch",
+      "args": [
+        "R_UTC",
+        "2011/01/03/17:00:00"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.0
+        },
+        "refer": "R_UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_R_UTC",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "R_UTC"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "refer": "R_UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_define_R_LAST",
+      "method": "epoch",
+      "args": [
+        "R_LAST",
+        "2011/01/03/17:00:00"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.0
+        },
+        "refer": "R_LAST",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_R_LAST",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "R_LAST"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 62288.80615949377
+        },
+        "refer": "R_LAST",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_define_r_tai",
+      "method": "epoch",
+      "args": [
+        "r_tai",
+        "2011/01/03/17:00:00"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.0
+        },
+        "refer": "R_TAI",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_r_tai",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "r_tai"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.70872685185
+        },
+        "refer": "R_TAI",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_define_R_INVALID",
+      "method": "epoch",
+      "args": [
+        "R_INVALID",
+        "2011/01/03/17:00:00"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_measure_R_INVALID",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "R_INVALID"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_raze_on_input",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "R_UTC",
+          "type": "epoch"
+        },
+        "LAST"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 62288.0
+        },
+        "refer": "LAST",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "epoch_raze_same_reference",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "R_UTC",
+          "type": "epoch"
+        },
+        "R_UTC"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.0
+        },
+        "refer": "R_UTC",
+        "type": "epoch"
+      }
+    },
+    {
+      "name": "dirshow_epoch",
+      "method": "dirshow",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "result": "Epoch: 55564::17:00:00.0000  UTC"
+    },
+    {
+      "name": "dirshow_epoch_raze",
+      "method": "dirshow",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.0
+          },
+          "refer": "R_LAST",
+          "type": "epoch"
+        }
+      ],
+      "result": "Epoch: 55564::00:00:00.0000  R_LAST"
+    },
+    {
+      "name": "dirshow_position",
+      "method": "dirshow",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "result": "Position: [100, 200, 300]  ITRF"
+    },
+    {
+      "name": "dirshow_geodetic_position",
+      "method": "dirshow",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.2967059728390361
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.6981317007977319
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5060.999999999999
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "result": "Position: [3707.55, 1133.51, -3253.15]  WGS84"
+    },
+    {
+      "name": "dirshow_frequency",
+      "method": "dirshow",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "REST",
+          "type": "frequency"
+        }
+      ],
+      "result": "Frequency: 1e+09  REST"
+    },
+    {
+      "name": "dirshow_frequency_with_offset",
+      "method": "dirshow",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "Hz",
+              "value": 1000000.0
+            },
+            "refer": "BARY",
+            "type": "frequency"
+          },
+          "refer": "BARY",
+          "type": "frequency"
+        }
+      ],
+      "result": "Frequency: 1e+09  BARY"
+    },
+    {
+      "name": "position_vector_cartesian",
+      "method": "position",
+      "args": [
+        "ITRF",
+        {
+          "unit": "m",
+          "value": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            200.0,
+            100.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": [
+            1.1071487177940904,
+            0.4636476090008061
+          ]
+        },
+        "m1": {
+          "unit": "rad",
+          "value": [
+            0.9302740141154722,
+            1.0610566479633898
+          ]
+        },
+        "m2": {
+          "unit": "m",
+          "value": [
+            374.16573867739413,
+            458.257569495584
+          ]
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_vector_with_offset",
+      "method": "position",
+      "args": [
+        "ITRF",
+        {
+          "unit": "m",
+          "value": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            200.0,
+            100.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": [
+            1.1071487177940904,
+            0.39852244566642026
+          ]
+        },
+        "m1": {
+          "unit": "rad",
+          "value": [
+            0.9302740141154722,
+            1.0624600774992305
+          ]
+        },
+        "m2": {
+          "unit": "m",
+          "value": [
+            336.7491648096547,
+            423.5563716909474
+          ]
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.930274014115472
+          },
+          "m2": {
+            "unit": "m",
+            "value": 37.416573867739416
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_vector_length_first",
+      "method": "position",
+      "args": [
+        "ITRF",
+        {
+          "unit": "m",
+          "value": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "unit": "deg",
+          "value": [
+            2.0,
+            12.0
+          ]
+        },
+        {
+          "unit": "deg",
+          "value": [
+            16.0,
+            35.0
+          ]
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": [
+            0.034906585039886584,
+            0.20943951023931956
+          ]
+        },
+        "m1": {
+          "unit": "rad",
+          "value": [
+            0.27925268031909267,
+            0.6108652381980153
+          ]
+        },
+        "m2": {
+          "unit": "m",
+          "value": [
+            100.00000000000001,
+            200.0
+          ]
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_vector_angle_first",
+      "method": "position",
+      "args": [
+        "ITRF",
+        {
+          "unit": "deg",
+          "value": [
+            2.0,
+            12.0
+          ]
+        },
+        {
+          "unit": "deg",
+          "value": [
+            16.0,
+            35.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            100.0,
+            200.0
+          ]
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": [
+            0.034906585039886584,
+            0.20943951023931956
+          ]
+        },
+        "m1": {
+          "unit": "rad",
+          "value": [
+            0.27925268031909267,
+            0.6108652381980153
+          ]
+        },
+        "m2": {
+          "unit": "m",
+          "value": [
+            100.00000000000001,
+            200.0
+          ]
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_vector_one",
+      "method": "position",
+      "args": [
+        "ITRF",
+        {
+          "unit": "m",
+          "value": [
+            100.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            200.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            300.0
+          ]
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.16573867739413
+        },
+        "refer": "ITRF",
+        "type": "position"
+      }
+    },
+    {
+      "name": "position_vector_mismatch",
+      "method": "position",
+      "args": [
+        "ITRF",
+        {
+          "unit": "m",
+          "value": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            200.0
+          ]
+        },
+        {
+          "unit": "m",
+          "value": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "result": {}
+    },
+    {
+      "name": "separation_same_reference_offset",
+      "method": "separation",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.3839724354387525
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.13962634015954636
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 30.388763233662132
+      }
+    },
+    {
+      "name": "separation_cross_reference_offset",
+      "method": "separation",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.2792526803190927
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.3490658503988659
+          },
+          "refer": "ICRS",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.820304748437335
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.4363323129985824
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          }
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 47.951768272989725
+      }
+    },
+    {
+      "name": "separation_vector_first",
+      "method": "separation",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              0.17453292519943295,
+              0.19198621771937627
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.3490658503988659,
+              0.38397243543875254
+            ]
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.3839724354387525
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.13962634015954636
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 30.388763233662132
+      }
+    },
+    {
+      "name": "separation_solar_system",
+      "method": "separation",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "MOON",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.3839724354387525
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.13962634015954636
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 101.91613365753153
+      }
+    },
+    {
+      "name": "separation_two_models",
+      "method": "separation",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "SUN",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "MOON",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 7.910889490665187
+      }
+    },
+    {
+      "name": "posangle_same_reference_offset",
+      "method": "posangle",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.3839724354387525
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.13962634015954636
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 155.98330605921697
+      }
+    },
+    {
+      "name": "posangle_cross_reference_offset",
+      "method": "posangle",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.2792526803190927
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.3490658503988659
+          },
+          "refer": "ICRS",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.820304748437335
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.4363323129985824
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          }
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 153.40656125263052
+      }
+    },
+    {
+      "name": "posangle_vector_first",
+      "method": "posangle",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              0.17453292519943295,
+              0.19198621771937627
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.3490658503988659,
+              0.38397243543875254
+            ]
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.3839724354387525
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.13962634015954636
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 155.98330605921697
+      }
+    },
+    {
+      "name": "posangle_solar_system",
+      "method": "posangle",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "MOON",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.3839724354387525
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.13962634015954636
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": 104.1731078754936
+      }
+    },
+    {
+      "name": "posangle_two_models",
+      "method": "posangle",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "SUN",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "MOON",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "unit": "deg",
+        "value": -93.96627602487062
+      }
+    },
+    {
+      "name": "source_with_offset",
+      "method": "source",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.10471975511965978
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "showframe_with_offsets",
+      "method": "showframe",
+      "args": [],
+      "result": "Frame: Epoch: 2::00:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [99, 180, 290]\n        (Longitude = 1.10715 Latitude = 0.930274)\n       Direction: [0.245053, -0.54034, 0.804973]\n        (J2000 = [-2.22991, 32.3192] deg)",
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.067953115867036
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.954471484036129
+          },
+          "m2": {
+            "unit": "m",
+            "value": 355.3885197920721
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.5208379310729538
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.4631484200296635
+            },
+            "m2": {
+              "unit": "m",
+              "value": 22.38302928559939
+            },
+            "refer": "ITRF",
+            "type": "position"
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 2.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "d",
+              "value": 55562.708333333336
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1450229528021967
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9356299822857078
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "name": "epoch_offset_absolute",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 2.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "d",
+              "value": 55562.708333333336
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "UTC"
+      ],
+      "result": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      },
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.067953115867036
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.954471484036129
+          },
+          "m2": {
+            "unit": "m",
+            "value": 355.3885197920721
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.5208379310729538
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.4631484200296635
+            },
+            "m2": {
+              "unit": "m",
+              "value": 22.38302928559939
+            },
+            "refer": "ITRF",
+            "type": "position"
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 2.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "d",
+              "value": 55562.708333333336
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1450229528021967
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9356299822857078
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "name": "frequency_with_frame_offsets",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 1000000000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "BARY"
+      ],
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000020552.6239818
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      },
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.067953115867036
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.954471484036129
+          },
+          "m2": {
+            "unit": "m",
+            "value": 355.3885197920721
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.5208379310729538
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.4631484200296635
+            },
+            "m2": {
+              "unit": "m",
+              "value": 22.38302928559939
+            },
+            "refer": "ITRF",
+            "type": "position"
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 2.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "d",
+              "value": 55562.708333333336
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1450229528021967
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9356299822857078
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "name": "ambient_direction_with_frame_offsets",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "APP",
+          "type": "direction"
+        },
+        "J2000"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17192616498557767
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.34795261115989295
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.067953115867036
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.954471484036129
+          },
+          "m2": {
+            "unit": "m",
+            "value": 355.3885197920721
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 1.5208379310729538
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.4631484200296635
+            },
+            "m2": {
+              "unit": "m",
+              "value": 22.38302928559939
+            },
+            "refer": "ITRF",
+            "type": "position"
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 2.0
+          },
+          "offset": {
+            "m0": {
+              "unit": "d",
+              "value": 55562.708333333336
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1450229528021967
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9356299822857078
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.10471975511965978
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "name": "showframe_with_vectors",
+      "method": "showframe",
+      "args": [],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [100, 200, 300]\n        (Longitude = 1.10715 Latitude = 0.930274)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": [
+              55564.708333333336,
+              61121.179166666676
+            ]
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1071487177940904,
+              1.2178635895734995
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.9302740141154722,
+              1.0233014155270195
+            ]
+          },
+          "m2": {
+            "unit": "m",
+            "value": [
+              374.16573867739413,
+              411.58231254513356
+            ]
+          },
+          "refer": "ITRF",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              0.17453292519943295,
+              0.19198621771937627
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.3490658503988659,
+              0.38397243543875254
+            ]
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ]
+    }
+  ]
+}
