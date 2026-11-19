@@ -97,17 +97,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (mask = None, name = None, asdefault = None), text_signature = "($self, mask='', name='', asdefault=True)")]
-    fn calcmask(
-        &self,
-        mask: Option<&Bound<'_, PyAny>>,
-        name: Option<&Bound<'_, PyAny>>,
-        asdefault: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("calcmask")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (function = None, axes = None, outfile = None, region = None, r#box = None, chans = None, stokes = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, function='', axes=[], outfile='', region='', box='', chans='', stokes='', mask='', overwrite=False, stretch=False)")]
     fn collapse(
         &self,

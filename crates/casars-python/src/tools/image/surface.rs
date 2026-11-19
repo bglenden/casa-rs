@@ -108,7 +108,7 @@ const METHODS: &[Method] = &[
             param("asdefault", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("close", &[], R::Any, Yes),
     method(

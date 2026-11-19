@@ -261,28 +261,6 @@ struct Lexer<'s> {
     pos: usize,
 }
 
-/// Image references in the lexical order used by the expression parser.
-pub(crate) fn lattice_image_names(expr: &str) -> Result<Vec<String>, ExprParseError> {
-    let mut lexer = Lexer::new(expr);
-    let mut token = lexer.next_token()?.0;
-    let mut names = Vec::new();
-    while token != Token::Eof {
-        let next = lexer.next_token()?.0;
-        let name = match token {
-            Token::QuotedPath(name) => Some(name),
-            Token::Ident(name) if next != Token::LParen => Some(name),
-            _ => None,
-        };
-        if let Some(name) = name
-            && !names.contains(&name)
-        {
-            names.push(name);
-        }
-        token = next;
-    }
-    Ok(names)
-}
-
 impl<'s> Lexer<'s> {
     fn new(src: &'s str) -> Self {
         Self { src, pos: 0 }
@@ -542,6 +520,36 @@ impl<'s> Lexer<'s> {
     }
 }
 
+/// Returns the image operands in a lattice expression, in first-use order.
+///
+/// Both bare and quoted image names are included. Function names and CASA
+/// Boolean literals are excluded.
+///
+/// # Errors
+/// Returns a tokenizer error if the expression is lexically invalid.
+pub fn referenced_images(expression: &str) -> Result<Vec<String>, ExprParseError> {
+    let mut lexer = Lexer::new(expression);
+    let mut current = lexer.next_token()?.0;
+    let mut names = Vec::new();
+    while current != Token::Eof {
+        let next = lexer.next_token()?.0;
+        let name = match current {
+            Token::QuotedPath(name) => Some(name),
+            Token::Ident(name) if !matches!(name.as_str(), "T" | "F") && next != Token::LParen => {
+                Some(name)
+            }
+            _ => None,
+        };
+        if let Some(name) = name
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+        current = next;
+    }
+    Ok(names)
+}
+
 // ---------------------------------------------------------------------------
 // Parser intermediate representation
 // ---------------------------------------------------------------------------
@@ -782,14 +790,19 @@ where
             self.advance()?;
             let right = self.parse_add_expr()?;
 
-            // At least one side must be a numeric expression (not bare scalar
-            // without shape context).
             match (&left, &right) {
-                (ExprNode::Scalar(_), ExprNode::Scalar(_)) => {
-                    return Err(ExprParseError {
-                        message: "comparison between two scalars has no image shape context".into(),
-                        position: pos,
-                    });
+                (ExprNode::Scalar(lhs), ExprNode::Scalar(rhs)) => {
+                    let value = match op {
+                        ImageExprCompareOp::GreaterThan => lhs > rhs,
+                        ImageExprCompareOp::LessThan => lhs < rhs,
+                        ImageExprCompareOp::GreaterEqual => lhs >= rhs,
+                        ImageExprCompareOp::LessEqual => lhs <= rhs,
+                        ImageExprCompareOp::Equal => lhs == rhs,
+                        ImageExprCompareOp::NotEqual => lhs != rhs,
+                    };
+                    return Ok(ExprNode::Mask(MaskExprBuilder::from_constant(
+                        ndarray::arr0(value).into_dyn(),
+                    )));
                 }
                 (ExprNode::Numeric(img), ExprNode::Scalar(s)) => {
                     let mask = (**img)
@@ -898,18 +911,16 @@ where
         if let Token::Ident(name) = self.current.clone() {
             let pos = self.current_pos;
             // Check if this is a function call (ident followed by '(')
-            let saved_pos = self.lexer.pos;
-            let saved_current_pos = self.current_pos;
             self.advance()?;
             if self.current == Token::LParen {
                 return self.parse_function_call(&name, pos);
             }
-            // Not a function call — treat as image reference
-            // (we already advanced past the ident, so the current token is
-            // whatever follows it)
-            // Restore? No — we consumed the ident, and current is now the
-            // next token.  We need to resolve the ident as an image name.
-            let _ = (saved_pos, saved_current_pos);
+            if matches!(name.as_str(), "T" | "F") {
+                let value = name == "T";
+                return Ok(ExprNode::Mask(MaskExprBuilder::from_constant(
+                    ndarray::arr0(value).into_dyn(),
+                )));
+            }
             return self.resolve_image(&name, pos);
         }
         self.parse_primary()

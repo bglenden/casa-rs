@@ -11,7 +11,7 @@ use casa_lattices::{Lattice, LatticeError};
 use casa_types::{ArrayD, Complex32, Complex64, RecordValue};
 
 use crate::analysis::mask_error_wording;
-use crate::expr_parser::{ExprValueConvert, HashMapResolver, lattice_image_names, parse_mask_expr};
+use crate::expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr, referenced_images};
 use crate::image_expr::ImageExprValue;
 use crate::image_expr_lel::can_broadcast_to;
 use crate::{
@@ -153,7 +153,7 @@ pub(super) fn evaluate_subimage_mask(
         // Unquoted path:maskname expression in top-level `mask=` parameter.
         expr = format!("mask(\"{raw}\")");
     }
-    let ref_names = lattice_image_names(&expr).map_err(mask_parse_error)?;
+    let ref_names = referenced_images(&expr).map_err(mask_parse_error)?;
 
     let mut opened: Vec<(String, NamedMaskImage<f64>)> = Vec::with_capacity(ref_names.len());
     for name in &ref_names {
