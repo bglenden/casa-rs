@@ -71,6 +71,19 @@ pub struct TableWriteLock {
 }
 
 impl TableWriteLock {
+    /// Whether another process still has the table open, even without a
+    /// read or write lock. Check this before removing a locked table.
+    pub fn is_multi_used(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.lock_file.as_ref().is_some_and(LockFile::is_multi_used)
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
     /// Take the write lock on the table at `table_dir`.
     ///
     /// `nattempts` has the meaning of [`Table::lock`](crate::Table::lock): 1 tries once without

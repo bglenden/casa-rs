@@ -19,6 +19,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [FITS import of an empty primary HDU](#fits-import-can-abort-on-an-empty-primary-hdu),
 [restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
@@ -7260,3 +7261,19 @@ Linux build.
 
 The native tasks keep the original visibility column and its weights in
 these sparse layouts (#1614).
+
+## Image removal can delete an open table through a symbolic link
+
+In CASA 6.7.6.14, open a native image by its table path with `table.open()`.
+`image.removefile()` refuses to delete that path while the table is open.
+Calling it with a symbolic link to the same path can succeed and remove both
+the link and the table. The open table handle then refers to a deleted table.
+
+casa-rs resolves aliases before checking whether the table is in use and
+preserves both names when it refuses removal. After the last handle closes,
+removing through the link deletes the link and table as CASA does. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+When `table.open()` holds the native image's `logtable`, CASA can also remove
+the parent image and its log. casa-rs checks live subtables before deleting
+the image.
