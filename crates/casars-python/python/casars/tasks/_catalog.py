@@ -1437,6 +1437,63 @@ def listcal(
     """
     return _call_casa(listcal, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal')
+def plotbandpass(
+    caltable: str = '',
+    antenna: str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...] = '',
+    field: str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...] = '',
+    spw: str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...] = '',
+    yaxis: str = 'amp',
+    xaxis: str = 'chan',
+    figfile: str = '',
+    plotrange: float | list[float] | tuple[float, ...] = [0.0, 0.0, 0.0, 0.0],
+    caltable2: str = '',
+    overlay: str = '',
+    showflagged: bool = False,
+    timeranges: str = '',
+    buildpdf: bool = False,
+    caltable3: str = '',
+    markersize: int = 3,
+    density: int = 108,
+    interactive: bool = True,
+    showpoints: str | bool = 'auto',
+    showlines: str | bool = 'auto',
+    subplot: str | int = '22',
+    zoom: str = '',
+    poln: list[str] | tuple[str, ...] | str = '',
+    showatm: bool = False,
+    pwv: float | str = 'auto',
+    gs: str = 'gs',
+    convert: str = 'convert',
+    chanrange: str | list[int] | tuple[int, ...] = '',
+    solutionTimeThresholdSeconds: float = 30.0,
+    debug: bool = False,
+    phase: list[int] | tuple[int, ...] | str = '',
+    vis: str = '',
+    showtsky: bool = False,
+    showfdm: bool = False,
+    showatmfield: int | str = '',
+    lo1: str | float = '',
+    showimage: bool = False,
+    showatmpoints: bool = False,
+    parentms: str = '',
+    pdftk: str = 'pdftk',
+    channeldiff: bool | float = False,
+    edge: int = 8,
+    resample: int = 1,
+    platformingThreshold: float = 10.0,
+    platformingSigma: float = 10.0,
+    basebands: int | str | list[int] | tuple[int, ...] = '',
+    showBasebandNumber: bool = False,
+    scans: int | str | list[int] | tuple[int, ...] = '',
+    figfileSequential: bool = False,
+    chanrangeSetXrange: bool = False,
+) -> Any:
+    """Plot calibration spectra and channel derivatives.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal']
+    CASA's ``plotbandpass``: its parameters, defaults and return value.
+    """
+    return _call_casa(plotbandpass, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass']

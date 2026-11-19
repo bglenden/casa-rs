@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "oracle": "Installed CASA Python task and Matplotlib artists",
+  "casa_version": "6.7.6.14",
+  "execution_date": "2026-11-19",
+  "revision": "e2e135fcea72b6295a72e238e22ab914d31e6a00",
+  "plotbandpass": {
+    "command": "CASARS_CALIBRATE_BIN=<calibrate> PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotbandpass_oracle.py",
+    "scope": "CASA 6.7.6.14 plots and return values, including selected arrays, axes, titles, companion time grids, physical receptor labels, masking, overlay colors and legends, paging, PNG filenames, PDFs, measured water, wide atmospheric grids and split receivers.",
+    "result": "passed",
+    "plot_cases": 41,
+    "terminal_cases": 7,
+    "argument_cases": 24,
+    "matched_panels": 76,
+    "pages_in_each_pdf": 2,
+    "platforming_thresholds": 2,
+    "scientific_limit": "Checks numerical axes and curves, titles, panel count, labels, colors, legend placement and PDF page counts.",
+    "missing_weather_cases": 1
+  }
+}

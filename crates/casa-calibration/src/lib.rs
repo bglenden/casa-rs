@@ -45,6 +45,7 @@ mod output;
 mod output_merge;
 mod paths;
 mod plan;
+mod plotbandpass;
 mod plots;
 mod rerefant;
 mod selected_data;

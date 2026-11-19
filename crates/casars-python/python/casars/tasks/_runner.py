@@ -10,7 +10,7 @@ stdout says how it ended. A Python task call neither loads nor saves Last.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import functools
 from http import HTTPStatus
 import inspect
@@ -240,6 +240,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_getantposalma(values)
     if name == "initweights":
         return _call_initweights(values)
+    if name == "plotbandpass":
+        return _call_plotbandpass(values, arguments)
     if name == "plotweather":
         return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
@@ -288,6 +290,49 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_plotbandpass(values, arguments):
+    from json import loads
+    from ._bandpass_arguments import normalize
+
+    caltable = arguments["caltable"]
+    if caltable is None:
+        raise AssertionError("{'caltable': ['null value not allowed']}")
+    if not isinstance(caltable, str):
+        raise AssertionError(f"the caltable parameter must be a path that exists ('{caltable}' does not exist)")
+    _validate_required_path(values, "caltable", caltable, search_data=True)
+    normalize(values, arguments)
+    try:
+        completion = run("plotbandpass", **values)
+    except TaskExecutionError as error:
+        message = error.completion.message
+        exceptions = {
+            "name 'resampleSolution' is not defined": NameError,
+            "cannot access local variable 'mytime' where it is not associated with a value": UnboundLocalError,
+            "expected string or bytes-like object, got 'float'": TypeError,
+            "unsupported operand type(s) for //=: 'str' and 'int'": TypeError,
+        }
+        if message is not None and message.startswith("invalid literal for int()"):
+            raise ValueError(message) from error
+        if message in exceptions:
+            raise exceptions[message](message) from error
+        raise
+    if completion.value is not None:
+        return _bandpass_statistics(completion.value)
+    return () if loads(completion.stdout)["result"]["empty_tuple"] else None
+
+
+def _bandpass_statistics(value):
+    import numpy as np
+
+    if isinstance(value, dict):
+        return {key: _bandpass_statistics(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_bandpass_statistics(item) for item in value]
+    if isinstance(value, float):
+        return np.float64(value)
+    return value
 
 
 def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
@@ -652,7 +697,10 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
     return _execute_task(task, resolved, workspace, None)
 
 
-def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None) -> TaskCompletion:
+def _execute_task(
+    task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None,
+    *, bandpass_completed_pages: int | None = None,
+) -> TaskCompletion:
     invocation = resolved.provider_invocation()
     executable = _task_executable(task)
     command = (executable, *invocation.args)
@@ -664,6 +712,10 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         environment.pop("CASARS_PLOT_PAYLOAD", None)
     if payload is not None:
         environment["CASARS_PLOT_PAYLOAD"] = str(payload)
+    if task == "plotbandpass":
+        environment.pop("CASARS_BANDPASS_COMPLETED_PAGES", None)
+        if bandpass_completed_pages is not None:
+            environment["CASARS_BANDPASS_COMPLETED_PAGES"] = str(bandpass_completed_pages)
     try:
         # The task runs in its own session, so a terminal's Ctrl-C reaches
         # Python alone, which passes it on once, in a terminal as in a
@@ -733,6 +785,17 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         raise TaskParameterError(completion)
     if not completion.successful:
         raise TaskExecutionError(completion)
+    if task == "plotbandpass" and bandpass_completed_pages is None:
+        from json import loads
+        from ._bandpass_plot import render_bandpass
+
+        reply = loads(stdout)["result"]
+        completed, immediate = render_bandpass(reply, workspace)
+        if immediate:
+            return replace(completion, value=None)
+        if completion.value is not None and completed < len(reply["pages"]):
+            partial = _execute_task(task, resolved, workspace, payload, bandpass_completed_pages=completed)
+            return replace(completion, value=partial.value)
     return completion
 
 
