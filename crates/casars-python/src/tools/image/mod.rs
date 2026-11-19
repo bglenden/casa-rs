@@ -23,6 +23,7 @@ mod point;
 mod records;
 mod region_read;
 mod serialization;
+mod statistics;
 mod stubs;
 pub(crate) mod surface;
 

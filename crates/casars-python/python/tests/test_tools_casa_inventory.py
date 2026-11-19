@@ -34,6 +34,7 @@ IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["coordsys"] = {"done", "referencepixel", "setreferencepixel", "torecord", "type"}
 IMPLEMENTED["image"] = {
+    "statistics",
     "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fromarray", "fromfits", "fromshape",
     "getchunk", "getregion", "haslock", "history", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
