@@ -45,7 +45,7 @@ use casa_numerics::solve_weighted_least_squares;
 mod extend;
 mod summary;
 mod version_backup;
-pub use summary::{FlagCounts, FlagSummaryBreakdown};
+pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{save_next_flag_backup, save_next_partition_flag_backup};
 
 const FLAG_COLUMN: &str = "FLAG";
@@ -134,6 +134,8 @@ pub struct FlagDataRequest {
     pub data_column: FlagDataColumn,
     /// Create a `flagdata_N` backup before mutating flags.
     pub flagbackup: bool,
+    /// Optional breakdowns for summary mode.
+    pub summary_options: FlagSummaryOptions,
     /// Clip exact zeros in [`FlagDataMode::Clip`].
     pub clipzeros: bool,
     /// Quack interval in seconds.
@@ -183,6 +185,7 @@ impl Default for FlagDataRequest {
             action: FlagDataAction::Flag,
             data_column: FlagDataColumn::Data,
             flagbackup: true,
+            summary_options: FlagSummaryOptions::default(),
             clipzeros: false,
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
@@ -345,7 +348,12 @@ pub fn flagdata(
     }
 
     if request.mode == FlagDataMode::Summary {
-        return summary::report(ms, &selected_rows, channel_selections.as_ref());
+        return summary::report(
+            ms,
+            &selected_rows,
+            channel_selections.as_ref(),
+            request.summary_options,
+        );
     }
 
     let backup_version = if request.flagbackup && !selected_rows.is_empty() {

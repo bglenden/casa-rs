@@ -22754,8 +22754,7 @@
             "provider": {"field": "spwchan"},
             "python": {"name": "spwchan"},
             "presentation": {"label": "SPW Channels", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "spwcorr",
@@ -22769,8 +22768,7 @@
             "provider": {"field": "spwcorr"},
             "python": {"name": "spwcorr"},
             "presentation": {"label": "SPW Correlations", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "basecnt",
@@ -22814,8 +22812,7 @@
             "provider": {"field": "name"},
             "python": {"name": "name"},
             "presentation": {"label": "Name", "group": "Summary", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "summary"}}}
+          }
         },
         {
           "name": "display",
