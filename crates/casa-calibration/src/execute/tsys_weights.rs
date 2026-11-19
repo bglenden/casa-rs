@@ -80,6 +80,16 @@ impl TsysPlan {
         )
     }
 
+    pub(crate) fn row_shapes(&self) -> impl Iterator<Item = [usize; 2]> + '_ {
+        self.plan.selected_rows.iter().map(|row| {
+            [
+                self.correlations[&row.data_desc_id].len(),
+                window(&self.plan.measurement_set_spectral_windows, row.data_spw_id).num_chan
+                    as usize,
+            ]
+        })
+    }
+
     pub(crate) fn values(
         &self,
         index: usize,

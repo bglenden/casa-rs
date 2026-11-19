@@ -4736,11 +4736,20 @@ fn save_tiled_shape_group_rows_sparse_in_place(
         std::collections::BTreeMap::new();
     for &row_idx in changed_rows {
         let interval = row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
-            continue;
-        }
-        let cube_idx = cube_map[interval] as usize;
+        let cube_idx = if interval < n_intervals {
+            cube_map[interval] as usize
+        } else {
+            0
+        };
         if cube_idx == 0 || cube_idx >= header.cubes.len() {
+            // A tile patch cannot define a cell without an existing cube.
+            // The caller rebuilds the manager and its row map in that case.
+            if sparse_columns.iter().flatten().any(|rows| {
+                rows.binary_search_by_key(&row_idx, |(row, _)| *row)
+                    .is_ok_and(|index| rows[index].1.is_some())
+            }) {
+                return Ok(false);
+            }
             continue;
         }
         let diff = row_map[interval] as usize - row_idx;
@@ -4901,11 +4910,15 @@ fn save_single_column_tiled_shape_rows_in_place(
             continue;
         }
         let interval = row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
-            continue;
-        }
-        let cube_idx = cube_map[interval] as usize;
+        let cube_idx = if interval < n_intervals {
+            cube_map[interval] as usize
+        } else {
+            0
+        };
         if cube_idx == 0 || cube_idx >= header.cubes.len() {
+            if values[row_idx].is_some() {
+                return Ok(false);
+            }
             continue;
         }
         let diff = row_map[interval] as usize - row_idx;

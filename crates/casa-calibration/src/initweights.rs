@@ -2,11 +2,14 @@
 //! Initialize the MeasurementSet's visibility weights without loading visibilities.
 
 use casa_ms::{MeasurementSet, MsError, MsResult};
-use casa_tables::{ColumnSchema, RequiredScalarColumnValues, Table, TableWriteLock};
-use casa_types::{ArrayValue, PrimitiveType, Value};
+use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
+use casa_types::{ArrayValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::{ApplyCalibrationTableSpec, execute::tsys_weights::TsysPlan};
+
+mod spectra;
+use spectra::NewSpectra;
 
 const WEIGHT_SPECTRUM: &str = "WEIGHT_SPECTRUM";
 const SIGMA_SPECTRUM: &str = "SIGMA_SPECTRUM";
@@ -62,10 +65,12 @@ pub(crate) fn initialize(
     let layout = Layout::read(ms, mode)?;
     let main = ms.main_table_mut();
     remove_column(main, mode.removed_column(), lock)?;
-    if spectrum {
-        ensure_spectrum(main, WEIGHT_SPECTRUM, lock)?;
-    }
     let columns = mode.written_columns(spectrum);
+    let shapes = layout.row_description.iter().map(|&index| {
+        let shape = &layout.descriptions[index];
+        [shape.correlations, shape.channels]
+    });
+    let mut spectra = NewSpectra::prepare(main, &columns, shapes)?;
     let bytes_per_row = layout
         .descriptions
         .iter()
@@ -78,10 +83,10 @@ pub(crate) fn initialize(
     while start < main.row_count() {
         let end = (start + batch_rows).min(main.row_count());
         let rows: Vec<_> = (start..end).collect();
-        write_batch(main, &rows, &layout, mode, &columns, lock)?;
+        write_batch(main, &rows, &layout, mode, &columns, &mut spectra, lock)?;
         start = end;
     }
-    Ok(())
+    spectra.publish(main, lock)
 }
 
 pub(crate) fn initialize_tsys(
@@ -96,23 +101,22 @@ pub(crate) fn initialize_tsys(
         .map_err(|error| MsError::InvalidInput(error.to_string()))?;
     let main = ms.main_table_mut();
     let columns = if spectrum {
-        ensure_spectrum(main, WEIGHT_SPECTRUM, lock)?;
-        ensure_spectrum(main, SIGMA_SPECTRUM, lock)?;
         &["WEIGHT", "SIGMA", WEIGHT_SPECTRUM, SIGMA_SPECTRUM][..]
     } else {
         remove_column(main, SIGMA_SPECTRUM, lock)?;
         &["WEIGHT", "SIGMA"][..]
     };
+    let mut spectra = NewSpectra::prepare(main, columns, plan.row_shapes())?;
     let (correlations, channels) = plan.max_cell_shape();
     let batch_rows = batch_size((1 + if spectrum { channels } else { 0 }) * correlations * 8);
     for start in (0..main.row_count()).step_by(batch_rows) {
         let rows: Vec<_> = (start..(start + batch_rows).min(main.row_count())).collect();
-        write_values(main, &rows, columns, lock, |_, row| {
+        write_values(main, &rows, columns, &mut spectra, lock, |_, row| {
             plan.values(row, spectrum)
                 .map_err(|error| MsError::InvalidInput(error.to_string()))
         })?;
     }
-    Ok(())
+    spectra.publish(main, lock)
 }
 
 fn batch_size(bytes_per_row: usize) -> usize {
@@ -123,26 +127,6 @@ fn has_column(table: &Table, name: &str) -> bool {
     table
         .schema()
         .is_some_and(|schema| schema.contains_column(name))
-}
-
-fn ensure_spectrum(table: &mut Table, name: &str, lock: &mut TableWriteLock) -> MsResult<()> {
-    if !has_column(table, name) {
-        let comment = if name == WEIGHT_SPECTRUM {
-            "weight spectrum"
-        } else {
-            "sigma spectrum"
-        };
-        lock.record_write();
-        table.add_column(
-            ColumnSchema::array_variable(name, PrimitiveType::Float32, Some(2))
-                .with_comment(comment),
-            None,
-        )?;
-        table
-            .prepare_write()
-            .add_tiled_shape_column(name, &[], None)?;
-    }
-    Ok(())
 }
 
 fn remove_column(table: &mut Table, name: &str, lock: &mut TableWriteLock) -> MsResult<()> {
@@ -276,7 +260,8 @@ fn write_batch(
     rows: &[usize],
     layout: &Layout,
     mode: Mode,
-    columns: &[&str],
+    columns: &[&'static str],
+    spectra: &mut NewSpectra,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     let inputs = match mode {
@@ -286,7 +271,7 @@ fn write_batch(
     }
     .map(|name| main.column_accessor(name)?.array_cells_owned_uncached(rows))
     .transpose()?;
-    write_values(main, rows, columns, lock, |index, row| {
+    write_values(main, rows, columns, spectra, lock, |index, row| {
         let shape = &layout.descriptions[layout.row_description[row]];
         let weights = if let Some(inputs) = &inputs {
             let Some(ArrayValue::Float32(cell)) = &inputs[index] else {
@@ -332,21 +317,38 @@ fn write_batch(
 fn write_values(
     main: &mut Table,
     rows: &[usize],
-    columns: &[&str],
+    columns: &[&'static str],
+    spectra: &mut NewSpectra,
     lock: &mut TableWriteLock,
     mut values: impl FnMut(usize, usize) -> MsResult<Vec<ArrayValue>>,
 ) -> MsResult<()> {
-    let mut writer = main.row_accessor_mut().prepare(columns)?;
+    let changed: Vec<_> = columns
+        .iter()
+        .copied()
+        .filter(|name| !spectra.contains(name))
+        .collect();
+    let mut writer = (!changed.is_empty())
+        .then(|| main.row_accessor_mut().prepare(&changed))
+        .transpose()?;
     for (index, &row) in rows.iter().enumerate() {
-        writer.seek(row)?;
-        for (slot, value) in values(index, row)?.into_iter().enumerate() {
+        if let Some(writer) = &mut writer {
+            writer.seek(row)?;
+        }
+        for (&name, value) in columns.iter().zip(values(index, row)?) {
+            if spectra.append(name, &value)? {
+                continue;
+            }
+            let writer = writer.as_mut().expect("output column has a table writer");
+            let slot = writer.column_index(name).expect("planned output column");
             writer.set_value_at(slot, Value::Array(value))?;
         }
     }
-    writer.flush()?;
-    drop(writer);
-    lock.record_write();
-    main.prepare_write().save_selected_rows(columns, rows)?;
-    main.discard_persisted_cell_updates(columns, rows);
+    if let Some(mut writer) = writer {
+        writer.flush()?;
+        drop(writer);
+        lock.record_write();
+        main.prepare_write().save_selected_rows(&changed, rows)?;
+        main.discard_persisted_cell_updates(&changed, rows);
+    }
     Ok(())
 }
