@@ -6,13 +6,8 @@ use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
 use casa_types::{ArrayValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
+use crate::weight_spectra::{NewSpectra, SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_column};
 use crate::{ApplyCalibrationTableSpec, execute::tsys_weights::TsysPlan};
-
-mod spectra;
-use spectra::NewSpectra;
-
-const WEIGHT_SPECTRUM: &str = "WEIGHT_SPECTRUM";
-const SIGMA_SPECTRUM: &str = "SIGMA_SPECTRUM";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
@@ -131,12 +126,6 @@ pub(crate) fn initialize_tsys(
 
 fn batch_size(bytes_per_row: usize) -> usize {
     (16 * 1024 * 1024 / bytes_per_row.max(1)).clamp(1, 65_536)
-}
-
-fn has_column(table: &Table, name: &str) -> bool {
-    table
-        .schema()
-        .is_some_and(|schema| schema.contains_column(name))
 }
 
 fn remove_column(table: &mut Table, name: &str, lock: &mut TableWriteLock) -> MsResult<()> {

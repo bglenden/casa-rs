@@ -6940,3 +6940,17 @@ reference calculation for real-valued parameters.
 
 casa-rs raises a task error for unsupported table types before publishing
 a result. The paired oracle runs this CASA check in a child process (#1525).
+## `statwt` creates spectra then fails on an explicitly selected subset
+
+CASA 6.7.6.14 initializes a required `WEIGHT_SPECTRUM` or `SIGMA_SPECTRUM`
+column for the original MS when `chanbin` requests channel bins. When the
+selected table predates the new column, CASA then raises a `RuntimeError`
+and asks the caller to rerun the selection. The first call writes the
+initial spectrum across the MS and leaves the original flags and scalar
+columns intact.
+
+casa-rs initializes the physical MAIN tables and subsequently applies
+statistical weights to the requested rows in one call. Unselected rows
+retain the spectrum obtained by expanding their original scalar values.
+The paired fixture compares this result with CASA's documented two-call
+sequence and checks unselected rows (#1524).

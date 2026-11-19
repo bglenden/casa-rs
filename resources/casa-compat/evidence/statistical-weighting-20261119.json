@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "oracle": "CASA and its casacore table reader",
+  "casa_version": "6.7.6.14",
+  "revision": "fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70",
+  "execution_date": "2026-11-19",
+  "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>",
+  "workflows": 62,
+  "large_case_rows": 122880,
+  "task_relative_tolerance": 2e-07,
+  "downstream_relative_tolerance": 0.001,
+  "sections": {
+    "selection": {
+      "scope": "Task and attached MS tool selection, preview, original flag versions, and selected row persistence across ordinary and partitioned MeasurementSets.",
+      "result": "CASA and native task and tool use matched row sets and read back the same columns and original flag backups."
+    },
+    "bins": {
+      "scope": "Elapsed duration and timestamp counts, block tails and sliding edge windows, independent channel bins and fit selections, scalar and spectral outputs, and absent or partially defined spectra.",
+      "result": "Paired summaries and persisted columns meet a 2e-7 relative tolerance. The selected-spectrum creation case follows the recorded decision."
+    },
+    "estimators": {
+      "scope": "Classical, Chauvenet, hinges and fences, and fit to half moments with exposure weighting, rejected samples, raw and corrected inputs, and scratch or virtual models.",
+      "result": "Matched robust and classical estimates, including non-finite output for otherwise eligible zero-exposure samples."
+    },
+    "downstream": {
+      "scope": "Weighted gain solutions and application with scalar or spectral initialization and either calwt value. Casacore readback also covers a 122,880-row spectral write.",
+      "result": "All four weighted solve and apply chains passed. CPARAM normalized RMS was below 4e-7, corrected visibilities below 5e-7, and weighted application below 8e-7. The 122,880-row spectral write agreed across the native batch boundary."
+    }
+  }
+}

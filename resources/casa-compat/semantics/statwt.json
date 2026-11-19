@@ -1,0 +1,377 @@
+{
+  "schema_version": 1,
+  "task": "statwt",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70",
+  "parameters": {
+    "vis": {
+      "scope": "Existing MeasurementSet and Multi-MS paths.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "selectdata": {
+      "scope": "Use the task row selectors, or use all rows when disabled.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "field": {
+      "scope": "Selected field names, IDs and expressions.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "spw": {
+      "scope": "Spectral window selection. The fit mask is controlled by fitspw.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "intent": {
+      "scope": "Observation intent and wildcard matching.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "array": {
+      "scope": "Array ID selection.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "observation": {
+      "scope": "Observation ID selection.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "scan": {
+      "scope": "Scan number selection.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "combine": {
+      "scope": "Correlation, scan, field and state combination switches.",
+      "evidence": [
+        "bins"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "bins"
+      ]
+    },
+    "timebin": {
+      "scope": "Timestamp counts and quantities with duration units.",
+      "evidence": [
+        "bins"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "bins"
+      ]
+    },
+    "slidetimebin": {
+      "scope": "Sliding windows and block processing, including incomplete edge bins.",
+      "evidence": [
+        "bins"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "bins"
+      ]
+    },
+    "chanbin": {
+      "scope": "Whole spectral windows, channel counts, and frequency quantities.",
+      "evidence": [
+        "bins"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "bins"
+      ]
+    },
+    "minsamp": {
+      "scope": "Minimum number of unflagged samples in each fitted bin.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    },
+    "statalg": {
+      "scope": "Classical, Chauvenet, fit-to-half, and hinges-and-fences selection.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    },
+    "fence": {
+      "scope": "The hinges-and-fences IQR multiplier, including the negative disabled setting.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    },
+    "center": {
+      "scope": "Mean, median, or zero fit-to-half center.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    },
+    "lside": {
+      "scope": "Fit the lower or upper half.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    },
+    "zscore": {
+      "scope": "Fixed limit or sample-size-based Chauvenet criterion.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    },
+    "maxiter": {
+      "scope": "Maximum Chauvenet iteration count and negative convergence setting.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    },
+    "fitspw": {
+      "scope": "Spectral window and channel mask for estimating variances.",
+      "evidence": [
+        "bins"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "bins"
+      ]
+    },
+    "excludechans": {
+      "scope": "Invert the fit mask in spectral windows named by fitspw.",
+      "evidence": [
+        "bins"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "bins"
+      ]
+    },
+    "wtrange": {
+      "scope": "Inclusive range of allowable weights. Accept the two endpoints in either order.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    },
+    "flagbackup": {
+      "scope": "Capture pre-existing flags before a write. Preview leaves flags and backups intact.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "preview": {
+      "scope": "Return the mean and variance of estimated weights without changing the MS.",
+      "evidence": [
+        "selection"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "datacolumn": {
+      "scope": "Raw, corrected and both residual visibility forms, with the corresponding weight or sigma outputs.",
+      "evidence": [
+        "estimators"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "estimators"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "selection",
+      "title": "Task and MS tool selection and preview",
+      "status": "Implemented",
+      "scope": "Task and attached MS tool selection, preview, original flag versions, and selected row persistence across ordinary and partitioned MeasurementSets.",
+      "gap": "CASA and native task and tool use matched row sets and read back the same columns and original flag backups.",
+      "evidence": [
+        "selection"
+      ]
+    },
+    {
+      "id": "bins",
+      "title": "Time and channel binning",
+      "status": "Implemented",
+      "scope": "Elapsed duration and timestamp counts, block tails and sliding edge windows, independent channel bins and fit selections, scalar and spectral outputs, and absent or partially defined spectra.",
+      "gap": "Paired summaries and persisted columns meet a 2e-7 relative tolerance. The selected-spectrum creation case follows the recorded decision.",
+      "evidence": [
+        "bins"
+      ]
+    },
+    {
+      "id": "estimators",
+      "title": "Variance estimators",
+      "status": "Implemented",
+      "scope": "Classical, Chauvenet, hinges and fences, and fit to half moments with exposure weighting, rejected samples, raw and corrected inputs, and scratch or virtual models.",
+      "gap": "Matched robust and classical estimates, including non-finite output for otherwise eligible zero-exposure samples.",
+      "evidence": [
+        "estimators"
+      ]
+    },
+    {
+      "id": "downstream",
+      "title": "Persisted weights and downstream calibration",
+      "status": "Implemented",
+      "scope": "Weighted gain solutions and application with scalar or spectral initialization and either calwt value. Casacore readback also covers a 122,880-row spectral write.",
+      "gap": "All four weighted solve and apply chains passed. CPARAM normalized RMS was below 4e-7, corrected visibilities below 5e-7, and weighted application below 8e-7. The 122,880-row spectral write agreed across the native batch boundary.",
+      "evidence": [
+        "downstream"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "create-selected-spectra-in-one-call",
+      "state": "Proposed",
+      "inputs": "Channel binning on a selected subset without the requested spectrum column.",
+      "casa": "Initializes the spectrum and raises; repeating the same selection applies the estimates.",
+      "ours": "Initializes the spectrum and applies the requested estimates in one call.",
+      "rationale": "The native writer maps the selected rows to the original table after preparing the column.",
+      "impact": "One call matches the columns after the CASA retry, with unselected rows retaining the initialized values.",
+      "evidence": [
+        "bins"
+      ]
+    }
+  ],
+  "evidence": {
+    "selection": {
+      "kind": "Same-input Python and casacore interchange",
+      "state": "passed",
+      "scope": "Task and attached MS tool selection, preview, original flag versions, and selected row persistence across ordinary and partitioned MeasurementSets.",
+      "result": "CASA and native task and tool use matched row sets and read back the same columns and original flag backups.",
+      "casa_version": "6.7.6.14",
+      "revision": "fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/statistical-weighting-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_statwt_oracle.py"
+      ]
+    },
+    "bins": {
+      "kind": "Same-input Python and casacore interchange",
+      "state": "passed",
+      "scope": "Elapsed duration and timestamp counts, block tails and sliding edge windows, independent channel bins and fit selections, scalar and spectral outputs, and absent or partially defined spectra.",
+      "result": "Paired summaries and persisted columns meet a 2e-7 relative tolerance. The selected-spectrum creation case follows the recorded decision.",
+      "casa_version": "6.7.6.14",
+      "revision": "fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/statistical-weighting-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_statwt_oracle.py"
+      ]
+    },
+    "estimators": {
+      "kind": "Same-input Python and casacore interchange",
+      "state": "passed",
+      "scope": "Classical, Chauvenet, hinges and fences, and fit to half moments with exposure weighting, rejected samples, raw and corrected inputs, and scratch or virtual models.",
+      "result": "Matched robust and classical estimates, including non-finite output for otherwise eligible zero-exposure samples.",
+      "casa_version": "6.7.6.14",
+      "revision": "fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/statistical-weighting-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_statwt_oracle.py"
+      ]
+    },
+    "downstream": {
+      "kind": "Same-input Python and casacore interchange",
+      "state": "passed",
+      "scope": "Weighted gain solutions and application with scalar or spectral initialization and either calwt value. Casacore readback also covers a 122,880-row spectral write.",
+      "result": "All four weighted solve and apply chains passed. CPARAM normalized RMS was below 4e-7, corrected visibilities below 5e-7, and weighted application below 8e-7. The 122,880-row spectral write agreed across the native batch boundary.",
+      "casa_version": "6.7.6.14",
+      "revision": "fe21b4bdfa96f57a36d2ae634aa5048bd0c33d70",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_statwt_oracle.py --large --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/statistical-weighting-20261119.json",
+      "links": [
+        "tools/casa-compat/calibration_statwt_oracle.py"
+      ]
+    },
+    "performance": {
+      "kind": "Matched release performance",
+      "state": "planned",
+      "scope": "End-to-end throughput, I/O and compute phases, workers and memory.",
+      "result": "The programme will qualify matched release workflows under #979. The local storage profile located and corrected repeated UVW reads during FLAG_ROW persistence.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/979"
+      ]
+    }
+  }
+}

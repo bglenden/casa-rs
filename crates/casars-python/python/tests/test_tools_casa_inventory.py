@@ -31,7 +31,7 @@ ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "m
 
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
-IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub"}
+IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",
     "open", "close", "done", "ok", "name", "nrows", "ncols", "colnames", "iswritable", "info",

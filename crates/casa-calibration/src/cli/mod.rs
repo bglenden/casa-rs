@@ -32,6 +32,7 @@ mod read;
 mod render;
 mod rerefant;
 mod smoothcal;
+mod statwt;
 mod uvmodelfit;
 
 use std::path::Path;
@@ -78,6 +79,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     if task.surface() == "initweights" {
         return initweights::run(task);
+    }
+    if task.surface() == "statwt" {
+        return statwt::run(task);
     }
     if matches!(task.surface(), "clearcal" | "delmod" | "uvsub") {
         return model_columns::run(task);
