@@ -111,18 +111,29 @@ fn validate_slice(
     for axis in 0..ndim {
         // The last element touched is: start + (shape-1) * stride
         // This must be < lattice_shape[axis]
+        if stride[axis] == 0 {
+            return Err(LatticeError::InvalidTraversal(
+                "slice stride must be positive".into(),
+            ));
+        }
         if slice_shape[axis] == 0 {
-            continue;
+            if start[axis] <= lattice_shape[axis] {
+                continue;
+            }
+        } else {
+            let last = (slice_shape[axis] - 1)
+                .checked_mul(stride[axis])
+                .and_then(|extent| start[axis].checked_add(extent));
+            if last.is_some_and(|last| last < lattice_shape[axis]) {
+                continue;
+            }
         }
-        let last = start[axis] + (slice_shape[axis] - 1) * stride[axis];
-        if last >= lattice_shape[axis] {
-            return Err(LatticeError::SliceOutOfBounds {
-                start: start.to_vec(),
-                slice_shape: slice_shape.to_vec(),
-                stride: stride.to_vec(),
-                lattice_shape: lattice_shape.to_vec(),
-            });
-        }
+        return Err(LatticeError::SliceOutOfBounds {
+            start: start.to_vec(),
+            slice_shape: slice_shape.to_vec(),
+            stride: stride.to_vec(),
+            lattice_shape: lattice_shape.to_vec(),
+        });
     }
     Ok(())
 }
@@ -150,11 +161,11 @@ impl<T: LatticeElement> Lattice<T> for ArrayLattice<T> {
             .zip(shape.iter())
             .zip(stride.iter())
             .map(|((&s, &n), &st)| {
-                let end = if n == 0 { s } else { s + n * st };
+                let end = if n == 0 { s } else { s + (n - 1) * st + 1 };
                 SliceInfoElem::Slice {
                     start: s as isize,
                     end: Some(end as isize),
-                    step: st as isize,
+                    step: if n <= 1 { 1 } else { st as isize },
                 }
             })
             .collect();

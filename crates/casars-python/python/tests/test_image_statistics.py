@@ -30,7 +30,7 @@ def test_statistics_records_and_display_axes(casa, pixel_type):
         dict(includepix=[7.0, -2.0], robust=True),
         dict(excludepix=[-7.0], clmethod="tiled"),
         dict(includepix=[25.0, 33.0], robust=True),
-        dict(axes=[0], includepix=[7.0, 9.0]),
+        dict(axes=[0], includepix=[7.0, 9.0], robust=True),
         dict(axes=[0], mask="F", robust=True),
         dict(mask=False),
     ):
@@ -77,6 +77,7 @@ def test_statistics_strided_extrema_are_absolute_image_pixels(casa):
     region = casa.regionmanager().box([1, 1, 0], [3, 2, 1], [2, 1, 1])
     result = image.statistics(region=region)
     selected = values[1:4:2, 1:3, :]
+    _assert_value(image.getregion(region=region), selected)
     _assert_value(result["npts"], np.array([selected.size], dtype=np.float64))
     _assert_value(result["max"], np.array([selected.max()]))
     _assert_value(result["maxpos"], np.array([3, 2, 1]))
@@ -104,3 +105,14 @@ def test_statistics_independent_moments_and_flux():
     _assert_value(result["median"], np.median(values, axis=(0, 1)))
     _assert_value(result["npts"], np.array([12.0, 12.0]))
     _assert_value(result["flux"], values.sum(axis=(0, 1)) * 3600.0)
+
+
+def test_statistics_flux_depends_on_which_axes_are_collapsed(casa):
+    values = np.arange(72, dtype=np.float64).reshape(4, 3, 2, 3)
+    rust, oracle = tools.image(), casa.image()
+    for image in rust, oracle:
+        assert image.fromarray(pixels=values)
+        assert image.setbrightnessunit("Jy/beam")
+        assert image.setrestoringbeam(major="60arcsec", minor="60arcsec", pa="0deg")
+    for axes in ([], [0], [0, 1], [0, 1, 2], [0, 1, 3], [3]):
+        _assert_value(rust.statistics(axes=axes), oracle.statistics(axes=axes))

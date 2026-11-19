@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::{CoordinateSystem, CoordinateType, format_world_display};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, format_world_display};
 use casa_images::{ImageInterface, ImagePixel, analysis::statistics_flux_scale};
 use casa_lattices::{LatticeStatistics, Statistic, StatsElement};
 use casa_tables::LockType;
-use ndarray::ArrayD;
+use ndarray::{ArrayD, Zip};
 use pyo3::prelude::*;
 
 use crate::convert::{DoubleList, IntList, Variant, value::CasaValue};
@@ -137,23 +137,20 @@ fn classic<T: ImagePixel + StatsElement>(
         let value = if empty {
             CasaValue::floats(Vec::new())
         } else {
-            floating_array(stats.get_statistic(statistic).map_err(raised)?)
+            let mut values = stats.get_statistic(statistic).map_err(raised)?;
+            Zip::from(&mut values).and(&npts).for_each(|value, &count| {
+                if count == 0.0 {
+                    *value = 0.0;
+                }
+            });
+            floating_array(values)
         };
         fields.push((name, value));
     }
     if empty {
         fields.push(("flux", CasaValue::floats(Vec::new())));
     } else {
-        let channels = image
-            .find_axis(CoordinateType::Spectral)
-            .filter(|axis| chunk.size[*axis] > 1 && (global || options.axes.contains(axis)))
-            .map(|axis| [chunk.start[axis], chunk.start[axis] + chunk.stride[axis]]);
-        let beam = image
-            .units()
-            .contains("/beam")
-            .then(|| image.image_info().ok()?.beam_set.single_beam())
-            .flatten();
-        if let Some(scale) = statistics_flux_scale(coordinates, image.units(), beam, channels) {
+        if let Some(scale) = flux_scale(image, chunk, &options.axes, global) {
             let mut sums = stats.get_statistic(Statistic::Sum).map_err(raised)?;
             sums.mapv_inplace(|sum| sum * scale);
             fields.push(("flux", floating_array(sums)));
@@ -177,6 +174,47 @@ fn classic<T: ImagePixel + StatsElement>(
         }
     }
     Ok(CasaValue::record(fields))
+}
+
+fn flux_scale<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    chunk: &Chunk,
+    axes: &[usize],
+    global: bool,
+) -> Option<f64> {
+    let collapsed = |axis| global || axes.contains(&axis);
+    let axis_types = image.axis_types();
+    if !axis_types
+        .iter()
+        .enumerate()
+        .any(|(axis, kind)| collapsed(axis) && *kind == CoordinateType::Direction)
+        || axis_types.iter().enumerate().any(|(axis, kind)| {
+            collapsed(axis)
+                && chunk.size[axis] > 1
+                && !matches!(kind, CoordinateType::Direction | CoordinateType::Spectral)
+        })
+    {
+        return None;
+    }
+    let coordinates = image.coordinates();
+    let spectral_axis = image
+        .find_axis(CoordinateType::Spectral)
+        .filter(|&axis| collapsed(axis) && chunk.size[axis] > 1);
+    if spectral_axis.is_some()
+        && let Some(index) = coordinates.find_coordinate(CoordinateType::Spectral)
+        && let CoordinateModel::Spectral(spectral) = coordinates.coordinate(index)
+        && !spectral.has_linear_mapping()
+    {
+        return None;
+    }
+    let channels =
+        spectral_axis.map(|axis| [chunk.start[axis], chunk.start[axis] + chunk.stride[axis]]);
+    let beam = image
+        .units()
+        .contains("/beam")
+        .then(|| image.image_info().ok()?.beam_set.single_beam())
+        .flatten();
+    statistics_flux_scale(coordinates, image.units(), beam, channels)
 }
 
 #[pymethods]
