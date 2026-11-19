@@ -762,16 +762,21 @@ fn accumulate_global_basic_chunk<T: StatsElement>(
     chunk: &ChunkTask<T>,
     filters: &FilterState<'_>,
 ) -> Result<(), LatticeError> {
+    let compare_ties = !chunk.data.view().reversed_axes().is_standard_layout();
     for_each_accepted_value_in_chunk(chunk, filters, |idx, value| {
         if partial.accum.npts == 0
             || value < partial.accum.min
-            || (value == partial.accum.min && earlier_pixel(idx, partial.min_pos.as_deref()))
+            || (compare_ties
+                && value == partial.accum.min
+                && earlier_pixel(idx, partial.min_pos.as_deref()))
         {
             partial.min_pos = Some(idx.to_vec());
         }
         if partial.accum.npts == 0
             || value > partial.accum.max
-            || (value == partial.accum.max && earlier_pixel(idx, partial.max_pos.as_deref()))
+            || (compare_ties
+                && value == partial.accum.max
+                && earlier_pixel(idx, partial.max_pos.as_deref()))
         {
             partial.max_pos = Some(idx.to_vec());
         }

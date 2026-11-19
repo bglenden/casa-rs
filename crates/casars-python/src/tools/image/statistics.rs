@@ -3,7 +3,7 @@
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, format_world_display};
 use casa_images::{ImageInterface, ImagePixel, analysis::statistics_flux_scale};
 use casa_lattices::{
-    FitHalfCenter, LatticeStatistics, Statistic, StatisticsAlgorithm, StatsElement,
+    FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm, StatsElement,
 };
 use casa_tables::LockType;
 use ndarray::{ArrayD, Zip};
@@ -123,7 +123,13 @@ fn calculate<T: ImagePixel + StatsElement>(
         )?;
         return Ok(CasaValue::record(fields));
     }
-    let mut stats = LatticeStatistics::new(&selection);
+    let lattice: &dyn Lattice<T> =
+        if chunk.size == image.shape() && chunk.stride.iter().all(|&step| step == 1) {
+            image
+        } else {
+            &selection
+        };
+    let mut stats = LatticeStatistics::new(lattice);
     if !global {
         stats.set_axes(options.axes.clone());
     }
