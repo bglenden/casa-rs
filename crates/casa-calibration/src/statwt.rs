@@ -109,9 +109,17 @@ pub fn classical_scalar_statwt(
                 options.combine_correlations,
             );
             for (row, sample) in integration.iter().zip(samples) {
-                for (correlation, &weight) in weights.iter().enumerate() {
-                    if sample.has_unflagged(correlation, &channel_indices) {
-                        summary.add(f64::from(weight));
+                if options.combine_correlations {
+                    if (0..weights.len())
+                        .any(|correlation| sample.has_unflagged(correlation, &channel_indices))
+                    {
+                        summary.add(f64::from(weights[0]));
+                    }
+                } else {
+                    for (correlation, &weight) in weights.iter().enumerate() {
+                        if sample.has_unflagged(correlation, &channel_indices) {
+                            summary.add(f64::from(weight));
+                        }
                     }
                 }
                 if let Some(lock) = &mut lock {
