@@ -7,12 +7,53 @@ use std::sync::Arc;
 
 use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_measures_data::{CometTable, MeasuresDataError};
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{EpochRef, MeasFrame, MeasureError};
 use pyo3::prelude::*;
 
 use super::{PyMeasures, State, arguments};
 use crate::convert::holder::MeasureValue;
 use crate::convert::value::CasaValue;
 use crate::tools::LogLine;
+
+pub(super) const COMET_UNAVAILABLE: &str = "No or outside range comet table specified";
+
+/// Casacore looks up the attached frame table at TDB. The stored direction
+/// attached at the call site can carry any angles because R_COMET0 replaces
+/// those angles with the interpolated position.
+pub(super) fn resolve_direction(
+    state: &State,
+    frame: &MeasFrame,
+) -> Result<(MDirection, f64), MeasureError> {
+    let unavailable = MeasureError::MissingFrameData {
+        what: COMET_UNAVAILABLE,
+    };
+    let table = state
+        .frame
+        .comet
+        .as_ref()
+        .ok_or_else(|| unavailable.clone())?;
+    let epoch = frame.epoch().ok_or_else(|| unavailable.clone())?;
+    let tdb = epoch.convert_to(EpochRef::TDB, frame)?.value().as_mjd();
+    let sample = table
+        .direction_at(tdb)
+        .map_err(|error| MeasureError::ModelError {
+            model: "comet ephemeris",
+            reason: error.to_string(),
+        })?
+        .ok_or(unavailable)?;
+    let resolved = if sample.remove_parallax {
+        // R_COMET de-applies the observer displacement in the table's axes
+        // before starting the normal route at its declared reference.
+        let topocentric = MDirection::from_cosines(sample.direction.cosines(), DirectionRef::TOPO);
+        let corrected =
+            topocentric.convert_with_parallax(DirectionRef::APP, frame, sample.distance_m)?;
+        MDirection::from_cosines(corrected.cosines(), sample.direction.refer())
+    } else {
+        sample.direction
+    };
+    Ok((resolved, sample.distance_m))
+}
 
 fn load(state: &mut State, name: &str, lines: &mut Vec<LogLine>) -> CasaValue {
     state.comet = None;

@@ -189,7 +189,7 @@ impl Conversion {
         target: &'static str,
     ) -> PyResult<Result<Self, String>> {
         let frame = match super::frame::native_frame(state)? {
-            Ok(frame) => frame,
+            Ok(frame) => super::frame::with_comet_direction(state, frame),
             Err(error) => return Ok(Err(error)),
         };
         Ok((|| {

@@ -79,11 +79,17 @@ fn crossings(
         .ok_or(MeasureError::MissingFrameData { what: "position" })?
         .geocentric_latitude_rad();
     let (source, distance_m) = frame::resolve_direction(state, source, frame)?;
-    let apparent = source.to_apparent(frame)?;
-    let hour_angle = if source.refer() == DirectionRef::HADEC {
-        source
+    let apparent = if source.refer() == DirectionRef::TOPO {
+        source.convert_with_parallax(DirectionRef::APP, frame, distance_m)?
     } else {
-        apparent.convert_with_parallax(DirectionRef::HADEC, frame, distance_m)?
+        source.to_apparent(frame)?
+    };
+    let hour_angle = match source.refer() {
+        DirectionRef::HADEC => source,
+        DirectionRef::TOPO => {
+            source.convert_with_parallax(DirectionRef::HADEC, frame, distance_m)?
+        }
+        _ => apparent.convert_with_parallax(DirectionRef::HADEC, frame, distance_m)?,
     };
     let (sin_dec, cos_dec) = hour_angle.latitude_rad().sin_cos();
     let (sin_lat, cos_lat) = latitude.sin_cos();

@@ -37,7 +37,7 @@ mod spectral_line;
 #[cfg(feature = "update")]
 pub mod update;
 
-pub use comet::CometTable;
+pub use comet::{CometDirection, CometTable};
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
 pub use planet::{PlanetaryEphemeris, PlanetaryTable};
 pub use source::{SourceCatalog, SourceEntry};

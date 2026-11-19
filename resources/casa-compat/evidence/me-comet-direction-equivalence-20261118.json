@@ -1,0 +1,749 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "bdafcea294c0f8df2b7ee0f053d02aa22e27765f",
+  "work_item": "https://github.com/bglenden/casa-rs/issues/1252",
+  "scope": "Resolve COMET directions from the active frame table, preserve declared reference and observer displacement, and use the resolved direction in frame display, horizon crossings, UVW and spectral projections.",
+  "sources": [
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MeasComet.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCDirection.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MeasMath.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCFrame.cc"
+  ],
+  "comparison": {
+    "fixture": "crates/casars-python/python/tests/data/casa_measures_comet.json",
+    "capture": "CASAPY tools/simulation/measures_comet_oracle.py --measures-data target/geometry-snapshot --out crates/casars-python/python/tests/data/casa_measures_comet.json",
+    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_comet.py",
+    "result": "45 recorded cases with 430 steps, including 17 direction sequences. All 24 release cases are faster, from 1.15x to 39.74x.",
+    "controls": "Legacy APP and explicit J2000 Ganymede tables at ALMA and VLA, synthesized TOPO, ICRS and B1950 tables, input coordinates, missing and out-of-range data, frame lifecycle, active frequency, radial velocity and UVW projections, reverse FK4 destinations, updated table state and rise/set.",
+    "tolerances": "Exact types, units, structures and frame-display text. 1e-7 rad for angles and 2e-7 d for rise/set epochs. Spectral controls use the existing 2e-11 relative and 2e-7 absolute gates."
+  },
+  "performance": {
+    "command": "CASAPY tools/simulation/measures_comet_benchmark.py --measures-data target/geometry-snapshot --direction-cases --backend casa/casars",
+    "conditions": "Same bundled data and installed CASA Python interpreter. One warm-up and seven samples of 1000 calls on both backends.",
+    "casa": {
+      "backend": "casa",
+      "casa_version": "6.7.6-14",
+      "revision": "bdafcea294c0f8df2b7ee0f053d02aa22e27765f",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "load_absolute": {
+          "median_ns": 201894.375,
+          "samples_ns": [
+            204646.0,
+            200903.458,
+            200704.375,
+            202153.625,
+            202811.458,
+            201894.375,
+            201140.458
+          ]
+        },
+        "load_ephemerides_relative": {
+          "median_ns": 195081.458,
+          "samples_ns": [
+            196228.542,
+            201697.25,
+            194777.417,
+            195081.458,
+            194163.625,
+            195866.417,
+            194521.959
+          ]
+        },
+        "load_topocentric": {
+          "median_ns": 187651.709,
+          "samples_ns": [
+            187322.583,
+            186707.458,
+            189470.834,
+            188258.292,
+            189718.0,
+            187651.709,
+            185962.792
+          ]
+        },
+        "name": {
+          "median_ns": 87.541,
+          "samples_ns": [
+            87.834,
+            87.541,
+            87.75,
+            87.209,
+            87.292,
+            85.959,
+            91.166
+          ]
+        },
+        "type": {
+          "median_ns": 89.25,
+          "samples_ns": [
+            89.583,
+            89.083,
+            89.583,
+            89.25,
+            89.208,
+            89.333,
+            89.208
+          ]
+        },
+        "topocentre_m": {
+          "median_ns": 3295.709,
+          "samples_ns": [
+            3220.0,
+            3192.75,
+            3281.5,
+            3323.459,
+            3325.125,
+            3306.583,
+            3295.709
+          ]
+        },
+        "distance": {
+          "median_ns": 3446.667,
+          "samples_ns": [
+            3453.167,
+            3446.667,
+            3485.0,
+            3422.875,
+            3458.0,
+            3439.75,
+            3433.166
+          ]
+        },
+        "angular_diameter": {
+          "median_ns": 3500.791,
+          "samples_ns": [
+            3574.709,
+            3598.959,
+            3473.709,
+            3500.791,
+            3483.667,
+            3499.875,
+            3528.542
+          ]
+        },
+        "topocentric_distance": {
+          "median_ns": 3536.792,
+          "samples_ns": [
+            3532.792,
+            3608.541,
+            3518.875,
+            3505.292,
+            3549.334,
+            3536.792,
+            3623.959
+          ]
+        },
+        "topocentric_angular_diameter": {
+          "median_ns": 3549.834,
+          "samples_ns": [
+            3560.208,
+            3583.667,
+            3653.333,
+            3549.834,
+            3526.667,
+            3538.458,
+            3549.0
+          ]
+        },
+        "measure_app_to_app": {
+          "median_ns": 31856.958,
+          "samples_ns": [
+            31856.958,
+            31744.75,
+            32013.583,
+            31064.958,
+            32089.625,
+            31655.5,
+            32253.416
+          ]
+        },
+        "measure_app_to_j2000": {
+          "median_ns": 55456.333,
+          "samples_ns": [
+            58609.625,
+            55915.958,
+            55078.583,
+            55386.667,
+            55456.333,
+            55069.166,
+            55699.834
+          ]
+        },
+        "measure_app_to_topo": {
+          "median_ns": 32768.834,
+          "samples_ns": [
+            34742.125,
+            33916.667,
+            32518.833,
+            32686.208,
+            32768.834,
+            32599.875,
+            33510.0
+          ]
+        },
+        "showframe_app": {
+          "median_ns": 3539.208,
+          "samples_ns": [
+            3524.209,
+            3606.875,
+            3554.167,
+            3532.042,
+            3539.208,
+            3528.292,
+            3570.0
+          ]
+        },
+        "measure_j2000_to_app": {
+          "median_ns": 54799.458,
+          "samples_ns": [
+            54799.458,
+            54427.917,
+            54752.75,
+            54666.375,
+            56115.667,
+            55789.25,
+            54878.375
+          ]
+        },
+        "measure_j2000_to_j2000": {
+          "median_ns": 31854.209,
+          "samples_ns": [
+            31909.458,
+            32796.958,
+            31957.208,
+            31691.458,
+            31843.084,
+            31854.209,
+            31544.958
+          ]
+        },
+        "measure_j2000_to_topo": {
+          "median_ns": 56446.375,
+          "samples_ns": [
+            56138.708,
+            55999.875,
+            56446.375,
+            56828.625,
+            57549.667,
+            56902.583,
+            56080.917
+          ]
+        },
+        "showframe_j2000": {
+          "median_ns": 3582.667,
+          "samples_ns": [
+            3598.083,
+            3575.708,
+            3607.375,
+            3578.25,
+            3582.667,
+            3579.417,
+            3625.667
+          ]
+        },
+        "measure_topo_to_app": {
+          "median_ns": 32018.5,
+          "samples_ns": [
+            34227.334,
+            32300.125,
+            31935.208,
+            32018.5,
+            33885.125,
+            31960.583,
+            31908.625
+          ]
+        },
+        "measure_topo_to_j2000": {
+          "median_ns": 56366.459,
+          "samples_ns": [
+            56366.459,
+            56440.792,
+            57861.292,
+            56457.708,
+            56214.75,
+            56198.375,
+            56105.542
+          ]
+        },
+        "measure_topo_to_topo": {
+          "median_ns": 33513.541,
+          "samples_ns": [
+            33879.792,
+            34295.5,
+            33513.541,
+            33197.375,
+            33110.542,
+            33771.417,
+            33288.458
+          ]
+        },
+        "showframe_topo": {
+          "median_ns": 3646.375,
+          "samples_ns": [
+            3604.417,
+            3608.209,
+            3688.459,
+            3658.041,
+            3646.375,
+            3638.75,
+            3649.625
+          ]
+        },
+        "rise": {
+          "median_ns": 40006.875,
+          "samples_ns": [
+            40788.625,
+            39634.5,
+            40615.0,
+            40095.875,
+            40006.875,
+            39346.417,
+            39407.0
+          ]
+        },
+        "riseset": {
+          "median_ns": 134621.666,
+          "samples_ns": [
+            132461.333,
+            137976.333,
+            132520.291,
+            135254.709,
+            135172.708,
+            134621.666,
+            134005.916
+          ]
+        }
+      }
+    },
+    "native": {
+      "backend": "casars",
+      "casa_version": "6.7.6-14",
+      "revision": "bdafcea294c0f8df2b7ee0f053d02aa22e27765f",
+      "source_dirty": false,
+      "calls_per_sample": 1000,
+      "cases": {
+        "load_absolute": {
+          "median_ns": 168998.334,
+          "samples_ns": [
+            168032.542,
+            169149.375,
+            169208.292,
+            168998.334,
+            169106.75,
+            168763.75,
+            168514.125
+          ]
+        },
+        "load_ephemerides_relative": {
+          "median_ns": 169816.542,
+          "samples_ns": [
+            168902.667,
+            169068.084,
+            169816.542,
+            179902.667,
+            168800.667,
+            170165.791,
+            170338.0
+          ]
+        },
+        "load_topocentric": {
+          "median_ns": 96454.875,
+          "samples_ns": [
+            96454.875,
+            96728.917,
+            96817.291,
+            96627.833,
+            96100.625,
+            96294.292,
+            96027.292
+          ]
+        },
+        "name": {
+          "median_ns": 70.459,
+          "samples_ns": [
+            71.917,
+            72.166,
+            71.375,
+            70.291,
+            70.334,
+            70.459,
+            70.208
+          ]
+        },
+        "type": {
+          "median_ns": 67.833,
+          "samples_ns": [
+            68.75,
+            70.042,
+            67.875,
+            67.167,
+            67.083,
+            67.75,
+            67.833
+          ]
+        },
+        "topocentre_m": {
+          "median_ns": 322.125,
+          "samples_ns": [
+            323.792,
+            320.792,
+            321.125,
+            322.125,
+            322.208,
+            322.5,
+            321.167
+          ]
+        },
+        "distance": {
+          "median_ns": 228.75,
+          "samples_ns": [
+            229.916,
+            229.292,
+            228.042,
+            228.709,
+            228.75,
+            229.166,
+            228.708
+          ]
+        },
+        "angular_diameter": {
+          "median_ns": 231.666,
+          "samples_ns": [
+            231.125,
+            247.333,
+            234.5,
+            231.666,
+            233.791,
+            231.459,
+            231.375
+          ]
+        },
+        "topocentric_distance": {
+          "median_ns": 221.333,
+          "samples_ns": [
+            221.625,
+            221.667,
+            221.292,
+            221.333,
+            224.541,
+            221.167,
+            221.208
+          ]
+        },
+        "topocentric_angular_diameter": {
+          "median_ns": 224.625,
+          "samples_ns": [
+            225.166,
+            224.625,
+            222.709,
+            222.417,
+            240.667,
+            234.875,
+            222.208
+          ]
+        },
+        "measure_app_to_app": {
+          "median_ns": 3244.833,
+          "samples_ns": [
+            3253.667,
+            3249.291,
+            3244.833,
+            3335.5,
+            3212.25,
+            3215.125,
+            3225.458
+          ]
+        },
+        "measure_app_to_j2000": {
+          "median_ns": 5222.791,
+          "samples_ns": [
+            5259.75,
+            5222.791,
+            5281.917,
+            5163.917,
+            5161.917,
+            5194.833,
+            5329.667
+          ]
+        },
+        "measure_app_to_topo": {
+          "median_ns": 4021.875,
+          "samples_ns": [
+            4064.25,
+            4057.625,
+            4011.791,
+            4021.875,
+            4023.5,
+            4005.167,
+            4013.125
+          ]
+        },
+        "showframe_app": {
+          "median_ns": 92.25,
+          "samples_ns": [
+            92.791,
+            92.292,
+            96.292,
+            92.25,
+            91.708,
+            92.042,
+            92.0
+          ]
+        },
+        "measure_j2000_to_app": {
+          "median_ns": 5819.75,
+          "samples_ns": [
+            5927.084,
+            5819.75,
+            5821.375,
+            5808.291,
+            5751.792,
+            5742.042,
+            5845.541
+          ]
+        },
+        "measure_j2000_to_j2000": {
+          "median_ns": 4061.417,
+          "samples_ns": [
+            4056.209,
+            4065.375,
+            4061.417,
+            4119.375,
+            4051.625,
+            4030.875,
+            4075.625
+          ]
+        },
+        "measure_j2000_to_topo": {
+          "median_ns": 5935.084,
+          "samples_ns": [
+            6009.083,
+            5935.084,
+            5946.583,
+            5926.5,
+            5918.125,
+            5925.375,
+            5958.5
+          ]
+        },
+        "showframe_j2000": {
+          "median_ns": 97.292,
+          "samples_ns": [
+            97.584,
+            97.542,
+            97.541,
+            97.292,
+            97.208,
+            97.042,
+            97.292
+          ]
+        },
+        "measure_topo_to_app": {
+          "median_ns": 3981.167,
+          "samples_ns": [
+            3981.167,
+            3912.5,
+            3938.542,
+            3906.666,
+            4124.666,
+            4096.917,
+            4062.375
+          ]
+        },
+        "measure_topo_to_j2000": {
+          "median_ns": 6091.791,
+          "samples_ns": [
+            6091.791,
+            6066.084,
+            6048.708,
+            6096.75,
+            6092.875,
+            6059.25,
+            6097.542
+          ]
+        },
+        "measure_topo_to_topo": {
+          "median_ns": 4080.334,
+          "samples_ns": [
+            4118.333,
+            4154.625,
+            4099.0,
+            4080.334,
+            3988.791,
+            3956.458,
+            3968.916
+          ]
+        },
+        "showframe_topo": {
+          "median_ns": 91.75,
+          "samples_ns": [
+            91.875,
+            91.75,
+            91.75,
+            91.75,
+            91.708,
+            91.709,
+            91.792
+          ]
+        },
+        "rise": {
+          "median_ns": 3783.916,
+          "samples_ns": [
+            3808.667,
+            3769.792,
+            3865.625,
+            3783.916,
+            3762.292,
+            3789.541,
+            3779.459
+          ]
+        },
+        "riseset": {
+          "median_ns": 9634.208,
+          "samples_ns": [
+            9742.0,
+            9629.125,
+            9706.375,
+            9634.208,
+            9589.042,
+            9581.667,
+            9687.458
+          ]
+        }
+      }
+    },
+    "speedups": {
+      "load_absolute": 1.194653049064969,
+      "load_ephemerides_relative": 1.1487777085933126,
+      "load_topocentric": 1.945487037332224,
+      "name": 1.2424388651556224,
+      "type": 1.3157312812347972,
+      "topocentre_m": 10.231149398525417,
+      "distance": 15.067396721311475,
+      "angular_diameter": 15.111371543515235,
+      "topocentric_distance": 15.979505993231918,
+      "topocentric_angular_diameter": 15.803378964941569,
+      "measure_app_to_app": 9.817749634572873,
+      "measure_app_to_j2000": 10.61814133477675,
+      "measure_app_to_topo": 8.147651033411034,
+      "showframe_app": 38.36539837398374,
+      "measure_j2000_to_app": 9.416118905451265,
+      "measure_j2000_to_j2000": 7.843126918511445,
+      "measure_j2000_to_topo": 9.510627819252433,
+      "showframe_j2000": 36.823860132384986,
+      "measure_topo_to_app": 8.042491058526307,
+      "measure_topo_to_j2000": 9.25285503064698,
+      "measure_topo_to_topo": 8.213430812281544,
+      "showframe_topo": 39.7425068119891,
+      "rise": 10.57287608921551,
+      "riseset": 13.973298687344096
+    }
+  },
+  "consumer_performance": {
+    "showframe": {
+      "cases": 34,
+      "min_speedup": 1.7748060551471656,
+      "max_speedup": 38.588057943234794,
+      "speedups": {
+        "empty": 1.7748060551471656,
+        "epoch": 12.572813454784272,
+        "position": 12.116466200075436,
+        "direction": 28.450022925263642,
+        "galactic": 30.506520346975606,
+        "azel_with_frame": 36.54186327694497,
+        "velocity": 7.877385714285714,
+        "all": 38.588057943234794,
+        "comet_only": 7.004407547169811,
+        "replacement": 38.558792654692915,
+        "split_epoch": 12.141677419354838,
+        "ut2": 12.576252255348397,
+        "sun_offset": 36.991243058522,
+        "sun": 38.18388204356763,
+        "moon": 36.381362328669724,
+        "mercury": 37.77276427891616,
+        "venus": 35.35618279569893,
+        "mars": 36.71542114415659,
+        "jupiter": 37.41405128205128,
+        "saturn": 36.66846963562753,
+        "uranus": 37.438720611485834,
+        "neptune": 37.25769531205778,
+        "pluto": 35.481283422459896,
+        "measure_sun_offset": 8.771119839120498,
+        "measure_sun": 8.846774468699142,
+        "measure_moon": 8.420550288466128,
+        "measure_mercury": 8.3941568316107,
+        "measure_venus": 8.52945631572419,
+        "measure_mars": 8.780693743393151,
+        "measure_jupiter": 8.666761988881385,
+        "measure_saturn": 8.724887521510142,
+        "measure_uranus": 8.758382608739327,
+        "measure_neptune": 8.692978007159232,
+        "measure_pluto": 8.784339427722882
+      }
+    },
+    "rise": {
+      "cases": 22,
+      "min_speedup": 10.907342415985468,
+      "max_speedup": 20.789549157567436,
+      "speedups": {
+        "rise_horizon": 14.449778336621963,
+        "riseset_horizon": 15.514419528855013,
+        "rise_positive": 14.78325813443812,
+        "riseset_positive": 16.054118673806126,
+        "rise_turn_boundary": 15.023579022391162,
+        "riseset_turn_boundary": 15.360992343574242,
+        "rise_above": 13.899709941281753,
+        "riseset_above": 14.623572544540933,
+        "rise_below": 13.664048209471428,
+        "riseset_below": 15.069866396671133,
+        "rise_north": 15.701916282568842,
+        "riseset_north": 15.86102537724779,
+        "rise_angles_text": 20.789549157567436,
+        "riseset_angles_text": 18.27039732114109,
+        "rise_b1950_crossings": 12.31810411375037,
+        "riseset_b1950_crossings": 14.385946474134775,
+        "rise_sun": 14.136572931277062,
+        "riseset_sun": 15.304850472051552,
+        "rise_moon": 10.907342415985468,
+        "riseset_moon": 13.4412074958952,
+        "rise_same_reference_offset": 12.299047062669832,
+        "riseset_same_reference_offset": 14.509728448618239
+      }
+    },
+    "geometry": {
+      "cases": 24,
+      "min_speedup": 4.031046837730504,
+      "max_speedup": 20.857782417202092,
+      "speedups": {
+        "baseline_values_0": 18.918871473453162,
+        "baseline_vector_1": 8.06861969918751,
+        "baseline_vector_3": 9.237410131747952,
+        "baseline_offset_0": 14.3206006607092,
+        "uvw_values_0": 20.857782417202092,
+        "uvw_vector_3": 9.162651834337876,
+        "uvw_offset_0": 11.16781998445527,
+        "earthmagnetic_ref_ITRF": 16.916893564626886,
+        "earthmagnetic_measure_0": 8.570024372721669,
+        "asbaseline_0": 5.315166772037934,
+        "asbaseline_1": 5.943870933709744,
+        "baseline_touvw_0": 4.892669500558779,
+        "touvw_baseline_vector_4": 6.716393348026567,
+        "baseline_expand_0": 7.405851040520186,
+        "expand_baseline_vector_4": 6.484081949722478,
+        "baseline_convert_HADEC": 8.949408576864116,
+        "baseline_convert_J2000": 4.6158088943649815,
+        "uvw_convert_B1950": 4.962703786360025,
+        "uvw_convert_J2000": 4.334666804265907,
+        "baseline_inspect_1_addxvalue": 4.031046837730504,
+        "earthmagnetic_convert_HADEC": 8.633890221433887,
+        "earthmagnetic_convert_IGRF": 8.799176220865952,
+        "earthmagnetic_fk4_B1950_APP_1": 8.962592878558464,
+        "earthmagnetic_fk4_APP_B1950_1": 10.236206970463412
+      }
+    }
+  },
+  "validation": "1350 affected Python cases and 311 Rust unit cases. Formatting, scoped Clippy, strict rustdoc, architecture and docs checks.",
+  "review": "One local Astra xhigh review. Resolved all four findings with exact APP/FK4 routes, finite-distance frames for UVW and independent spectral projections, and the active-table refresh verified against CASA after reattaching the direction."
+}

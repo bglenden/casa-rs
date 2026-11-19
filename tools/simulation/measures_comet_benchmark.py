@@ -20,6 +20,7 @@ parser.add_argument("--measures-data", type=Path, required=True)
 parser.add_argument("--out", type=Path, required=True)
 parser.add_argument("--calls", type=int, default=1000)
 parser.add_argument("--samples", type=int, default=7)
+parser.add_argument("--direction-cases", action="store_true")
 args = parser.parse_args()
 
 config.data_auto_update = config.measures_auto_update = False
@@ -27,7 +28,7 @@ config.measurespath = str(args.measures_data.resolve())
 config.datapath = [config.measurespath, *config.datapath]
 os.environ["CASA_RS_MEASURESPATH"] = config.measurespath
 
-from casatools import measures, table, version_string
+from casatools import logsink, measures, table, version_string
 
 assert version_string() == "6.7.6-14"
 if args.backend == "casars":
@@ -52,16 +53,29 @@ def make_topocentric(path):
     tool.close()
 
 
-def run(method, table_path):
+def run(method, table_path, reference=None):
     tool = measures()
     assert tool.done()
     assert tool.doframe(tool.epoch("UTC", "2011/01/03/17:00:00"))
     assert tool.framecomet(table_path)
     operation = getattr(tool, method)
-    values = (table_path,) if method == "framecomet" else ()
-    if values:
+    if reference is not None or method in ("showframe", "rise", "riseset"):
+        direction = tool.direction("COMET")
+        assert tool.doframe(tool.observatory("ALMA"))
+        if method == "showframe":
+            assert tool.doframe(direction)
+            values = ()
+        elif reference is not None:
+            values = (direction, reference)
+        else:
+            values = (direction,)
+        first = operation(*values)
+        assert first, (method, reference, table_path)
+    elif method == "framecomet":
+        values = (table_path,)
         assert operation(*values)
     else:
+        values = ()
         operation()
     measurements = []
     gc.disable()
@@ -94,6 +108,16 @@ with TemporaryDirectory() as temp:
         ("topocentric_angular_diameter", "cometangdiam", topo),
     ]
     results = {name: run(method, path) for name, method, path in cases}
+    if args.direction_cases:
+        logger = logsink()
+        logger.filter("SEVERE")
+        j2000 = str(args.measures_data / "ephemerides/JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab")
+        for name, path in (("app", ABSOLUTE), ("j2000", j2000), ("topo", topo)):
+            for reference in ("APP", "J2000", "TOPO"):
+                results[f"measure_{name}_to_{reference.lower()}"] = run("measure", path, reference)
+            results[f"showframe_{name}"] = run("showframe", path)
+        for method in ("rise", "riseset"):
+            results[method] = run(method, ABSOLUTE)
 
 
 def git(*args):

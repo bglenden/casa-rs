@@ -7,7 +7,7 @@ use casa_types::measures::{EpochRef, MeasFrame, MeasureError, MjdHighPrec};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use super::{PyMeasures, State, frame};
+use super::{PyMeasures, State, comet::COMET_UNAVAILABLE, frame};
 use crate::convert::holder::{MeasureValue, direction_angles, spatial_spherical};
 use crate::convert::value::{CasaValue, stream_double};
 use crate::tools::LogLine;
@@ -38,10 +38,10 @@ fn radial_error(error: MeasureError) -> String {
     }
 }
 
-fn render(state: &mut State, native: &MeasFrame) -> Result<String, String> {
+fn render(state: &mut State, mut native: MeasFrame) -> Result<String, String> {
     let mut elements = Vec::new();
     if let Some(epoch) = native.epoch() {
-        let to = |refer| match epoch.convert_to(refer, native) {
+        let to = |refer| match epoch.convert_to(refer, &native) {
             Ok(value) => Ok(stream_double(value.value().as_mjd())),
             Err(MeasureError::MissingFrameData { what }) if what.starts_with("dUT1") => {
                 Ok("unavailable".to_owned())
@@ -67,8 +67,11 @@ fn render(state: &mut State, native: &MeasFrame) -> Result<String, String> {
         ));
     }
     if let Some(direction) = native.direction() {
-        let converted = frame::convert_direction(state, direction, DirectionRef::J2000, native)
+        let converted = frame::convert_direction(state, direction, DirectionRef::J2000, &native)
             .map_err(|error| match error {
+                MeasureError::MissingFrameData {
+                    what: COMET_UNAVAILABLE,
+                } => COMET_UNAVAILABLE.to_owned(),
                 MeasureError::MissingFrameData { .. } => MISSING_FRAME.to_owned(),
                 error => error.to_string(),
             })?;
@@ -78,6 +81,9 @@ fn render(state: &mut State, native: &MeasFrame) -> Result<String, String> {
             vector(direction.cosines()),
             vector([longitude.to_degrees(), latitude.to_degrees()])
         ));
+        if direction.refer() == DirectionRef::COMET && native.radial_velocity().is_some() {
+            native = frame::with_comet_direction(state, native);
+        }
     }
     if let (Some(record), Some(velocity)) = (&state.frame.radial_velocity, native.radial_velocity())
     {
@@ -94,7 +100,7 @@ fn render(state: &mut State, native: &MeasFrame) -> Result<String, String> {
             }));
         }
         let lsr = velocity
-            .convert_to(RadialVelocityRef::LSRK, native)
+            .convert_to(RadialVelocityRef::LSRK, &native)
             .map_err(radial_error)?;
         elements.push(format!(
             "Radialvelocity: {}\n        (LSR velocity = {} km/s)",
@@ -126,7 +132,7 @@ impl PyMeasures {
                 frame::materialize(&state.frame, MeasFrame::new())
             };
             frame
-                .and_then(|frame| render(state, &frame))
+                .and_then(|frame| render(state, frame))
                 .map(|text| {
                     state.frame.rendered = Some(text.clone());
                     CasaValue::Text(text)
