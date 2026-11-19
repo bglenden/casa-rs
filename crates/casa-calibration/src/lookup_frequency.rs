@@ -6,6 +6,14 @@ use crate::interpolation::{
 use crate::{ApplyExecutionError, CalibrationTableLookup, ComplexSolution};
 use casa_types::Complex32;
 
+pub(crate) fn relative_axis(axis: &[f64]) -> Vec<f64> {
+    let center = axis.iter().sum::<f64>() / axis.len() as f64;
+    let sideband = if axis.first() > axis.last() { -1. } else { 1. };
+    axis.iter()
+        .map(|frequency| (frequency - center) * sideband)
+        .collect()
+}
+
 /// Frequency interpolation for a complex calibration grid.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,

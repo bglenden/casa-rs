@@ -534,7 +534,23 @@ impl MsCalEngine {
         field_id: usize,
         first_time_mjd_sec: f64,
     ) -> MsResult<Option<MDirection>> {
-        let Some((ephemeris, offset)) = self.field_series(field_id)? else {
+        self.moving_field_reference_direction_with_offset(field_id, first_time_mjd_sec, None)
+    }
+
+    /// The nominal direction at the FIELD reference epoch with a supplied
+    /// observing offset. Calibration table construction supplies
+    /// `REFERENCE_DIR` here. Without an override, use the field's
+    /// `PHASE_DIR` offset.
+    ///
+    /// # Errors
+    /// The field or its reference epoch is outside the ephemeris domain.
+    pub fn moving_field_reference_direction_with_offset(
+        &self,
+        field_id: usize,
+        first_time_mjd_sec: f64,
+        offset: Option<[f64; 2]>,
+    ) -> MsResult<Option<MDirection>> {
+        let Some((ephemeris, phase_offset)) = self.field_series(field_id)? else {
             return Ok(None);
         };
         let frame = MeasFrame::new().with_position(self.observatory_position.clone());
@@ -549,7 +565,8 @@ impl MsCalEngine {
             .flatten()
             .unwrap_or_else(|| MEpoch::from_mjd_seconds(first_time_mjd_sec, self.time_reference));
         let mjd_utc = origin.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
-        crate::ephemeris::reference_direction(ephemeris, mjd_utc, offset).map(Some)
+        crate::ephemeris::reference_direction(ephemeris, mjd_utc, offset.unwrap_or(phase_offset))
+            .map(Some)
     }
 
     /// The ephemeris `field_id` follows and its `PHASE_DIR` offset, or

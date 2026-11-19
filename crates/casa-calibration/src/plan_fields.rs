@@ -42,7 +42,7 @@ pub(super) fn resolve_gainfield(
     }
 }
 
-fn resolve_gainfield_expression(
+pub(crate) fn resolve_gainfield_expression(
     spec: &ApplyCalibrationTableSpec,
     summary: &CalibrationTableSummary,
     expression: &str,

@@ -2,6 +2,7 @@
 //! CASA bandpass frequency resampling and full-band power normalization.
 
 use super::*;
+use crate::lookup_frequency::relative_axis;
 
 // Share CTPatchedInterp's curves, flag registration, phase unwrapping and
 // short-axis rules with simulator application.
@@ -42,14 +43,6 @@ fn resample(
         };
     }
     Ok(sampled)
-}
-
-pub(super) fn relative_axis(axis: &[f64]) -> Vec<f64> {
-    let center = axis.iter().sum::<f64>() / axis.len() as f64;
-    let sideband = if axis.first() > axis.last() { -1. } else { 1. };
-    axis.iter()
-        .map(|frequency| (frequency - center) * sideband)
-        .collect()
 }
 
 pub(super) fn prepare(
@@ -184,6 +177,7 @@ pub(super) fn receptors(correlations: &[i32], index: usize) -> Option<(usize, us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lookup_frequency::relative_axis;
 
     #[test]
     fn constant_wide_bandpass_shares_payload_and_resampling_across_times() {

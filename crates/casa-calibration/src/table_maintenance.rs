@@ -3,7 +3,9 @@
 
 use std::path::Path;
 
-use casa_ms::{MeasurementSet, MeasurementSetBuilder, schema::SubtableId};
+use casa_ms::{
+    MeasurementSet, MeasurementSetBuilder, derived::engine::MsCalEngine, schema::SubtableId,
+};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableWriteLock};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
@@ -94,6 +96,9 @@ pub(crate) fn prepare_empty_calibration_table<'a>(
                 .subtable(id)
                 .ok_or_else(|| format!("missing {} subtable", id.name()))?;
             copy_standard_rows(source, table)?;
+            if id == SubtableId::Field {
+                copy_moving_field_directions(measurement_set, table)?;
+            }
         }
         table
             .save(TableOptions::new(writer.output_path().join(id.name())))
@@ -132,6 +137,48 @@ fn copy_standard_rows(source: &Table, target: &mut Table) -> Result<(), String> 
         target
             .add_row(RecordValue::new(values))
             .map_err(error_text)?;
+    }
+    Ok(())
+}
+
+fn copy_moving_field_directions(ms: &MeasurementSet, target: &mut Table) -> Result<(), String> {
+    let field = ms.field().map_err(error_text)?;
+    let mut engine = None;
+    for row in 0..field.row_count() {
+        if !field
+            .ephemeris_id(row)
+            .map_err(error_text)?
+            .is_some_and(|id| id >= 0)
+        {
+            continue;
+        }
+        let engine = match &mut engine {
+            Some(engine) => engine,
+            empty => empty.insert(MsCalEngine::for_calibration(ms).map_err(error_text)?),
+        };
+        let ArrayValue::Float64(offset) = field.reference_dir(row).map_err(error_text)? else {
+            return Err("invalid moving field REFERENCE_DIR".into());
+        };
+        let offset = [offset.get([0, 0]), offset.get([1, 0])].map(|coord| coord.copied());
+        let [Some(longitude), Some(latitude)] = offset else {
+            return Err("invalid moving field REFERENCE_DIR dimensions".into());
+        };
+        let time = field.time(row).map_err(error_text)?;
+        let direction = engine
+            .moving_field_reference_direction_with_offset(row, time, Some([longitude, latitude]))
+            .map_err(error_text)?
+            .ok_or("moving field reference direction is missing")?;
+        let (longitude, latitude) = direction.as_angles();
+        let cell = Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(IxDyn(&[2, 1]), vec![longitude, latitude])
+                .expect("a direction has two coordinates"),
+        ));
+        for column in ["DELAY_DIR", "PHASE_DIR", "REFERENCE_DIR"] {
+            target
+                .cell_accessor_mut(row, column)
+                .and_then(|mut accessor| accessor.set(cell.clone()))
+                .map_err(error_text)?;
+        }
     }
     Ok(())
 }
