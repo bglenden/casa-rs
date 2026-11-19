@@ -10,7 +10,7 @@ mod spectrum;
 mod statistics;
 mod table;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_tables::{Table, TableOptions};
@@ -73,6 +73,9 @@ pub(crate) struct BandpassPanel {
     pub(crate) frequency_channels: Vec<f64>,
     atmosphere: Vec<AtmosphericCurve>,
     fdm: Option<Vec<FdmWindow>>,
+    diagnostics: Vec<String>,
+    epoch: f64,
+    overlay: Overlay,
 }
 
 #[derive(Clone, Serialize)]
@@ -89,6 +92,8 @@ pub(crate) struct BandpassSeries {
     pub(crate) label: String,
     pub(crate) curve: BandpassCurve,
     pub(crate) statistics: Option<DerivativeStatistics>,
+    table_index: usize,
+    polynomial: bool,
 }
 
 pub(crate) struct BandpassCurve {
@@ -115,6 +120,13 @@ pub(crate) fn prepare_bandpass(
 ) -> Result<BandpassPlots, String> {
     let source = Solutions::open(request.caltable, request.vis)?;
     let polynomial = source.subtype == "BPOLY";
+    if source.rows.iter().all(|row| row.field < 0) {
+        return Ok(empty_plots(
+            source,
+            false,
+            Some("The field_id is -1 (invalid) for all rows of this caltable.".into()),
+        ));
+    }
     let companions = request
         .companion_tables
         .iter()
@@ -124,7 +136,11 @@ pub(crate) fn prepare_bandpass(
     if invalid_overlay(&source, request, &companions) {
         return Ok(empty_plots(source, false, None));
     }
-    let (selected, time_count) = match groups(
+    let selection::SelectedGroups {
+        groups: selected,
+        time_count,
+        fields,
+    } = match groups(
         &source,
         &request.selectors,
         request.overlay,
@@ -181,6 +197,7 @@ pub(crate) fn prepare_bandpass(
         spectra: &spectra,
         request,
         time_count,
+        fields: &fields,
         companions: &companions,
         atmosphere: atmosphere.as_ref(),
         fdm_windows: fdm_windows.as_deref(),
@@ -251,6 +268,7 @@ struct PanelContext<'a, 'request> {
     spectra: &'a BTreeMap<usize, table::Spectrum>,
     request: &'a PlotRequest<'request>,
     time_count: usize,
+    fields: &'a [i32],
     companions: &'a [Companion],
     atmosphere: Option<&'a AtmosphereContext<'request>>,
     fdm_windows: Option<&'a [SolutionWindow]>,
@@ -267,6 +285,7 @@ fn panel(
         spectra,
         request,
         time_count,
+        fields,
         companions,
         atmosphere,
         fdm_windows,
@@ -274,6 +293,7 @@ fn panel(
     let mut series = Vec::new();
     let mut comparison_count: Option<usize> = None;
     let mut metadata = None;
+    let mut diagnostics = Vec::new();
     for row in selected {
         let address = source.rows[row.row];
         let samples = &spectra[&row.row];
@@ -295,7 +315,9 @@ fn panel(
             ],
             (_, None) => [0.0, total_channels.saturating_sub(1) as f64],
         };
-        let derivative = request.derivative_sigma > 0.0;
+        let derivative = request.derivative_sigma > 0.0
+            && ordinate != Ordinate::Decibels
+            && source.subtype != "BPOLY";
         metadata
             .get_or_insert_with(|| PanelMetadata::new(window, samples, frequency_axis, derivative))
             .extend_domain(domain);
@@ -351,14 +373,42 @@ fn panel(
                         y: curve.y,
                     },
                     statistics: None,
+                    table_index: index + 1,
+                    polynomial: companion.polynomial(),
                 });
             }
             let (curve, statistics) = if derivative {
+                let differentiated =
+                    raw.differentiate(ordinate == Ordinate::Amplitude, request.edge);
+                let can_report = ordinate != Ordinate::Phase
+                    || differentiated
+                        .curve
+                        .y
+                        .iter()
+                        .map(|value| value.abs())
+                        .sum::<f64>()
+                        >= 0.002;
+                if can_report
+                    && let Some(outliers) =
+                        differentiated.outliers(request.derivative_sigma, request.edge)
+                {
+                    let name = antenna_name(source, address.antenna);
+                    let kind = if ordinate == Ordinate::Phase {
+                        "phs"
+                    } else {
+                        "amp"
+                    };
+                    diagnostics.push(format!(
+                        "{name}, Pol {receptor}, spw {}, {kind}: {} points exceed {:.1} sigma (worst={:.2} at chan {})",
+                        address.window, outliers.count, request.derivative_sigma, outliers.worst_sigma,
+                        outliers.coordinate as i32,
+                    ));
+                }
                 let Derivative {
                     curve,
                     deviation,
                     rms,
-                } = raw.differentiate(ordinate == Ordinate::Amplitude, request.edge);
+                } = differentiated;
                 let threshold = if request.platforming_sigma > 0.0 {
                     request.platforming_sigma * deviation
                 } else {
@@ -390,6 +440,8 @@ fn panel(
                 label: labels[receptor].into(),
                 curve: BandpassCurve { x, y },
                 statistics,
+                table_index: 0,
+                polynomial: source.subtype == "BPOLY",
             });
         }
         series.extend(comparison_series.into_iter().flatten());
@@ -398,9 +450,11 @@ fn panel(
     let (title, suffix) = captions(
         source,
         key,
-        selected[0],
+        selected,
+        request.overlay,
         request.show_baseband_number,
         time_count,
+        fields,
     )?;
     let x_limits = metadata.x_limits();
     let atmosphere = if let Some(atmosphere) = atmosphere {
@@ -421,7 +475,13 @@ fn panel(
         title,
         suffix,
         x_label,
-        y_label: ordinate_label(ordinate, request.derivative_sigma > 0.0, &source.subtype),
+        y_label: ordinate_label(
+            ordinate,
+            request.derivative_sigma > 0.0
+                && ordinate != Ordinate::Decibels
+                && source.subtype != "BPOLY",
+            &source.subtype,
+        ),
         series,
         x_limits,
         frequency_channels: metadata.frequency_channels,
@@ -429,6 +489,9 @@ fn panel(
         fdm: fdm_windows.and_then(|windows| {
             fdm_for_panel(source, &source.rows[selected[0].row], windows, request)
         }),
+        diagnostics,
+        epoch: source.rows[selected[0].row].time,
+        overlay: request.overlay,
     })
 }
 
@@ -646,10 +709,13 @@ fn antenna_name(source: &Solutions, antenna: i32) -> String {
 fn captions(
     source: &Solutions,
     key: GroupKey,
-    first: SelectedRow,
+    selected: &[SelectedRow],
+    overlay: Overlay,
     show_baseband: bool,
     time_count: usize,
+    fields: &[i32],
 ) -> Result<(String, String), String> {
+    let first = selected[0];
     let row = source.rows[first.row];
     let mut title = Vec::new();
     let mut suffix = Vec::new();
@@ -667,11 +733,41 @@ fn captions(
         }
         title.push(window_title);
         suffix.push(format!("spw{window:02}"));
+    } else if overlay.window || overlay.baseband {
+        let windows = selected
+            .iter()
+            .map(|selected| source.rows[selected.row].window)
+            .collect::<BTreeSet<_>>();
+        let file_window = if overlay.baseband {
+            windows.first()
+        } else {
+            windows.last()
+        };
+        suffix.push(format!("spw{:02}", file_window.copied().unwrap_or(0)));
+        let listed = if overlay.baseband {
+            " all".into()
+        } else {
+            windows
+                .iter()
+                .map(|id| format!("np.int64({id})"))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        title.push(format!("spw{listed}"));
     }
-    if let Some(name) = usize::try_from(row.field)
-        .ok()
-        .and_then(|id| source.fields.get(id))
-    {
+    if overlay.time && fields.len() > 1 {
+        let ids = fields
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let names = fields
+            .iter()
+            .filter_map(|&id| field_name(source, id))
+            .collect::<Vec<_>>()
+            .join(",");
+        title.push(format!("fields {ids}: {names}"));
+    } else if let Some(name) = field_name(source, row.field) {
         title.push(format!("field {}: {name}", row.field));
     }
     if let Some(index) = key.time_index {
@@ -685,4 +781,11 @@ fn captions(
         suffix.push(format!("t{index:02}"));
     }
     Ok((title.join(",  "), suffix.join(".")))
+}
+
+fn field_name(source: &Solutions, field: i32) -> Option<&str> {
+    usize::try_from(field)
+        .ok()
+        .and_then(|id| source.fields.get(id))
+        .map(String::as_str)
 }

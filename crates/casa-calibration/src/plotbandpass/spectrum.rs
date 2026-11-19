@@ -24,6 +24,41 @@ pub(super) struct Derivative {
     pub(super) rms: f64,
 }
 
+pub(super) struct Outliers {
+    pub(super) count: usize,
+    pub(super) worst_sigma: f64,
+    pub(super) coordinate: f64,
+}
+
+impl Derivative {
+    pub(super) fn outliers(&self, sigma: f64, edge: usize) -> Option<Outliers> {
+        let edge = edge.min(self.curve.y.len().saturating_sub(1) / 2);
+        let mut count = 0;
+        let mut worst: Option<usize> = None;
+        for (index, &value) in self
+            .curve
+            .y
+            .iter()
+            .enumerate()
+            .skip(edge)
+            .take(self.curve.y.len() - 2 * edge)
+        {
+            if value.abs() > sigma * self.deviation {
+                count += 1;
+                if worst.is_none_or(|prior| value.abs() > self.curve.y[prior].abs()) {
+                    worst = Some(index);
+                }
+            }
+        }
+        let index = worst?;
+        Some(Outliers {
+            count,
+            worst_sigma: self.curve.y[index] / self.deviation,
+            coordinate: index as f64 + self.curve.x[0],
+        })
+    }
+}
+
 impl Spectrum {
     pub(super) fn curve(
         &self,

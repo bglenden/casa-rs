@@ -51,7 +51,11 @@ pub(super) struct SelectionMismatch {
     pub(super) word: String,
 }
 
-type SelectedGroups = (BTreeMap<GroupKey, Vec<SelectedRow>>, usize);
+pub(super) struct SelectedGroups {
+    pub(super) groups: BTreeMap<GroupKey, Vec<SelectedRow>>,
+    pub(super) time_count: usize,
+    pub(super) fields: Vec<i32>,
+}
 
 pub(super) fn groups(
     source: &Solutions,
@@ -60,7 +64,15 @@ pub(super) fn groups(
     threshold_seconds: f64,
 ) -> Result<SelectedGroups, SelectionMismatch> {
     let times = TimeGroups::for_source(source, threshold_seconds);
-    let select = Selection::new(source, selectors, times.len(), overlay)?;
+    let select = Selection::new(source, selectors, &times, overlay)?;
+    let fields = source
+        .rows
+        .iter()
+        .map(|row| row.field)
+        .filter(|&id| included(&select.field, Some(id)))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let mut groups: BTreeMap<GroupKey, Vec<SelectedRow>> = BTreeMap::new();
     let mut first_rows = HashSet::new();
     for (row_index, row) in source.rows.iter().enumerate() {
@@ -94,16 +106,44 @@ pub(super) fn groups(
             (row.window, row.antenna, selected.time_index)
         });
     }
-    Ok((groups, times.len()))
+    Ok(SelectedGroups {
+        groups,
+        time_count: times.len(),
+        fields,
+    })
 }
 
 impl Selection {
     fn new(
         source: &Solutions,
         selectors: &Selectors,
-        times: usize,
+        times: &TimeGroups,
         overlay: Overlay,
     ) -> Result<Self, SelectionMismatch> {
+        let scan = if overlay.time {
+            BTreeSet::new()
+        } else {
+            select(
+                "scans",
+                &selectors.scan,
+                source.rows.iter().filter_map(|row| row.scan),
+                |_| "",
+            )?
+        };
+        let offset = scan
+            .iter()
+            .next()
+            .and_then(|id| times.scan_index(*id))
+            .unwrap_or(0) as i32;
+        let time = select(
+            "timeranges",
+            &selectors.time,
+            0..times.len() as i32 - offset,
+            |_| "",
+        )?
+        .into_iter()
+        .map(|relative| relative + offset)
+        .collect();
         Ok(Self {
             antenna: select(
                 "antenna",
@@ -128,22 +168,8 @@ impl Selection {
                         .map_or("", |window| &window.name)
                 },
             )?,
-            time: select(
-                "timeranges",
-                &selectors.time,
-                (0..times).map(|time| time as i32),
-                |_| "",
-            )?,
-            scan: if overlay.time {
-                BTreeSet::new()
-            } else {
-                select(
-                    "scans",
-                    &selectors.scan,
-                    source.rows.iter().filter_map(|row| row.scan),
-                    |_| "",
-                )?
-            },
+            time,
+            scan,
             baseband: select(
                 "basebands",
                 &selectors.baseband,
@@ -189,8 +215,15 @@ fn select<'a>(
         return Ok(BTreeSet::new());
     }
     let identifiers = identifiers.collect::<BTreeSet<_>>();
-    let mut selected = BTreeSet::new();
-    for word in words {
+    let mut selected = if words.iter().any(|word| word.starts_with('!')) {
+        identifiers.clone()
+    } else {
+        BTreeSet::new()
+    };
+    for raw in &words {
+        let (word, exclude) = raw
+            .strip_prefix('!')
+            .map_or((*raw, false), |word| (word, true));
         let matches = identifiers.iter().copied().filter(|&id| {
             if let Ok(number) = word.parse::<i32>() {
                 return id == number;
@@ -207,7 +240,11 @@ fn select<'a>(
         });
         let count = matches
             .inspect(|&id| {
-                selected.insert(id);
+                if exclude {
+                    selected.remove(&id);
+                } else {
+                    selected.insert(id);
+                }
             })
             .count();
         if count == 0 {
@@ -216,6 +253,12 @@ fn select<'a>(
                 word: word.into(),
             });
         }
+    }
+    if selected.is_empty() {
+        return Err(SelectionMismatch {
+            parameter,
+            word: words.join(","),
+        });
     }
     Ok(selected)
 }
@@ -263,6 +306,13 @@ impl TimeGroups {
         match self {
             Self::Scans(groups) => groups.len(),
             Self::Epochs { times, .. } => times.len(),
+        }
+    }
+
+    fn scan_index(&self, scan: i32) -> Option<usize> {
+        match self {
+            Self::Scans(scans) => scans.get(&scan).copied(),
+            Self::Epochs { .. } => None,
         }
     }
 

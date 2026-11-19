@@ -37,6 +37,8 @@ def browse_pages(plt, reply, workspace):
     completed = current = 0
     while current < len(pages):
         page = pages[current]
+        for message in page["diagnostics"]:
+            print(message)
         path = draw_page(plt, page, workspace, figure, reply, len(products))
         if path is not None:
             products.append(path)
@@ -84,11 +86,16 @@ def draw_page(plt, page, workspace, figure, reply, sequence):
                 axis.set_ylim(*y_limits)
             for artist, layer in zip(axis.lines, panel["layers"], strict=True):
                 artist.set_markersize(layer["symbol_size"])
+            if axis is axes[0]:
+                header = document["header_lines"][0]
+                header = f"...{header[-90:]}" if len(header) > 90 else header
+                axis.text(0.07, 0.955, header, transform=figure.transFigure)
             if atmosphere:
                 with plt.rc_context({"axes.grid": True}):
                     draw_atmosphere(axis, atmosphere, document["layout"])
             if fdm is not None:
                 draw_fdm_windows(axis, fdm)
+        axes[-1].text(0.04, 0.02, page["footer"], transform=figure.transFigure)
         if plot["output_file"] is not None:
             path = save_page(figure, page, workspace, reply, sequence)
         if plot["show"]:

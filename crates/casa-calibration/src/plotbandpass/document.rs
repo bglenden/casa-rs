@@ -8,6 +8,7 @@ use casa_ms::plot_document::{
     PlotDocumentPanel, PlotFigure, PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy,
     PlotTextStyle,
 };
+use casa_types::quanta::format::{YMD, format_time};
 use serde::Serialize;
 
 use super::atmosphere::AtmosphericCurve;
@@ -61,6 +62,8 @@ pub(crate) struct BandpassPage {
     fdm: Vec<Option<Vec<FdmWindow>>>,
     prompt: bool,
     quit_immediately: bool,
+    footer: String,
+    diagnostics: Vec<String>,
 }
 
 pub(crate) fn pages(
@@ -118,6 +121,15 @@ pub(crate) fn pages(
                 .map_err(|error| error.to_string())?;
             let last = &source[source.len() - 1];
             let output_file = output_file(display, &last.suffix, index);
+            let date = format_time(last.epoch / 86_400.0, YMD, 0);
+            let date = date.get(..10).unwrap_or(&date).replace('/', "-");
+            let mut footer = format!("{subtitle}  ObsDate={date}");
+            let regression = std::path::Path::new(display.figfile)
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("regression"));
+            if !regression {
+                footer.push_str("   plotbandpass v2.20 = 2024/09/04 16:00:03");
+            }
             Ok(BandpassPage {
                 figure: PlotFigure {
                     document,
@@ -135,6 +147,11 @@ pub(crate) fn pages(
                 quit_immediately: plot.polynomial
                     || plot.immediate_combined_overlay
                     || (with_phase_page && last.ordinate != super::Ordinate::Phase),
+                footer,
+                diagnostics: source
+                    .iter()
+                    .flat_map(|panel| panel.diagnostics.iter().cloned())
+                    .collect(),
             })
         })
         .collect()
@@ -165,10 +182,26 @@ fn document_panel(
     panel_number: usize,
     display: &DisplayOptions<'_>,
 ) -> PlotDocumentPanel {
-    let phase = bandpass.y_label.to_ascii_lowercase().starts_with("phase");
-    let points = display.show_points.unwrap_or(phase);
-    let lines = display.show_lines.unwrap_or(!phase);
+    let phase = bandpass.ordinate == super::Ordinate::Phase;
+    let (points, lines) = match (display.show_points, display.show_lines) {
+        (None, None) => (phase, !phase),
+        (None, Some(lines)) => (!lines, lines),
+        (Some(false), _) => (false, true),
+        (Some(true), lines) => (true, lines.unwrap_or(!phase)),
+    };
+    let delay = bandpass.ordinate == super::Ordinate::Delay;
+    let markersize = if delay {
+        display.markersize.max(8.0)
+    } else {
+        display.markersize
+    };
+    let (points, lines) = if delay {
+        (true, false)
+    } else {
+        (points, lines)
+    };
     let palette = ["b", "g", "r", "c", "#7f3f98", "#a57a24", "#228a84"];
+    let table_colors = [["b", "g"], ["k", "c"], ["m", "r"]];
     let mut annotations = Vec::new();
     let mut labels = std::collections::BTreeSet::new();
     let layers = bandpass
@@ -176,7 +209,11 @@ fn document_panel(
         .iter()
         .enumerate()
         .map(|(index, data)| {
-            let color = palette[index % palette.len()];
+            let color = if bandpass.overlay.antenna || bandpass.overlay.time {
+                palette[index % palette.len()]
+            } else {
+                table_colors[data.table_index][data.receptor % 2]
+            };
             if labels.insert(&data.label) {
                 annotations.push(PlotDocumentAnnotation {
                     id: format!("polarization-{}", data.receptor),
@@ -209,7 +246,7 @@ fn document_panel(
                 interval_labels: Vec::new(),
                 provenance: Vec::new(),
                 color_group: color.into(),
-                symbol_size: display.markersize,
+                symbol_size: markersize,
                 line_width: 1.0,
                 opacity: 1.0,
                 source_sample_count: data.curve.x.len() as u64,
@@ -218,8 +255,22 @@ fn document_panel(
                 data: None,
                 style: Some(PlotLayerStyle {
                     color: Some(color.into()),
-                    marker: Some(if points { "." } else { "None" }.into()),
-                    line_style: Some(if lines { "-" } else { "None" }.into()),
+                    marker: Some(
+                        if points && !data.polynomial {
+                            if data.table_index == 0 { "." } else { "o" }
+                        } else {
+                            "None"
+                        }
+                        .into(),
+                    ),
+                    line_style: Some(
+                        if data.polynomial || lines {
+                            "-"
+                        } else {
+                            "None"
+                        }
+                        .into(),
+                    ),
                 }),
             }
         })
