@@ -16,6 +16,7 @@ mod edit;
 mod record_axes;
 
 use casa_types::{ArrayValue, RecordValue, Value};
+use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
 
 use crate::coordinate::{CoordinateModel, CoordinateType};
 use crate::direction::DirectionCoordinate;
@@ -179,6 +180,55 @@ impl CoordinateSystem {
         }
 
         Ok(pixel)
+    }
+
+    /// Converts a matrix of world vectors, with one point per column.
+    ///
+    /// The rows follow the system's world axes. The result has one row per
+    /// pixel axis and holds its columns contiguously.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the number of rows differs from the world axis
+    /// count or a coordinate cannot be converted.
+    pub fn to_pixel_columns(
+        &self,
+        world: ArrayView2<'_, f64>,
+    ) -> Result<Array2<f64>, CoordinateError> {
+        let n_world = self.n_world_axes();
+        if world.nrows() != n_world {
+            return Err(CoordinateError::DimensionMismatch {
+                expected: n_world,
+                got: world.nrows(),
+            });
+        }
+
+        let mut pixels = Array2::zeros((self.n_pixel_axes(), world.ncols()).f());
+        let mut input = Vec::new();
+        let mut world_offset = 0;
+        let mut pixel_offset = 0;
+        for coord in &self.coordinates {
+            let next_world = world_offset + coord.n_world_axes();
+            let next_pixel = pixel_offset + coord.n_pixel_axes();
+            let world = world.slice_axis(Axis(0), (world_offset..next_world).into());
+            let mut pixel = pixels.slice_axis_mut(Axis(0), (pixel_offset..next_pixel).into());
+            if let CoordinateModel::Linear(linear) = coord {
+                linear.to_pixel_columns(world, pixel.view_mut())?;
+            } else {
+                for (column, mut output) in
+                    world.axis_iter(Axis(1)).zip(pixel.axis_iter_mut(Axis(1)))
+                {
+                    input.clear();
+                    input.extend(column.iter().copied());
+                    for (output, value) in output.iter_mut().zip(coord.to_pixel(&input)?) {
+                        *output = value;
+                    }
+                }
+            }
+            world_offset = next_world;
+            pixel_offset = next_pixel;
+        }
+        Ok(pixels)
     }
 
     /// Serializes the coordinate system using casacore's canonical

@@ -39,7 +39,7 @@ IMPLEMENTED["coordsys"] = {
     "observer", "parentname", "projection", "referencecode", "referencepixel", "restfrequency",
     "setnames", "setobserver", "setparentname", "setstokes",
     "setreferencepixel", "settelescope",
-    "stokes", "telescope", "torecord", "type", "units",
+    "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
     "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fromarray", "fromshape",

@@ -440,7 +440,7 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
-    method("topixelmany", &[param("value", K::Any, Empty)], R::Any, No),
+    method("topixelmany", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("torecord", &[], R::Any, Yes),
     method(
         "torel",
@@ -469,7 +469,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("toworldmany", &[param("value", K::Any, Empty)], R::Any, No),
+    method("toworldmany", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("transpose", &[param("order", K::Any, Required)], R::Any, No),
     method("type", &[], R::Any, Yes),
     method("units", &[param("type", K::Text, Text(""))], R::Any, Yes),
