@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>        .expect(<span class="string">"record coordinate fields end in their numeric index"</span>)
 <a href=#30 id=30 data-nosnippet>30</a>}
 <a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">fn </span>numbered_coordinates(
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>numbered_coordinates(
 <a href=#33 id=33 data-nosnippet>33</a>    state: <span class="kw-2">&amp;</span>CoordinateState,
 <a href=#34 id=34 data-nosnippet>34</a>) -&gt; PyResult&lt;Vec&lt;(usize, <span class="kw-2">&amp;</span>CoordinateModel, RecordCoordinate)&gt;&gt; {
 <a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span>placements = CoordinateSystem::record_coordinates(<span class="kw-2">&amp;</span>state.record)

@@ -901,6 +901,9 @@ coordinate for a particular axis with <code>cs.findaxis(world=False, axis=0)</co
 <code>cs.names()</code> and <code>cs.units()</code> follow world-axis order. Use <code>cs.copy()</code> to edit
 a separate coordinate system, then pass its record to <code>ia.setcoordsys()</code> to
 persist the edits to the image.</p>
+<p>Use <code>cs.projection()</code> to inspect the direction projection and
+<code>cs.referencecode()</code> to list stored frames in coordinate order.
+<code>cs.getconversiontype("direction")</code> reports the current conversion frame.</p>
 <p>To build a coordinate system without an image, call
 <code>tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])</code>.
 Use <code>addcoordinate</code> to append axes and <code>fromrecord</code> to restore a coordinate
