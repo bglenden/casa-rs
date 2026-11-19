@@ -143,3 +143,59 @@ def test_statistics_handles_empty_biweight_sample():
     assert image.fromshape(shape=[4, 3])
     with pytest.raises(RuntimeError, match="at least two points"):
         image.statistics(algorithm="biweight", mask="F")
+
+
+@pytest.mark.parametrize("algorithm", ["classic", "hinges-fences", "fit-half", "chauvenet"])
+def test_statistics_retains_variance_on_large_double_baseline(casa, algorithm):
+    pixels = 1e12 + np.arange(6.0).reshape(3, 2)
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromshape(shape=[3, 2], type="d")
+        assert image.putchunk(pixels)
+        result = image.statistics(algorithm=algorithm)
+        _assert_value(result["npts"], np.array([6.0]))
+        _assert_value(result["sigma"], np.array([np.std(np.arange(6.0), ddof=1)]))
+
+
+@pytest.mark.parametrize("algorithm", ["classic", "hinges-fences"])
+def test_statistics_filters_nan_and_uses_float_thresholds_on_double_data(casa, algorithm):
+    rust, oracle = tools.image(), casa.image()
+    finite = np.arange(6.0).reshape(3, 2)
+    nan_pixels = finite.copy()
+    nan_pixels[0, 1] = np.nan
+    for image in rust, oracle:
+        assert image.fromshape(shape=[3, 2], type="d")
+        assert image.putchunk(nan_pixels)
+    kwargs = dict(algorithm=algorithm, fence=100.0)
+    result = rust.statistics(includepix=[0.0, 10.0], **kwargs)
+    _assert_value(result, oracle.statistics(includepix=[0.0, 10.0], **kwargs))
+    _assert_value(result["npts"], np.array([5.0]))
+    for image in rust, oracle:
+        assert image.putchunk(1 + finite * 1e-8)
+    limits = [1.000000009, 1.000000031]
+    for name, count in (("includepix", 1.0), ("excludepix", 5.0)):
+        args = {name: limits, **kwargs}
+        result = rust.statistics(**args)
+        _assert_value(result, oracle.statistics(**args))
+        _assert_value(result["npts"], np.array([count]))
+
+
+def test_statistics_strided_direction_flux_and_fit_half_tie(casa):
+    values = np.array([[0., 3., 2.], [3., 2., 3.]])
+    region = casa.regionmanager().box([0, 0], [1, 2], [1, 2])
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromarray(pixels=values)
+        assert image.setbrightnessunit("K")
+        _assert_value(image.statistics(region=region)["flux"], np.array([57600.0]))
+        _assert_value(image.statistics(algorithm="fit-half", lside=False)["maxpos"], np.array([1, 0]))
+
+
+@pytest.mark.parametrize("invalid_unit", ["K/beam", "W/beam"])
+def test_statistics_omits_flux_for_incompatible_beam_units(casa, invalid_unit):
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromarray(pixels=np.ones((3, 2)))
+        assert image.setrestoringbeam(major="60arcsec", minor="60arcsec", pa="0deg")
+        assert image.setbrightnessunit(invalid_unit)
+        assert "flux" not in image.statistics()

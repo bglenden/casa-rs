@@ -6,8 +6,8 @@
 //! `casacore/lattices/LatticeMath/LatticeStatistics.h`.
 //!
 //! The implementation follows the C++ classical algorithm: a single pass
-//! accumulates `npts`, `sum`, `sumsq`, `min`, `max`; derived quantities
-//! (`mean`, `rms`, `variance`, `sigma`) are computed from those; order
+//! accumulates `npts`, `sum`, `sumsq`, `min`, `max` and the centered
+//! second moment used for variance and standard deviation. Order
 //! statistics use quantile selection rather than full repeated sorts, while
 //! preserving the relevant casacore-style median and fractile semantics.
 //!
@@ -880,7 +880,7 @@ fn accept_idx_fast(filters: &FilterState<'_>, value: f64, idx: &[usize]) -> bool
 
 fn accept_value(filters: &FilterState<'_>, value: f64) -> bool {
     if let Some([lo, hi]) = filters.include_range
-        && (value < lo || value > hi)
+        && !(lo <= value && value <= hi)
     {
         return false;
     }
@@ -1029,10 +1029,13 @@ impl OrderStatsCache {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct RunningStats {
+pub(crate) struct RunningStats {
     npts: usize,
     sum: f64,
     sumsq: f64,
+    origin: f64,
+    mean: f64,
+    centered_sumsq: f64,
     min: f64,
     max: f64,
 }
@@ -1043,6 +1046,9 @@ impl Default for RunningStats {
             npts: 0,
             sum: 0.0,
             sumsq: 0.0,
+            origin: 0.0,
+            mean: 0.0,
+            centered_sumsq: 0.0,
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
         }
@@ -1050,10 +1056,19 @@ impl Default for RunningStats {
 }
 
 impl RunningStats {
-    fn push(&mut self, value: f64) {
+    pub(crate) fn push(&mut self, value: f64) {
+        if self.npts == 0 {
+            self.origin = value;
+        }
         self.npts += 1;
         self.sum += value;
         self.sumsq += value * value;
+        // Keep the running mean relative to the first sample so adjustments
+        // smaller than the spacing of the original values are retained.
+        let shifted = value - self.origin;
+        let delta = shifted - self.mean;
+        self.mean += delta / self.npts as f64;
+        self.centered_sumsq += delta * (shifted - self.mean);
         self.min = self.min.min(value);
         self.max = self.max.max(value);
     }
@@ -1066,14 +1081,20 @@ impl RunningStats {
             *self = other;
             return;
         }
+        let first_count = self.npts as f64;
+        let second_count = other.npts as f64;
         self.npts += other.npts;
+        let delta = (other.origin - self.origin) + (other.mean - self.mean);
+        let second_weight = second_count / self.npts as f64;
+        self.mean += delta * second_weight;
+        self.centered_sumsq += other.centered_sumsq + delta * delta * first_count * second_weight;
         self.sum += other.sum;
         self.sumsq += other.sumsq;
         self.min = self.min.min(other.min);
         self.max = self.max.max(other.max);
     }
 
-    fn finish(self, stat: Statistic) -> f64 {
+    pub(crate) fn finish(self, stat: Statistic) -> f64 {
         debug_assert!(self.npts > 0);
         let n = self.npts as f64;
         match stat {
@@ -1091,8 +1112,7 @@ impl RunningStats {
                 if self.npts < 2 {
                     0.0
                 } else {
-                    let mean = self.sum / n;
-                    (self.sumsq - n * mean * mean) / (n - 1.0)
+                    self.centered_sumsq / (n - 1.0)
                 }
             }
             Statistic::Sigma => {

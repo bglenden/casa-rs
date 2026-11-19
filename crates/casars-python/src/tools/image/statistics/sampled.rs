@@ -61,7 +61,7 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
             let value = pixel.to_f64_stats();
             if options
                 .include
-                .is_some_and(|[low, high]| value < low || value > high)
+                .is_some_and(|[low, high]| !(low <= value && value <= high))
                 || options
                     .exclude
                     .is_some_and(|[low, high]| value >= low && value <= high)

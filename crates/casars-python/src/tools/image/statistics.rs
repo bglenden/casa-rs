@@ -6,6 +6,7 @@ use casa_lattices::{
     FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm, StatsElement,
 };
 use casa_tables::LockType;
+use casa_types::quanta::{Quantity, Unit};
 use ndarray::{ArrayD, Zip};
 use pyo3::prelude::*;
 
@@ -111,7 +112,9 @@ fn calculate<T: ImagePixel + StatsElement>(
     let global = options.axes.is_empty() || options.axes.len() == chunk.size.len();
     let mask = and_mask(chunk.mask(image)?, options.expression.take());
     let mut fields = region_fields(image.coordinates(), chunk)?;
-    if options.algorithm != StatisticsAlgorithm::Classic {
+    if !matches!(options.algorithm, StatisticsAlgorithm::Classic)
+        && !matches!(options.algorithm, StatisticsAlgorithm::HingesFences { fence } if fence < 0.0)
+    {
         let scale = flux_scale(image, chunk, &options.axes, global);
         sampled::collect(
             &selection,
@@ -299,12 +302,24 @@ fn flux_scale<T: ImagePixel>(
     }
     let channels =
         spectral_axis.map(|axis| [chunk.start[axis], chunk.start[axis] + chunk.stride[axis]]);
-    let beam = image
-        .units()
-        .contains("/beam")
-        .then(|| image.image_info().ok()?.beam_set.single_beam())
-        .flatten();
-    statistics_flux_scale(coordinates, image.units(), beam, channels)
+    let units = image.units();
+    let beam = if let Some(brightness) = units.strip_suffix("/beam") {
+        let jansky = Unit::new("Jy").expect("standard Jy unit");
+        Quantity::new(1.0, brightness)
+            .ok()?
+            .get_value_in(&jansky)
+            .ok()?;
+        image.image_info().ok()?.beam_set.single_beam()
+    } else {
+        None
+    };
+    let direction_stride = axis_types
+        .iter()
+        .zip(&chunk.stride)
+        .filter(|(kind, _)| **kind == CoordinateType::Direction)
+        .map(|(_, &step)| step as f64)
+        .product::<f64>();
+    statistics_flux_scale(coordinates, units, beam, channels).map(|scale| scale * direction_stride)
 }
 
 #[pymethods]
@@ -360,19 +375,17 @@ impl PyImageTool {
             if disk || !logfile.is_empty() || image.fits().is_some() {
                 return Err(stub("statistics").unwrap_err());
             }
-            let mut include = range(includepix, "include")?;
-            let mut exclude = range(excludepix, "exclude")?;
+            // casatools stores its public thresholds as Float even when the
+            // underlying image and the reported statistics use Double.
+            let single = |limits: [f64; 2]| limits.map(|bound| f64::from(bound as f32));
+            let include = range(includepix, "include")?.map(single);
+            let exclude = range(excludepix, "exclude")?.map(single);
             if include.is_some() && exclude.is_some() {
                 return Err(raised(
                     "You can only give one of arguments include or exclude.",
                 ));
             }
             let single_precision = matches!(&*image, ImageHandle::Float(_));
-            if single_precision {
-                let single = |limits: [f64; 2]| limits.map(|bound| f64::from(bound as f32));
-                include = include.map(single);
-                exclude = exclude.map(single);
-            }
             let region = region?;
             let mask = expression?;
             attachment.require_lock(&mut image, LockType::Read)?;
