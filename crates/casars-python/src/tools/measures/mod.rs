@@ -36,6 +36,7 @@ mod geometry;
 mod inspect;
 mod offset;
 mod record;
+mod shift;
 mod spectral;
 pub(crate) mod surface;
 mod xvalue;
@@ -365,21 +366,6 @@ impl PyMeasures {
         ev: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("riseset")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (v = None, offset = None, pa = None),
-        text_signature = "($self, v={}, offset=[], pa=[])"
-    )]
-    fn shift(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        offset: Option<&Bound<'_, PyAny>>,
-        pa: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("shift")
     }
 
     /// Not yet implemented in casa-rs.
