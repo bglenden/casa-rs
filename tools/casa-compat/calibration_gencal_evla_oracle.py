@@ -158,6 +158,7 @@ def affected_epoch(root, fixture, native):
             if scale == 1.0:
                 assert tool.getkeyword('VLATrDelCorr') == 1.0
             else:
+                tool.removekeyword('VLATrDelCorr')
                 tool.putkeyword('VLATrDelCorr', scale)
             tool.close()
         output = case / f'apply-{scale}'
