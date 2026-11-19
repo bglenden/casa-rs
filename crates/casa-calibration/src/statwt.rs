@@ -21,6 +21,8 @@ use classic::{Moments, VisibilityMoments};
 use output::Output;
 pub use robust::StatWtAlgorithm;
 
+use crate::solve::grouping::{VisibilityModels, correlation_types_for_ddid};
+
 /// Main-table data column contributing samples to a classical weight estimate.
 #[derive(Clone, Copy)]
 pub enum StatWtDataColumn {
@@ -233,9 +235,14 @@ pub fn estimate_statwt(
         ));
     }
     let channel_plans = channels::prepare(ms, selection, options)?;
-    let table = ms.main_table_mut();
+    let models = options
+        .data_column
+        .residual()
+        .then(|| VisibilityModels::new(ms, &selection.selected_rows))
+        .transpose()
+        .map_err(|error| MsError::InvalidInput(error.to_string()))?;
     let groups = grouping::groups(
-        table,
+        ms.main_table(),
         selection,
         options.combine,
         options.time_bin,
@@ -245,82 +252,123 @@ pub fn estimate_statwt(
     let mut pending = Vec::new();
     let mut pending_bytes = 0;
     let output = Output::prepare(
-        table,
+        ms.main_table_mut(),
         options.data_column,
         !matches!(options.channel_bin, StatWtChannelBin::Window),
+        selection,
         lock.as_deref_mut(),
     )?;
     let columns = output.columns();
-    for group in groups {
-        let channel_plan = &channel_plans[&group.rows[0].spectral_window_id];
-        let samples = read_group(table, options.data_column, &group.rows)?;
-        if samples[0].values.len_of(Axis(1)) != channel_plan.fit.len() {
-            return Err(MsError::InvalidInput(
-                "visibility shape disagrees with spectral window".into(),
-            ));
-        }
-        let estimate = |range: std::ops::Range<usize>| {
-            estimate_variances(
-                &samples[range.clone()],
-                &group.exposures[range],
-                channel_plan,
-                options,
-            )
-        };
-        let mut previous_window = 0..0;
-        let mut variances = Vec::new();
-        let mut weights = Vec::new();
-        for (index, (&row, sample)) in group.rows.iter().zip(&samples).enumerate() {
-            let window = group.window(index, options.time_bin, options.sliding);
-            if window != previous_window {
-                variances = estimate(window.clone());
-                previous_window = window;
+    let polarizations = ms.polarization()?;
+    let correlation_count = (0..polarizations.row_count())
+        .map(|row| polarizations.num_corr(row).map(|count| count as usize))
+        .collect::<MsResult<Vec<_>>>()?;
+    let cell_bytes =
+        size_of::<Complex32>() * (1 + usize::from(models.is_some())) + size_of::<bool>();
+    let mut remaining = groups.as_slice();
+    while !remaining.is_empty() {
+        let mut bytes = 0;
+        let mut count = 0;
+        for group in remaining {
+            let row = group.rows[0];
+            let channels = channel_plans[&row.spectral_window_id].fit.len();
+            let correlations = correlation_count
+                .get(row.polarization_id as usize)
+                .copied()
+                .ok_or_else(|| MsError::InvalidInput("invalid POLARIZATION_ID".into()))?;
+            let group_bytes = group
+                .rows
+                .len()
+                .saturating_mul(128 + channels * correlations * cell_bytes);
+            if count > 0 && bytes + group_bytes > casa_ms::write_session::TARGET_BATCH_BYTES {
+                break;
             }
-            let exposure = group.exposures[index];
-            weights.clear();
-            weights.extend(variances.iter().map(|&variance| {
-                if variance == 0.0 {
-                    0.0
-                } else {
-                    (exposure / variance) as f32
+            bytes = bytes.saturating_add(group_bytes);
+            count += 1;
+        }
+        let (batch, rest) = remaining.split_at(count);
+        remaining = rest;
+        let rows = batch
+            .iter()
+            .flat_map(|group| group.rows.iter().copied())
+            .collect::<Vec<_>>();
+        let samples = read_samples(ms, options.data_column, models.as_ref(), &rows)?;
+        let mut offset = 0;
+        for group in batch {
+            let channel_plan = &channel_plans[&group.rows[0].spectral_window_id];
+            let samples = &samples[offset..offset + group.rows.len()];
+            offset += samples.len();
+            let shape = samples[0].values.shape();
+            if shape[1] != channel_plan.fit.len()
+                || samples.iter().any(|sample| sample.values.shape() != shape)
+            {
+                return Err(MsError::InvalidInput(
+                    "visibility shape disagrees with spectral window".into(),
+                ));
+            }
+            let estimate = |range: std::ops::Range<usize>| {
+                estimate_variances(
+                    &samples[range.clone()],
+                    &group.exposures[range],
+                    channel_plan,
+                    options,
+                )
+            };
+            let mut previous_window = 0..0;
+            let mut variances = Vec::new();
+            let mut weights = Vec::new();
+            for (index, (&row, sample)) in group.rows.iter().zip(samples).enumerate() {
+                let window = group.window(index, options.time_bin, options.sliding);
+                if window != previous_window {
+                    variances = estimate(window.clone());
+                    previous_window = window;
                 }
-            }));
-            add_summary(
-                &mut summary,
-                sample,
-                &weights,
-                channel_plan,
-                output.spectral,
-                options.combine.correlations,
-            );
-            if let Some(lock) = &mut lock {
-                let update = RowUpdate::new(
-                    row.row_index,
+                let exposure = group.exposures[index];
+                weights.clear();
+                weights.extend(variances.iter().map(|&variance| {
+                    if variance == 0.0 {
+                        0.0
+                    } else {
+                        (exposure / variance) as f32
+                    }
+                }));
+                add_summary(
+                    &mut summary,
                     sample,
                     &weights,
                     channel_plan,
-                    &output,
-                    options,
-                    exposure,
+                    output.spectral,
+                    options.combine.correlations,
                 );
-                pending_bytes += update.flags.len()
-                    + update
-                        .values
-                        .iter()
-                        .map(|value| value.len() * size_of::<f32>())
-                        .sum::<usize>();
-                pending.push(update);
-                if pending_bytes >= casa_ms::write_session::TARGET_BATCH_BYTES
-                    || pending.len() == 65_536
-                {
-                    persist_updates(table, &columns, &mut pending, lock)?;
-                    pending_bytes = 0;
+                if let Some(lock) = &mut lock {
+                    let update = RowUpdate::new(
+                        row.row_index,
+                        sample,
+                        &weights,
+                        channel_plan,
+                        &output,
+                        options,
+                        exposure,
+                    );
+                    pending_bytes += update.flags.len()
+                        + update
+                            .values
+                            .iter()
+                            .map(|value| value.len() * size_of::<f32>())
+                            .sum::<usize>();
+                    pending.push(update);
+                    if pending_bytes >= casa_ms::write_session::TARGET_BATCH_BYTES
+                        || pending.len() == 65_536
+                    {
+                        persist_updates(ms.main_table_mut(), &columns, &mut pending, lock)?;
+                        pending_bytes = 0;
+                    }
                 }
             }
         }
     }
     if let Some(lock) = lock {
-        persist_updates(table, &columns, &mut pending, lock)?;
+        persist_updates(ms.main_table_mut(), &columns, &mut pending, lock)?;
     }
     Ok(StatWtSummary {
         mean: summary.mean(),
@@ -495,11 +543,13 @@ struct Samples {
     flags: ArrayD<bool>,
 }
 
-fn read_group(
-    table: &Table,
+fn read_samples(
+    ms: &MeasurementSet,
     column: StatWtDataColumn,
+    models: Option<&VisibilityModels>,
     integration: &[&ResolvedMsSelectionRow],
 ) -> MsResult<Vec<Samples>> {
+    let table = ms.main_table();
     let indices = integration
         .iter()
         .map(|row| row.row_index)
@@ -511,7 +561,14 @@ fn read_group(
     };
     let data = read(column.visibility_column())?;
     let flags = read("FLAG")?;
-    let models = column.residual().then(|| read("MODEL_DATA")).transpose()?;
+    let scratch = models
+        .is_some_and(|models| {
+            integration
+                .iter()
+                .any(|row| models.reads_column(row.field_id))
+        })
+        .then(|| read("MODEL_DATA"))
+        .transpose()?;
     let mut samples = Vec::with_capacity(integration.len());
     for (index, (values, flags)) in data.into_iter().zip(flags).enumerate() {
         let row = integration[index];
@@ -529,30 +586,36 @@ fn read_group(
                 row.row_index
             )));
         }
-        if let Some(models) = &models {
-            let Some(ArrayValue::Complex32(model)) = &models[index] else {
-                return Err(MsError::InvalidInput(format!(
-                    "MODEL_DATA is undefined at row {}",
-                    row.row_index
-                )));
-            };
+        let model = if models.is_some_and(|models| models.reads_column(row.field_id)) {
+            match &scratch.as_ref().expect("read scratch model for its field")[index] {
+                Some(ArrayValue::Complex32(model)) => Some(std::borrow::Cow::Borrowed(model)),
+                _ => {
+                    return Err(MsError::InvalidInput(format!(
+                        "MODEL_DATA is undefined at row {}",
+                        row.row_index
+                    )));
+                }
+            }
+        } else if let Some(models) = models {
+            let correlation_types = correlation_types_for_ddid(ms, row.data_desc_id)
+                .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+            models
+                .predict(ms, row.row_index, &correlation_types, &flags)
+                .map_err(|error| MsError::InvalidInput(error.to_string()))?
+                .map(std::borrow::Cow::Owned)
+        } else {
+            None
+        };
+        if let Some(model) = model {
             if model.shape() != values.shape() {
                 return Err(MsError::InvalidInput(format!(
                     "MODEL_DATA has a different shape at row {}",
                     row.row_index
                 )));
             }
-            values -= model;
+            values -= model.as_ref();
         }
         samples.push(Samples { values, flags });
-    }
-    if samples
-        .iter()
-        .any(|row| row.values.shape() != samples[0].values.shape())
-    {
-        return Err(MsError::InvalidInput(
-            "rows in one integration have incompatible visibility shapes".into(),
-        ));
     }
     Ok(samples)
 }

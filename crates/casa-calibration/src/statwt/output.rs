@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Resolve which scalar and spectral weight columns statwt writes.
 
-use casa_ms::{MsError, MsResult};
+use casa_ms::{MsError, MsResult, ResolvedMsSelection};
 use casa_tables::{Table, TableWriteLock};
 use casa_types::{ArrayValue, Value};
 use ndarray::{Array1, ArrayD, IxDyn, ShapeBuilder};
@@ -23,6 +23,7 @@ impl Output {
         table: &mut Table,
         column: StatWtDataColumn,
         split_channels: bool,
+        selection: &ResolvedMsSelection,
         lock: Option<&mut TableWriteLock>,
     ) -> MsResult<Self> {
         let sigma = column.raw();
@@ -36,6 +37,9 @@ impl Output {
         let weight_initialized = initialized(table, WEIGHT_SPECTRUM)?;
         let sigma_initialized = initialized(table, SIGMA_SPECTRUM)?;
         let spectral = split_channels || weight_initialized;
+        if weight_initialized {
+            check_weight_spectrum(table, selection)?;
+        }
         let weight_spectrum = weight && spectral;
         let sigma_spectrum = sigma && (split_channels || sigma_initialized);
         if let Some(lock) = lock {
@@ -131,6 +135,27 @@ fn initialized(table: &Table, column: &str) -> MsResult<bool> {
         Ok(defined) => defined,
         Err(_) => reader.array_cells_owned_uncached(&[0])?[0].is_some(),
     })
+}
+
+fn check_weight_spectrum(table: &Table, selection: &ResolvedMsSelection) -> MsResult<()> {
+    let reader = table.column_accessor(WEIGHT_SPECTRUM)?;
+    let rows = selection.row_indices().collect::<Vec<_>>();
+    for batch in rows.chunks(256) {
+        let missing = match reader.array_shapes_uncached(batch) {
+            Ok(shapes) => shapes.iter().position(Option::is_none),
+            Err(_) => reader
+                .array_cells_owned_uncached(batch)?
+                .iter()
+                .position(Option::is_none),
+        };
+        if let Some(index) = missing {
+            return Err(MsError::InvalidInput(format!(
+                "WEIGHT_SPECTRUM is undefined at row {}",
+                batch[index]
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn initialize_spectrum(
