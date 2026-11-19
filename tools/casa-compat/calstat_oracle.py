@@ -92,7 +92,6 @@ def run(root, native, native_table):
         (legacy, 'phase', 'model'),
         (legacy, 'imaginary', 'corrected_data'),
         (legacy, 'VECTOR', 'unused'),
-        (legacy, 'nan', 'unused'),
     ]
     for path, axis, datacolumn in successes:
         expected = casa.calstat(str(path), axis, datacolumn)
@@ -101,6 +100,13 @@ def run(root, native, native_table):
         compare(native.calstat(caltable=str(path), axis=axis, datacolumn=datacolumn), expected)
     compare(native.calstat(str(legacy)), casa.calstat(str(legacy)))
     compare(native.calstat(str(gain), 'phase', 'cparam'), casa.calstat(str(gain), 'phase', 'cparam'))
+
+    expected_nan = casa.calstat(str(legacy), 'NAN')['NAN']
+    actual_nan = native.calstat(str(legacy), 'NAN')['NAN']
+    assert expected_nan['quartile'] == 7.0
+    assert (actual_nan['min'], actual_nan['max'], actual_nan['npts']) == (0., 9., 7.)
+    assert all(np.isnan(value) for key, value in actual_nan.items()
+               if key not in ('min', 'max', 'npts'))
 
     errors = [
         ((str(gain),), 'Table column GAIN is unknown'),
@@ -136,7 +142,7 @@ def run(root, native, native_table):
     samples = cast.astype(np.float32)
     assert expected['sumsq'] == np.square(samples).sum(dtype=np.float64)
     print(f'{len(successes) + 2} public statistics comparisons, {len(errors)} errors, '
-          'four table-tool comparisons and an independent sample-variance check passed')
+          'four table-tool comparisons, NaN behavior and independent moment checks passed')
 
 
 def main():
