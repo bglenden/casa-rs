@@ -160,6 +160,20 @@ def calibrated_positions(root, vis, native):
     }
 
 
+def routine_parameters(root, vis, native):
+    reference = inspect.signature(casa.gencal).parameters
+    candidate = inspect.signature(native.gencal).parameters
+    assert list(reference) == list(candidate)[:len(reference)]
+    assert all(candidate[name].default == parameter.default for name, parameter in reference.items())
+    outputs = []
+    for name, engine in (('casa', casa), ('native', native)):
+        path = root / f'inactive-service-options-{name}.cal'
+        generate(engine, vis, path, [('amp', {'parameter': 1.01, 'endpoint': 'ignored',
+                                              'timeout': -1, 'retry': -2, 'retry_wait_time': -3})])
+        outputs.append(path)
+    return {'casa_parameters': len(reference), 'table_nrms': compare_tables(*outputs)}
+
+
 def live_service(root, native):
     from casatasks.private import task_getantposalma
 
@@ -185,8 +199,10 @@ def main():
         os.environ[name] = ','.join(filter(None, [os.environ.get(name), '127.0.0.1']))
     from casars import tasks as native
 
-    for name, reference in inspect.signature(casa.getantposalma).parameters.items():
-        assert inspect.signature(native.getantposalma).parameters[name].default == reference.default
+    reference = inspect.signature(casa.getantposalma).parameters
+    candidate = inspect.signature(native.getantposalma).parameters
+    assert list(candidate) == list(reference)
+    assert all(candidate[name].default == parameter.default for name, parameter in reference.items())
     root = args.work.resolve()
     root.mkdir(parents=True)
     vis = root / 'alma.ms'
@@ -195,6 +211,7 @@ def main():
         results = successful_requests(root, endpoint, calls, native)
         results.update(errors_and_replacement(root, endpoint, calls, native))
     results['gencal'] = calibrated_positions(root, vis, native)
+    results['routine-service-options'] = routine_parameters(root, vis, native)
     if args.live:
         results['live-service'] = live_service(root, native)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
