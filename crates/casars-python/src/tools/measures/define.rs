@@ -17,7 +17,7 @@ use casa_types::quanta::{Dimension, Quantity, UnitDim};
 
 use crate::convert::holder::{
     DIRECTION_CODES, EPOCH_CODES, FREQUENCY_CODES, Measure, MeasureKind, MeasureValue,
-    POSITION_CODES, days_of, direction_cosines, frequency_hz,
+    POSITION_CODES, days_of, direction_cosines, frequency_hz, resolve_epoch_code,
 };
 use crate::convert::measures::direction_measure;
 use crate::convert::value::CasaValue;
@@ -94,63 +94,56 @@ fn exception(lines: &mut Vec<LogLine>, message: impl std::fmt::Display) -> CasaV
     failed()
 }
 
-/// casa-rs does not read measure offsets yet.
-fn offset_refused(off: &RecordArg, lines: &mut Vec<LogLine>) -> bool {
-    if off.0.is_empty() {
-        return false;
-    }
-    lines.push(LogLine::error(
-        "measure offsets (off) are not yet implemented in casa-rs",
-    ));
-    true
-}
-
 /// `me.epoch(rf, v0, off)`. An unknown `rf` is UTC, silently, as in CASA.
 pub(super) fn epoch(
+    state: &mut super::State,
     rf: &str,
     v0: &Variant,
     off: &RecordArg,
     lines: &mut Vec<LogLine>,
-) -> CasaValue {
+) -> pyo3::PyResult<CasaValue> {
     let Some(mut time) = quantity_of(v0, lines) else {
-        return failed();
+        return Ok(failed());
     };
     if unset(&time) {
         time = Quantity::new(0.0, "d").expect("d is a unit");
     }
     if !has(&time, Dimension::Time) {
-        return exception(
+        return Ok(exception(
             lines,
             format!(
                 "Quantum::assure non-conforming unit type '{}'",
                 time.unit().name()
             ),
-        );
+        ));
     }
-    if offset_refused(off, lines) {
-        return failed();
+    let refer = resolve_epoch_code(rf).unwrap_or_else(|| EPOCH_CODES.default_code());
+    let mut value = MjdHighPrec::from_mjd(days_of(&time));
+    if refer.starts_with("R_") {
+        value = MjdHighPrec::new(value.day(), 0.0);
     }
-    Measure {
-        refer: EPOCH_CODES.resolve_or_default(rf),
-        value: MeasureValue::Epoch(MjdHighPrec::from_mjd(days_of(&time))),
-    }
-    .to_value()
+    let base = Measure {
+        refer,
+        value: MeasureValue::Epoch(value),
+    };
+    super::offset::finish_definition(state, base, off, lines)
 }
 
 /// `me.direction(rf, v0, v1, off)`: a longitude and a latitude. An unknown
 /// `rf` is J2000, with CASA's warning.
 pub(super) fn direction(
+    state: &mut super::State,
     rf: &str,
     v0: &Variant,
     v1: &Variant,
     off: &RecordArg,
     lines: &mut Vec<LogLine>,
-) -> CasaValue {
+) -> pyo3::PyResult<CasaValue> {
     let Some(mut longitude) = quantity_of(v0, lines) else {
-        return failed();
+        return Ok(failed());
     };
     let Some(mut latitude) = quantity_of(v1, lines) else {
-        return failed();
+        return Ok(failed());
     };
     if unset(&longitude) && unset(&latitude) {
         longitude = Quantity::new(0.0, "deg").expect("deg is a unit");
@@ -159,10 +152,10 @@ pub(super) fn direction(
     // casacore's MVDirection takes cos(latitude) first.
     for angle in [&latitude, &longitude] {
         if !has(angle, Dimension::Angle) {
-            return exception(
+            return Ok(exception(
                 lines,
                 format!("Quantum::cos illegal unit type '{}'", angle.unit().name()),
-            );
+            ));
         }
     }
     let refer = DIRECTION_CODES.resolve(rf).unwrap_or_else(|| {
@@ -171,17 +164,14 @@ pub(super) fn direction(
         ));
         DIRECTION_CODES.default_code()
     });
-    if offset_refused(off, lines) {
-        return failed();
-    }
-    Measure {
+    let base = Measure {
         refer,
         value: MeasureValue::Direction(direction_cosines(
             longitude.get_si_value(),
             latitude.get_si_value(),
         )),
-    }
-    .to_value()
+    };
+    super::offset::finish_definition(state, base, off, lines)
 }
 
 /// `me.position(rf, v0, v1, v2, off)`: x, y, z lengths, or a longitude, a
@@ -192,26 +182,23 @@ pub(super) fn direction(
 /// longitude, latitude before casacore reads them, and values casacore
 /// cannot read leave the position at the origin.
 pub(super) fn position(
+    state: &mut super::State,
     rf: &str,
     values: [&Variant; 3],
     off: &RecordArg,
     lines: &mut Vec<LogLine>,
-) -> CasaValue {
+) -> pyo3::PyResult<CasaValue> {
     if let Variant::Record(record) = values[0]
-        && matches!(
-            record.get("value"),
-            Some(Variant::Numbers(_) | Variant::Array { .. })
-        )
+        && let Some(Variant::Numbers(items) | Variant::Array { values: items, .. }) =
+            record.get("value")
+        && !items.is_empty()
     {
-        lines.push(LogLine::error(
-            "multi-valued measures are not yet implemented in casa-rs",
-        ));
-        return failed();
+        return super::geometry::define_three(state, MeasureKind::Position, rf, values, off, lines);
     }
     let mut quantities = Vec::with_capacity(3);
     for value in values {
         let Some(quantity) = quantity_of(value, lines) else {
-            return failed();
+            return Ok(failed());
         };
         quantities.push(quantity);
     }
@@ -225,7 +212,16 @@ pub(super) fn position(
     if has(&quantities[1], Dimension::Angle) {
         quantities.rotate_right(1);
     }
-    let refer = POSITION_CODES.resolve(rf).unwrap_or_else(|| {
+    let refer = position_reference(rf, lines);
+    let base = Measure::from_values(MeasureKind::Position, refer, &quantities).unwrap_or(Measure {
+        refer,
+        value: MeasureValue::Position([0.0; 3]),
+    });
+    super::offset::finish_definition(state, base, off, lines)
+}
+
+pub(super) fn position_reference(rf: &str, lines: &mut Vec<LogLine>) -> &'static str {
+    POSITION_CODES.resolve(rf).unwrap_or_else(|| {
         if !rf.is_empty() {
             lines.push(LogLine::warning(format!(
                 "Illegal or unknown reference type '{rf}' for position definition. DEFAULT \
@@ -233,53 +229,42 @@ pub(super) fn position(
             )));
         }
         POSITION_CODES.default_code()
-    });
-    if offset_refused(off, lines) {
-        return failed();
-    }
-    Measure::from_values(MeasureKind::Position, refer, &quantities)
-        .unwrap_or(Measure {
-            refer,
-            value: MeasureValue::Position([0.0; 3]),
-        })
-        .to_value()
+    })
 }
 
 /// `me.frequency(rf, v0, off)`: a frequency, or a period, wavelength,
 /// wavenumber or energy. An unknown `rf` is LSRK, with CASA's warning.
 pub(super) fn frequency(
+    state: &mut super::State,
     rf: &str,
     v0: &Variant,
     off: &RecordArg,
     lines: &mut Vec<LogLine>,
-) -> CasaValue {
+) -> pyo3::PyResult<CasaValue> {
     let Some(mut value) = quantity_of(v0, lines) else {
-        return failed();
+        return Ok(failed());
     };
     if unset(&value) {
         value = Quantity::new(0.0, "Hz").expect("Hz is a unit");
     }
     let Some(hz) = frequency_hz(&value) else {
-        return exception(
+        return Ok(exception(
             lines,
             format!(
                 "Quantum::assure non-conforming unit type '{}'",
                 value.unit().name()
             ),
-        );
+        ));
     };
     let refer = FREQUENCY_CODES.resolve(rf).unwrap_or_else(|| {
         lines.push(LogLine::warning("Illegal reference frame string."));
         FREQUENCY_CODES.default_code()
     });
-    if offset_refused(off, lines) {
-        return failed();
-    }
-    Measure {
+    let base = Measure {
         refer,
         value: MeasureValue::Frequency(hz),
-    }
-    .to_value()
+    };
+    super::offset::finish_definition(state, base, off, lines)
 }
 
 /// `me.observatory(name)`: the observatory table's position, in its
@@ -333,6 +318,12 @@ pub(super) fn source(
     measures: &Arc<dyn MeasuresProvider>,
     lines: &mut Vec<LogLine>,
 ) -> pyo3::PyResult<CasaValue> {
+    if let Variant::Record(record) = name
+        && let Ok(values) = super::record::Measures::read_variant(record)
+        && values.values[0].kind() == MeasureKind::Direction
+    {
+        return Ok(values.into_reference_origin().to_value());
+    }
     match direction_measure(name, measures) {
         Ok(Some(direction)) => Ok(direction.to_value()),
         Ok(None) => {

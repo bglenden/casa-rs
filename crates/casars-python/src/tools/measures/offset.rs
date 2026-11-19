@@ -7,11 +7,71 @@ use pyo3::exceptions::{PyNotImplementedError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
-use super::PyMeasures;
 use super::record::Measures;
+use super::{PyMeasures, State};
+use crate::convert::holder::{Measure, MeasureKind};
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
 use crate::tools::LogLine;
+
+/// Apply the constructor's declared reference origin, following the CASA
+/// wrappers that attach some offsets to both the input and output references.
+pub(super) fn finish_definition(
+    state: &mut State,
+    base: Measure,
+    off: &RecordArg,
+    lines: &mut Vec<LogLine>,
+) -> PyResult<CasaValue> {
+    if off.0.is_empty() {
+        return Ok(base.to_value());
+    }
+    let kind = base.kind();
+    let both = matches!(kind, MeasureKind::Direction | MeasureKind::Frequency);
+    let origin = match Measures::read(off) {
+        Ok(origin) if origin.values[0].kind() == kind => origin.into_reference_origin(),
+        Ok(_) if kind == MeasureKind::Epoch => return Ok(base.to_value()),
+        Ok(_) => {
+            match kind {
+                MeasureKind::Direction => {
+                    lines.push(LogLine::warning("Non-matching measure offset\n"))
+                }
+                MeasureKind::Frequency => lines.push(LogLine::warning(
+                    "Illegal offset type specified, not used\n",
+                )),
+                _ => {}
+            }
+            lines.push(LogLine::warning(
+                "Non-conforming offset measure type\nCall to measures::measure() failed\n",
+            ));
+            return Ok(CasaValue::empty_record());
+        }
+        Err(error) => {
+            if both {
+                lines.push(LogLine::warning(format!(
+                    "{}Non-measure type offset in measure conversion\n",
+                    error.message()
+                )));
+            }
+            return Ok(base.to_value());
+        }
+    };
+    let mut source = Measures::scalar(base);
+    if both {
+        source.offset = Some(Box::new(origin.clone()));
+    }
+    match source.resolve_relative(state, base.refer, Some(origin))? {
+        Ok(converted) => Ok(converted.to_value()),
+        Err(_) => {
+            let message = if kind == MeasureKind::Epoch {
+                "Cannot convert due to missing frame information\nEpoch definition failed!"
+            } else {
+                "Cannot convert due to missing frame information\nCall to measures::measure() failed\n"
+            };
+            lines.push(LogLine::warning(message));
+            Ok(CasaValue::empty_record())
+        }
+    }
+}
 
 enum Visit<'py> {
     Enter(Bound<'py, PyAny>, usize),
