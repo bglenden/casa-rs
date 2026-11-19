@@ -3019,6 +3019,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casa-drops-numpy-scalars-from-mixed-quantity-record-sequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA drops NumPy scalars from mixed quantity-record sequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-masks-quantity-record-integer-overflow-with-a-wrapper-error" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA masks quantity-record integer overflow with a wrapper error
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casa-discards-the-values-of-bare-complex-quantity-arrays" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4108,6 +4130,28 @@
     <span class="md-ellipsis">
       
         TaQL derived geometry treats an ephemeris field offset as a direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#immathmodepola-crashes-with-unboundlocalerror-on-unitless-polithresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        immath(mode="pola") crashes with UnboundLocalError on unitless polithresh
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#immath-polarization-debiasing-ignores-non-conforming-sigma-units" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        immath polarization debiasing ignores non-conforming sigma units
       
     </span>
   </a>
@@ -8603,6 +8647,39 @@ The CASA failure was observed directly; there is no CASA mask to compare.</p>
 <li>Evidence: <code>tools/casa-compat/quantity_record_endian_oracle.py</code>, CASA 6.7.6.14 on a little-endian Mac.</li>
 </ul>
 <p>A quantity record containing <code>np.array([1], dtype="&gt;i4")</code> returns 16777216 m in CASA; the native-endian array returns 1 m. Big-endian 16-bit arrays return 256 m and 64-bit arrays return 0 m after integer narrowing. Signed and unsigned integer arrays show the same byte-order corruption, and arithmetic uses the corrupted values. casa-rs reads the numerical array value and returns 1 m for each. It still applies CASA's signed 32-bit narrowing to that value.</p>
+<h2 id="casa-drops-numpy-scalars-from-mixed-quantity-record-sequences">CASA drops NumPy scalars from mixed quantity-record sequences<a class="headerlink" href="#casa-drops-numpy-scalars-from-mixed-quantity-record-sequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-19</li>
+<li>Status: CASA loses input values; casa-rs rejects the record (#1170).</li>
+<li>Owner decision: Correct CASA data loss under the standing rule in <code>AGENTS.md</code>.</li>
+<li>Evidence: <code>tools/casa-compat/quantity_record_sequence_edges_oracle.py</code> and its CASA 6.7.6.14 fixture.</li>
+</ul>
+<p>For <code>{"unit": "m", "value": [1, np.uint64(2)]}</code>, CASA returns a scalar 1 m.
+For <code>[1.5, np.uint32(2), 3.5]</code>, it returns the vector <code>[1.5, 3.5]</code>.
+A NumPy boolean in a mixed sequence is dropped the same way. The Python
+binding leaves these scalar types out as it constructs its variant. casa-rs
+raises the malformed-quantity-record error for those sequences, matching
+CASA's existing error for a sequence containing only those scalar types.
+Callers see an error before computing on a shortened quantity. Unsigned
+NumPy arrays retain their existing integer-array behavior.</p>
+<p>When a sequence mixes Python booleans and numbers, CASA also drops
+<code>np.timedelta64</code> and <code>np.longlong</code> values. casa-rs refuses these mixed records
+as well, so a timedelta's storage unit cannot turn it into a measurement.</p>
+<h2 id="casa-masks-quantity-record-integer-overflow-with-a-wrapper-error">CASA masks quantity-record integer overflow with a wrapper error<a class="headerlink" href="#casa-masks-quantity-record-integer-overflow-with-a-wrapper-error" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-19</li>
+<li>Status: The CASA Python wrapper returns with a pending exception; casa-rs reports the underlying overflow (#1170).</li>
+<li>Evidence: <code>tools/casa-compat/quantity_record_sequence_edges_oracle.py</code> and its CASA 6.7.6.14 fixture.</li>
+</ul>
+<p>Native Python integers outside the signed 64-bit range, such as <code>2**63</code> or
+<code>[2**63]</code> in a quantity record's <code>value</code>, cause CASA's Python conversion to
+return a result with a pending <code>OverflowError</code>. CPython reports a
+<code>SystemError</code> with the overflow as its cause. casa-rs reports
+<code>OverflowError</code> directly so callers can handle the range failure. In-range
+native integers still narrow to the same signed 32-bit value as CASA,
+including the singleton list, tuple, and rectangular nested forms.
+Mixed boolean/floating sequences also report overflow before promoting a
+native integer outside that range to a floating value.</p>
 <h2 id="casa-discards-the-values-of-bare-complex-quantity-arrays">CASA discards the values of bare complex quantity arrays<a class="headerlink" href="#casa-discards-the-values-of-bare-complex-quantity-arrays" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
@@ -10428,6 +10505,36 @@ field. For the Uranus fixture, <code>mscal.hadec1()</code> reports a declination
 requested epoch. The <code>calibration_ephemeris_geometry_oracle.py</code> fixture obtains
 the per-epoch phase centres from CASA and evaluates CASA geometry on fixed
 snapshots of those directions (#989).</p>
+<h2 id="immathmodepola-crashes-with-unboundlocalerror-on-unitless-polithresh"><code>immath(mode="pola")</code> crashes with <code>UnboundLocalError</code> on unitless <code>polithresh</code><a class="headerlink" href="#immathmodepola-crashes-with-unboundlocalerror-on-unitless-polithresh" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-18</li>
+<li>Status: CASA crashes with an uncaught Python <code>UnboundLocalError</code>; casa-rs accepts unitless thresholds in image brightness units (#977).</li>
+<li>Affected code: <code>casatasks/private/task_immath.py</code>, <code>_immath_new_pola</code>.</li>
+</ul>
+<p>In CASA 6.7.6.14, when <code>mode="pola"</code> and <code>polithresh</code> is given without a unit
+(e.g. <code>polithresh="0.1"</code>), <code>_immath_new_pola</code> skips creating the temporary
+linear-polarization image <code>lpol</code> because <code>if (myqa.getunit(polithresh) != ""):</code>
+wraps both unit conversion and <code>mypo.linpolint(..., outfile=lpol)</code>, yet the
+later <code>if (polithresh):</code> block unconditionally evaluates <code>lpol</code> and raises
+<code>UnboundLocalError: cannot access local variable 'lpol'</code>.</p>
+<p>casa-rs parses <code>polithresh</code> as an optional-unit quantity (<code>crates/casa-images/src/analysis/immath/pol.rs</code>),
+treats a unitless <code>polithresh</code> as already expressed in the input image's
+brightness unit, and thresholds linear polarized intensity normally (#977).</p>
+<h2 id="immath-polarization-debiasing-ignores-non-conforming-sigma-units"><code>immath</code> polarization debiasing ignores non-conforming <code>sigma</code> units<a class="headerlink" href="#immath-polarization-debiasing-ignores-non-conforming-sigma-units" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-18</li>
+<li>Status: CASA silently corrupts/masks output; casa-rs rejects non-conforming or missing units when the image carries a brightness unit (#977).</li>
+<li>Affected code: <code>casatools/casacore</code> quantity conversion in <code>task_immath.py</code>, <code>_immath_new_poli</code>.</li>
+</ul>
+<p>In CASA 6.7.6.14, <code>_immath_new_poli</code> converts a positive <code>sigma</code> via
+<code>myqa.convert(qsigma, iunit)</code> and reads <code>.getvalue()</code> without verifying that
+<code>sigma</code>'s unit conforms to the input image's <code>bunit</code> (for example passing
+<code>sigma="1K"</code> or unitless <code>sigma="10"</code> on a <code>"Jy/beam"</code> image). On mismatch
+<code>qa.convert</code> leaves the value/unit invalid so downstream <code>imagepol</code> debiasing
+silently over-thresholds and masks the entire output plane.</p>
+<p>casa-rs validates unit conformance via <code>get_conformant_value</code> when <code>sigma &gt; 0</code>
+(<code>crates/casa-images/src/analysis/immath/pol.rs</code>) and refuses non-conforming or
+unitless <code>sigma</code> against non-empty image <code>bunit</code> with a clear error (#977).</p>
 
 
 

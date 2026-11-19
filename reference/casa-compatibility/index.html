@@ -3994,6 +3994,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#quanta-discarded-numpy-scalar-sequences-previously-agreed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quanta-discarded-numpy-scalar-sequences: Previously agreed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quanta-record-integer-overflow-previously-agreed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quanta-record-integer-overflow: Previously agreed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4269,6 +4291,17 @@
     <span class="md-ellipsis">
       
         define-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#record-sequence-edges-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record-sequence-edges-casa
       
     </span>
   </a>
@@ -9622,6 +9655,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#quanta-discarded-numpy-scalar-sequences-previously-agreed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quanta-discarded-numpy-scalar-sequences: Previously agreed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quanta-record-integer-overflow-previously-agreed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quanta-record-integer-overflow: Previously agreed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9897,6 +9952,17 @@
     <span class="md-ellipsis">
       
         define-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#record-sequence-edges-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record-sequence-edges-casa
       
     </span>
   </a>
@@ -11599,7 +11665,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">15</td>
 <td style="text-align: right;">15</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">12</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: right;">1</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -12857,7 +12923,6 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Called with its defaults in an empty directory, CASA raises <code>Exception</code>: Image data set not found - please verify</li>
 <li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
-<li>Accepted only at CASA's default until #977: <code>mode</code>, <code>varnames</code>, <code>sigma</code>, <code>polithresh</code>, <code>mask</code>, <code>region</code>, <code>box</code>, <code>chans</code>, <code>stokes</code>, <code>stretch</code>, <code>imagemd</code>, <code>prec</code></li>
 <li>casa-rs parameters CASA lacks: <code>overwrite</code></li>
 <li>Shared parameters: 15, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
@@ -17162,7 +17227,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 57, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>ea0ad2a5158f77c82e5ab3681ef63ab264fb9332</code>. Status counts: Implemented: 57, Partial: 0, Not implemented: 0, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -17193,7 +17258,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[], a=[]</code></td>
 <td>Implemented</td>
 <td>Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a>, <a href="#quanta-evidence-record-zero-dimensional-casa">record-zero-dimensional-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a>, <a href="#quanta-evidence-record-zero-dimensional-casa">record-zero-dimensional-casa</a>, <a href="#quanta-evidence-record-sequence-edges-casa">record-sequence-edges-casa</a></td>
 </tr>
 <tr>
 <td><code>angle</code></td>
@@ -17375,7 +17440,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[]</code></td>
 <td>Implemented</td>
 <td>Reads a quantity's value and unit back.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a>, <a href="#quanta-evidence-record-zero-dimensional-casa">record-zero-dimensional-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a>, <a href="#quanta-evidence-record-zero-dimensional-casa">record-zero-dimensional-casa</a>, <a href="#quanta-evidence-record-sequence-edges-casa">record-sequence-edges-casa</a></td>
 </tr>
 <tr>
 <td><code>getvalue</code></td>
@@ -17487,7 +17552,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[], unitname='', keepshape=False</code></td>
 <td>Implemented</td>
 <td>Builds quantities and quantity arrays from strings, numbers and records, as CASA does.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a>, <a href="#quanta-evidence-record-zero-dimensional-casa">record-zero-dimensional-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a>, <a href="#quanta-evidence-record-zero-dimensional-casa">record-zero-dimensional-casa</a>, <a href="#quanta-evidence-record-sequence-edges-casa">record-sequence-edges-casa</a></td>
 </tr>
 <tr>
 <td><code>setformat</code></td>
@@ -17579,7 +17644,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h4 id="quanta-deviations-and-unfinished-work">quanta deviations and unfinished work<a class="headerlink" href="#quanta-deviations-and-unfinished-work" title="Permanent link">&para;</a></h4>
 <h5 id="quantities-non-conforming-units-previously-agreed">quantities-non-conforming-units: Previously agreed<a class="headerlink" href="#quantities-non-conforming-units-previously-agreed" title="Permanent link">&para;</a></h5>
 <ul>
-<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-tools-convert-quantities-whose-units-do-not-conform">The tools convert quantities whose units do not conform</a></li>
+<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/ea0ad2a5158f77c82e5ab3681ef63ab264fb9332/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-tools-convert-quantities-whose-units-do-not-conform">The tools convert quantities whose units do not conform</a></li>
 <li>Inputs: integrationtime='10Jy', integrationtime='10m' or freq='1s' passed to a simulator method; a direction string such as 'J2000 12h00m00 garbage'.</li>
 <li>CASA: CASA 6.7.6 converts without checking conformance: '10Jy' becomes 1e-25 s, '10m' 10 s, '1s' 1 Hz, and an unreadable direction token keeps the previous value (declination 180 deg).</li>
 <li>casa-rs: Refuses both with casacore's 'From/to units not consistent' or a parse error, while keeping CASA's cross-dimension conversions (number is SI, angle is time, length is frequency via c).</li>
@@ -17587,6 +17652,28 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>User impact: Scripts with a wrong unit now stop with an error instead of running with a nonsense value.</li>
 <li>Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.</li>
 <li>Evidence: <a href="#quanta-evidence-bugs-record">bugs-record</a>.</li>
+</ul>
+<h5 id="quanta-discarded-numpy-scalar-sequences-previously-agreed">quanta-discarded-numpy-scalar-sequences: Previously agreed<a class="headerlink" href="#quanta-discarded-numpy-scalar-sequences-previously-agreed" title="Permanent link">&para;</a></h5>
+<ul>
+<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/ea0ad2a5158f77c82e5ab3681ef63ab264fb9332/docs/CASA%20%28C%2B%2B%29%20bugs.md#casa-drops-numpy-scalars-from-mixed-quantity-record-sequences">CASA drops NumPy scalars from mixed quantity-record sequences</a></li>
+<li>Inputs: Quantity-record lists or tuples with unsigned NumPy integer scalars or NumPy booleans, or mixed boolean/numeric sequences with NumPy timedeltas or longlong scalars.</li>
+<li>CASA: CASA 6.7.6.14 discards those members when it builds the record, sometimes returning a shortened scalar or vector.</li>
+<li>casa-rs: Reject such quantity records before parsing the unit or running the quantity operation.</li>
+<li>Rationale: Preserve input integrity instead of silently dropping numeric values.</li>
+<li>User impact: Calls with a mixed sequence affected by CASA's data loss raise the malformed-record error.</li>
+<li>Owner decision: Standing CASA data-loss rule in AGENTS.md.</li>
+<li>Evidence: <a href="#quanta-evidence-record-sequence-edges-casa">record-sequence-edges-casa</a>, <a href="#quanta-evidence-bugs-record">bugs-record</a>.</li>
+</ul>
+<h5 id="quanta-record-integer-overflow-previously-agreed">quanta-record-integer-overflow: Previously agreed<a class="headerlink" href="#quanta-record-integer-overflow-previously-agreed" title="Permanent link">&para;</a></h5>
+<ul>
+<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/ea0ad2a5158f77c82e5ab3681ef63ab264fb9332/docs/CASA%20%28C%2B%2B%29%20bugs.md#casa-masks-quantity-record-integer-overflow-with-a-wrapper-error">CASA masks quantity-record integer overflow with a wrapper error</a></li>
+<li>Inputs: For example Python integers 2<strong>63, [2</strong>63], or their tuple and nested singleton forms in quantity records.</li>
+<li>CASA: CASA 6.7.6.14 can return with a pending OverflowError, leading to a CPython SystemError.</li>
+<li>casa-rs: Raise OverflowError directly for the out-of-range integer. In-range integers keep CASA's signed 32-bit narrowing.</li>
+<li>Rationale: Expose the actual input conversion error to the caller.</li>
+<li>User impact: Callers can handle the range failure as a Python OverflowError.</li>
+<li>Owner decision: Standing rule in AGENTS.md to correct CASA behavior that contradicts its evident intent.</li>
+<li>Evidence: <a href="#quanta-evidence-record-sequence-edges-casa">record-sequence-edges-casa</a>, <a href="#quanta-evidence-bugs-record">bugs-record</a>.</li>
 </ul>
 <h4 id="quanta-evidence">quanta evidence<a class="headerlink" href="#quanta-evidence" title="Permanent link">&para;</a></h4>
 <p>Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.</p>
@@ -17779,6 +17866,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/tools/casa-compat/quanta_define_oracle.py">tools/casa-compat/quanta_define_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/crates/casars-python/python/tests/data/casa_quanta_define.json">crates/casars-python/python/tests/data/casa_quanta_define.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/crates/casars-python/python/tests/test_quanta_define.py">crates/casars-python/python/tests/test_quanta_define.py</a></li>
+</ul>
+<p><a id="quanta-evidence-record-sequence-edges-casa"></a></p>
+<h5 id="record-sequence-edges-casa">record-sequence-edges-casa<a class="headerlink" href="#record-sequence-edges-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded quantity record values and errors — passed.</strong> All 120 recorded quantity, getunit and add cases pass, including 51 cases with recorded CASA deviations. A separate shared MeasureHolder regression confirms its existing numeric values. Unsigned NumPy sequence scalars, mixed bool/numeric record sequences, and signed 64-bit integer overflow.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ea0ad2a5158f77c82e5ab3681ef63ab264fb9332/crates/casars-python/python/tests/test_quanta_record_sequence_edges.py">crates/casars-python/python/tests/test_quanta_record_sequence_edges.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ea0ad2a5158f77c82e5ab3681ef63ab264fb9332/crates/casars-python/python/tests/data/casa_quanta_record_sequence_edges.json">crates/casars-python/python/tests/data/casa_quanta_record_sequence_edges.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ea0ad2a5158f77c82e5ab3681ef63ab264fb9332/tools/casa-compat/quantity_record_sequence_edges_oracle.py">tools/casa-compat/quantity_record_sequence_edges_oracle.py</a></li>
+<li>Revision: <code>ea0ad2a5158f77c82e5ab3681ef63ab264fb9332</code>; CASA: <code>casatools 6.7.6-14, casatasks 6.7.6.14</code>.</li>
+<li>Command: <code>python -m pytest -q crates/casars-python/python/tests/test_quanta_record_sequence_edges.py</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/qa-sequence-edges-20261119.json</code>.</li>
 </ul>
 <h3 id="simulator">simulator<a class="headerlink" href="#simulator" title="Permanent link">&para;</a></h3>
 <h4 id="simulator-method-implementation">simulator method implementation<a class="headerlink" href="#simulator-method-implementation" title="Permanent link">&para;</a></h4>

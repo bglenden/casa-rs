@@ -122,7 +122,7 @@
 <a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">if </span><span class="macro">matches!</span>(record.get(<span class="string">"value"</span>), <span class="prelude-val">Some</span>(Variant::Array { shape, .. }) <span class="kw">if </span>shape.len() != <span class="number">1</span>) {
 <a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
 <a href=#124 id=124 data-nosnippet>124</a>    }
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="prelude-val">Ok</span>(quantum_holder(value)<span class="question-mark">?</span>.filter(Quantum::is_array))
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="prelude-val">Ok</span>(quantum_holder(value)<span class="question-mark">?</span>.filter(|quantum| <span class="macro">matches!</span>(quantum.shape.as_deref(), <span class="prelude-val">Some</span>([<span class="kw">_</span>]))))
 <a href=#126 id=126 data-nosnippet>126</a>}
 <a href=#127 id=127 data-nosnippet>127</a>
 <a href=#128 id=128 data-nosnippet>128</a><span class="doccomment">/// `qa.getvalue(v)`: the value or values, always as an array.

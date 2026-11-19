@@ -711,57 +711,60 @@
 <a href=#711 id=711 data-nosnippet>711</a>    <span class="kw">let </span>coordinates = stokes
 <a href=#712 id=712 data-nosnippet>712</a>        .iter()
 <a href=#713 id=713 data-nosnippet>713</a>        .copied()
-<a href=#714 id=714 data-nosnippet>714</a>        .map(<span class="kw">crate</span>::ft::image::polarization_coordinate)
-<a href=#715 id=715 data-nosnippet>715</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#716 id=716 data-nosnippet>716</a>    <span class="kw">let </span>correlations = correlations
-<a href=#717 id=717 data-nosnippet>717</a>        .iter()
-<a href=#718 id=718 data-nosnippet>718</a>        .map(|<span class="kw-2">&amp;</span>code| {
-<a href=#719 id=719 data-nosnippet>719</a>            Correlation::from_casacore_code(code)
-<a href=#720 id=720 data-nosnippet>720</a>                .ok_or_else(|| model_error(<span class="macro">format!</span>(<span class="string">"invalid virtual grid correlation {code}"</span>)))
-<a href=#721 id=721 data-nosnippet>721</a>        })
-<a href=#722 id=722 data-nosnippet>722</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#723 id=723 data-nosnippet>723</a>    PolarizationRouting::from_saved_planes(<span class="kw-2">&amp;</span>correlations, <span class="kw-2">&amp;</span>coordinates).map_err(model_error)
-<a href=#724 id=724 data-nosnippet>724</a>}
-<a href=#725 id=725 data-nosnippet>725</a>
-<a href=#726 id=726 data-nosnippet>726</a><span class="kw">fn </span>load_grids(
-<a href=#727 id=727 data-nosnippet>727</a>    operator: <span class="kw-2">&amp;</span>MeasurementOperator,
-<a href=#728 id=728 data-nosnippet>728</a>    images: <span class="kw-2">&amp;</span>[PagedImage&lt;Complex32&gt;],
-<a href=#729 id=729 data-nosnippet>729</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PreparedModelGrids, GainSolveError&gt; {
-<a href=#730 id=730 data-nosnippet>730</a>    <span class="kw">let </span>channels = operator.basis().planes();
-<a href=#731 id=731 data-nosnippet>731</a>    <span class="kw">let </span>[nx, ny] = operator.geometry().grid_shape();
-<a href=#732 id=732 data-nosnippet>732</a>    <span class="kw">let </span>shape = [
-<a href=#733 id=733 data-nosnippet>733</a>        nx,
-<a href=#734 id=734 data-nosnippet>734</a>        ny,
-<a href=#735 id=735 data-nosnippet>735</a>        operator.polarization().grid_pols(),
-<a href=#736 id=736 data-nosnippet>736</a>        channels <span class="kw">as </span>usize,
-<a href=#737 id=737 data-nosnippet>737</a>    ];
-<a href=#738 id=738 data-nosnippet>738</a>    <span class="kw">if </span>images.iter().any(|image| image.shape() != shape) {
-<a href=#739 id=739 data-nosnippet>739</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(model_error(
-<a href=#740 id=740 data-nosnippet>740</a>            <span class="string">"virtual model image axes do not match the grid"</span>,
-<a href=#741 id=741 data-nosnippet>741</a>        ));
-<a href=#742 id=742 data-nosnippet>742</a>    }
-<a href=#743 id=743 data-nosnippet>743</a>    <span class="kw">let </span><span class="kw-2">mut </span>grids = operator
-<a href=#744 id=744 data-nosnippet>744</a>        .empty_model_grids(PlaneRange::new(<span class="number">0</span>, channels))
-<a href=#745 id=745 data-nosnippet>745</a>        .map_err(model_error)<span class="question-mark">?</span>;
-<a href=#746 id=746 data-nosnippet>746</a>    <span class="kw">for </span><span class="kw-2">mut </span>plane <span class="kw">in </span>grids.planes_mut() {
-<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">for </span>(term, image) <span class="kw">in </span>images.iter().enumerate() {
-<a href=#748 id=748 data-nosnippet>748</a>            <span class="kw">for </span>polarization <span class="kw">in </span><span class="number">0</span>..shape[<span class="number">2</span>] {
-<a href=#749 id=749 data-nosnippet>749</a>                <span class="kw">let </span>values = image
-<a href=#750 id=750 data-nosnippet>750</a>                    .get_slice(
-<a href=#751 id=751 data-nosnippet>751</a>                        <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, polarization, plane.plane() <span class="kw">as </span>usize],
-<a href=#752 id=752 data-nosnippet>752</a>                        <span class="kw-2">&amp;</span>[nx, ny, <span class="number">1</span>, <span class="number">1</span>],
-<a href=#753 id=753 data-nosnippet>753</a>                    )
-<a href=#754 id=754 data-nosnippet>754</a>                    .map_err(model_error)<span class="question-mark">?</span>;
-<a href=#755 id=755 data-nosnippet>755</a>                <span class="kw">let </span>cells = values
-<a href=#756 id=756 data-nosnippet>756</a>                    .as_slice_memory_order()
-<a href=#757 id=757 data-nosnippet>757</a>                    .filter(|<span class="kw">_</span>| values.strides()[<span class="number">0</span>] == <span class="number">1</span>)
-<a href=#758 id=758 data-nosnippet>758</a>                    .ok_or_else(|| model_error(<span class="string">"virtual grid cells are not contiguous along x"</span>))<span class="question-mark">?</span>;
-<a href=#759 id=759 data-nosnippet>759</a>                plane
-<a href=#760 id=760 data-nosnippet>760</a>                    .load_f32_block(polarization, term, cells)
-<a href=#761 id=761 data-nosnippet>761</a>                    .map_err(model_error)<span class="question-mark">?</span>;
-<a href=#762 id=762 data-nosnippet>762</a>            }
-<a href=#763 id=763 data-nosnippet>763</a>        }
-<a href=#764 id=764 data-nosnippet>764</a>    }
-<a href=#765 id=765 data-nosnippet>765</a>    <span class="prelude-val">Ok</span>(grids)
-<a href=#766 id=766 data-nosnippet>766</a>}
+<a href=#714 id=714 data-nosnippet>714</a>        .map(|stokes_type| {
+<a href=#715 id=715 data-nosnippet>715</a>            <span class="kw">crate</span>::ft::image::polarization_coordinate(stokes_type)
+<a href=#716 id=716 data-nosnippet>716</a>                .ok_or_else(|| model_error(<span class="string">"unsupported polarization plane in virtual grid"</span>))
+<a href=#717 id=717 data-nosnippet>717</a>        })
+<a href=#718 id=718 data-nosnippet>718</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#719 id=719 data-nosnippet>719</a>    <span class="kw">let </span>correlations = correlations
+<a href=#720 id=720 data-nosnippet>720</a>        .iter()
+<a href=#721 id=721 data-nosnippet>721</a>        .map(|<span class="kw-2">&amp;</span>code| {
+<a href=#722 id=722 data-nosnippet>722</a>            Correlation::from_casacore_code(code)
+<a href=#723 id=723 data-nosnippet>723</a>                .ok_or_else(|| model_error(<span class="macro">format!</span>(<span class="string">"invalid virtual grid correlation {code}"</span>)))
+<a href=#724 id=724 data-nosnippet>724</a>        })
+<a href=#725 id=725 data-nosnippet>725</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#726 id=726 data-nosnippet>726</a>    PolarizationRouting::from_saved_planes(<span class="kw-2">&amp;</span>correlations, <span class="kw-2">&amp;</span>coordinates).map_err(model_error)
+<a href=#727 id=727 data-nosnippet>727</a>}
+<a href=#728 id=728 data-nosnippet>728</a>
+<a href=#729 id=729 data-nosnippet>729</a><span class="kw">fn </span>load_grids(
+<a href=#730 id=730 data-nosnippet>730</a>    operator: <span class="kw-2">&amp;</span>MeasurementOperator,
+<a href=#731 id=731 data-nosnippet>731</a>    images: <span class="kw-2">&amp;</span>[PagedImage&lt;Complex32&gt;],
+<a href=#732 id=732 data-nosnippet>732</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PreparedModelGrids, GainSolveError&gt; {
+<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">let </span>channels = operator.basis().planes();
+<a href=#734 id=734 data-nosnippet>734</a>    <span class="kw">let </span>[nx, ny] = operator.geometry().grid_shape();
+<a href=#735 id=735 data-nosnippet>735</a>    <span class="kw">let </span>shape = [
+<a href=#736 id=736 data-nosnippet>736</a>        nx,
+<a href=#737 id=737 data-nosnippet>737</a>        ny,
+<a href=#738 id=738 data-nosnippet>738</a>        operator.polarization().grid_pols(),
+<a href=#739 id=739 data-nosnippet>739</a>        channels <span class="kw">as </span>usize,
+<a href=#740 id=740 data-nosnippet>740</a>    ];
+<a href=#741 id=741 data-nosnippet>741</a>    <span class="kw">if </span>images.iter().any(|image| image.shape() != shape) {
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(model_error(
+<a href=#743 id=743 data-nosnippet>743</a>            <span class="string">"virtual model image axes do not match the grid"</span>,
+<a href=#744 id=744 data-nosnippet>744</a>        ));
+<a href=#745 id=745 data-nosnippet>745</a>    }
+<a href=#746 id=746 data-nosnippet>746</a>    <span class="kw">let </span><span class="kw-2">mut </span>grids = operator
+<a href=#747 id=747 data-nosnippet>747</a>        .empty_model_grids(PlaneRange::new(<span class="number">0</span>, channels))
+<a href=#748 id=748 data-nosnippet>748</a>        .map_err(model_error)<span class="question-mark">?</span>;
+<a href=#749 id=749 data-nosnippet>749</a>    <span class="kw">for </span><span class="kw-2">mut </span>plane <span class="kw">in </span>grids.planes_mut() {
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">for </span>(term, image) <span class="kw">in </span>images.iter().enumerate() {
+<a href=#751 id=751 data-nosnippet>751</a>            <span class="kw">for </span>polarization <span class="kw">in </span><span class="number">0</span>..shape[<span class="number">2</span>] {
+<a href=#752 id=752 data-nosnippet>752</a>                <span class="kw">let </span>values = image
+<a href=#753 id=753 data-nosnippet>753</a>                    .get_slice(
+<a href=#754 id=754 data-nosnippet>754</a>                        <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, polarization, plane.plane() <span class="kw">as </span>usize],
+<a href=#755 id=755 data-nosnippet>755</a>                        <span class="kw-2">&amp;</span>[nx, ny, <span class="number">1</span>, <span class="number">1</span>],
+<a href=#756 id=756 data-nosnippet>756</a>                    )
+<a href=#757 id=757 data-nosnippet>757</a>                    .map_err(model_error)<span class="question-mark">?</span>;
+<a href=#758 id=758 data-nosnippet>758</a>                <span class="kw">let </span>cells = values
+<a href=#759 id=759 data-nosnippet>759</a>                    .as_slice_memory_order()
+<a href=#760 id=760 data-nosnippet>760</a>                    .filter(|<span class="kw">_</span>| values.strides()[<span class="number">0</span>] == <span class="number">1</span>)
+<a href=#761 id=761 data-nosnippet>761</a>                    .ok_or_else(|| model_error(<span class="string">"virtual grid cells are not contiguous along x"</span>))<span class="question-mark">?</span>;
+<a href=#762 id=762 data-nosnippet>762</a>                plane
+<a href=#763 id=763 data-nosnippet>763</a>                    .load_f32_block(polarization, term, cells)
+<a href=#764 id=764 data-nosnippet>764</a>                    .map_err(model_error)<span class="question-mark">?</span>;
+<a href=#765 id=765 data-nosnippet>765</a>            }
+<a href=#766 id=766 data-nosnippet>766</a>        }
+<a href=#767 id=767 data-nosnippet>767</a>    }
+<a href=#768 id=768 data-nosnippet>768</a>    <span class="prelude-val">Ok</span>(grids)
+<a href=#769 id=769 data-nosnippet>769</a>}
 </code></pre></div></section></main></body></html>
