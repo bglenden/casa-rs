@@ -7,12 +7,13 @@ use std::path::{Path, PathBuf};
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use super::PlotSeries;
 use super::axis::Axis;
+use super::iteration::{Panel, PlotPanels};
 use super::samples::Point;
 use crate::plot_document::{
-    PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
-    PlotLayerKind, PlotLayerStyle, PlotPayloadStrategy, PlotPayloadWriter,
+    PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotDocumentPanel,
+    PlotFigure, PlotLayerData, PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy,
+    PlotPayloadWriter,
 };
 
 pub(super) fn prepare(
@@ -20,10 +21,89 @@ pub(super) fn prepare(
     payload: &Path,
     destination: Option<PathBuf>,
     show: bool,
-    series: &[PlotSeries],
-) -> Result<PlotFigure, TaskFailure> {
+    overwrite: bool,
+    panels: &PlotPanels,
+) -> Result<Vec<PlotFigure>, TaskFailure> {
+    let pages = panels.pages().collect::<Vec<_>>();
+    let destinations = pages
+        .iter()
+        .enumerate()
+        .map(|(page, page_panels)| {
+            destination
+                .as_deref()
+                .map(|path| panels.filename(path, page, page_panels))
+        })
+        .collect::<Vec<_>>();
+    let output_paths = destinations
+        .iter()
+        .map(|path| ("plotfile", path.as_deref()))
+        .collect::<Vec<_>>();
+    crate::msexplore::task_contract::refuse_unwritable_outputs(
+        &output_paths,
+        overwrite,
+        "set overwrite=True to replace it",
+    )
+    .map_err(TaskFailure::validation)?;
     let mut payload = PlotPayloadWriter::open(payload).map_err(write_failure)?;
+    let ranges = AxisRanges::new(task, panels)?;
     let title = task.text("title")?.unwrap_or_default();
+    let mut figures = Vec::new();
+    for (page, (source, destination)) in pages.iter().zip(destinations).enumerate() {
+        let content = source
+            .iter()
+            .enumerate()
+            .map(|(index, panel)| make_panel(task, &mut payload, panels, panel, index, &ranges))
+            .collect::<Result<Vec<_>, _>>()?;
+        let [rows, columns] = panels.grid;
+        let mut document = PlotDocument {
+            id: format!("plotms-calibration-{page}"),
+            title: title.clone(),
+            subtitle: String::new(),
+            header_lines: Vec::new(),
+            axes: Vec::new(),
+            layers: Vec::new(),
+            annotations: Vec::new(),
+            panels: content,
+            show_legend: task.flag("showlegend")?,
+            layout: Some(PlotLayout {
+                rows,
+                columns,
+                aspect: None,
+                margins: None,
+                font_size: None,
+            }),
+        };
+        if rows == 1 && columns == 1 && panels.axis_name().is_none() {
+            let panel = document.panels.pop().expect("one panel");
+            document.axes = panel.axes;
+            document.layers = panel.layers;
+            document.annotations = panel.annotations;
+        }
+        figures.push(PlotFigure {
+            output_file: destination,
+            show: show && page == 0,
+            document,
+        });
+    }
+    let bytes = payload.finish().map_err(write_failure)?;
+    for figure in &figures {
+        figure
+            .document
+            .validate_payload(bytes)
+            .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    }
+    Ok(figures)
+}
+
+fn make_panel(
+    task: &TaskInvocation<'_>,
+    payload: &mut PlotPayloadWriter,
+    panels: &PlotPanels,
+    panel: &Panel,
+    index: usize,
+    ranges: &AxisRanges<'_>,
+) -> Result<PlotDocumentPanel, TaskFailure> {
+    let series = &panel.series;
     let xlabel = task.text("xlabel")?.filter(|label| !label.is_empty());
     let ylabel = task.text("ylabel")?.filter(|label| !label.is_empty());
     let manual = plot_limits(task.value("plotrange"))?;
@@ -33,30 +113,14 @@ pub(super) fn prepare(
         .map(|value| Axis::parse(&value))
         .transpose()
         .map_err(TaskFailure::validation)?;
-    let ordinate_locations =
-        super::axis_names(task.value("yaxislocation")).map_err(TaskFailure::validation)?;
-    if ordinate_locations
-        .iter()
-        .any(|location| !matches!(*location, "" | "left" | "right"))
-    {
-        return Err(TaskFailure::validation(
-            "yaxislocation accepts left or right",
-        ));
-    }
-    let on_right = |index| {
-        ordinate_locations
-            .get(index)
-            .or_else(|| (ordinate_locations.len() == 1).then(|| &ordinate_locations[0]))
-            == Some(&"right")
-    };
+    let on_right = |index| right_side(&ranges.locations, index);
     let x = &series[0].x;
+    let [x_range, left_range, right_range] = ranges.for_panel(panel);
     let mut axes = vec![axis(
         "x",
         *x,
         xlabel.as_deref(),
-        series
-            .iter()
-            .flat_map(|line| line.points.iter().map(|point| point.x)),
+        x_range,
         [manual[0], manual[1]],
     )];
     for right in [false, true] {
@@ -73,9 +137,7 @@ pub(super) fn prepare(
             ordinate_id(right),
             first.y,
             ylabel.as_deref(),
-            selected
-                .iter()
-                .flat_map(|line| line.points.iter().map(|point| point.y)),
+            if right { right_range } else { left_range },
             [manual[2], manual[3]],
         );
         if selected.len() > 1 && ylabel.is_none() {
@@ -88,10 +150,6 @@ pub(super) fn prepare(
         ordinate.draws_on_trailing_edge = right;
         axes.push(ordinate);
     }
-    let show_flagged = matches!(
-        task.value("customflaggedsymbol"),
-        Some(ParameterValue::Bool(true))
-    );
     let connect = task
         .text("xconnector")?
         .is_some_and(|name| name == "line" || name == "step");
@@ -101,7 +159,9 @@ pub(super) fn prepare(
         let yid = ordinate_id(on_right(id));
         let mut groups = BTreeMap::<(bool, String, u64), Vec<&Point>>::new();
         for point in series.points.iter().filter(|point| {
-            point.x.is_finite() && point.y.is_finite() && (!point.flagged || show_flagged)
+            point.x.is_finite()
+                && point.y.is_finite()
+                && (!point.flagged || shows_flagged(ranges.flagged_symbols, id))
         }) {
             let label = color.map_or_else(
                 || series.y.label().to_string(),
@@ -125,8 +185,8 @@ pub(super) fn prepare(
         }
         for ((flagged, label, epoch), points) in groups {
             layers.push(layer(
-                &mut payload,
-                (id, yid, epoch),
+                payload,
+                (index, id, yid, epoch),
                 flagged,
                 label,
                 points,
@@ -134,26 +194,18 @@ pub(super) fn prepare(
             )?);
         }
     }
-    let document = PlotDocument {
-        id: "plotms-calibration".into(),
+    let title = panels
+        .axis_name()
+        .map_or_else(String::new, |axis| format!("{axis} {}", panel.label));
+    Ok(PlotDocumentPanel {
+        id: format!("calibration-panel-{index}"),
         title,
-        subtitle: String::new(),
-        header_lines: Vec::new(),
+        title_font_size: None,
         axes,
         layers,
         annotations: Vec::new(),
-        panels: Vec::new(),
-        show_legend: task.flag("showlegend")?,
-        layout: None,
-    };
-    let bytes = payload.finish().map_err(write_failure)?;
-    document
-        .validate_payload(bytes)
-        .map_err(|error| TaskFailure::execution(error.to_string()))?;
-    Ok(PlotFigure {
-        output_file: destination,
-        show,
-        document,
+        aspect: None,
+        frame_visible: None,
     })
 }
 
@@ -163,7 +215,7 @@ fn ordinate_id(right: bool) -> &'static str {
 
 fn layer(
     payload: &mut PlotPayloadWriter,
-    (index, ordinate, epoch): (usize, &str, u64),
+    (panel, index, ordinate, epoch): (usize, usize, &str, u64),
     flagged: bool,
     label: String,
     points: Vec<&Point>,
@@ -181,7 +233,7 @@ fn layer(
         PlotLayerKind::Scatter
     };
     Ok(PlotDocumentLayer {
-        id: format!("{index}-{ordinate}-{flagged}-{epoch}-{label}"),
+        id: format!("{index}-{panel}-{ordinate}-{flagged}-{epoch}-{label}"),
         title: label.clone(),
         kind,
         x_axis_id: "x".into(),
@@ -212,18 +264,103 @@ fn layer(
     })
 }
 
+struct AxisRanges<'a> {
+    locations: Vec<&'a str>,
+    flagged_symbols: Option<&'a ParameterValue>,
+    global: [[f64; 2]; 3],
+    local_x: bool,
+    local_y: bool,
+}
+
+impl<'a> AxisRanges<'a> {
+    fn new(task: &'a TaskInvocation<'_>, layout: &PlotPanels) -> Result<Self, TaskFailure> {
+        let locations =
+            super::axis_names(task.value("yaxislocation")).map_err(TaskFailure::validation)?;
+        if locations
+            .iter()
+            .any(|location| !matches!(*location, "" | "left" | "right"))
+        {
+            return Err(TaskFailure::validation(
+                "yaxislocation accepts left or right",
+            ));
+        }
+        let flagged_symbols = task.value("customflaggedsymbol");
+        Ok(Self {
+            global: data_ranges(&layout.panels, &locations, flagged_symbols),
+            locations,
+            flagged_symbols,
+            local_x: task.flag("xselfscale")? && !task.flag("xsharedaxis")?,
+            local_y: task.flag("yselfscale")? && !task.flag("ysharedaxis")?,
+        })
+    }
+
+    fn for_panel(&self, panel: &Panel) -> [[f64; 2]; 3] {
+        let mut ranges = self.global;
+        if self.local_x || self.local_y {
+            let local = data_ranges(
+                std::slice::from_ref(panel),
+                &self.locations,
+                self.flagged_symbols,
+            );
+            if self.local_x {
+                ranges[0] = local[0];
+            }
+            if self.local_y {
+                ranges[1..].copy_from_slice(&local[1..]);
+            }
+        }
+        ranges
+    }
+}
+
+fn right_side(locations: &[&str], index: usize) -> bool {
+    locations
+        .get(index)
+        .or_else(|| (locations.len() == 1).then(|| &locations[0]))
+        == Some(&"right")
+}
+
+fn shows_flagged(symbols: Option<&ParameterValue>, index: usize) -> bool {
+    let enabled = match symbols {
+        Some(ParameterValue::Array(values)) => values.get(index),
+        other => other,
+    };
+    matches!(enabled, Some(ParameterValue::Bool(true)))
+}
+
+fn data_ranges(
+    panels: &[Panel],
+    locations: &[&str],
+    flagged_symbols: Option<&ParameterValue>,
+) -> [[f64; 2]; 3] {
+    let mut ranges = [[f64::INFINITY, f64::NEG_INFINITY]; 3];
+    let add = |range: &mut [f64; 2], value: f64| {
+        if value.is_finite() {
+            *range = [range[0].min(value), range[1].max(value)];
+        }
+    };
+    for panel in panels {
+        for (index, series) in panel.series.iter().enumerate() {
+            let y_index = if right_side(locations, index) { 2 } else { 1 };
+            let show_flags = shows_flagged(flagged_symbols, index);
+            for point in &series.points {
+                if show_flags || !point.flagged {
+                    add(&mut ranges[0], point.x);
+                    add(&mut ranges[y_index], point.y);
+                }
+            }
+        }
+    }
+    ranges
+}
+
 fn axis(
     id: &str,
     axis: Axis,
     label: Option<&str>,
-    values: impl Iterator<Item = f64>,
+    [mut lower, mut upper]: [f64; 2],
     limits: [f64; 2],
 ) -> PlotDocumentAxis {
-    let [mut lower, mut upper] = values
-        .filter(|value| value.is_finite())
-        .fold([f64::INFINITY, f64::NEG_INFINITY], |[lo, hi], value| {
-            [lo.min(value), hi.max(value)]
-        });
     if lower > upper {
         [lower, upper] = [0.0, 1.0];
     }

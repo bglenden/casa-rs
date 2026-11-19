@@ -4,6 +4,7 @@
 mod averaging;
 mod axis;
 mod figure;
+mod iteration;
 mod samples;
 mod selection;
 mod table_data;
@@ -19,6 +20,7 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 use self::axis::Axis;
+use self::iteration::PlotPanels;
 use self::samples::{Point, SeriesRequest};
 use self::selection::{Expressions, Selection};
 use self::table_data::CalibrationTable;
@@ -122,6 +124,8 @@ pub(super) fn run(
             Ok(PlotSeries { x, y, points })
         })
         .collect::<Result<Vec<_>, TaskFailure>>()?;
+    let samples = series.iter().map(|line| line.points.len()).sum();
+    let panels = PlotPanels::prepare(task, &table, series)?;
     let expformat = task.text("expformat")?.unwrap_or_default();
     let mut figure_path = output;
     if let Some(destination) = &figure_path {
@@ -143,7 +147,7 @@ pub(super) fn run(
                 plotindex,
                 verbose: task.flag("verbose")?,
             };
-            write_export(destination, overwrite, &table, &header, &series).map_err(|e| {
+            write_export(destination, overwrite, &table, &header, &panels).map_err(|e| {
                 TaskFailure::execution(format!("write {}: {e}", destination.display()))
             })?;
             figure_path = None;
@@ -151,7 +155,7 @@ pub(super) fn run(
     }
     let show = task.flag("showgui")?;
     let plots = match payload {
-        Some(payload) => vec![figure::prepare(task, payload, figure_path, show, &series)?],
+        Some(payload) => figure::prepare(task, payload, figure_path, show, overwrite, &panels)?,
         None if figure_path.is_some() => {
             return Err(TaskFailure::validation(
                 "use casars.tasks.plotms for rendered figures",
@@ -159,7 +163,6 @@ pub(super) fn run(
         }
         None => Vec::new(),
     };
-    let samples = series.iter().map(|line| line.points.len()).sum();
     TaskSuccess::new(CasaValue::None, &PlotResult { samples, plots })
 }
 
@@ -170,7 +173,7 @@ fn validate_pending_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailur
         ))
         .at(name)
     };
-    for name in ["iteraxis", "headeritems", "freqframe", "restfreq"] {
+    for name in ["headeritems", "freqframe", "restfreq"] {
         if task.text(name)?.is_some_and(|value| !value.is_empty()) {
             return Err(pending(name));
         }
@@ -180,11 +183,6 @@ fn validate_pending_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailur
             if task.text(name)?.is_some_and(|value| !value.is_empty()) {
                 return Err(pending(name));
             }
-        }
-    }
-    for name in ["gridrows", "gridcols"] {
-        if task.integer(name)? != 1 {
-            return Err(pending(name));
         }
     }
     Ok(())
@@ -239,7 +237,7 @@ fn write_export(
     overwrite: bool,
     table: &CalibrationTable,
     header: &ExportHeader<'_>,
-    series: &[PlotSeries],
+    panels: &PlotPanels,
 ) -> std::io::Result<()> {
     let parent = destination
         .parent()
@@ -253,7 +251,7 @@ fn write_export(
         header
             .path
             .file_name()
-            .unwrap_or_else(|| header.path.as_os_str())
+            .unwrap_or(header.path.as_os_str())
             .to_string_lossy()
     )?;
     let selections = &header.expressions;
@@ -299,28 +297,37 @@ fn write_export(
             }
         }
     }
-    writeln!(output, "# From plot {}", header.plotindex)?;
-    for series in series {
-        let mut points = series
-            .points
-            .iter()
-            .filter(|point| !point.flagged)
-            .peekable();
-        text::axes_header(
-            &mut output,
-            series.x,
-            series.y,
-            header.verbose,
-            points.peek().is_some(),
-        )?;
-        for point in points {
-            text::point(
+    if let Some(axis) = panels.axis_name() {
+        writeln!(output, "# iteraxis: {axis}")?;
+    }
+    for (index, panel) in panels.panels.iter().take(panels.capacity()).enumerate() {
+        if index == 0 {
+            writeln!(output, "# From plot {}", header.plotindex)?;
+        } else {
+            writeln!(output, "# From plot {index} iteration {}", index + 1)?;
+        }
+        for series in &panel.series {
+            let mut points = series
+                .points
+                .iter()
+                .filter(|point| !point.flagged)
+                .peekable();
+            text::axes_header(
                 &mut output,
-                table,
-                point,
-                [series.x, series.y],
+                series.x,
+                series.y,
                 header.verbose,
+                points.peek().is_some(),
             )?;
+            for point in points {
+                text::point(
+                    &mut output,
+                    table,
+                    point,
+                    [series.x, series.y],
+                    header.verbose,
+                )?;
+            }
         }
     }
     output.flush()?;

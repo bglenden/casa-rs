@@ -18,12 +18,14 @@ _MARKERS = {
 _STROKES = {"": "-", "solid": "-", "dot": ":", "dash": "--"}
 
 
-def configure(figure, document, options):
+def configure(figure, panel_axes, document, options):
     """Set figure formatting after the shared renderer draws the native layers."""
 
     font = options.get("titlefont")
     if font > 0 and document["title"]:
         figure.suptitle(document["title"], fontsize=font)
+    if isinstance(panel_axes, list) and len(panel_axes) > 1:
+        _share_axes(panel_axes, options)
     for axis in figure.axes:
         for name, label in (("x", axis.xaxis.label), ("y", axis.yaxis.label)):
             size = options.get(f"{name}axisfont")
@@ -64,6 +66,21 @@ def configure(figure, document, options):
         location, anchor = _LEGEND[options.get("legendposition") or "upperRight"]
         if handles:
             figure.axes[0].legend(handles, labels, loc=location, bbox_to_anchor=anchor)
+
+
+def _share_axes(axes, options):
+    for dimension, edge in (("x", "is_last_row"), ("y", "is_first_col")):
+        if not options.get(f"{dimension}sharedaxis"):
+            continue
+        for axis in axes[1:]:
+            getattr(axis, f"share{dimension}")(axes[0])
+        for axis in axes:
+            if not getattr(axis.get_subplotspec(), edge)():
+                if dimension == "x":
+                    axis.tick_params(axis="x", labelbottom=False)
+                else:
+                    axis.tick_params(axis="y", labelleft=False)
+                getattr(axis, f"set_{dimension}label")("")
 
 
 def _line(line, layer, options):

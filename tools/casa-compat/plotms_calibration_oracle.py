@@ -74,6 +74,10 @@ def exports(root, products, native):
         ("scalar-average", "bandpass", dict(avgchannel="2", scalar=True)),
         ("baseline-average", "bandpass", dict(antenna="", avgbaseline=True)),
         ("antenna-average", "bandpass", dict(antenna="", avgantenna=True)),
+        ("scan-current-text", "bandpass", dict(iteraxis="scan", exprange="all")),
+        ("scan-grid-text", "bandpass", dict(iteraxis="scan", gridcols=2)),
+        ("antenna-grid-text", "bandpass", dict(iteraxis="antenna", gridcols=2, antenna="")),
+        ("polarization-grid-text", "bandpass", dict(iteraxis="poln", gridcols=2)),
     ]
     total = 0
     for name, kind, options in cases:
@@ -135,6 +139,32 @@ def figure(root, products, native):
     print(f"Rendered PNG matched {len(points)} exported coordinates and the requested pixel size.")
 
 
+def plot_pages(root, products, native):
+    source = str(products["bandpass"])
+    for engine, task in (("casa", reference), ("native", native)):
+        directory = root / engine
+        directory.mkdir()
+        assert task(caltable=source, spw="0", antenna="A0", showgui=False,
+                    iteraxis="scan", exprange="all", plotfile=str(directory / "plot.png")) is None
+        assert sorted(file.name for file in directory.iterdir()) == ["plot_Scan1.png", "plot_Scan2_2.png"]
+        assert all(file.stat().st_size > 1000 for file in directory.iterdir())
+
+    unfiltered = root / "unfiltered.txt"
+    reference_file = root / "unfiltered.casa.txt"
+    try:
+        reference(caltable=source, selectdata=False, field="missing",
+                  showgui=False, plotfile=str(reference_file))
+    except Exception as error:
+        assert str(error) == "updateImmediately must be a boolean", str(error)
+    else:
+        raise AssertionError("CASA accepted selectdata=False")
+    assert native(caltable=source, selectdata=False, field="missing", antenna="wrong",
+                  plotfile=str(unfiltered), showgui=False) is None
+    assert reference(caltable=source, showgui=False, plotfile=str(reference_file)) is None
+    assert compare_text(unfiltered, reference_file) == 160
+    print("Matched iteration image names and verified that disabled selectors leave every point available.")
+
+
 def errors(root, products, native):
     plotfile = str(root / "invalid.txt")
     path = str(products["bandpass"])
@@ -191,6 +221,7 @@ def main():
         cases, points = exports(root, products, native)
         error_cases = errors(root, products, native)
         figure(root, products, native)
+        plot_pages(root, products, native)
     print(f"{cases} exports, {points} points and {error_cases} error cases matched.")
 
 

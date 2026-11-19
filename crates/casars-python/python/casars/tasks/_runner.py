@@ -750,13 +750,13 @@ def _render_task_plots(plots, payload: Path, workspace: Path, plotms=None) -> No
     mapped = np.memmap(payload, dtype="u1", mode="r") if payload.stat().st_size else None
     try:
         for plot in plots:
-            figure, _ = render_document(plot["document"], payload=mapped)
+            figure, panel_axes = render_document(plot["document"], payload=mapped)
             completed = False
             try:
                 if plotms is not None:
                     from ._plotms_plot import configure
 
-                    configure(figure, plot["document"], plotms)
+                    configure(figure, panel_axes, plot["document"], plotms)
                 if plot["output_file"] is not None:
                     output = workspace / plot["output_file"]
                     if plotms is None:
