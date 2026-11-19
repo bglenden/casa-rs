@@ -7062,3 +7062,14 @@ splits at 72 characters on the first card and `>` plus 71 characters on each
 continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
 all 17 original history entries intact (#977).
+
+## plotbandpass passes a fractional platforming channel to range
+
+CASA 6.7.6.14 raises `TypeError` while checking a wide bandpass for
+platforming. The check computes the two interior channel offsets with
+floating-point division, then passes those offsets to Python `range()`.
+The paired 64-channel fixture enters this branch.
+
+casa-rs evaluates the check at integer channel indices. In the fixture,
+a step at channel 32 produces a platforming report at the 10 percent
+threshold and a clean result at the 100 percent threshold (#1526).
