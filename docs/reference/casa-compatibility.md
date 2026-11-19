@@ -1125,7 +1125,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `51dc8e32a499867a7fcd93775a586a0f8fe55c87`. Status counts: Default only: 0, Implemented: 49, Not implemented: 0, Partial: 0, Unassessed: 0.
+Audit baseline: `e2e135fcea72b6295a72e238e22ab914d31e6a00`. Status counts: Default only: 0, Implemented: 49, Not implemented: 0, Partial: 0, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1249,6 +1249,16 @@ Evidence: [paired](#plotbandpass-evidence-paired).
 - Owner decision: Pending; not an accepted deviation.
 - Evidence: [paired](#plotbandpass-evidence-paired).
 
+##### default-atmosphere-without-weather: Proposed
+
+- Inputs: An atmospheric overlay on a bandpass whose associated MS has no WEATHER table.
+- CASA: Raises NameError while referencing needToClose_mymsmd.
+- casa-rs: Evaluates the ATM profile using the station defaults available in the absence of measured weather.
+- Rationale: Allow a transmission or sky-temperature overlay for supported data with missing weather measurements.
+- User impact: The plot includes a finite atmospheric curve and the original calibration spectra.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#plotbandpass-evidence-paired).
+
 #### plotbandpass evidence
 
 Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
@@ -1256,10 +1266,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotbandpass-evidence-paired"></a>
 ##### paired
 
-**Same-input public Python tasks and Matplotlib artist arrays — passed.** 32 plot cases, seven terminal cases, 21 argument cases, 65 rendered panels, two-page PDFs and two analytic platforming thresholds passed. CASA 6.7.6.14 plots and return values, including selected arrays, axes, titles, companion tables, masking, paging, PNG filenames, PDFs, measured water and split receivers.
+**Same-input public Python tasks and Matplotlib artist arrays — passed.** 41 plot cases, seven terminal cases, 24 argument and domain cases, 76 rendered panels, paired two-page PDFs and two analytic platforming thresholds passed. Default atmospheric conditions were verified when WEATHER was absent. CASA 6.7.6.14 plots and return values, including selected arrays, axes, titles, companion time grids, physical receptor labels, masking, overlay colors and legends, paging, PNG filenames, PDFs, measured water, wide atmospheric grids and split receivers.
 
-- [tools/casa-compat/plotbandpass_oracle.py](https://github.com/bglenden/casa-rs/blob/51dc8e32a499867a7fcd93775a586a0f8fe55c87/tools/casa-compat/plotbandpass_oracle.py)
-- Revision: `51dc8e32a499867a7fcd93775a586a0f8fe55c87`; CASA: `6.7.6.14`.
+- [tools/casa-compat/plotbandpass_oracle.py](https://github.com/bglenden/casa-rs/blob/e2e135fcea72b6295a72e238e22ab914d31e6a00/tools/casa-compat/plotbandpass_oracle.py)
+- Revision: `e2e135fcea72b6295a72e238e22ab914d31e6a00`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotbandpass_oracle.py`.
 - Receipt: `resources/casa-compat/evidence/plotbandpass-20261119.json`.
 

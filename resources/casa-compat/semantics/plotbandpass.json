@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "plotbandpass",
   "casa_version": "6.7.6.14",
-  "audit_revision": "51dc8e32a499867a7fcd93775a586a0f8fe55c87",
+  "audit_revision": "e2e135fcea72b6295a72e238e22ab914d31e6a00",
   "parameters": {
     "caltable": {
       "status": "Implemented",
@@ -569,16 +569,28 @@
       "evidence": [
         "paired"
       ]
+    },
+    {
+      "id": "default-atmosphere-without-weather",
+      "state": "Proposed",
+      "inputs": "An atmospheric overlay on a bandpass whose associated MS has no WEATHER table.",
+      "casa": "Raises NameError while referencing needToClose_mymsmd.",
+      "ours": "Evaluates the ATM profile using the station defaults available in the absence of measured weather.",
+      "rationale": "Allow a transmission or sky-temperature overlay for supported data with missing weather measurements.",
+      "impact": "The plot includes a finite atmospheric curve and the original calibration spectra.",
+      "evidence": [
+        "paired"
+      ]
     }
   ],
   "evidence": {
     "paired": {
       "kind": "Same-input public Python tasks and Matplotlib artist arrays",
       "state": "passed",
-      "scope": "CASA 6.7.6.14 plots and return values, including selected arrays, axes, titles, companion tables, masking, paging, PNG filenames, PDFs, measured water and split receivers.",
-      "result": "32 plot cases, seven terminal cases, 21 argument cases, 65 rendered panels, two-page PDFs and two analytic platforming thresholds passed.",
+      "scope": "CASA 6.7.6.14 plots and return values, including selected arrays, axes, titles, companion time grids, physical receptor labels, masking, overlay colors and legends, paging, PNG filenames, PDFs, measured water, wide atmospheric grids and split receivers.",
+      "result": "41 plot cases, seven terminal cases, 24 argument and domain cases, 76 rendered panels, paired two-page PDFs and two analytic platforming thresholds passed. Default atmospheric conditions were verified when WEATHER was absent.",
       "casa_version": "6.7.6.14",
-      "revision": "51dc8e32a499867a7fcd93775a586a0f8fe55c87",
+      "revision": "e2e135fcea72b6295a72e238e22ab914d31e6a00",
       "command": "CASARS_CALIBRATE_BIN=<calibrate> PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotbandpass_oracle.py",
       "receipt": "resources/casa-compat/evidence/plotbandpass-20261119.json",
       "links": [

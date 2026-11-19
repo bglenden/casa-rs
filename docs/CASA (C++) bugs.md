@@ -7073,3 +7073,11 @@ The paired 64-channel fixture enters this branch.
 casa-rs evaluates the check at integer channel indices. In the fixture,
 a step at channel 32 produces a platforming report at the 10 percent
 threshold and a clean result at the 100 percent threshold (#1526).
+
+## plotbandpass references an undefined name when WEATHER is absent
+
+An atmospheric overlay on the paired bandpass with no associated WEATHER
+table raises `NameError` in CASA 6.7.6.14 when it tries to read
+`needToClose_mymsmd`. casa-rs evaluates the native atmospheric profile
+with the station defaults and plots the original calibration spectra
+with the resulting curve (#1526).
