@@ -14,7 +14,8 @@ JSON record holds every call with what it returned, typed so a future replay
 can check types and dtypes, or the type and first line of what it raised.
 
 This is recorder groundwork only: no fixture or casa-rs replay test is
-included yet. A later replay may share this encoding.
+included for the exploratory scripts. The native workflow is replayed in
+`test_image_workflow.py`.
 
 Encoding for a future replay:
 
@@ -24,7 +25,8 @@ Encoding for a future replay:
 - a complex number is `{"complex": [re, im]}`;
 - a returned tool is `{"tool": "image"}` or `{"tool": "coordsys"}`;
 - a tuple is `{"tuple": [...]}`;
-- the working directory in a returned string is written `{tmp}`.
+- the working directory in a returned string is written `{tmp}`;
+- an argument `{"ref": name}` uses the result previously bound to `name`.
 
 A call may carry `"compare"`: `"type"` to check only the result's type (a
 value that depends on the clock), `"skip"` to check only that it does not
@@ -110,6 +112,41 @@ def cs(method: str, compare=None, bind=None, **args) -> dict:
 
 
 SCRIPTS: dict[str, list[dict]] = {
+    "native_workflow": [
+        ia("isopen"),
+        ia("getchunk"),
+        ia("fromshape", outfile="{tmp}/workflow.im", shape=[4, 3, 2, 2]),
+        ia("shape"),
+        ia("name", strippath=True),
+        ia("ispersistent"),
+        ia("pixeltype"),
+        ia("putchunk", pixels=array(SMALL), blc=[1, 0, 1, 0], inc=[2, 1, 1, 1]),
+        ia("getchunk", blc=[0, 0, 1, 0], trc=[3, 2, 1, 0], dropdeg=True),
+        ia("getchunk", blc=[0, 0, 1, 0], trc=[3, 2, 1, 0], axes=[1]),
+        ia("getchunk", blc=[0, 0, 1, 0], trc=[3, 2, 1, 0], getmask=True),
+        ia("coordsys", bind="edit"),
+        call("edit", "type"),
+        call("edit", "referencepixel"),
+        call("edit", "setreferencepixel", value=[1.25, 2.5], type="direction"),
+        call("edit", "torecord", bind="edited_record"),
+        call("edit", "done"),
+        ia("coordsys", bind="original"),
+        call("original", "referencepixel"),
+        ia("setcoordsys", csys={"ref": "edited_record"}),
+        ia("setbrightnessunit", unit="Jy/beam"),
+        ia("history", list=False),
+        ia("close"),
+        ia("isopen"),
+        ia("open", infile="{tmp}/workflow.im"),
+        ia("brightnessunit"),
+        ia("getchunk", blc=[0, 0, 1, 0], trc=[3, 2, 1, 0], dropdeg=True),
+        ia("coordsys", bind="reopened"),
+        call("reopened", "referencepixel"),
+        call("reopened", "torecord"),
+        ia("done"),
+        ia("open", infile="{tmp}/missing.im"),
+        ia("isopen"),
+    ],
     "metadata": [
         ia("isopen"),
         ia("fromshape", outfile="{tmp}/a.im", shape=[4, 5, 3, 2]),
@@ -288,7 +325,12 @@ def run_script(calls: list[dict]) -> list[dict]:
     try:
         for entry in calls:
             target = tools[entry["target"]]
-            args = {key: decode(value, tmp) for key, value in entry["args"].items()}
+            args = {
+                key: tools[value["ref"]]
+                if isinstance(value, dict) and set(value) == {"ref"}
+                else decode(value, tmp)
+                for key, value in entry["args"].items()
+            }
             outcome = dict(entry)
             try:
                 result = getattr(target, entry["method"])(**args)
@@ -306,7 +348,8 @@ def run_script(calls: list[dict]) -> list[dict]:
     finally:
         for tool in tools.values():
             try:
-                tool.done()
+                if hasattr(tool, "done"):
+                    tool.done()
             except Exception:  # noqa: BLE001
                 pass
         shutil.rmtree(tmp, ignore_errors=True)
