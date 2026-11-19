@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 from threading import Thread
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import install_opener
 
@@ -133,7 +134,9 @@ def freeze_results(root, fixture, native):
         with archive_proxy(fail_at=2):
             try:
                 generate(engine, fixture, prior, [('antpos', {})])
-            except (RuntimeError, OSError):
+            except HTTPError as error:
+                assert error.code == 503
+                assert 'Year=2010' in error.url
                 assert (prior / 'table.dat').read_bytes() == before
             else:
                 raise AssertionError(f'{name} accepted an archive transfer failure')

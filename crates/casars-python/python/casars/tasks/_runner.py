@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import functools
+from http import HTTPStatus
 import inspect
 from json import JSONDecodeError
 import os
@@ -23,6 +24,7 @@ import sys
 import threading
 import tempfile
 from typing import Any, TypeAlias
+from urllib.error import HTTPError, URLError
 
 from ..parameters import (
     ParameterData,
@@ -277,6 +279,16 @@ def _call_gencal(values: dict[str, Any]) -> Any:
             raise errors[parameter](message) from error
         if parameter == "infile.json":
             raise JSONDecodeError(message, "", 0) from error
+        if parameter == "antenna.archive.url":
+            raise URLError(message) from error
+        if parameter and parameter.startswith("antenna.archive.http."):
+            status = int(parameter.rsplit(".", 1)[-1])
+            url = message.rsplit(" at ", 1)[-1]
+            try:
+                reason = HTTPStatus(status).phrase
+            except ValueError:
+                reason = message
+            raise HTTPError(url, status, reason, None, None) from error
         raise
 
 

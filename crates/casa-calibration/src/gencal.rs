@@ -213,6 +213,14 @@ pub enum GencalError {
     /// A supplied ALMA position file or its arguments are invalid.
     #[error(transparent)]
     PositionInput(#[from] AntposInputError),
+    /// A VLA archive request failed after the initial connection probe.
+    #[error("{source} at {url}")]
+    VlaArchive {
+        /// Archive URL, including the year being retrieved.
+        url: String,
+        /// HTTP or transport error.
+        source: Box<ureq::Error>,
+    },
     /// A needed value in a CASA table had an unsupported type or shape.
     #[error("{0}")]
     UnsupportedTableValue(String),

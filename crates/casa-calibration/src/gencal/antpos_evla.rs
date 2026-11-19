@@ -62,8 +62,12 @@ pub(super) fn resolve(
         .as_secs_f64();
     let year = MvTime::from_mjd_seconds(unix_seconds + 40_587.0 * 86_400.0).year();
     for correction_year in FIRST_EVLA_YEAR..=year {
-        let mut response = query(scheme, correction_year).map_err(invalid)?;
-        let text = response.body_mut().read_to_string().map_err(invalid)?;
+        let failure = |source| GencalError::VlaArchive {
+            url: format!("{scheme}://{ARCHIVE}{correction_year}"),
+            source: Box::new(source),
+        };
+        let mut response = query(scheme, correction_year).map_err(failure)?;
+        let text = response.body_mut().read_to_string().map_err(failure)?;
         accumulate(&mut antennas, start, time_limit, correction_year, &text)?;
     }
     let mut selected = Vec::new();
