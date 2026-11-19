@@ -301,7 +301,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     if name == "flagdata":
-        _coerce_flagdata_summary(values)
+        _coerce_flagdata_options(values)
     return run(name, **values).value
 
 
@@ -401,7 +401,7 @@ def _bandpass_statistics(value):
     return value
 
 
-def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
+def _coerce_flagdata_options(values: dict[str, Any]) -> None:
     import numpy as np
 
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
@@ -417,6 +417,7 @@ def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
         ("maxrel", cfloat, "cFloat"),
         ("minabs", cint, "cInt"),
         ("maxabs", cint, "cInt"),
+        ("writeflags", bool, "cBool"),
     ):
         if parameter not in values:
             continue
@@ -425,7 +426,7 @@ def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
             errors[parameter] = ["null value not allowed"]
         elif expected is bool and isinstance(value, np.bool_):
             # CASA admits these scalars but leaves the summary options disabled.
-            values[parameter] = False
+            values[parameter] = bool(value) if parameter == "writeflags" else False
         elif not isinstance(value, expected):
             errors[parameter] = [f"must be of {casa_type} type"]
         elif casa_type == "cFloat":
