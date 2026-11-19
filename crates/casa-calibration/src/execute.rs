@@ -2229,6 +2229,7 @@ fn apply_row_all_channels(
                         second,
                         correlation_types,
                         row.data_desc_id,
+                        table_plan.summary.table_subtype == "EPowerCurve",
                         weight_spectrum.as_mut(),
                         implicit_weight_spectrum.as_mut(),
                     )?;
