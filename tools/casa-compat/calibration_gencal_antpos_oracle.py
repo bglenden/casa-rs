@@ -11,12 +11,12 @@ import subprocess
 import sys
 
 import casatasks as casa
-from casatools import table
+from casatools import msmetadata, table
 import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_gencal_gaincurve_oracle import compare_case, refuses
-from calibration_gencal_specify_oracle import apply_both, compare_tables, generate, with_second_window
+from calibration_gencal_specify_oracle import apply_both, columns, compare_tables, generate, with_second_window
 from gaincal_oracle import ephemeris_observation
 from record_casa_returns import make_cal_ms
 
@@ -112,10 +112,28 @@ def moving_position(root, native):
     fixed = case / 'fixed.ms'
     make_cal_ms(str(fixed), stokes='XX XY YX YY')
     moving, _ = ephemeris_observation(case, fixed, offset=(.002, -.004))
-    options = {'antenna': '0,1', 'parameter': [17, 28, 34, 40, 59, 63]}
+    options = {'antenna': '0,1', 'parameter': [.17, .28, .34, .40, .59, .63]}
     result, _ = compare_case(case, 'calibration', fixed, 'antpos', options, native)
     tables = case / 'calibration'
     result['apply_nrms'] = apply_both(case, moving, tables / 'casa.cal', tables / 'native.cal', native)
+    metadata = msmetadata()
+    assert metadata.open(str(moving))
+    phase = metadata.phasecenter(0)
+    metadata.done()
+    assert phase['refer'] == 'J2000'
+    snapshot = case / 'field-reference-snapshot.ms'
+    copy_ms(moving, snapshot)
+    tool = table()
+    assert tool.open(str(snapshot / 'FIELD'), nomodify=False)
+    tool.putcell('EPHEMERIS_ID', 0, -1)
+    for column in ('DELAY_DIR', 'PHASE_DIR', 'REFERENCE_DIR'):
+        tool.putcell(column, 0, np.asarray([[phase['m0']['value']], [phase['m1']['value']]]))
+    tool.close()
+    native.applycal(str(snapshot), gaintable=[str(tables / 'casa.cal')],
+                    interp=['nearest'], calwt=[True])
+    np.testing.assert_array_equal(columns(snapshot, ['CORRECTED_DATA'])['CORRECTED_DATA'],
+                                  columns(case / 'apply-native-casa.ms', ['CORRECTED_DATA'])['CORRECTED_DATA'])
+    result['matches_field_reference_snapshot'] = True
     return result
 
 
