@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 
 use super::construction::{stokes_values, string_arguments};
 use super::inspect::{coordinate_type, numbered_coordinates};
-use super::{CoordinateState, PyCoordsys, stub};
+use super::{CoordinateState, PyCoordsys};
 
 fn names(mut names: Vec<String>) -> Vec<String> {
     if matches!(names.as_slice(), [name] if !name.is_empty()) {
@@ -46,24 +46,15 @@ impl PyCoordsys {
                         "names vector must be of length nWorldAxes()",
                     ));
                 }
-                let mut axes = vec![None; names.len()];
-                for (_, _, placement) in numbered_coordinates(&state)? {
-                    for (pixel, world) in placement.pixel_axes.into_iter().zip(placement.world_axes)
-                    {
-                        if let Some(world) = world {
-                            *axes
-                                .get_mut(world)
-                                .ok_or_else(|| stub("setnames").unwrap_err())? = pixel;
-                        }
-                    }
-                }
-                axes
+                // The native reader requires matching visible world and
+                // pixel maps, even when whole coordinates are transposed.
+                (0..names.len()).map(Some).collect()
             } else {
                 let target = coordinate(&state, coordinate_type(r#type))?;
-                if names.len() != target.world_axes.len() {
+                if names.len() != target.pixel_axes.len() {
                     return Err(PyRuntimeError::new_err(format!(
                         "Supplied axis names vector must be of length {}",
-                        target.world_axes.len()
+                        target.pixel_axes.len()
                     )));
                 }
                 target.pixel_axes
@@ -71,7 +62,9 @@ impl PyCoordsys {
             let mut record = state.record.clone();
             let mut updated = state.coordinates.clone();
             for (axis, name) in axes.into_iter().zip(names) {
-                let axis = axis.ok_or_else(|| stub("setnames").unwrap_err())?;
+                let axis = axis.ok_or_else(|| {
+                    PyRuntimeError::new_err("Cannot set the name of a removed coordinate axis")
+                })?;
                 (updated, _) = CoordinateSystem::set_axis_name_in_record(&mut record, axis, &name)
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             }

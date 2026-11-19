@@ -50,6 +50,24 @@ def test_axis_names_follow_visible_world_order_after_transpose(casa):
         _assert_value(rust.torecord()[field], oracle.torecord()[field])
 
 
+def test_renaming_the_visible_axis_preserves_the_removed_label(casa):
+    record = tools.coordsys().newcoordsys(linear=2).torecord()
+    record["worldmap0"] = record["pixelmap0"] = np.asarray([0, -2], dtype=np.int32)
+    for make in (tools.coordsys, casa.coordsys):
+        tool = make()
+        assert tool.fromrecord(record)
+        assert tool.setnames(["active"])
+        assert tool.names() == ["active"]
+        assert tool.torecord()["linear0"]["axes"].tolist() == ["active", "LinAxis1"]
+        with pytest.raises(RuntimeError, match="must be of length 2"):
+            tool.setnames(["active"], type="linear")
+    tool = tools.coordsys()
+    assert tool.fromrecord(record)
+    with pytest.raises(RuntimeError, match="removed coordinate axis"):
+        tool.setnames(["changed", "removed"], type="linear")
+    assert tool.names() == ["LinAxis0"]
+
+
 @pytest.mark.parametrize("input_names", ["Q,U", "i q", ["XX", "YY"], ["RX", "RCircular"], "IQUV", "", ["", "V"]])
 def test_setstokes_updates_values_and_preserves_the_axis_label(casa, input_names):
     rust = tools.coordsys().newcoordsys(stokes="I,Q")
