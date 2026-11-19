@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use casa_types::{ArrayValue, PrimitiveType, ScalarValue};
 
-use crate::{ArrayShapeContract, ColumnType, Table, TableError};
+use crate::{ArrayShapeContract, ColumnType, Table, TableColumn, TableError};
 
 /// CASA statistics indexed by column name, then statistic name. One-dimensional
 /// arrays use one entry per element, indexed as `COLUMN_0`, `COLUMN_1`, and so on.
@@ -295,55 +295,27 @@ pub fn column_statistics(
             "complex_value must be amp, amplitude, phase, imag, imaginary or real, is {mode}"
         )));
     }
-    let standard_arrays = is_array
-        && table.data_manager_info().iter().any(|manager| {
+    let access = table.column_accessor(column)?;
+    let indexed = is_array && rank == Some(1);
+    let groups = if is_array {
+        let standard = table.data_manager_info().iter().any(|manager| {
             manager.dm_type == "StandardStMan" && manager.columns.iter().any(|name| name == column)
         });
-    let access = table.row_accessor();
-    let mut groups: Vec<Vec<f64>> = Vec::new();
-    let mut shape = None;
-    for view_row in 0..nrows {
-        let row = rows.map_or(view_row, |rows| rows[view_row]);
-        if is_array {
-            let (next_shape, values) = array(access.array_cell(row, column)?, mode)?;
-            let target = shape.get_or_insert_with(|| next_shape.clone());
-            if target.contains(&0) {
-                if rank == Some(1) {
-                    return Ok(BTreeMap::new());
-                }
-                return Err(ColumnStatisticsError::Invalid(
-                    "All selected rows are flagged.".into(),
-                ));
-            }
-            if standard_arrays && *target != next_shape {
-                return Err(ColumnStatisticsError::Invalid(
-                    "Table DataManager error: Internal error: StManIndArray::get/put shapes not conforming".into(),
-                ));
-            }
-            let values = pad_cell(values, &next_shape, target)?;
-            if rank == Some(1) {
-                if groups.is_empty() {
-                    groups.resize_with(values.len(), Vec::new);
-                }
-                for (group, value) in groups.iter_mut().zip(values) {
-                    group.push(value);
-                }
-            } else {
-                if groups.is_empty() {
-                    groups.push(Vec::new());
-                }
-                groups[0].extend(values);
-            }
-        } else {
-            if groups.is_empty() {
-                groups.push(Vec::new());
-            }
-            groups[0].push(scalar(access.scalar_cell(row, column)?, mode)?);
-        }
-    }
+        array_samples(&access, column, rows, nrows, mode, indexed, standard)?
+    } else {
+        let cells = match rows {
+            Some(rows) => access.scalar_cells_owned_for_rows(rows),
+            None => access.scalar_cells_owned(),
+        }?;
+        let values = cells.into_iter().enumerate().map(|(index, cell)| {
+            let row = rows.map_or(index, |rows| rows[index]);
+            scalar(&cell.ok_or_else(|| missing_cell(row, column))?, mode)
+        });
+        vec![values.collect::<Result<Vec<_>, _>>()?]
+    };
     let mut result = BTreeMap::new();
     for (index, values) in groups.iter().enumerate() {
-        let name = if is_array && rank == Some(1) {
+        let name = if indexed {
             format!("{column}_{index}")
         } else {
             column.to_string()
@@ -351,4 +323,70 @@ pub fn column_statistics(
         result.insert(name, record(values)?);
     }
     Ok(result)
+}
+
+fn array_samples(
+    access: &TableColumn<'_>,
+    column: &str,
+    rows: Option<&[usize]>,
+    nrows: usize,
+    mode: &str,
+    indexed: bool,
+    standard: bool,
+) -> Result<Vec<Vec<f64>>, ColumnStatisticsError> {
+    // Batch storage reads instead of asking the data manager to reopen and
+    // locate the array for every row. Keep the decoded cells in one batch.
+    const ROW_BATCH: usize = 4096;
+    let mut groups: Vec<Vec<f64>> = Vec::new();
+    let mut shape = None;
+    for start in (0..nrows).step_by(ROW_BATCH) {
+        let end = (start + ROW_BATCH).min(nrows);
+        let contiguous;
+        let selected = match rows {
+            Some(rows) => &rows[start..end],
+            None => {
+                contiguous = (start..end).collect::<Vec<_>>();
+                &contiguous
+            }
+        };
+        let arrays = access.array_cells_owned_uncached(selected)?;
+        for (&row, cell) in selected.iter().zip(arrays) {
+            let cell = cell.ok_or_else(|| missing_cell(row, column))?;
+            let (next_shape, values) = array(&cell, mode)?;
+            let target = shape.get_or_insert_with(|| {
+                let streams = if indexed { values.len() } else { 1 };
+                groups.resize_with(streams, Vec::new);
+                next_shape.clone()
+            });
+            if target.contains(&0) {
+                if indexed {
+                    return Ok(Vec::new());
+                }
+                return Err(ColumnStatisticsError::Invalid(
+                    "All selected rows are flagged.".into(),
+                ));
+            }
+            if standard && *target != next_shape {
+                return Err(ColumnStatisticsError::Invalid(
+                    "Table DataManager error: Internal error: StManIndArray::get/put shapes not conforming".into(),
+                ));
+            }
+            let values = pad_cell(values, &next_shape, target)?;
+            if indexed {
+                for (group, value) in groups.iter_mut().zip(values) {
+                    group.push(value);
+                }
+            } else {
+                groups[0].extend(values);
+            }
+        }
+    }
+    Ok(groups)
+}
+
+fn missing_cell(row_index: usize, column: &str) -> TableError {
+    TableError::ColumnNotFound {
+        row_index,
+        column: column.to_owned(),
+    }
 }

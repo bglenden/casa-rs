@@ -1939,7 +1939,7 @@
         "resource_kind": "calibration_table"
       },
       "normalization": {
-        "kind": "path"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,

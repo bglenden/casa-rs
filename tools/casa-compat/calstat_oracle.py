@@ -76,6 +76,8 @@ def run(root, native, native_table):
     tool.putcol('CPARAM', gain_values)
     tool.close()
     legacy_table(legacy)
+    spaced = root/'legacy with trailing space.cal '
+    spaced.symlink_to(legacy, target_is_directory=True)
 
     successes = [
         (gain, axis, 'CPARAM')
@@ -99,6 +101,7 @@ def run(root, native, native_table):
             assert expected['CPARAM']['npts'] == flags.size > np.count_nonzero(~flags)
         compare(native.calstat(caltable=str(path), axis=axis, datacolumn=datacolumn), expected)
     compare(native.calstat(str(legacy)), casa.calstat(str(legacy)))
+    compare(native.calstat(str(spaced)), casa.calstat(str(spaced)))
     compare(native.calstat(str(gain), 'phase', 'cparam'), casa.calstat(str(gain), 'phase', 'cparam'))
 
     expected_nan = casa.calstat(str(legacy), 'NAN')['NAN']
@@ -141,7 +144,7 @@ def run(root, native, native_table):
     np.testing.assert_allclose(expected['var'], cast.var(ddof=1), rtol=2e-7)
     samples = cast.astype(np.float32)
     assert expected['sumsq'] == np.square(samples).sum(dtype=np.float64)
-    print(f'{len(successes) + 2} public statistics comparisons, {len(errors)} errors, '
+    print(f'{len(successes) + 3} public statistics comparisons, {len(errors)} errors, '
           'four table-tool comparisons, NaN behavior and independent moment checks passed')
 
 
