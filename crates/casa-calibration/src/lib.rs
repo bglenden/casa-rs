@@ -32,6 +32,7 @@ mod execute;
 mod fluxscale;
 mod ft;
 mod gencal;
+mod initweights;
 mod interpolation;
 mod lookup;
 mod lookup_frequency;

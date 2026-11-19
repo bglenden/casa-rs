@@ -102,6 +102,19 @@ pub(crate) fn sample_polar(
 
 /// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
 pub(crate) fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
+    spline_derivatives_from(points, 1)
+}
+
+/// Tsys weight initialization uses casacore's InterpolateArray1D. It
+/// leaves the first interior derivative at its forward-elimination value.
+pub(crate) fn tsys_weight_spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
+    spline_derivatives_from(points, 2)
+}
+
+fn spline_derivatives_from(
+    points: &[(f64, f32, f32)],
+    first_back_substitution: usize,
+) -> Vec<[f64; 2]> {
     let mut second = vec![[0.0; 2]; points.len()];
     if points.len() < 3 {
         return second;
@@ -125,7 +138,7 @@ pub(crate) fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
             *value = (6.0 * slope - left * previous[axis]) / diagonal;
         }
     }
-    for index in (1..points.len() - 1).rev() {
+    for index in (first_back_substitution..points.len() - 1).rev() {
         let next = second[index + 1];
         for (value, next) in second[index].iter_mut().zip(next) {
             *value -= upper[index] * next;

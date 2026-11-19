@@ -69,6 +69,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("impbcor", "casatasks"),
     ("importfits", "casatasks"),
     ("importvla", "casatasks"),
+    ("initweights", "casatasks"),
     ("impv", "casatasks"),
     ("imregrid", "casatasks"),
     ("imstat", "casatasks"),

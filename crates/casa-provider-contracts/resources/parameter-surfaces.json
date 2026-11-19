@@ -33853,6 +33853,314 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "initweights",
+      "contract_version": 1,
+      "display_name": "Initialize Visibility Weights",
+      "category": "Calibration",
+      "summary": "Initialize MeasurementSet weights and their channel spectra.",
+      "provider_family": "calibration",
+      "casa_task": "initweights",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "initweights"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "wtmode",
+          "concept": {
+            "id": "weightinit.wtmode",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "nyq"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--wtmode"
+              ]
+            },
+            "provider": {
+              "field": "wtmode"
+            },
+            "python": {
+              "name": "wtmode"
+            },
+            "presentation": {
+              "label": "Initialization Mode",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "tsystable",
+          "concept": {
+            "id": "weightinit.tsystable",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--tsystable"
+              ]
+            },
+            "provider": {
+              "field": "tsystable"
+            },
+            "python": {
+              "name": "tsystable"
+            },
+            "presentation": {
+              "label": "Tsys Table",
+              "group": "Weights"
+            }
+          }
+        },
+        {
+          "name": "gainfield",
+          "concept": {
+            "id": "weightinit.gainfield",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gainfield"
+              ]
+            },
+            "provider": {
+              "field": "gainfield"
+            },
+            "python": {
+              "name": "gainfield"
+            },
+            "presentation": {
+              "label": "Gain Field",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Weight initialization accepts the settings for one Tsys table."
+          }
+        },
+        {
+          "name": "interp",
+          "concept": {
+            "id": "weightinit.interp",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interp"
+              ]
+            },
+            "provider": {
+              "field": "interp"
+            },
+            "python": {
+              "name": "interp"
+            },
+            "presentation": {
+              "label": "Interpolation",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Weight initialization accepts the settings for one Tsys table."
+          }
+        },
+        {
+          "name": "spwmap",
+          "concept": {
+            "id": "weightinit.spwmap",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spwmap"
+              ]
+            },
+            "provider": {
+              "field": "spwmap"
+            },
+            "python": {
+              "name": "spwmap"
+            },
+            "presentation": {
+              "label": "SPW Map",
+              "group": "Weights"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "ADR-0006",
+            "reason": "Weight initialization accepts the settings for one Tsys table."
+          }
+        },
+        {
+          "name": "dowtsp",
+          "concept": {
+            "id": "weightinit.dowtsp",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dowtsp"
+              ]
+            },
+            "provider": {
+              "field": "dowtsp"
+            },
+            "python": {
+              "name": "dowtsp"
+            },
+            "presentation": {
+              "label": "Weight Spectrum",
+              "group": "Weights"
+            }
+          }
+        }
+      ]
     }
   ]
 }
