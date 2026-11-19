@@ -424,7 +424,7 @@
       "status": "Partial"
     },
     "restfreq": {
-      "scope": "Accept rest frequency on modern calibration tables while preserving their frequency coordinates. Velocity conversions remain open for calibration tables.",
+      "scope": "CASA leaves modern calibration-table coordinates unchanged for supplied rest-frequency values. Frequency and velocity transforms for other inputs remain separately tracked.",
       "evidence": [
         "selectors",
         "remaining"
@@ -1152,13 +1152,13 @@
       "kind": "Same-input PlotMS calibration types and selectors",
       "state": "passed",
       "scope": "CASA 6.7.6.14 with casaplotms 2.9.1 on identical modern calibration tables, including Tsys and antenna position.",
-      "result": "50 text exports, 1,494 points, 14 exact errors, six paired refusals, 32 rendered coordinates and scan, baseline and time page filenames matched.",
+      "result": "56 text exports, 1,688 points, 14 exact errors, six paired refusals and 32 rendered coordinates matched. Scan, baseline, time and antenna-position page exports used the same filenames.",
       "casa_version": "6.7.6.14",
-      "revision": "874a356658252ccedfd69ba15a293c9c96555100",
+      "revision": "d3571932be189f719e83e2626ba7fab982d23d33",
       "command": "casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>",
       "receipt": "resources/casa-compat/evidence/plotms-calibration-selectors-20261119.json",
       "links": [
-        "tools/casa-compat/plotms_calibration_oracle.py"
+        "https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py"
       ]
     }
   }
