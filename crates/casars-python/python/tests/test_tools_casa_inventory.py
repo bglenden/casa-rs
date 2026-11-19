@@ -37,6 +37,7 @@ IMPLEMENTED["coordsys"] = {
     "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "getconversiontype", "lineartransform",
     "names", "naxes", "ncoordinates", "newcoordsys",
     "observer", "parentname", "projection", "referencecode", "referencepixel", "restfrequency",
+    "setepoch",
     "setnames", "setobserver", "setparentname", "setstokes",
     "setreferencepixel", "settelescope",
     "stokes", "telescope", "torecord", "type", "units",

@@ -389,6 +389,7 @@ pub struct MEpoch {
     value: MjdHighPrec,
     refer: EpochRef,
     razing: bool,
+    offset: Option<Box<Self>>,
 }
 
 impl MEpoch {
@@ -398,6 +399,7 @@ impl MEpoch {
             value,
             refer,
             razing: false,
+            offset: None,
         }
     }
 
@@ -453,6 +455,17 @@ impl MEpoch {
         self.razing
     }
 
+    /// Attaches the time origin of this epoch's reference frame.
+    pub fn with_offset(mut self, offset: Self) -> Self {
+        self.offset = Some(Box::new(offset));
+        self
+    }
+
+    /// Returns the time origin of this epoch's reference frame, if present.
+    pub fn offset(&self) -> Option<&Self> {
+        self.offset.as_deref()
+    }
+
     /// Returns the epoch value as a [`Quantity`] in days.
     pub fn as_quantity(&self) -> Quantity {
         Quantity::new(self.value.as_mjd(), "d").expect("'d' is a valid unit")
@@ -468,6 +481,11 @@ impl MEpoch {
     /// - GMST1 ↔ LMST and GAST ↔ LAST: require `position` (for longitude)
     pub fn convert_to(&self, target: EpochRef, frame: &MeasFrame) -> Result<MEpoch, MeasureError> {
         let mut current = self.value;
+        if let Some(offset) = &self.offset {
+            let origin = offset.convert_to(self.refer, frame)?.value();
+            current =
+                MjdHighPrec::new(current.day() + origin.day(), current.frac() + origin.frac());
+        }
         if self.refer != target {
             let path = find_path(self.refer, target)?;
             let mut current_ref = self.refer;

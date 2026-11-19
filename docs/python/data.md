@@ -50,6 +50,9 @@ Use `addcoordinate` to append axes and `fromrecord` to restore a coordinate
 record. Pass `cs.torecord()` as the `csys` argument to `ia.fromshape` or
 `ia.fromarray`. The coordinate record must describe each image axis.
 
+Use `cs.setepoch(epoch)` to store an epoch measure record. `cs.epoch()`
+returns the epoch in days with its reference code and any reference offset.
+
 Use `cs.setobserver(name)` and `cs.settelescope(name)` to update observation
 metadata. An unknown telescope name is stored and the setter returns
 `False`. The record retains the last known telescope position.

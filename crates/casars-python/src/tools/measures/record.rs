@@ -4,9 +4,51 @@ use super::State;
 use crate::convert::holder::{CasaMeasure, HolderError, Measure, MeasureValue};
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
+use crate::tools::LogLine;
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{MeasFrame, MeasureError};
+use casa_types::measures::{MEpoch, MeasFrame, MeasureError};
 use std::collections::BTreeMap;
+
+/// Decodes the scalar epoch and its offsets stored by `ObsInfo`.
+pub(in crate::tools) fn observation_epoch(
+    record: &RecordArg,
+    log: &mut Vec<LogLine>,
+) -> Result<Option<MEpoch>, &'static str> {
+    for key in ["m0", "m1", "m2"] {
+        let Some(Variant::Record(quantity)) = record.0.get(key) else {
+            break;
+        };
+        if let Some(Variant::Numbers(values) | Variant::Array { values, .. }) =
+            quantity.get("value")
+            && !values.is_empty()
+            && !quantity.is_double_vector()
+        {
+            return Err("Cannot convert to QuantumVectorDouble");
+        }
+    }
+    let measures = match Measures::read(record) {
+        Ok(measures) => measures,
+        Err(error) => {
+            log.push(LogLine::error(format!(
+                "{}Non-measure type value in measure conversion",
+                error.message(),
+            )));
+            return Ok(None);
+        }
+    };
+    if let Some(warning) = &measures.warning {
+        log.push(LogLine::warning(warning.clone()));
+    }
+    match measures.as_epoch() {
+        Some(epoch) => Ok(Some(epoch)),
+        None => {
+            log.push(LogLine::error(
+                "Record value does not contain an Epoch measure.",
+            ));
+            Ok(None)
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct Measures {
@@ -17,6 +59,16 @@ pub(super) struct Measures {
 }
 
 impl Measures {
+    fn as_epoch(&self) -> Option<MEpoch> {
+        let CasaMeasure::Epoch(epoch) = self.values.first()?.to_casa().ok()? else {
+            return None;
+        };
+        match &self.offset {
+            Some(offset) => Some(epoch.with_offset(offset.as_epoch()?)),
+            None => Some(epoch),
+        }
+    }
+
     pub(super) fn read(record: &RecordArg) -> Result<Self, HolderError> {
         Self::read_fields(&record.0, 0)
     }

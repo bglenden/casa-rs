@@ -4791,6 +4791,13 @@ including the singleton list, tuple, and rectangular nested forms.
 Mixed boolean/floating sequences also report overflow before promoting a
 native integer outside that range to a floating value.
 
+## An empty floating epoch vector can terminate CASA
+
+In CASA 6.7.6.14, a `float64` NumPy array of shape `(0,)` or `(1, 0)`
+inside the `m0.value` field of an epoch record can terminate the process
+during `coordsys.setepoch`. casa-rs returns `False` and preserves the
+current observation date (#1626).
+
 ## CASA discards the values of bare complex quantity arrays
 
 - Date noted: 2026-11-05
