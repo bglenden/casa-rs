@@ -110,15 +110,21 @@ def main():
     np.testing.assert_array_equal(default['eff'][1:4], 0.)
     np.testing.assert_array_equal(default['eff'][5:8], 0.)
 
-    results['explicit-file'], explicit = compare_case(root, 'explicit-file', source, 'gceff',
-                                                       {'infile': curves}, native)
-    assert not np.array_equal(default['gceff'], explicit['FPARAM'])
+    for kind in ('gc', 'gceff', 'eff'):
+        explicit_case = f'{kind}-explicit-file'
+        results[explicit_case], explicit = compare_case(root, explicit_case, source, kind,
+                                                        {'infile': curves}, native)
+        if kind == 'eff':
+            np.testing.assert_array_equal(default[kind], explicit['FPARAM'])
+        else:
+            assert not np.array_equal(default[kind], explicit['FPARAM'])
+        missing_case = f'{kind}-missing-file'
+        results[missing_case] = refuses(root, missing_case, source, kind,
+                                       {'infile': str(root / 'absent')}, native)
     results['inactive-selectors'], selected = compare_case(
         root, 'inactive-selectors', source, 'gc',
         {'spw': '0', 'antenna': '1', 'pol': 'Y', 'uniform': False, 'parameter': [1.7]}, native)
     np.testing.assert_array_equal(selected['FPARAM'], default['gc'])
-    results['missing-file'] = refuses(root, 'missing-file', source, 'gceff',
-                                      {'infile': str(root / 'absent')}, native)
     for label, frequency in (('below', .5e9), ('above', 55e9)):
         vis = root / f'{label}.ms'
         copy_ms(source, vis)
