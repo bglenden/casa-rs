@@ -103,6 +103,23 @@ pub struct MsTransformTaskOptions {
     /// Active per-selected-SPW widths, or a single width broadcast to each SPW.
     /// When absent, the task uses the scalar width in the request.
     pub channel_widths: Option<Vec<usize>>,
+    /// Average visibilities along each baseline within this time bin.
+    pub time_averaging: Option<TimeAverageOptions>,
+}
+
+/// Time averaging parameters shared by the split and mstransform tasks.
+#[derive(Debug, Clone, Copy)]
+pub struct TimeAverageOptions {
+    /// Maximum duration of an averaging group, in seconds.
+    pub interval_seconds: f64,
+    /// Let the averaging group contain rows from different scans.
+    pub span_scans: bool,
+    /// Let the averaging group contain rows from different states.
+    pub span_states: bool,
+    /// Let the averaging group contain rows from different fields.
+    pub span_fields: bool,
+    /// Baseline motion limit in metres. Nonpositive values disable the limit.
+    pub max_uvw_distance: f64,
 }
 
 /// Report returned after materializing a transformed MeasurementSet.

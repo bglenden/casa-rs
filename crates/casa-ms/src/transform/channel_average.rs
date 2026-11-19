@@ -52,7 +52,7 @@ enum WeightKind {
     Unit,
 }
 
-struct InputStatistic<'a> {
+pub(super) struct InputStatistic<'a> {
     scalar: ArrayView1<'a, f32>,
     spectrum: Option<ChannelMatrix<'a, f32>>,
 }
@@ -64,7 +64,7 @@ pub(super) struct SpectrumCells<'a> {
 }
 
 impl<'a> InputStatistic<'a> {
-    fn from_cells(
+    pub(super) fn from_cells(
         scalar: &'a ArrayValue,
         spectrum: Option<&'a ArrayValue>,
         shape: [usize; 2],
@@ -102,7 +102,7 @@ impl<'a> InputStatistic<'a> {
         Ok(Self { scalar, spectrum })
     }
 
-    fn value(&self, corr: usize, chan: usize) -> f32 {
+    pub(super) fn value(&self, corr: usize, chan: usize) -> f32 {
         self.spectrum
             .as_ref()
             .map_or_else(|| self.scalar[corr], |array| array.get(corr, chan))
