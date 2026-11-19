@@ -39,8 +39,10 @@ persist the edits to the image.
 
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
-`ia.sethistory(origin, messages)` to append provenance. The remaining CASA
-image and coordinate operations are tracked in
+`ia.sethistory(origin, messages)` to append provenance. For an image with stored
+restoring beams, `ia.restoringbeam()` reads the beam quantities and
+`ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid. The remaining
+CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
 ### Access an existing image through the Data API
