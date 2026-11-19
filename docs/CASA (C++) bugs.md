@@ -7009,3 +7009,6 @@ casa-rs maps extrema to absolute image pixels using the original stride.
 
 On a three-axis image, `ia.statistics(axes=[0, 0])` can also terminate the
 process. casa-rs raises an error for the duplicate axis.
+
+The pinned biweight algorithm can also terminate when every selected
+pixel is masked. casa-rs returns a recoverable error for the empty sample.

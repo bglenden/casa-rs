@@ -61,11 +61,13 @@ Use `ia.getregion(region=...)` to read that same selection. Pass
 `getmask=True` to read validity, `mask` to apply a lattice expression,
 or `axes` to average the valid pixels along selected axes.
 
-`ia.statistics()` returns classical statistics over a real native CASA or
+`ia.statistics()` returns statistics over a real native CASA or
 temporary image. Pass `axes` for per-plane results, `region` or `mask` to
 select pixels, and `robust=True` for the median, quartiles, and median absolute
-deviation. FITS statistics, nonclassical algorithms, disk storage and logfile
-output are tracked in [#1627](https://github.com/bglenden/casa-rs/issues/1627).
+deviation. The tool supports classical, biweight, Chauvenet, fit-to-half and
+hinges-and-fences statistics. FITS statistics, disk storage, logfile output,
+and flux for per-plane beams are tracked in
+[#1627](https://github.com/bglenden/casa-rs/issues/1627).
 
 The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).

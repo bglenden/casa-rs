@@ -116,3 +116,30 @@ def test_statistics_flux_depends_on_which_axes_are_collapsed(casa):
         assert image.setrestoringbeam(major="60arcsec", minor="60arcsec", pa="0deg")
     for axes in ([], [0], [0, 1], [0, 1, 2], [0, 1, 3], [3]):
         _assert_value(rust.statistics(axes=axes), oracle.statistics(axes=axes))
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(algorithm="biweight"),
+        dict(algorithm="Biw", axes=[1], niter=3, robust=True),
+        dict(algorithm="hinges-fences", axes=[1], fence=1.0, robust=True),
+        dict(algorithm="fit-half", center="mean", lside=False, robust=True),
+        dict(algorithm="fit-half", center="median", lside=False, robust=True),
+        dict(algorithm="fit-half", center="zero", lside=True, robust=True),
+        dict(algorithm="chauvenet", zscore=1.4, maxiter=2, robust=True),
+    ],
+)
+def test_statistics_sample_algorithms(casa, kwargs):
+    values = np.array([[-25., 2., 3.], [4., 5., 7.], [9., 11., 100.]])
+    rust, oracle = tools.image(), casa.image()
+    for image in rust, oracle:
+        assert image.fromarray(pixels=values)
+    _assert_value(rust.statistics(**kwargs), oracle.statistics(**kwargs))
+
+
+def test_statistics_handles_empty_biweight_sample():
+    image = tools.image()
+    assert image.fromshape(shape=[4, 3])
+    with pytest.raises(RuntimeError, match="at least two points"):
+        image.statistics(algorithm="biweight", mask="F")

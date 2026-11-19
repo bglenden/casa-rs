@@ -2,7 +2,9 @@
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, format_world_display};
 use casa_images::{ImageInterface, ImagePixel, analysis::statistics_flux_scale};
-use casa_lattices::{LatticeStatistics, Statistic, StatsElement};
+use casa_lattices::{
+    FitHalfCenter, LatticeStatistics, Statistic, StatisticsAlgorithm, StatsElement,
+};
 use casa_tables::LockType;
 use ndarray::{ArrayD, Zip};
 use pyo3::prelude::*;
@@ -16,6 +18,8 @@ use super::mask_expression::{MaskTarget, evaluate_mask};
 use super::pixels::{Chunk, and_mask, collapse_axes};
 use super::region_read::region_argument;
 use super::{PyImageTool, stub};
+
+mod sampled;
 
 const BASIC: [(&str, Statistic); 8] = [
     ("npts", Statistic::Npts),
@@ -88,12 +92,14 @@ struct StatsOptions {
     exclude: Option<[f64; 2]>,
     robust: bool,
     expression: Option<ArrayD<bool>>,
+    algorithm: StatisticsAlgorithm,
+    single_precision: bool,
 }
 
-fn classic<T: ImagePixel + StatsElement>(
+fn calculate<T: ImagePixel + StatsElement>(
     image: &impl ImageInterface<T>,
     chunk: &Chunk,
-    options: StatsOptions,
+    mut options: StatsOptions,
 ) -> PyResult<CasaValue> {
     let selection = image
         .sub_image_with_stride(
@@ -102,8 +108,22 @@ fn classic<T: ImagePixel + StatsElement>(
             chunk.stride.clone(),
         )
         .map_err(raised)?;
-    let mut stats = LatticeStatistics::new(&selection);
     let global = options.axes.is_empty() || options.axes.len() == chunk.size.len();
+    let mask = and_mask(chunk.mask(image)?, options.expression.take());
+    let mut fields = region_fields(image.coordinates(), chunk)?;
+    if options.algorithm != StatisticsAlgorithm::Classic {
+        let scale = flux_scale(image, chunk, &options.axes, global);
+        sampled::collect(
+            &selection,
+            chunk,
+            &options,
+            mask.as_ref(),
+            scale,
+            &mut fields,
+        )?;
+        return Ok(CasaValue::record(fields));
+    }
+    let mut stats = LatticeStatistics::new(&selection);
     if !global {
         stats.set_axes(options.axes.clone());
     }
@@ -113,21 +133,9 @@ fn classic<T: ImagePixel + StatsElement>(
     if let Some([low, high]) = options.exclude {
         stats.set_exclude_range(low, high);
     }
-    if let Some(mask) = and_mask(chunk.mask(image)?, options.expression) {
+    if let Some(mask) = mask {
         stats.set_pixel_mask(mask);
     }
-
-    let trc = chunk
-        .start
-        .iter()
-        .zip(&chunk.size)
-        .zip(&chunk.stride)
-        .map(|((&first, &n), &step)| first + (n - 1) * step)
-        .collect::<Vec<_>>();
-    let coordinates = image.coordinates();
-    let (blc, blcf) = position_fields(coordinates, &chunk.start)?;
-    let (trc, trcf) = position_fields(coordinates, &trc)?;
-    let mut fields = vec![("blc", blc), ("blcf", blcf), ("trc", trc), ("trcf", trcf)];
     let npts = stats.get_statistic(Statistic::Npts).map_err(raised)?;
     let empty = !npts.iter().any(|&n| n > 0.0);
     let stats_fields = BASIC
@@ -139,7 +147,7 @@ fn classic<T: ImagePixel + StatsElement>(
         } else {
             let mut values = stats.get_statistic(statistic).map_err(raised)?;
             Zip::from(&mut values).and(&npts).for_each(|value, &count| {
-                if count == 0.0 {
+                if count == 0.0 || count.is_nan() {
                     *value = 0.0;
                 }
             });
@@ -152,28 +160,104 @@ fn classic<T: ImagePixel + StatsElement>(
     } else {
         if let Some(scale) = flux_scale(image, chunk, &options.axes, global) {
             let mut sums = stats.get_statistic(Statistic::Sum).map_err(raised)?;
-            sums.mapv_inplace(|sum| sum * scale);
+            Zip::from(&mut sums).and(&npts).for_each(|sum, &count| {
+                *sum = if count > 0.0 { *sum * scale } else { 0.0 };
+            });
             fields.push(("flux", floating_array(sums)));
         }
         if global {
             let (min, max) = stats.get_min_max_pos().map_err(raised)?;
-            for (position, raw_name, world_name) in
-                [(min, "minpos", "minposf"), (max, "maxpos", "maxposf")]
-            {
-                if let Some(position) = position {
-                    let absolute = position
-                        .iter()
-                        .zip(&chunk.start)
-                        .zip(&chunk.stride)
-                        .map(|((&local, &first), &step)| first + local * step)
-                        .collect::<Vec<_>>();
-                    let (raw, world) = position_fields(coordinates, &absolute)?;
-                    fields.extend([(raw_name, raw), (world_name, world)]);
-                }
-            }
+            add_extrema(&mut fields, image.coordinates(), chunk, [min, max])?;
         }
     }
     Ok(CasaValue::record(fields))
+}
+
+fn region_fields(
+    coordinates: &CoordinateSystem,
+    chunk: &Chunk,
+) -> PyResult<Vec<(&'static str, CasaValue)>> {
+    let trc = chunk
+        .start
+        .iter()
+        .zip(&chunk.size)
+        .zip(&chunk.stride)
+        .map(|((&first, &n), &step)| first + (n - 1) * step)
+        .collect::<Vec<_>>();
+    let (blc, blcf) = position_fields(coordinates, &chunk.start)?;
+    let (trc, trcf) = position_fields(coordinates, &trc)?;
+    Ok(vec![
+        ("blc", blc),
+        ("blcf", blcf),
+        ("trc", trc),
+        ("trcf", trcf),
+    ])
+}
+
+fn add_extrema(
+    fields: &mut Vec<(&'static str, CasaValue)>,
+    coordinates: &CoordinateSystem,
+    chunk: &Chunk,
+    extrema: [Option<Vec<usize>>; 2],
+) -> PyResult<()> {
+    for (position, (raw_name, world_name)) in extrema
+        .into_iter()
+        .zip([("minpos", "minposf"), ("maxpos", "maxposf")])
+    {
+        if let Some(position) = position {
+            let absolute = position
+                .iter()
+                .zip(&chunk.start)
+                .zip(&chunk.stride)
+                .map(|((&local, &first), &step)| first + local * step)
+                .collect::<Vec<_>>();
+            let (raw, world) = position_fields(coordinates, &absolute)?;
+            fields.extend([(raw_name, raw), (world_name, world)]);
+        }
+    }
+    Ok(())
+}
+
+fn algorithm(
+    name: &str,
+    clmethod: &str,
+    fence: f64,
+    center: &str,
+    lside: bool,
+    clipping: (f64, i64),
+    niter: i64,
+) -> PyResult<StatisticsAlgorithm> {
+    let name = name.to_ascii_lowercase();
+    let (zscore, maxiter) = clipping;
+    if name.starts_with("cl") {
+        if !clmethod.to_ascii_lowercase().starts_with(['a', 't', 'f']) {
+            return Err(raised(format!("Unsupported classical method {clmethod}")));
+        }
+        Ok(StatisticsAlgorithm::Classic)
+    } else if name.starts_with("ch") {
+        Ok(StatisticsAlgorithm::Chauvenet { zscore, maxiter })
+    } else if name.starts_with('b') {
+        Ok(StatisticsAlgorithm::Biweight { niter })
+    } else if name.starts_with('h') {
+        Ok(StatisticsAlgorithm::HingesFences { fence })
+    } else if name.starts_with('f') {
+        let lower = center.to_ascii_lowercase();
+        let center = if lower.starts_with("mea") {
+            FitHalfCenter::Mean
+        } else if lower.starts_with("med") {
+            FitHalfCenter::Median
+        } else if lower.starts_with('z') {
+            FitHalfCenter::Zero
+        } else {
+            return Err(raised(format!("Unsupported center value {center}")));
+        };
+        Ok(StatisticsAlgorithm::FitToHalf {
+            center,
+            upper: !lside,
+        })
+    } else {
+        Err(raised(format!("Unsupported algorithm {name}")))
+    }
 }
 
 fn flux_scale<T: ImagePixel>(
@@ -246,7 +330,7 @@ impl PyImageTool {
         clmethod: &str,
         niter: i64,
     ) -> PyResult<Py<PyAny>> {
-        let _ = (force, append, fence, center, lside, zscore, maxiter, niter);
+        let _ = (force, append);
         let region = region_argument(py, region, "statistics");
         let expression = stats_mask(mask);
         let (value, log) = py.detach(|| {
@@ -258,16 +342,15 @@ impl PyImageTool {
             if matches!(&*image, ImageHandle::Complex(_) | ImageHandle::DComplex(_)) {
                 return Err(raised("This method only supports real valued images"));
             }
-            let algorithm = algorithm.to_ascii_lowercase();
-            if !algorithm.starts_with("cl") {
-                if algorithm.starts_with("ch") || algorithm.starts_with(['b', 'f', 'h']) {
-                    return Err(stub("statistics").unwrap_err());
-                }
-                return Err(raised(format!("Unsupported algorithm {algorithm}")));
-            }
-            if !clmethod.to_ascii_lowercase().starts_with(['a', 't', 'f']) {
-                return Err(raised(format!("Unsupported classical method {clmethod}")));
-            }
+            let algorithm = self::algorithm(
+                algorithm,
+                clmethod,
+                fence,
+                center,
+                lside,
+                (zscore, maxiter),
+                niter,
+            )?;
             if disk || !logfile.is_empty() || image.fits().is_some() {
                 return Err(stub("statistics").unwrap_err());
             }
@@ -278,7 +361,8 @@ impl PyImageTool {
                     "You can only give one of arguments include or exclude.",
                 ));
             }
-            if matches!(&*image, ImageHandle::Float(_)) {
+            let single_precision = matches!(&*image, ImageHandle::Float(_));
+            if single_precision {
                 let single = |limits: [f64; 2]| limits.map(|bound| f64::from(bound as f32));
                 include = include.map(single);
                 exclude = exclude.map(single);
@@ -317,13 +401,15 @@ impl PyImageTool {
                     exclude,
                     robust,
                     expression,
+                    algorithm,
+                    single_precision,
                 };
                 match &*image {
                     ImageHandle::Float(storage) => {
-                        with_storage!(storage, image => classic(image.as_ref(), &chunk, options))
+                        with_storage!(storage, image => calculate(image.as_ref(), &chunk, options))
                     }
                     ImageHandle::Double(storage) => {
-                        with_storage!(storage, image => classic(image.as_ref(), &chunk, options))
+                        with_storage!(storage, image => calculate(image.as_ref(), &chunk, options))
                     }
                     _ => unreachable!("complex statistics were rejected"),
                 }
@@ -340,8 +426,14 @@ impl PyImageTool {
                 log.push(LogLine::info(format!("Determining stats for image {name}")));
             }
             if list {
-                log.push(LogLine::info(
-                    "Statistics calculated using Classic algorithm",
+                log.push(LogLine::info(format!(
+                    "Statistics calculated using {:?} algorithm",
+                    algorithm.kind()
+                )));
+            }
+            if robust && matches!(algorithm, StatisticsAlgorithm::Biweight { .. }) {
+                log.push(LogLine::warning(
+                    "The biweight algorithm does not support quantile-related statistics.",
                 ));
             }
             Ok::<_, PyErr>((value, log))
