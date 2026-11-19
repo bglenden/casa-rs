@@ -7126,3 +7126,11 @@ the beam, even when history is disabled.
 casa-rs validates the supplied record before it saves any changes, so a
 rejected call preserves the restoring beam and history. See
 [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Naming a removed coordinate axis can terminate CASA
+
+CASA 6.7.6.14 can terminate when `coordsys.setnames` is called with
+`type="linear"` and two names for a linear coordinate whose world and
+pixel maps are `[0, -2]`. casa-rs raises `RuntimeError` before applying
+either name. Passing the one visible axis name without a coordinate type
+renames that axis and preserves the stored removed-axis name (#1626).

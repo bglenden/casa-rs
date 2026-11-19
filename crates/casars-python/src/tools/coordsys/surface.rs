@@ -285,7 +285,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setobserver",
@@ -372,7 +372,7 @@ const METHODS: &[Method] = &[
         "setstokes",
         &[param("stokes", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "settabular",
