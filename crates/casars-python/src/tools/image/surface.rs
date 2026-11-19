@@ -665,7 +665,7 @@ const METHODS: &[Method] = &[
             param("shape", K::Ints, Ints(&[0])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "makecomplex",
@@ -865,7 +865,7 @@ const METHODS: &[Method] = &[
         "pixelvalue",
         &[param("pixel", K::Ints, Ints(&[-1]))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putchunk",

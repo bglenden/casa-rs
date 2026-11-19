@@ -632,16 +632,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (v = None, shape = None), text_signature = "($self, v=0.0, shape=[0])")]
-    fn makearray(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        shape: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("makearray")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile, imag, region = None, overwrite = None), text_signature = "($self, outfile, imag, region={}, overwrite=False)")]
     fn makecomplex(
         &self,
@@ -833,12 +823,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("pbcor")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixel = None), text_signature = "($self, pixel=[-1])")]
-    fn pixelvalue(&self, pixel: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("pixelvalue")
     }
 
     /// Not yet implemented in casa-rs.
