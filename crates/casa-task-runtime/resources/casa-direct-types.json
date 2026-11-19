@@ -479,6 +479,11 @@
     "showimage": "cBool",
     "colorizeoverlay": "cBool"
   },
+  "rerefant": {
+    "caltable": "cStr",
+    "refantmode": "cStr",
+    "refant": "cStr"
+  },
   "simalma": {
     "project": "cStr",
     "dryrun": "cBool",
@@ -583,6 +588,12 @@
     "graphics": "cStr",
     "verbose": "cBool",
     "overwrite": "cBool"
+  },
+  "smoothcal": {
+    "caltable": "cStr",
+    "field": "cStrVec",
+    "smoothtype": "cStr",
+    "ratesmooth": "cBool"
   },
   "split": {
     "outputvis": "cPath",
