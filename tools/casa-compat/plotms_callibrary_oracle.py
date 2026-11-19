@@ -84,11 +84,25 @@ def requests(root, amplitude, bandpass, flagged, flagged_gain):
     yield "mixed-data-and-corrected", {
         "callib": str(callibrary), "xaxis": "amp", "xdatacolumn": "data",
     }
+    for axis in ("x", "y"):
+        yield f"independent-{axis}-data-column", {
+            "callib": str(callibrary), "xaxis": "amp", "ydatacolumn": "",
+            f"{axis}datacolumn": "corrected",
+        }
     yield "mixed-data-and-corrected-average", {
         "callib": str(callibrary), "xaxis": "amp", "xdatacolumn": "data",
         "spw": "0:0~1", "avgchannel": "2",
     }
-    yield "ordered-library-terms", {
+    for label, spw in (("offset", "0:3~6"), ("strided", "0:0~7^2"),
+                       ("segmented", "0:0~2;5~7"), ("single", "0:2")):
+        yield f"{label}-channel-average", {
+            "callib": str(callibrary), "xaxis": "channel",
+            "spw": spw, "avgchannel": "2",
+        }
+    yield "unplotted-time-average", {
+        "callib": str(callibrary), "xaxis": "channel", "avgtime": "30",
+    }
+    yield "multiple-library-terms", {
         "callib": [amplitude_inline, library_entry(bandpass)], "spw": "0:0~1",
     }
     yield "library-field-slices", {
@@ -116,6 +130,32 @@ def requests(root, amplitude, bandpass, flagged, flagged_gain):
                     "callib": library, "xaxis": "channel", "yaxis": axis,
                     "spw": "0:0~1", "avgchannel": "2" if axis == "amp" else "",
                 }
+
+
+def spectral_weight_requests(root, vis, amplitude, bandpass):
+    spectral = root / "spectral-weights.ms"
+    copy_ms(vis, spectral)
+    with opened(spectral, True) as table:
+        sigma = np.ones(table.getcol("DATA").shape, dtype=np.float32)
+        sigma[:, 1::2, :] = 4.0
+        for name, values in (("SIGMA_SPECTRUM", sigma), ("WEIGHT_SPECTRUM", 1.0 / sigma**2)):
+            if name not in table.colnames():
+                description = table.getcoldesc("DATA")
+                description.update(valueType="float", dataManagerType="StandardStMan",
+                                   dataManagerGroup=name, option=4,
+                                   shape=np.array(sigma.shape[:2], dtype=np.int32))
+                table.addcols({name: description}, {"TYPE": "StandardStMan", "NAME": name})
+            table.putcol(name, values)
+    for name, correction, calibrate_weights in (
+        ("amplitude", amplitude, False), ("bandpass", bandpass, True),
+    ):
+        for setting, average in (("channel", {"avgchannel": "2"}),
+                                 ("time-channel", {"avgchannel": "2", "avgtime": "30"}),
+                                 ("time", {"avgtime": "30"})):
+            yield f"spectral-weight-{name}-{setting}", dict(
+                vis=str(spectral), callib=library_entry(correction, calibrate_weights),
+                xaxis="time", spw="0:0~1",
+            ) | average
 
 
 def compare(root, vis, tests, native):
@@ -237,6 +277,7 @@ def main():
     with opened(persisted, True) as table:
         table.putcol("CORRECTED_DATA", 7 * table.getcol("DATA"))
     cases = list(requests(root, amplitude, bandpass, flagged, flagged_gain))
+    cases.extend(spectral_weight_requests(root, vis, amplitude, bandpass))
     cases.append(("preserve-existing-corrected-data", {
         "vis": str(persisted), "callib": library_entry(amplitude),
     }))
