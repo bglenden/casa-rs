@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use casa_tables::ColumnType;
-use casa_types::quanta::{Quantity, Unit};
+use casa_types::quanta::{Quantity, Unit, UnitVal, casacore};
 use casa_types::{PrimitiveType, ScalarValue, Value};
 
 use crate::{MeasuresDataError, RuntimeTable};
@@ -21,6 +21,7 @@ pub struct CometTable {
     step_days: f64,
     topocentre_m: Option<[f64; 3]>,
     mean_radius_au: Option<f64>,
+    zero_range_au: f64,
     bracket: Option<Bracket>,
 }
 
@@ -45,7 +46,12 @@ impl CometTable {
         let keywords = table.table.keywords();
         let version_date_valid = match keywords.get("VS_DATE") {
             Some(Value::Scalar(ScalarValue::String(value))) => {
-                Quantity::read(value).is_ok_and(|date| date.unit().name() == "d")
+                Quantity::read(value).is_ok_and(|date| {
+                    let unit = date.unit().val();
+                    [UnitVal::NODIM, UnitVal::TIME, UnitVal::ANGLE]
+                        .iter()
+                        .any(|valid| unit.conformant(valid))
+                })
             }
             _ => false,
         };
@@ -60,18 +66,19 @@ impl CometTable {
         {
             return Err(invalid("invalid IERS table metadata"));
         }
-        let schema = table.table.schema();
-        if REQUIRED_COLUMNS.iter().any(|name| {
-            !schema
-                .and_then(|schema| schema.column(name))
-                .is_some_and(|column| {
-                    column.column_type() == &ColumnType::Scalar
-                        && column.data_type() == Some(PrimitiveType::Float64)
-                })
-        }) {
-            return Err(invalid(
-                "expected double MJD, RA, DEC, Rho and RadVel columns",
-            ));
+        let column = |name| table.table.schema().and_then(|schema| schema.column(name));
+        let scalar_double = |column: &casa_tables::ColumnSchema| {
+            column.column_type() == &ColumnType::Scalar
+                && column.data_type() == Some(PrimitiveType::Float64)
+        };
+        if REQUIRED_COLUMNS
+            .iter()
+            .any(|name| !column(name).is_some_and(scalar_double))
+            || ["DiskLong", "DiskLat"]
+                .iter()
+                .any(|name| column(name).is_some_and(|col| !scalar_double(col)))
+        {
+            return Err(invalid("expected double comet columns"));
         }
         let number = |name| keyword_double(keywords.get(name)).ok_or_else(|| invalid(name));
         let name = match keywords.get("NAME") {
@@ -81,11 +88,12 @@ impl CometTable {
         let origin_mjd = number("MJD0")?;
         let step_days = number("dMJD")?;
         let count = table.row_count();
-        if origin_mjd < 10_000.0
-            || step_days <= 0.0
-            || count == 0
-            || (scalar(&table, "MJD", count - 1)? - (origin_mjd + count as f64 * step_days)).abs()
-                > step_days * 0.1
+        if origin_mjd < 10_000.0 || step_days <= 0.0 || count == 0 {
+            return Err(invalid("invalid MJD sampling grid"));
+        }
+        let last_mjd = scalar(&table, "MJD", count - 1)?;
+        if !last_mjd.is_finite()
+            || (last_mjd - (origin_mjd + count as f64 * step_days)).abs() > step_days * 0.1
         {
             return Err(invalid("invalid MJD sampling grid"));
         }
@@ -116,13 +124,15 @@ impl CometTable {
             )
         });
 
+        let au = Unit::new("AU").map_err(|_| invalid("invalid AU unit"))?;
         let mean_radius_au = match keywords.get("meanrad") {
             Some(Value::Record(record)) => {
                 match (keyword_double(record.get("value")), record.get("unit")) {
                     (Some(value), Some(Value::Scalar(ScalarValue::String(unit)))) => {
                         Quantity::new(value, unit)
-                            .and_then(|radius| radius.get_value_in(&Unit::new("AU")?))
                             .ok()
+                            .and_then(|radius| casacore::convert(&radius, Some(&au)).ok())
+                            .map(|radius| radius.value())
                     }
                     _ => None,
                 }
@@ -136,6 +146,7 @@ impl CometTable {
             step_days,
             topocentre_m,
             mean_radius_au,
+            zero_range_au: 1e-6 / au.val().factor,
             bracket: None,
         })
     }
@@ -172,8 +183,8 @@ impl CometTable {
             self.bracket = Some(Bracket {
                 index,
                 start_mjd: scalar(&self.table, "MJD", index)?,
-                start_au: position(&self.table, index)?,
-                end_au: position(&self.table, index + 1)?,
+                start_au: position(&self.table, index, self.zero_range_au)?,
+                end_au: position(&self.table, index + 1, self.zero_range_au)?,
             });
         }
         let bracket = self.bracket.as_ref().expect("comet bracket is loaded");
@@ -207,15 +218,21 @@ fn keyword_double(value: Option<&Value>) -> Option<f64> {
 
 fn scalar(table: &RuntimeTable, name: &str, row: usize) -> Result<f64, MeasuresDataError> {
     match table.table.column_accessor(name)?.scalar_cell(row)? {
-        ScalarValue::Float64(value) if value.is_finite() => Ok(*value),
+        ScalarValue::Float64(value) => Ok(*value),
         _ => Err(MeasuresDataError::TableRead(format!(
-            "comet column {name} row {row} must contain a finite double"
+            "comet column {name} row {row} must contain a double"
         ))),
     }
 }
 
-fn position(table: &RuntimeTable, row: usize) -> Result<[f64; 3], MeasuresDataError> {
-    let distance = scalar(table, "Rho", row)?;
+fn position(
+    table: &RuntimeTable,
+    row: usize,
+    zero_range_au: f64,
+) -> Result<[f64; 3], MeasuresDataError> {
+    let range = scalar(table, "Rho", row)?;
+    // MVPosition substitutes a micrometre when readjusting a zero radius.
+    let distance = if range == 0.0 { zero_range_au } else { range };
     let longitude = scalar(table, "RA", row)?.to_radians();
     let latitude = scalar(table, "DEC", row)?.to_radians();
     Ok(cartesian(distance, longitude, latitude))

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The active MeasComet table and the queries CASA exposes on it.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
+use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_measures_data::{CometTable, MeasuresDataError};
 use pyo3::prelude::*;
 
@@ -16,9 +18,9 @@ fn load(state: &mut State, name: &str, lines: &mut Vec<LogLine>) -> CasaValue {
     if name.is_empty() {
         return CasaValue::Bool(false);
     }
-    let path = Path::new(name);
-    let loaded = resolve(path)
-        .ok_or_else(|| MeasuresDataError::MissingData(format!("comet table {}", path.display())))
+    let loaded = expand_path(name)
+        .and_then(|name| resolve(Path::new(name.as_ref())))
+        .ok_or_else(|| MeasuresDataError::MissingData(format!("comet table {name}")))
         .and_then(|table| CometTable::open(&table));
     match loaded {
         Ok(comet) => {
@@ -35,7 +37,7 @@ fn load(state: &mut State, name: &str, lines: &mut Vec<LogLine>) -> CasaValue {
 }
 
 fn resolve(path: &Path) -> Option<PathBuf> {
-    if path.is_dir() {
+    if is_readable_table(path) {
         return Some(path.to_owned());
     }
     if path.is_absolute() {
@@ -49,7 +51,60 @@ fn resolve(path: &Path) -> Option<PathBuf> {
     ["ephemerides", "geodetic"]
         .into_iter()
         .map(|directory| root.join(directory).join(path))
-        .find(|table| table.is_dir())
+        .find(|table| is_readable_table(table))
+}
+
+fn is_readable_table(path: &Path) -> bool {
+    AipsIo::open(path.join("table.dat"), AipsOpenOption::Old)
+        .is_ok_and(|mut io| io.get_next_type().is_ok_and(|kind| kind == "Table"))
+}
+
+fn expand_path(name: &str) -> Option<Cow<'_, str>> {
+    if !name.starts_with('~') && !name.contains('$') {
+        return Some(Cow::Borrowed(name));
+    }
+    let mut path = Cow::Borrowed(name);
+    // casacore Path::expandName follows environment references recursively
+    // and stops expanding if the substitutions form a cycle.
+    for _ in 0..25 {
+        if let Some(suffix) = path
+            .strip_prefix('~')
+            .filter(|s| s.is_empty() || s.starts_with('/'))
+            && let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            path = Cow::Owned(format!("{home}{suffix}"));
+        }
+        let mut changed = false;
+        let next = path
+            .split('/')
+            .map(|part| match expand_variable(part) {
+                Some(expanded) => {
+                    changed = true;
+                    Cow::Owned(expanded)
+                }
+                None => Cow::Borrowed(part),
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        if !changed {
+            return Some(path);
+        }
+        path = Cow::Owned(next);
+    }
+    None
+}
+
+fn expand_variable(part: &str) -> Option<String> {
+    let (prefix, expression) = part.split_once('$')?;
+    let (variable, suffix) = match expression.strip_prefix('{') {
+        Some(braced) => braced.split_once('}')?,
+        None => (expression, ""),
+    };
+    let value = std::env::var(variable)
+        .ok()
+        .filter(|value| !value.is_empty())?;
+    Some(format!("{prefix}{value}{suffix}"))
 }
 
 fn read_distance_or_diameter(

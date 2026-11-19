@@ -1,5 +1,6 @@
 """CASA 6.7.6.14 table and lifecycle comparisons for the comet tool."""
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -18,16 +19,21 @@ SYNTHETIC = ORACLE["synthetic"]
 @pytest.fixture(scope="module")
 def synthetic(tmp_path_factory):
     root = tmp_path_factory.mktemp("measures-comet")
-    columns = SYNTHETIC["columns"]
-    description = {key: {"valueType": "double"} for key in columns}
     for name, changes in SYNTHETIC["variants"].items():
+        columns = SYNTHETIC["columns"] | SYNTHETIC["column_overrides"].get(name, {})
+        description = {key: {"valueType": "string" if isinstance(values[0], str) else "double"}
+                       for key, values in columns.items()}
         keywords = SYNTHETIC["keywords"] | changes
         count = SYNTHETIC["row_counts"].get(name, len(columns["MJD"]))
         tool = table()
         try:
             assert tool.create(str(root / f"{name}.tab"), description, nrow=count)
             for column, values in columns.items():
-                assert tool.putcol(column, np.asarray(values[:count]))
+                if isinstance(values[0], str):
+                    for row, value in enumerate(values[:count]):
+                        assert tool.putcell(column, row, value)
+                else:
+                    assert tool.putcol(column, np.asarray(values[:count], dtype=float))
             assert tool.putkeywords({key: value for key, value in keywords.items() if value is not None})
             assert tool.putinfo({"type": "IERS"})
         finally:
@@ -45,6 +51,12 @@ def decode(value, snapshot, synthetic):
         return path.encode()
     if value["form"] == "nul":
         return path + "\0ignored"
+    if value["form"] == "home":
+        return "~/" + os.path.relpath(path, Path.home())
+    if value["form"] == "plain_environment":
+        return "$CASA_RS_TEST_COMET_ROOT/" + value["ephemeris"]
+    if value["form"] == "environment":
+        return "${CASA_RS_TEST_COMET_ROOT}/" + value["ephemeris"]
     return path
 
 
@@ -53,7 +65,8 @@ def compare(actual, expected):
         assert actual.keys() == expected.keys()
         assert actual["unit"] == expected["unit"]
         assert np.shape(actual["value"]) == np.shape(expected["value"])
-        np.testing.assert_allclose(actual["value"], expected["value"], rtol=2e-11, atol=0)
+        np.testing.assert_allclose(actual["value"], np.asarray(expected["value"], dtype=float),
+                                   rtol=2e-11, atol=0, equal_nan=True)
     else:
         assert actual == expected
 
@@ -61,6 +74,7 @@ def compare(actual, expected):
 @pytest.mark.parametrize("case", ORACLE["cases"], ids=lambda case: case["name"])
 def test_comet_states_match_casa(case, snapshot, synthetic, monkeypatch):
     monkeypatch.setenv("CASA_RS_MEASURESPATH", str(snapshot))
+    monkeypatch.setenv("CASA_RS_TEST_COMET_ROOT", str(snapshot / "ephemerides"))
     tool = measures()
     try:
         assert tool.done()
@@ -111,6 +125,10 @@ def test_relative_lookup_uses_named_tables_in_both_data_directories(
     for directory, name in (("ephemerides", "local-eph.tab"), ("geodetic", "local-geo.tab")):
         (tmp_path / directory).mkdir()
         (tmp_path / directory / name).symlink_to(bundled, target_is_directory=True)
+    # An ordinary directory or a non-table control file must not hide the
+    # readable candidate in the next search location.
+    (tmp_path / "ephemerides/local-geo.tab").mkdir()
+    (tmp_path / "ephemerides/local-geo.tab/table.dat").write_bytes(b"not a CASA table")
     iers = snapshot / "geodetic/IERSeop2000"
     (tmp_path / "geodetic/IERSeop2000").symlink_to(iers, target_is_directory=True)
     monkeypatch.setenv("CASA_RS_MEASURESPATH", str(tmp_path))

@@ -16,6 +16,7 @@ crate-type = ["cdylib"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
+casa-aipsio = { path = "../casa-aipsio" }
 casa-calibration = { path = "../casa-calibration" }
 casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }

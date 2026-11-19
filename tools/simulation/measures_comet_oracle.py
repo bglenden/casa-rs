@@ -3,6 +3,8 @@
 """Capture CASA 6.7.6.14's MeasComet tool states and values."""
 import argparse
 import json
+import math
+import os
 from pathlib import Path
 import resource
 import signal
@@ -30,6 +32,7 @@ from casatools import measures, table, version_string
 assert version_string() == "6.7.6-14"
 GANYMEDE = "JPL-Horizons/Ganymede_55437-56293dUTC.tab"
 EPHEMERIDES = Path(config.measurespath) / "ephemerides"
+os.environ["CASA_RS_TEST_COMET_ROOT"] = str(EPHEMERIDES)
 
 if args.without_epoch:
     tool = measures()
@@ -65,23 +68,39 @@ SYNTHETIC = {
         "bad_grid": {"MJD0": 55000.},
         "bad_version_date": {"VS_DATE": "not a date"},
         "one_sample": {},
+        "numeric_version_date": {"VS_DATE": "55564"},
+        "time_unit_version_date": {"VS_DATE": "1s"},
+        "zero_range": {},
+        "nonfinite_direction": {},
+        "bad_optional_column": {},
+        "nonconformant_radius": {"meanrad": {"unit": "s", "value": 1.}},
         "integer_metadata": {
             "MJD0": 55563, "dMJD": 1, "GeoDist": 6378, "GeoLat": 25, "GeoLong": -67,
             "meanrad": {"unit": "km", "value": 2400},
         },
     },
     "row_counts": {"one_sample": 1},
+    "column_overrides": {
+        "zero_range": {"Rho": [0., 5.01, 5.03]},
+        "nonfinite_direction": {"RA": [None, 1., 2.]},
+        "bad_optional_column": {"DiskLong": ["invalid", "invalid", "invalid"]},
+    },
 }
 
 
-def make_table(path, changes, count):
-    columns = SYNTHETIC["columns"]
+def make_table(path, changes, count, variant):
+    columns = SYNTHETIC["columns"] | SYNTHETIC["column_overrides"].get(variant, {})
     metadata = SYNTHETIC["keywords"] | changes
     tb = table()
-    descriptors = {name: {"valueType": "double"} for name in columns}
+    descriptors = {name: {"valueType": "string" if isinstance(values[0], str) else "double"}
+                   for name, values in columns.items()}
     assert tb.create(str(path), descriptors, nrow=count)
     for name, values in columns.items():
-        tb.putcol(name, np.asarray(values[:count]))
+        if isinstance(values[0], str):
+            for row, value in enumerate(values[:count]):
+                tb.putcell(name, row, value)
+        else:
+            tb.putcol(name, np.asarray(values[:count], dtype=float))
     tb.putkeywords({name: value for name, value in metadata.items() if value is not None})
     tb.putinfo({"type": "IERS"})
     tb.close()
@@ -89,9 +108,11 @@ def make_table(path, changes, count):
 
 def clean(value):
     if isinstance(value, np.ndarray):
-        return value.tolist()
+        return [clean(item) for item in value.tolist()]
     if isinstance(value, dict):
         return {key: clean(item) for key, item in value.items()}
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
     return value
 
 
@@ -130,6 +151,12 @@ def run_case(name, steps, synthetic):
                     return path.encode()
                 if value["form"] == "nul":
                     return path + "\0ignored"
+                if value["form"] == "home":
+                    return "~/" + os.path.relpath(path, Path.home())
+                if value["form"] == "plain_environment":
+                    return "$CASA_RS_TEST_COMET_ROOT/" + value["ephemeris"]
+                if value["form"] == "environment":
+                    return "${CASA_RS_TEST_COMET_ROOT}/" + value["ephemeris"]
                 return path
 
             try:
@@ -147,6 +174,9 @@ sequences = {
     "upstream_ganymede": [explicit(), epoch("2011/01/03/17:00:00"), ("set_alma",), *query_steps()],
     "path_protocol": [epoch("55564.7083333333d"), explicit(form="bytes"), *query_steps(),
                       explicit(form="nul"), ("cometname",), ("framecomet", GANYMEDE), *query_steps()],
+    "path_expansion": [explicit(form="home"), ("cometname",),
+                       explicit(form="environment"), ("cometname",),
+                       explicit(form="plain_environment"), ("cometname",)],
     "protocol_errors_keep_frame": [epoch("55564.7083333333d"), explicit(),
                                    ("framecomet", None), ("framecomet", 42), ("framecomet", []),
                                    ("framecomet", False), *query_steps()],
@@ -168,7 +198,7 @@ sequences = {
 for variant in SYNTHETIC["variants"]:
     sequences[variant] = [
         ("framecomet", {"synthetic": variant}),
-        epoch("55564.5d"),
+        epoch("55564d" if variant == "zero_range" else "55564.5d"),
         *query_steps(),
     ]
 
@@ -176,7 +206,7 @@ with TemporaryDirectory() as temp:
     scratch = Path(temp)
     for variant, changes in SYNTHETIC["variants"].items():
         count = SYNTHETIC["row_counts"].get(variant, len(SYNTHETIC["columns"]["MJD"]))
-        make_table(scratch / (variant + ".tab"), changes, count)
+        make_table(scratch / (variant + ".tab"), changes, count, variant)
     cases = [run_case(name, steps, scratch) for name, steps in sequences.items()]
 
 for query, unit in (("cometdist", "AU"), ("cometangdiam", "rad")):
