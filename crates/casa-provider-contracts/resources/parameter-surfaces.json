@@ -33457,8 +33457,8 @@
         {
           "name": "field",
           "concept": {
-            "id": "smoothing.field",
-            "semantic_revision": 1
+            "id": "ms.selection.field",
+            "semantic_revision": 5
           },
           "order": 3,
           "default": {
@@ -33491,10 +33491,6 @@
               "label": "field",
               "group": "Data selection"
             }
-          },
-          "reviewed_homonym": {
-            "review_id": "ADR-0006",
-            "reason": "smoothcal accepts a list of calibration field selectors."
           }
         },
         {

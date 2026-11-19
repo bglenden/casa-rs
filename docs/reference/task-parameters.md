@@ -1497,7 +1497,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
 | <code>tablein</code> | <code>smoothing.tablein@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Existing input calibration table. |
 | <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Calibration table the task writes. |
-| <code>field</code> | <code>smoothing.field@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Data selection | Field selection expressions. Empty selects every field. |
+| <code>field</code> | <code>ms.selection.field@r5</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Data selection | Field selection expressions. Empty selects every field. |
 | <code>smoothtype</code> | <code>smoothing.smoothtype@r1</code> | <code>string</code> | <code>"median"</code>; optional | Smoothing | Use the median or mean smoothing filter. |
 | <code>smoothtime</code> | <code>smoothing.smoothtime@r1</code> | <code>float</code> | <code>60.0</code>; optional | Smoothing | Full width of the smoothing window in seconds. |
 | <code>ratesmooth</code> | <code>smoothing.ratesmooth@r1</code> | <code>bool</code> | <code>false</code>; optional | Smoothing | Use the fringe rate to predict phase wraps when smoothing fringe solutions. |

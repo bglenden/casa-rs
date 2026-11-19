@@ -12778,8 +12778,8 @@
       "persistence_class": "profile"
     },
     {
-      "id": "smoothing.field",
-      "semantic_revision": 1,
+      "id": "ms.selection.field",
+      "semantic_revision": 5,
       "casa_name": "field",
       "value_domain": {
         "kind": "array",
@@ -12791,11 +12791,13 @@
         "allow_scalar": true
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "casa_selector",
+        "grammar": "field",
+        "capabilities": ["ids", "names", "ranges", "wildcards"]
       },
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "algorithm",
+      "semantic_role": "selection",
       "documentation": {
         "summary": "Field selection expressions. Empty selects every field.",
         "examples": []
