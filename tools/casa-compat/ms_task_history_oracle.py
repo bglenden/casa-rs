@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from time import time
 
 import casatasks
-from casacore.tables import table
+from casacore.tables import makearrcoldesc, makescacoldesc, maketabdesc, table
 import numpy as np
 
 from casars import tasks
@@ -24,11 +24,19 @@ HISTORY = {
     "ORIGIN": "history-fixture",
     "PRIORITY": "NORMAL",
     "TIME": 5_000_000_000.0,
+    "EXTRA": 42,
+    "EXTRA_FIXED": [2, 3],
+    "EXTRA_VARIABLE": [4, 5],
 }
 
 
 def seed_history(source):
     with table(str(source / "HISTORY"), readonly=False, ack=False) as history:
+        history.addcols(maketabdesc([
+            makescacoldesc("EXTRA", 0),
+            makearrcoldesc("EXTRA_FIXED", 0, shape=[2]),
+            makearrcoldesc("EXTRA_VARIABLE", 0, ndim=1),
+        ]))
         history.addrows(1)
         for name, value in HISTORY.items():
             history.putcell(name, 0, value)
@@ -67,6 +75,10 @@ def compare_history(inputs, outputs, task, wall_time):
             assert np.all(np.diff(time_values) >= 0)
         for row in range(reference.nrows()):
             for name in reference.colnames():
+                if name == "EXTRA_VARIABLE" and row > 0:
+                    assert not reference.iscelldefined(name, row)
+                    assert not actual.iscelldefined(name, row)
+                    continue
                 expected = reference.getcell(name, row)
                 value = actual.getcell(name, row)
                 np.testing.assert_array_equal(value, reopen.getcell(name, row), err_msg=f"CASA reopen {name} {row}")
@@ -74,6 +86,10 @@ def compare_history(inputs, outputs, task, wall_time):
                     np.testing.assert_array_equal(value, HISTORY[name])
                 elif name == "TIME":
                     continue
+                elif name == "EXTRA_FIXED":
+                    # CASA leaves new, unwritten fixed arrays uninitialized.
+                    assert value.shape == expected.shape
+                    np.testing.assert_array_equal(value, [0, 0])
                 elif name == "MESSAGE" and row == 2:
                     assert expected.startswith("version: 6.7.6-14"), expected
                     assert value.startswith("version: casa-rs "), value
@@ -99,7 +115,9 @@ def main():
             ("split", {"width": [2], "timebin": "25s", "combine": "scan",
                        "correlation": ["xx", "yy"]}, {"msselect": ""}),
             ("mstransform", {"chanaverage": True, "chanbin": [2], "timeaverage": True,
-                            "timebin": "25s", "timespan": "scan", "correlation": "xx,yy"}, {}),
+                            "timebin": "25s", "timespan": "scan", "correlation": "xx,yy",
+                            "feed": np.int32(0)}, {}),
+            ("split", {"width": "2"}, {}),
         )
         for number, (task, arguments, native_only) in enumerate(cases):
             outputs = [root / f"{task}-{number}-{implementation}.ms"
@@ -125,7 +143,7 @@ def main():
             assert history.nrows() == 1
             for name, value in HISTORY.items():
                 np.testing.assert_array_equal(history.getcell(name, 0), value)
-        print("Four HISTORY products and eight repeated-call collisions compared with CASA 6.7.6.14")
+        print("Five HISTORY products and ten repeated-call collisions compared with CASA 6.7.6.14")
 
 
 if __name__ == "__main__":

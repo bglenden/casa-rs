@@ -115,6 +115,9 @@ pub struct MsTransformTaskOptions {
     pub time_averaging: Option<TimeAverageOptions>,
     /// Provenance rows to append to the output's HISTORY table.
     pub history: Option<TransformTaskHistory>,
+    /// Supplied bin widths used when rewriting saved FLAG_CMD selectors.
+    /// CASA interprets them independently of visibility averaging.
+    pub flag_command_widths: Option<Vec<i64>>,
 }
 
 /// Time averaging parameters shared by the split and mstransform tasks.
@@ -599,6 +602,7 @@ fn mstransform_staged(
             &request.spw,
             &channel_selection,
             normalized_width(request.width),
+            options.flag_command_widths.as_deref(),
             options.channel_widths.as_deref(),
         )?;
     }

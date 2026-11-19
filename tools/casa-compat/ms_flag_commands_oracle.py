@@ -26,6 +26,8 @@ COMMANDS = (
     "mode='manual' spw='1:2~5' reason='limit'",
     "mode='manual' spw='0:2,1:0' reason='some-overlap'",
     "mode='manual' spw='0:2,1:2' reason='two-windows'",
+    "mode='manual' spw='0:2,99:0' reason='unknown-window'",
+    "mode='manual' spw='0:2~3' reason='inactive-averaging-width'",
 )
 
 
@@ -39,14 +41,21 @@ def add_commands(vis, commands):
                 flags.putcell(name, row, value)
 
 
-def compare(case, paths, original):
+def compare(case, paths, original, *, check_truncation=False):
     with (table(str(paths[0]), ack=False) as want, table(str(paths[1]), ack=False) as got,
           casa_table(paths[1]) as reopen):
         assert len(original) == want.nrows() == got.nrows(), case
         assert set(got.colnames()) == set(want.colnames()), case
         for name in want.colnames():
             actual = got.getcol(name)
-            np.testing.assert_array_equal(actual, want.getcol(name), err_msg=f"{case} {name}")
+            expected = want.getcol(name)
+            if name == "COMMAND" and check_truncation:
+                desired = "mode='manual' spw='0:-2~-1' reason='inactive-averaging-width'"
+                assert expected[-1] == desired[:max(map(len, original))]
+                assert actual[-1] == desired
+                np.testing.assert_array_equal(actual[:-1], expected[:-1], err_msg=f"{case} {name}")
+            else:
+                np.testing.assert_array_equal(actual, expected, err_msg=f"{case} {name}")
             np.testing.assert_array_equal(actual, reopen.getcol(name), err_msg=f"{case} {name} CASA reopen")
 
 
@@ -78,6 +87,21 @@ def main():
                                                        spw=selection, datacolumn="data", **params)
                         assert result is None, (case, module.__name__, result)
                     compare(case, [path / "FLAG_CMD" for path in paths], commands)
+                    total += 1
+            if first == "numeric":
+                for task, options in (
+                    ("mstransform", {"chanaverage": False, "chanbin": 2}),
+                    ("mstransform", {"chanaverage": False, "chanbin": 0}),
+                    ("mstransform", {"chanaverage": False, "chanbin": -2}),
+                    ("split", {"width": [0, 1]}),
+                ):
+                    case = f"{task}-inactive-width-{total}"
+                    paths = [root / f"{case}-{side}.ms" for side in ("casa", "native")]
+                    for module, target in zip((casatasks, tasks), paths):
+                        getattr(module, task)(vis=str(base), outputvis=str(target), spw="0~1",
+                                              datacolumn="data", **options)
+                    compare(case, [path / "FLAG_CMD" for path in paths], commands,
+                            check_truncation=options.get("chanbin") == -2)
                     total += 1
             with table(str(base / "FLAG_CMD"), ack=False) as flags:
                 np.testing.assert_array_equal(flags.getcol("COMMAND"), commands)

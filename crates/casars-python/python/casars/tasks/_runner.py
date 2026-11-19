@@ -663,8 +663,10 @@ def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
         if name == "observation" or (task == "split" and name in ("array", "feed")):
             values[name] = converted
         elif record_type is None:
-            # CASA's tool record conversion omits this scalar variant.
-            del values[name]
+            # The Rust tool omits NumPy integer selectors where CASA
+            # does. Keep their values available for provenance.
+            if name == "intent":
+                del values[name]
         else:
             raise RuntimeError(
                 "RecordRep::get_pointer - incorrect data type String   "
@@ -686,7 +688,6 @@ def _coerce_ms_channel_width(task: str, values: dict[str, Any]) -> None:
     if isinstance(value, integers):
         return
     if name == "width" and isinstance(value, str):
-        values[name] = int(value) if value.isdigit() else 1
         return
     if not isinstance(value, (str, bytes)):
         try:

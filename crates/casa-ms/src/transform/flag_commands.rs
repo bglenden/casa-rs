@@ -24,7 +24,8 @@ pub(super) fn rewrite(
     selector: &str,
     selected: &BTreeMap<i32, TransformChannelSelection>,
     width: usize,
-    widths: Option<&[usize]>,
+    command_widths: Option<&[i64]>,
+    averaged_widths: Option<&[usize]>,
 ) -> Result<(), MsTransformError> {
     let path = output.join(SubtableId::FlagCmd.name());
     let fail = |source| MsTransformError::MutateMeasurementSet {
@@ -45,6 +46,14 @@ pub(super) fn rewrite(
     let mut changed = false;
     let mut output_commands = table.column_accessor_mut("COMMAND").map_err(fail)?;
     let selector = if selector.is_empty() { "*" } else { selector };
+    let fallback = averaged_widths.map(|widths| {
+        widths
+            .iter()
+            .map(|&width| i64::try_from(width).unwrap_or(i64::MAX))
+            .collect::<Vec<_>>()
+    });
+    let widths = command_widths.or(fallback.as_deref()).unwrap_or(&[]);
+    let width = i64::try_from(width).unwrap_or(i64::MAX);
     let selected_channels = selected
         .iter()
         .map(|(&spw, window)| {
@@ -103,43 +112,45 @@ fn remap(
     selection: &str,
     original: &str,
     selected: &BTreeMap<i32, Vec<usize>>,
-    width: usize,
-    widths: Option<&[usize]>,
+    width: i64,
+    widths: &[i64],
 ) -> String {
     if original.is_empty() || original == "*" || original == selection {
         return "*".into();
     }
-    let Ok(windows) = input.resolve_spw_selector(original).and_then(|spw| {
-        resolve_transform_channels(input, &spw, original)
-            .map_err(|error| crate::MsError::InvalidInput(error.to_string()))
-    }) else {
-        return String::new();
-    };
-    let mut by_channel_label = BTreeMap::<String, Vec<usize>>::new();
+    let windows = command_channels(input, original);
+    let mut by_channel_label = BTreeMap::<String, Vec<i64>>::new();
     for (out_spw, (&spw, channels)) in selected.iter().enumerate() {
         let Some(command) = windows.get(&spw) else {
             continue;
         };
-        let width = widths
-            .filter(|widths| widths.len() > 1)
-            .map_or(width, |widths| {
-                widths.get(spw as usize).copied().unwrap_or(1)
-            });
+        let width = match widths {
+            [] => width,
+            [width] => *width,
+            widths => widths.get(spw as usize).copied().unwrap_or(1),
+        };
+        if width == 0 {
+            return String::new();
+        }
         let included = command
-            .channels
             .iter()
             .filter_map(|channel| {
-                channels
-                    .binary_search(channel)
-                    .ok()
-                    .map(|index| index / width)
+                let index = channels.binary_search(channel).ok()? as i64;
+                Some(if width > 0 {
+                    index / width
+                } else {
+                    -((index as u64).div_ceil(width.unsigned_abs()) as i64)
+                })
             })
             .collect::<BTreeSet<_>>();
         if included.is_empty() {
             return String::new();
         }
         let label = channel_label(&included.into_iter().collect::<Vec<_>>(), channels.len());
-        by_channel_label.entry(label).or_default().push(out_spw);
+        by_channel_label
+            .entry(label)
+            .or_default()
+            .push(out_spw as i64);
     }
     let mut groups = by_channel_label
         .into_iter()
@@ -156,7 +167,44 @@ fn remap(
     groups.join(",")
 }
 
-fn channel_label(channels: &[usize], total: usize) -> String {
+fn command_channels(input: &MeasurementSet, selector: &str) -> BTreeMap<i32, BTreeSet<usize>> {
+    let resolve = |text: &str| {
+        let spw = input.resolve_spw_selector(text).ok()?;
+        resolve_transform_channels(input, &spw, text).ok()
+    };
+    if let Some(windows) = resolve(selector) {
+        return windows
+            .into_iter()
+            .map(|(spw, window)| (spw, window.channels.into_iter().collect()))
+            .collect();
+    }
+    // CASA retries numeric selectors against the available windows if
+    // an absent window makes msseltoindex reject the full expression.
+    if !selector.bytes().all(|byte| {
+        byte.is_ascii_digit() || byte.is_ascii_whitespace() || b",:;~^+-".contains(&byte)
+    }) {
+        return BTreeMap::new();
+    }
+    let mut windows = BTreeMap::<i32, BTreeSet<usize>>::new();
+    for clause in selector.split(',') {
+        let (spws, channels) = clause.split_once(':').unwrap_or((clause, ""));
+        for spw in spws.split(';').filter(|spw| !spw.is_empty()) {
+            let clause = if channels.is_empty() {
+                spw.to_string()
+            } else {
+                format!("{spw}:{channels}")
+            };
+            if let Some(clause_windows) = resolve(&clause) {
+                for (spw, window) in clause_windows {
+                    windows.entry(spw).or_default().extend(window.channels);
+                }
+            }
+        }
+    }
+    windows
+}
+
+fn channel_label(channels: &[i64], total: usize) -> String {
     if channels.len() == total {
         return String::new();
     }
@@ -169,7 +217,7 @@ fn channel_label(channels: &[usize], total: usize) -> String {
     consecutive_ranges(channels)
 }
 
-fn consecutive_ranges(values: &[usize]) -> String {
+fn consecutive_ranges(values: &[i64]) -> String {
     let mut ranges = Vec::new();
     let mut remaining = values;
     while let Some((&first, rest)) = remaining.split_first() {
@@ -181,7 +229,7 @@ fn consecutive_ranges(values: &[usize]) -> String {
         ranges.push(if count == 0 {
             first.to_string()
         } else {
-            format!("{first}~{}", first + count)
+            format!("{first}~{}", first + count as i64)
         });
         remaining = &rest[count..];
     }

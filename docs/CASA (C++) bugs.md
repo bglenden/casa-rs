@@ -215,6 +215,18 @@ On `refim_mawproject` (CASA 6.7.6.14, Stokes I, `wbawp=True`,
 dirty image. casa-rs compiles CASA's pairing (`casa-imaging-operator`,
 `aw::routing` into `MuellerRouting`) and agrees with CASA to 2e-7.
 
+
+## FLAG_CMD rewrites may truncate a longer saved command
+
+CASA 6.7.6.14 reads FLAG_CMD.COMMAND into a NumPy string array during
+`split` and `mstransform` post-processing. The array holds strings no longer
+than the longest original command. Replacing a spectral selector with a longer
+one can cut off later arguments before the table is written. The paired
+`ms_flag_commands_oracle.py` test reproduces the truncation when an inactive
+channel bin is negative and checks the complete rewritten command independently.
+casa-rs writes the full command to the variable-length table column.
+[Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## AW-projection predicts with the unrotated w
 
 - Date noted: 2026-10-09

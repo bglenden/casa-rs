@@ -79,6 +79,7 @@ fn transform_request(
         channel_widths,
         time_averaging: time_average_options(task)?,
         history: Some(task_history(task)),
+        flag_command_widths: flag_command_widths(task),
     };
     Ok((request, options))
 }
@@ -285,6 +286,15 @@ fn channel_width(task: &TaskInvocation<'_>) -> Result<(usize, Option<Vec<usize>>
             }
             Ok((usize::try_from(width).unwrap_or(1).max(1), None))
         }
+    }
+}
+
+fn flag_command_widths(task: &TaskInvocation<'_>) -> Option<Vec<i64>> {
+    let value = task.value(channel_parameter(task))?;
+    match value {
+        ParameterValue::Array(widths) => widths.iter().map(channel_integer).collect(),
+        value if task.surface() == "mstransform" => channel_integer(value).map(|width| vec![width]),
+        _ => None,
     }
 }
 

@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_tables::{TableError, TableOptions};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::SubtableId;
 
@@ -30,6 +30,10 @@ pub(super) fn append_task_history(
         source: Box::new(source),
     };
     let mut table = open_staged_subtable_for_write(&path).map_err(failure)?;
+    let default_row = table
+        .schema()
+        .ok_or_else(|| failure(TableError::PreparedRowRequiresSchema))?
+        .default_row();
     let heading = [
         format!("taskname={}", history.task),
         format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
@@ -48,17 +52,20 @@ pub(super) fn append_task_history(
             + 40_587.0 * 86_400.0;
         let text = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
         let empty = || Value::Array(ArrayValue::from_string_vec(vec![String::new()]));
-        let row = RecordValue::new(vec![
-            RecordField::new("APP_PARAMS", empty()),
-            RecordField::new("CLI_COMMAND", empty()),
-            RecordField::new("APPLICATION", text("ms")),
-            RecordField::new("MESSAGE", text(&message)),
-            RecordField::new("OBJECT_ID", Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new("OBSERVATION_ID", Value::Scalar(ScalarValue::Int32(-1))),
-            RecordField::new("ORIGIN", text(&history.task)),
-            RecordField::new("PRIORITY", text("INFO")),
-            RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
-        ]);
+        let mut row = default_row.clone();
+        for (column, value) in [
+            ("APP_PARAMS", empty()),
+            ("CLI_COMMAND", empty()),
+            ("APPLICATION", text("ms")),
+            ("MESSAGE", text(&message)),
+            ("OBJECT_ID", Value::Scalar(ScalarValue::Int32(0))),
+            ("OBSERVATION_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            ("ORIGIN", text(&history.task)),
+            ("PRIORITY", text("INFO")),
+            ("TIME", Value::Scalar(ScalarValue::Float64(time))),
+        ] {
+            row.upsert(column, value);
+        }
         table.add_row(row).map_err(failure)?;
     }
     table
