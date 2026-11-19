@@ -12,7 +12,62 @@ use crate::selection::{ResolvedMsSelectionRow, TimeSelection};
 use crate::subtables::{get_f64, get_i32};
 use crate::{MeasurementSet, MsError, SubtableId};
 
-use super::{MsTransformError, MsTransformRequest, rewrite_selected_table_rows};
+use super::{
+    MsTransformError, MsTransformRequest, rewrite_selected_table_rows, scalar_f64, scalar_i32,
+};
+
+/// CASA's visibility iterator groups ordinary MS rows by the original IDs
+/// before ordering each group by TIME (MSTransformManager::setIterationApproach).
+pub(super) fn sort_selected_rows(
+    table: &Table,
+    request: &MsTransformRequest,
+    rows: Vec<usize>,
+    descriptions: Vec<i32>,
+) -> Result<(Vec<usize>, Vec<i32>), MsTransformError> {
+    const GROUPS: [&str; 5] = [
+        "OBSERVATION_ID",
+        "ARRAY_ID",
+        "SCAN_NUMBER",
+        "STATE_ID",
+        "FIELD_ID",
+    ];
+    let read = |name| {
+        table
+            .column_accessor(name)
+            .and_then(|column| column.scalar_cells_owned_for_rows(&rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.input_ms.display().to_string(),
+                source: Box::new(source),
+            })
+    };
+    let mut groups = vec![[0; GROUPS.len()]; rows.len()];
+    for (slot, name) in GROUPS.into_iter().enumerate() {
+        for ((group, value), &row) in groups.iter_mut().zip(read(name)?).zip(&rows) {
+            group[slot] = scalar_i32(value.as_ref(), name, row)?;
+        }
+    }
+    let times = read("TIME")?;
+    let mut ordering = groups
+        .into_iter()
+        .zip(times)
+        .zip(rows)
+        .zip(descriptions)
+        .map(|(((group, time), row), ddid)| {
+            Ok((group, ddid, scalar_f64(time.as_ref(), "TIME", row)?, row))
+        })
+        .collect::<Result<Vec<_>, MsTransformError>>()?;
+    ordering.sort_unstable_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| left.2.total_cmp(&right.2))
+            .then_with(|| left.3.cmp(&right.3))
+    });
+    Ok(ordering
+        .into_iter()
+        .map(|(_, ddid, _, row)| (row, ddid))
+        .unzip())
+}
 
 pub(super) struct RowIdMaps {
     antenna: Option<BTreeMap<i32, i32>>,

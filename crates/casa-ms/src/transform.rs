@@ -404,39 +404,16 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         }
     }
     let stage_started_at = Instant::now();
-    let selected_times = input
-        .main_table()
-        .column_accessor("TIME")
-        .and_then(|column| column.scalar_cells_owned_for_rows(&selected_rows))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: request.input_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let mut row_order = selected_rows
-        .into_iter()
-        .zip(selected_ddids)
-        .zip(selected_times)
-        .enumerate()
-        .map(|(original_index, ((row_index, ddid), time))| {
-            scalar_f64(time.as_ref(), "TIME", row_index)
-                .map(|time| (time, original_index, row_index, ddid))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    row_order.sort_by(|left, right| {
-        left.0
-            .total_cmp(&right.0)
-            .then_with(|| left.1.cmp(&right.1))
-    });
-    let mut selected_rows = Vec::with_capacity(row_order.len());
-    let mut selected_ddids = Vec::with_capacity(row_order.len());
-    for (_time, _original_index, row_index, ddid) in row_order {
-        selected_rows.push(row_index);
-        selected_ddids.push(ddid);
-    }
+    let (selected_rows, selected_ddids) = selection_metadata::sort_selected_rows(
+        input.main_table(),
+        request,
+        selected_rows,
+        selected_ddids,
+    )?;
     let selected_field_ids_for_metadata =
         selected_field_ids_for_rows(input.main_table(), &selected_rows, &request.output_ms)?;
     maybe_log_transform_progress(
-        "sort_rows_by_time",
+        "sort_selected_rows",
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );

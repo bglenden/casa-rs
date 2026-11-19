@@ -10,7 +10,7 @@ use casa_ms::{
     MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform,
     mstransform_task_schema_bundle, task_selection_text,
 };
-use casa_provider_contracts::{CasaValue, ParameterValue, python_repr};
+use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue, python_repr};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -100,10 +100,7 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         scan: selector("scan")?,
         antenna: selector("antenna")?,
         timerange: selector("timerange")?,
-        observation: task.value("observation").and_then(|value| match value {
-            ParameterValue::String(text) => (!text.is_empty()).then(|| text.clone()),
-            other => Some(python_repr(other)),
-        }),
+        observation: task.value("observation").and_then(observation_text),
         intent: task.text("intent")?.filter(|text| !text.is_empty()),
         msselect: selector(taql_name)?,
         ..MsSelection::default()
@@ -115,6 +112,18 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         selection = selection.time_range(start, end);
     }
     Ok(selection)
+}
+
+fn observation_text(value: &ParameterValue) -> Option<String> {
+    match value {
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            value,
+        }
+        | ParameterValue::ScalarArray(value) => observation_text(value),
+        ParameterValue::String(text) => (!text.is_empty()).then(|| text.clone()),
+        other => Some(python_repr(other)),
+    }
 }
 
 /// CASA's `datacolumn`, in any case: casa-rs copies `data` and `corrected`
