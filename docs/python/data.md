@@ -44,6 +44,11 @@ Use `cs.setnames(values)` to replace the world-axis labels in order, or
 pass `type` to replace one coordinate's labels. `cs.setstokes(values)`
 sets the polarization labels in pixel order.
 
+Use `cs.referencevalue()` and `cs.increment()` to read the world-axis
+reference values and spacing. Pass `type` to select a coordinate, or combine
+`n`, `q`, `s`, and `m` in `format` to request numbers, quantities, display
+strings, and CASA measures.
+
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
 Use `addcoordinate` to append axes and `fromrecord` to restore a coordinate

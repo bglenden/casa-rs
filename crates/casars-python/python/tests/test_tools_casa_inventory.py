@@ -44,6 +44,7 @@ IMPLEMENTED["calibrater"] = {
     "initcalset", "delmod", "setptmodel", "modelfit",
 }
 IMPLEMENTED["coordsys"] = {
+    "increment", "referencevalue",
     "addcoordinate", "axesmap", "axiscoordinatetypes", "conversiontype", "coordinatetype", "copy", "done", "epoch",
     "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "getconversiontype", "lineartransform",
     "names", "naxes", "ncoordinates", "newcoordsys",
