@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_task_runtime::{TaskFailure, TaskInvocation};
-use casa_types::quanta::format::{YMD, format_time};
+use casa_types::quanta::format::{TIME, format_time};
 
 use super::PlotSeries;
 use super::axis::SampleCoordinates;
@@ -81,12 +81,15 @@ impl IterationAxis {
             Self::Spw => Key::Id(coordinates.window),
             Self::Time => Key::Time(coordinates.time.to_bits()),
             Self::Antenna => Key::Id(coordinates.antennas[0]),
-            Self::Baseline => Key::Antennas(coordinates.antennas),
+            Self::Baseline => {
+                let [a, b] = coordinates.antennas;
+                Key::Antennas([a.min(b), a.max(b)])
+            }
             Self::Polarization | Self::AntennaPosition => Key::Id(coordinates.receptor),
         }
     }
 
-    fn name(self, key: Key, table: &CalibrationTable) -> String {
+    fn name(self, key: Key, table: &CalibrationTable, coordinates: &SampleCoordinates) -> String {
         let antenna = |id| {
             usize::try_from(id)
                 .ok()
@@ -101,8 +104,31 @@ impl IterationAxis {
                 .map_or_else(|| id.to_string(), |field| field.name.clone()),
             Key::Id(id) if matches!(self, Self::Polarization) && id < 0 => "ratio".into(),
             Key::Id(id) => id.to_string(),
-            Key::Antennas([a, b]) => format!("{}&{}", antenna(a), antenna(b)),
-            Key::Time(bits) => format_time(f64::from_bits(bits) / 86_400.0, YMD, 0),
+            Key::Antennas(_) => {
+                let [a, b] = coordinates.antennas;
+                let a_label = antenna(a);
+                let b_label = antenna(b);
+                let position = |id| {
+                    usize::try_from(id)
+                        .ok()
+                        .and_then(|id| table.antennas.get(id))
+                        .map(|antenna| antenna.position)
+                };
+                let length = match (position(a), position(b)) {
+                    (Some(first), Some(second)) => {
+                        let distance = first
+                            .into_iter()
+                            .zip(second)
+                            .map(|(a, b)| (a - b).powi(2))
+                            .sum::<f64>()
+                            .sqrt();
+                        format!("_{distance:.0}m")
+                    }
+                    _ => String::new(),
+                };
+                format!("{a_label} & {b_label}{length}")
+            }
+            Key::Time(bits) => format_time(f64::from_bits(bits) / 86_400.0, TIME, 10),
         }
     }
 }
@@ -170,7 +196,7 @@ impl PlotPanels {
         };
         let labels = panels
             .iter()
-            .map(|panel| panel.label.replace('/', "-"))
+            .map(|panel| panel.label.replace(" & ", "_with_").replace('/', "-"))
             .collect::<Vec<_>>()
             .join(",");
         let suffix = if page == 0 {
@@ -214,7 +240,7 @@ fn split(table: &CalibrationTable, axis: IterationAxis, series: Vec<PlotSeries>)
         for point in source.points {
             let key = axis.key(&point.coordinates);
             let group: &mut Panel = groups.entry(key).or_insert_with(|| Panel {
-                label: axis.name(key, table),
+                label: axis.name(key, table, &point.coordinates),
                 series: empty_series(),
             });
             group.series[index].points.push(point);

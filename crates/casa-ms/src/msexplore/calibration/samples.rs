@@ -43,6 +43,8 @@ pub(super) fn points(
         for interval in averaging::intervals(&rows, request.averaging) {
             let interval = &rows[interval];
             let metadata = averaging::coordinates(interval);
+            let frequencies =
+                averaging::channel_frequencies(table, interval, selection, request.averaging)?;
             for (antennas, group) in averaging::row_groups(
                 interval,
                 request.averaging,
@@ -58,7 +60,7 @@ pub(super) fn points(
                 };
                 append_points(
                     table,
-                    &input,
+                    (&input, &frequencies),
                     coordinates,
                     selection,
                     request,
@@ -72,7 +74,7 @@ pub(super) fn points(
             let input = [table.solution(coordinates)?];
             append_points(
                 table,
-                &input,
+                (&input, &[]),
                 coordinates,
                 selection,
                 request,
@@ -86,7 +88,7 @@ pub(super) fn points(
 
 fn append_points(
     table: &CalibrationTable,
-    input: &[Solution<'_>],
+    (input, averaged_frequencies): (&[Solution<'_>], &[f64]),
     row: SampleCoordinates,
     selection: &Selection,
     request: &SeriesRequest<'_>,
@@ -126,17 +128,19 @@ fn append_points(
         } else {
             members[0]
         };
-        coordinates.frequency_ghz = members
-            .iter()
-            .map(|&channel| {
-                window
-                    .frequencies
-                    .get(channel)
-                    .copied()
-                    .unwrap_or(window.reference)
-            })
-            .sum::<f64>()
-            / (members.len() as f64 * 1e9);
+        coordinates.frequency_ghz = averaged_frequencies.get(bin).copied().unwrap_or_else(|| {
+            members
+                .iter()
+                .map(|&channel| {
+                    window
+                        .frequencies
+                        .get(channel)
+                        .copied()
+                        .unwrap_or(window.reference)
+                })
+                .sum::<f64>()
+                / (members.len() as f64 * 1e9)
+        });
         for &polarization in &polarizations {
             coordinates.receptor = polarization.output_index();
             let x_value = x.project(

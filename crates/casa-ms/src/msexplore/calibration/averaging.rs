@@ -7,6 +7,8 @@ use std::ops::Range;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::axis::SampleCoordinates;
+use super::selection::Selection;
+use super::table_data::CalibrationTable;
 use crate::MsAverageSpec;
 
 pub(super) fn options(task: &TaskInvocation<'_>) -> Result<MsAverageSpec, TaskFailure> {
@@ -115,18 +117,102 @@ pub(super) fn row_groups(
     let mut groups = BTreeMap::<_, Vec<_>>::new();
     let reference_antenna = rows[0].antennas[1];
     for &row in rows {
-        let [a, b] = row.antennas;
-        if spec.avgbaseline {
-            groups.entry([-1, -1]).or_default().push(row);
-        } else if spec.avgantenna {
-            for antenna in [a, b].into_iter().filter(|&id| id >= 0) {
-                groups.entry([antenna, -1]).or_default().push(row);
-            }
-        } else if baseline_based {
-            groups.entry([a.min(b), a.max(b)]).or_default().push(row);
-        } else {
-            groups.entry([a, reference_antenna]).or_default().push(row);
+        for id in antenna_groups(row, spec, baseline_based, reference_antenna)
+            .into_iter()
+            .flatten()
+        {
+            groups.entry(id).or_default().push(row);
         }
     }
     groups
+}
+
+fn antenna_groups(
+    row: SampleCoordinates,
+    spec: &MsAverageSpec,
+    baseline_based: bool,
+    reference_antenna: i32,
+) -> [Option<[i32; 2]>; 2] {
+    let [a, b] = row.antennas;
+    if spec.avgbaseline {
+        [Some([-1, -1]), None]
+    } else if spec.avgantenna {
+        [(a >= 0).then_some([a, -1]), (b >= 0).then_some([b, -1])]
+    } else if baseline_based {
+        [Some([a.min(b), a.max(b)]), None]
+    } else {
+        [Some([a, reference_antenna]), None]
+    }
+}
+
+pub(super) fn channel_frequencies(
+    table: &CalibrationTable,
+    rows: &[SampleCoordinates],
+    selection: &Selection,
+    spec: &MsAverageSpec,
+) -> Result<Vec<f64>, String> {
+    let Some(width) = spec.avgchannel.filter(|&width| width > 1) else {
+        return Ok(Vec::new());
+    };
+    let first = table.solution(rows[0])?;
+    let shape = first.values.shape();
+    let first_channels = selection.channels(rows[0].window, shape[1]);
+    let width = width.min(first_channels.len().max(1));
+    let bins = first_channels.len() / width;
+    let mut frequencies = vec![(0.0, 0usize); bins];
+    let mut averaged_flags = BTreeMap::<_, Vec<bool>>::new();
+    for &row in rows {
+        let solution = table.solution(row)?;
+        if solution.values.shape() != shape {
+            return Err("calibration solutions being averaged must have the same shape".into());
+        }
+        let window = usize::try_from(row.window)
+            .ok()
+            .and_then(|id| table.windows.get(id))
+            .ok_or_else(|| {
+                format!(
+                    "calibration row {} has unknown window {}",
+                    row.row, row.window
+                )
+            })?;
+        let channels = selection.channels(row.window, shape[1]);
+        let groups = antenna_groups(
+            row,
+            spec,
+            table.subtype.contains("Mueller"),
+            rows[0].antennas[1],
+        );
+        for receptor in 0..shape[0] {
+            for (bin, members) in channels.chunks_exact(width).take(bins).enumerate() {
+                for &channel in members {
+                    let flagged = solution.flagged(receptor, channel);
+                    let mut include = false;
+                    for group in groups.into_iter().flatten() {
+                        let flags = averaged_flags
+                            .entry(group)
+                            .or_insert_with(|| vec![true; shape[0] * bins]);
+                        let entry = &mut flags[receptor * bins + bin];
+                        if !flagged && *entry {
+                            *entry = false;
+                            frequencies[bin] = (0.0, 0);
+                        }
+                        include |= !flagged || *entry;
+                    }
+                    if include {
+                        let (total, count) = &mut frequencies[bin];
+                        *total += window
+                            .frequencies
+                            .get(channel)
+                            .copied()
+                            .unwrap_or(window.reference);
+                        *count += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(frequencies
+        .into_iter()
+        .map(|(sum, count)| sum / (count as f64 * 1e9))
+        .collect())
 }

@@ -291,6 +291,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
 
 
 def _call_plotms(values, arguments):
+    from ._plotms_plot import validate
+
     paths = {name: arguments[name].strip() for name in ("vis", "caltable")
              if isinstance(arguments[name], str) and arguments[name].strip()}
     if len(paths) > 1:
@@ -319,10 +321,18 @@ def _call_plotms(values, arguments):
                 raise ValueError
         except ValueError:
             raise ValueError("avgtime value must be numerical string in seconds (no units)") from None
+    validate(arguments)
+    if not paths and all(isinstance(arguments[name], str) for name in ("vis", "caltable")):
+        return None
     for name in ("field", "spw"):
         if name in values and isinstance(values[name], (int, float)):
             values[name] = str(values[name])
-    return run("plotms", **values).value
+    try:
+        return run("plotms", **values).value
+    except (TaskExecutionError, TaskParameterError) as error:
+        if error.completion.message == "Remove duplicate y-axes.":
+            raise RuntimeError(error.completion.message) from error
+        raise
 
 
 def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:

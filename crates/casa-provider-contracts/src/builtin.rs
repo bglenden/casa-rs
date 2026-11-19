@@ -845,7 +845,12 @@ mod tests {
                         decoded,
                         matches!(
                             surface.id(),
-                            "tclean" | "simobserve" | "simanalyze" | "simalma" | "tsdimaging"
+                            "tclean"
+                                | "simobserve"
+                                | "simanalyze"
+                                | "simalma"
+                                | "tsdimaging"
+                                | "plotms"
                         ),
                         "{} product sources",
                         surface.id()

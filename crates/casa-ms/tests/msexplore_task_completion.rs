@@ -211,6 +211,6 @@ fn casa_plotms_names_export_existing_measurement_set_plots() {
     assert_eq!(value, casa_provider_contracts::CasaValue::None);
     assert!(is_fixture_summary(&result["summary"]));
     assert_eq!(completion.products.len(), 1);
-    assert_eq!(completion.products[0].id, "plotfile");
+    assert_eq!(completion.products[0].id, "plotfile:1");
     assert!(completion.products[0].exists);
 }

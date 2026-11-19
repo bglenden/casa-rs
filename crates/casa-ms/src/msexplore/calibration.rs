@@ -45,6 +45,7 @@ pub(super) fn input(task: &TaskInvocation<'_>) -> Result<Option<PathBuf>, TaskFa
 #[derive(Serialize)]
 struct PlotResult {
     samples: usize,
+    text_file: Option<PathBuf>,
     plots: Vec<crate::plot_document::PlotFigure>,
 }
 
@@ -60,6 +61,7 @@ pub(super) fn run(
     payload: Option<&Path>,
 ) -> Result<TaskSuccess, TaskFailure> {
     validate_pending_controls(task)?;
+    figure::plot_limits(task.value("plotrange"))?;
     let output = task
         .text("plotfile")?
         .filter(|value| !value.is_empty())
@@ -109,7 +111,8 @@ pub(super) fn run(
         .filter(|value| !value.is_empty())
         .map_or(Ok(default_x), |value| Axis::parse(&value))
         .map_err(TaskFailure::validation)?;
-    let ys = axes(task.value("yaxis"), default_y).map_err(TaskFailure::validation)?;
+    let ys = axes(task.value("yaxis"), task.value("ydatacolumn"), default_y)
+        .map_err(TaskFailure::validation)?;
     let series = ys
         .into_iter()
         .map(|y| {
@@ -128,6 +131,7 @@ pub(super) fn run(
     let panels = PlotPanels::prepare(task, &table, series)?;
     let expformat = task.text("expformat")?.unwrap_or_default();
     let mut figure_path = output;
+    let mut text_file = None;
     if let Some(destination) = &figure_path {
         let format = if expformat.is_empty() {
             destination
@@ -144,13 +148,21 @@ pub(super) fn run(
                 expressions,
                 polarization,
                 averaging: &averaging,
+                requested_channels: if task.flag("averagedata")? {
+                    task.text("avgchannel")?
+                        .and_then(|value| value.parse::<f64>().ok())
+                        .filter(|&value| value > 0.0)
+                } else {
+                    None
+                },
                 plotindex,
                 verbose: task.flag("verbose")?,
+                flagged_symbols: task.value("customflaggedsymbol"),
             };
             write_export(destination, overwrite, &table, &header, &panels).map_err(|e| {
                 TaskFailure::execution(format!("write {}: {e}", destination.display()))
             })?;
-            figure_path = None;
+            text_file = figure_path.take();
         }
     }
     let show = task.flag("showgui")?;
@@ -163,7 +175,14 @@ pub(super) fn run(
         }
         None => Vec::new(),
     };
-    TaskSuccess::new(CasaValue::None, &PlotResult { samples, plots })
+    TaskSuccess::new(
+        CasaValue::None,
+        &PlotResult {
+            samples,
+            plots,
+            text_file,
+        },
+    )
 }
 
 fn validate_pending_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
@@ -188,12 +207,30 @@ fn validate_pending_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailur
     Ok(())
 }
 
-fn axes(value: Option<&ParameterValue>, default: Axis) -> Result<Vec<Axis>, String> {
+fn axes(
+    value: Option<&ParameterValue>,
+    data_columns: Option<&ParameterValue>,
+    default: Axis,
+) -> Result<Vec<Axis>, String> {
     let values = axis_names(value)?;
     if values.is_empty() {
         return Ok(vec![default]);
     }
-    values.iter().map(|name| Axis::parse(name)).collect()
+    let columns = if matches!(data_columns, Some(ParameterValue::Array(_))) {
+        axis_names(data_columns)?
+    } else {
+        Vec::new()
+    };
+    let mut chosen = Vec::with_capacity(values.len());
+    for (index, name) in values.iter().enumerate() {
+        let ordinate = Axis::parse(name)?;
+        let column = columns.get(index).copied().unwrap_or_default();
+        if chosen.contains(&(ordinate, column)) {
+            return Err("Remove duplicate y-axes.".into());
+        }
+        chosen.push((ordinate, column));
+    }
+    Ok(chosen.into_iter().map(|(ordinate, _)| ordinate).collect())
 }
 
 pub(super) fn axis_names(value: Option<&ParameterValue>) -> Result<Vec<&str>, String> {
@@ -228,8 +265,10 @@ struct ExportHeader<'a> {
     expressions: Expressions<'a>,
     polarization: String,
     averaging: &'a crate::MsAverageSpec,
+    requested_channels: Option<f64>,
     plotindex: usize,
     verbose: bool,
+    flagged_symbols: Option<&'a ParameterValue>,
 }
 
 fn write_export(
@@ -268,9 +307,9 @@ fn write_export(
             writeln!(output, "# {name}: {value}")?;
         }
     }
-    if averaging::active(header.averaging) {
+    if header.requested_channels.is_some() || averaging::active(header.averaging) {
         let average = header.averaging;
-        match average.avgchannel {
+        match header.requested_channels {
             Some(channels) => writeln!(output, "# channel average: {channels}")?,
             None => writeln!(output, "# channel average: None")?,
         }
@@ -306,11 +345,12 @@ fn write_export(
         } else {
             writeln!(output, "# From plot {index} iteration {}", index + 1)?;
         }
-        for series in &panel.series {
+        for (index, series) in panel.series.iter().enumerate() {
+            let show_flagged = figure::shows_flagged(header.flagged_symbols, index);
             let mut points = series
                 .points
                 .iter()
-                .filter(|point| !point.flagged)
+                .filter(|point| show_flagged || !point.flagged)
                 .peekable();
             text::axes_header(
                 &mut output,

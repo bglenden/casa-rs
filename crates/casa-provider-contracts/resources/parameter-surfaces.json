@@ -18630,7 +18630,12 @@
       "execution": {
         "invocation_name": "msexplore",
         "fixed_args": [],
-        "managed_output": null,
+        "managed_output": {
+          "decoder": "plotms-run-v1",
+          "stdout_format": "json",
+          "raw_stdout_available": true,
+          "raw_stderr_available": true
+        },
         "products": {
           "kind": "declared",
           "products": [
@@ -18639,10 +18644,9 @@
               "role": "primary",
               "resource_kind": "file",
               "source": {
-                "kind": "parameter",
-                "parameter": "plotfile"
+                "kind": "decoded_artifacts"
               },
-              "cardinality": "one",
+              "cardinality": "many",
               "optional": true,
               "probe_supported": false
             }

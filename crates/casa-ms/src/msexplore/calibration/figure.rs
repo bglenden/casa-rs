@@ -320,7 +320,7 @@ fn right_side(locations: &[&str], index: usize) -> bool {
         == Some(&"right")
 }
 
-fn shows_flagged(symbols: Option<&ParameterValue>, index: usize) -> bool {
+pub(super) fn shows_flagged(symbols: Option<&ParameterValue>, index: usize) -> bool {
     let enabled = match symbols {
         Some(ParameterValue::Array(values)) => values.get(index),
         other => other,
@@ -373,7 +373,7 @@ fn axis(
     } else {
         0.05 * (upper - lower)
     };
-    if limits[0] != limits[1] {
+    if limits != [0.0, 0.0] {
         [lower, upper] = limits;
     } else {
         lower -= padding;
@@ -402,7 +402,7 @@ fn axis(
     }
 }
 
-fn plot_limits(value: Option<&ParameterValue>) -> Result<[f64; 4], TaskFailure> {
+pub(super) fn plot_limits(value: Option<&ParameterValue>) -> Result<[f64; 4], TaskFailure> {
     let Some(ParameterValue::Array(values)) = value else {
         return Ok([0.0; 4]);
     };

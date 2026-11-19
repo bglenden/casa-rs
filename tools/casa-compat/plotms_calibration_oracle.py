@@ -16,7 +16,7 @@ from casaplotms import plotms as reference
 import numpy as np
 
 from calibration_rerefant_oracle import reference_fixture
-from calibration_smoothcal_oracle import fixture
+from calibration_smoothcal_oracle import copy_ms, fixture, opened
 
 
 @contextmanager
@@ -69,6 +69,9 @@ def exports(root, products, native):
         ("solution-time-selection", "bandpass",
          dict(timerange="2019/12/31/21:52:35~2019/12/31/21:52:45")),
         ("no-channel-compression", "bandpass", dict(avgchannel="1")),
+        ("fractional-channel-width", "bandpass", dict(avgchannel="2.5")),
+        ("flagged-visible-text", "flagged", dict(customflaggedsymbol=True)),
+        ("flagged-averaged-frequency", "flagged", dict(xaxis="frequency", avgchannel="2")),
         ("time-average", "bandpass", dict(avgtime="120", avgscan=True, avgfield=True)),
         ("scan-boundaries", "bandpass", dict(avgtime="120")),
         ("scalar-average", "bandpass", dict(avgchannel="2", scalar=True)),
@@ -141,13 +144,23 @@ def figure(root, products, native):
 
 def plot_pages(root, products, native):
     source = str(products["bandpass"])
-    for engine, task in (("casa", reference), ("native", native)):
-        directory = root / engine
-        directory.mkdir()
-        assert task(caltable=source, spw="0", antenna="A0", showgui=False,
-                    iteraxis="scan", exprange="all", plotfile=str(directory / "plot.png")) is None
-        assert sorted(file.name for file in directory.iterdir()) == ["plot_Scan1.png", "plot_Scan2_2.png"]
-        assert all(file.stat().st_size > 1000 for file in directory.iterdir())
+    from casars import tasks
+
+    for axis, antenna in (("scan", "A0"), ("time", "A0"), ("baseline", "")):
+        expected = root / f"pages-{axis}-casa"
+        actual = root / f"pages-{axis}-native"
+        expected.mkdir()
+        actual.mkdir()
+        controls = dict(caltable=source, spw="0", antenna=antenna,
+                        showgui=False, iteraxis=axis, exprange="all")
+        assert reference(plotfile=str(expected / "plot.png"), **controls) is None
+        completion = tasks.run("plotms", plotfile=str(actual / "plot.png"), **controls)
+        assert completion.value is None
+        assert sorted(file.name for file in actual.iterdir()) == sorted(file.name for file in expected.iterdir())
+        assert all(file.stat().st_size > 1000 for file in actual.iterdir())
+        assert {Path(product.path) for product in completion.result.products if product.exists} == set(actual.iterdir())
+        if axis == "scan":
+            assert sorted(file.name for file in actual.iterdir()) == ["plot_Scan1.png", "plot_Scan2_2.png"]
 
     unfiltered = root / "unfiltered.txt"
     reference_file = root / "unfiltered.casa.txt"
@@ -169,6 +182,15 @@ def errors(root, products, native):
     plotfile = str(root / "invalid.txt")
     path = str(products["bandpass"])
     cases = [
+        (RuntimeError, "Remove duplicate y-axes.", dict(caltable=path, yaxis=["amp", "Amp"])),
+        (ValueError, "invalid symbolshape value 'wrong'",
+         dict(caltable=path, customsymbol=True, symbolshape="wrong")),
+        (TypeError, "invalid symbolsize type, should be int or list",
+         dict(caltable=path, customsymbol=True, symbolsize="large")),
+        (ValueError, "plotrange parameter has incorrect number of elements.",
+         dict(caltable=path, plotrange=[1, 3, 4])),
+        (ValueError, "plots cannot share an x-axis unless they use the same x-axis scale.",
+         dict(caltable=path, iteraxis="scan", gridrows=2, xsharedaxis=True)),
         (RuntimeError, "Cannot set both vis and caltable parameters", dict(vis=path, caltable=path)),
         (RuntimeError, "vis and caltable not set, cannot export empty plot", {}),
         (RuntimeError, "Cannot select both correlation and polarization.",
@@ -193,6 +215,7 @@ def errors(root, products, native):
             else:
                 raise AssertionError(options)
     assert not Path(plotfile).exists()
+    assert reference(showgui=False) is native(showgui=False) is None
     return len(cases)
 
 
@@ -217,6 +240,14 @@ def main():
     reference_fixture(vis, products["gain"], "G Jones")
     casa.bandpass(str(vis), str(products["bandpass"]), refant="A0", solint="inf", minsnr=0.0)
     casa.gencal(str(vis), str(products["delay"]), "sbd", parameter=[2.5])
+    products["flagged"] = root / "flagged.cal"
+    copy_ms(products["bandpass"], products["flagged"])
+    with opened(products["flagged"], True) as table:
+        selected = np.flatnonzero(table.getcol("ANTENNA1") == 0)
+        flags = table.getcol("FLAG")
+        flags[:, 1, selected[0]] = True
+        flags[0, 2, selected[0]] = True
+        table.putcol("FLAG", flags)
     with plotms_launcher(args.app_run):
         cases, points = exports(root, products, native)
         error_cases = errors(root, products, native)

@@ -1013,12 +1013,22 @@ fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFail
     let averaging = task.flag("averagedata")?;
     let average = |name| Ok::<_, TaskFailure>(averaging && task.flag(name)?);
     let average_text = |name| if averaging { text(name) } else { Ok(None) };
-    let data_column = plotms_column(task.value("ydatacolumn"))?
-        .or(text("xdatacolumn")?)
-        .map_or(Ok(MsDataColumn::Data), |column| {
-            MsDataColumn::parse(&column)
-        })
-        .map_err(TaskFailure::validation)?;
+    let data_column = |column: Option<String>| {
+        column
+            .map(|column| MsDataColumn::parse(&column))
+            .transpose()
+            .map_err(TaskFailure::validation)
+    };
+    let x_column = data_column(text("xdatacolumn")?)?;
+    let y_column = data_column(plotms_column(task.value("ydatacolumn"))?)?;
+    if let (Some(x), Some(y)) = (x_column, y_column)
+        && x != y
+    {
+        return Err(TaskFailure::validation(
+            "distinct MeasurementSet X and Y data columns are pending #1032",
+        ));
+    }
+    let data_column = y_column.or(x_column).unwrap_or(MsDataColumn::Data);
     let color_by = text("coloraxis")?
         .map_or(Ok(MsColorAxis::None), |axis| {
             MsColorAxis::parse(&axis.to_ascii_lowercase())
