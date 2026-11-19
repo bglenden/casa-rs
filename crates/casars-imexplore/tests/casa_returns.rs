@@ -1121,43 +1121,35 @@ fn imhead_put_of_an_empty_bunit_clears_it() {
 }
 
 #[test]
-fn a_parameter_casa_rs_takes_only_at_its_default_is_refused_otherwise() {
+fn imstat_takes_every_parameter_at_a_non_default_value() {
     let workspace = tempfile::tempdir().unwrap();
-    let image = workspace.path().join("ramp.im");
-    write_ramp(&image, false);
-    let (output, reply) = json_run(
-        workspace.path(),
-        "imstat",
-        json!({"imagename": image, "listit": false}),
-    );
-    assert_eq!(output.status.code(), Some(2));
-    let Some(TaskReply::Failed {
-        message, parameter, ..
-    }) = reply
-    else {
-        panic!("{reply:?}");
-    };
-    assert_eq!(parameter.as_deref(), Some("listit"));
-    assert!(message.contains("#977"), "{message}");
-    // CASA's default is accepted, on the command line as from Python.
-    let (output, _) = json_run(workspace.path(), "imstat", json!({"imagename": image}));
-    assert!(output.status.success());
-    let command_line = Command::new(env!("CARGO_BIN_EXE_imexplore"))
-        .args([
-            "imstat",
-            image.to_str().unwrap(),
-            "--mask",
-            "other.im",
-            "--no-save-last",
-        ])
-        .current_dir(workspace.path())
-        .output()
-        .unwrap();
-    assert_eq!(command_line.status.code(), Some(2));
+    let image = workspace.path().join("ones.im");
+    write_fromshape(&image, "Jy/beam", false);
+    let logfile = workspace.path().join("stats.log");
+    let values = json!({
+        "imagename": image,
+        "algorithm": "hinges-fences",
+        "fence": 2.0,
+        "center": "med",
+        "lside": false,
+        "zscore": 2.0,
+        "maxiter": 5,
+        "clmethod": "t",
+        "niter": 2,
+        "axes": -1,
+        "stokes": "I",
+        "mask": format!("\"{}\" > 0", image.display()),
+        "stretch": true,
+        "logfile": logfile,
+        "append": false,
+        "listit": false,
+        "verbose": false,
+    });
+    let record = returned(workspace.path(), "imstat", values);
+    assert_eq!(statistic(&record, "npts"), 64.0);
     assert!(
-        String::from_utf8_lossy(&command_line.stderr).contains("#977"),
-        "{}",
-        String::from_utf8_lossy(&command_line.stderr)
+        logfile.exists(),
+        "a non-default logfile records the statistics block"
     );
 }
 
@@ -1205,21 +1197,15 @@ fn imstat_takes_casas_spellings_of_its_defaults() {
         "{}",
         String::from_utf8_lossy(&command_line.stderr)
     );
-    // Another parameter is not yet, and with it the control it reads.
-    let (output, reply) = json_run(
+    // A mask expression selects the pixels the statistics use, as
+    // CASA's LEL threshold does.
+    let masked = returned(
         workspace.path(),
         "imstat",
-        json!({"imagename": image, "mask": "other.im", "stretch": true}),
+        json!({"imagename": image, "mask": format!("\"{}\" > 10", image.display())}),
     );
-    assert_eq!(output.status.code(), Some(2));
-    let Some(TaskReply::Failed {
-        message, parameter, ..
-    }) = reply
-    else {
-        panic!("{reply:?}");
-    };
-    assert_eq!(parameter.as_deref(), Some("mask"));
-    assert!(message.contains("#977"), "{message}");
+    let masked_npts = statistic(&masked, "npts");
+    assert!(masked_npts > 0.0 && masked_npts < 2048.0, "{masked_npts}");
 }
 
 /// An absent or missing `imagename` is a refusal naming it (exit 2), as

@@ -53,13 +53,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 
-use ndarray::{Array1, ArrayD, Dimension, IxDyn};
-use ndarray_stats::{
-    Quantile1dExt,
-    interpolate::{Lower, Midpoint},
-};
-use noisy_float::types::n64;
-use ordered_float::OrderedFloat;
+use ndarray::{ArrayD, Dimension, IxDyn};
 
 use crate::execution::{
     ChunkTask, ExecutionInputs, ExecutionMode, ExecutionPolicy, ExecutionResources,
@@ -1293,43 +1287,50 @@ fn compute_order_summary(values: &[f64]) -> Result<OrderStatsSummary, LatticeErr
         return Ok(legacy_order_summary(values));
     }
 
-    let mut ordered = Array1::from_vec(values.iter().copied().map(OrderedFloat).collect());
-    let quantiles = Array1::from_vec(vec![n64(0.25), n64(0.75)]);
-    let quartiles = ordered
-        .view_mut()
-        .quantiles_mut(&quantiles.view(), &Lower)
-        .map_err(|err| {
-            LatticeError::InvalidTraversal(format!("quantile selection failed: {err}"))
-        })?;
-    let median = ordered
-        .view_mut()
-        .quantile_mut(n64(0.5), &Midpoint)
-        .map_err(|err| {
-            LatticeError::InvalidTraversal(format!("quantile selection failed: {err}"))
-        })?;
+    let mut ordered = values.to_vec();
+    ordered.sort_by(|left, right| left.total_cmp(right));
+    // casacore's statistics framework takes the quantile at fraction q of
+    // n sorted values at index ceil(q * n) - 1, without interpolation;
+    // the median still averages an even sample's middle pair.
+    let q1 = framework_fractile(&ordered, 0.25);
+    let q3 = framework_fractile(&ordered, 0.75);
+    let median = averaging_median(&ordered);
 
-    let mut deviations = Array1::from_vec(
-        values
-            .iter()
-            .map(|value| OrderedFloat((value - median.0).abs()))
-            .collect(),
-    );
-    let mad = deviations
-        .view_mut()
-        .quantile_mut(n64(0.5), &Midpoint)
-        .map_err(|err| {
-            LatticeError::InvalidTraversal(format!("quantile selection failed: {err}"))
-        })?;
-
-    let q1 = quartiles[0].0;
-    let q3 = quartiles[1].0;
+    let mut deviations: Vec<f64> = values.iter().map(|value| (value - median).abs()).collect();
+    deviations.sort_by(|left, right| left.total_cmp(right));
+    let mad = averaging_median(&deviations);
     Ok(OrderStatsSummary {
-        median: median.0,
+        median,
         q1,
         q3,
         quartile: q3 - q1,
-        mad: mad.0,
+        mad,
     })
+}
+
+/// The framework's fractile at `q`: the sorted value at
+/// `ceil(q * n) - 1`.
+fn framework_fractile(sorted: &[f64], q: f64) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return f64::NAN;
+    }
+    let index = (q * n as f64).ceil() as isize - 1;
+    sorted[index.clamp(0, n as isize - 1) as usize]
+}
+
+/// The framework's median: the middle value, or the average of an even
+/// sample's middle pair.
+fn averaging_median(sorted: &[f64]) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return f64::NAN;
+    }
+    if n.is_multiple_of(2) {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    } else {
+        sorted[n / 2]
+    }
 }
 
 fn legacy_order_summary(values: &[f64]) -> OrderStatsSummary {
