@@ -363,7 +363,7 @@ fn validate_shape(
         CalibrationParameterFamily::Float
             if matches!(
                 keywords.vis_cal.as_deref(),
-                Some("K Jones" | "Kcross Jones" | "KAntPos Jones" | "EGainCurve" | "TOpac")
+                Some("K Jones" | "Kcross Jones" | "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac")
             ) => {}
         CalibrationParameterFamily::Float => issues.push(issue(
             "unsupported-float-family",

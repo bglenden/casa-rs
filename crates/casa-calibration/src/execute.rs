@@ -2229,6 +2229,7 @@ fn apply_row_all_channels(
                         second,
                         correlation_types,
                         row.data_desc_id,
+                        table_plan.summary.table_subtype == "EPowerCurve",
                         weight_spectrum.as_mut(),
                         implicit_weight_spectrum.as_mut(),
                     )?;
@@ -3008,19 +3009,11 @@ fn fast_gain_curve_values(
         path: path.display().to_string(),
         source,
     })?;
-    let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees() as f32;
+    let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees();
     let mut values = [0.0_f32; FAST_GAIN_RECEPTOR_LIMIT];
     let mut flags = [false; FAST_GAIN_RECEPTOR_LIMIT];
     for receptor in 0..grid.receptor_count {
-        let base = receptor * 4;
-        let mut gain = grid.coefficients[[base, 0]];
-        let mut angle_power = 1.0_f32;
-        for coeff_index in 1..4 {
-            angle_power *= za_degrees;
-            gain += grid.coefficients[[base + coeff_index, 0]] * angle_power;
-        }
-        values[receptor] = gain;
-        flags[receptor] = (0..4).any(|coeff_index| grid.flags[[base + coeff_index, 0]]);
+        (values[receptor], flags[receptor]) = grid.evaluate(receptor, za_degrees);
     }
     let gains = FastReceptorGains {
         receptor_count: grid.receptor_count,
@@ -3198,19 +3191,13 @@ fn materialize_row_dependent_grid(
                 path: path.display().to_string(),
                 source,
             })?;
-            let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees() as f32;
+            let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees();
             let mut values = Vec::with_capacity(grid.receptor_count);
             let mut flags = Vec::with_capacity(grid.receptor_count);
             for receptor in 0..grid.receptor_count {
-                let base = receptor * 4;
-                let mut gain = grid.coefficients[[base, 0]];
-                let mut angle_power = 1.0_f32;
-                for coeff_index in 1..4 {
-                    angle_power *= za_degrees;
-                    gain += grid.coefficients[[base + coeff_index, 0]] * angle_power;
-                }
+                let (gain, flagged) = grid.evaluate(receptor, za_degrees);
                 values.push(Complex32::new(gain, 0.0));
-                flags.push((0..4).any(|coeff_index| grid.flags[[base + coeff_index, 0]]));
+                flags.push(flagged);
             }
             Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
                 receptor_count: grid.receptor_count,
@@ -3432,7 +3419,7 @@ pub(crate) struct LoadedCalibrationTable {
 enum TimeParameterFamily {
     Delay,
     Antpos,
-    GainCurve,
+    GainCurve { power: bool },
     Opacity,
 }
 
@@ -3441,7 +3428,8 @@ impl TimeParameterFamily {
         match subtype {
             "K Jones" | "Kcross Jones" => Some(Self::Delay),
             "KAntPos Jones" => Some(Self::Antpos),
-            "EGainCurve" => Some(Self::GainCurve),
+            "EGainCurve" => Some(Self::GainCurve { power: false }),
+            "EPowerCurve" => Some(Self::GainCurve { power: true }),
             "TOpac" => Some(Self::Opacity),
             _ => None,
         }
@@ -3508,6 +3496,7 @@ pub(crate) struct AntposGrid {
 #[derive(Clone)]
 pub(crate) struct GainCurveGrid {
     receptor_count: usize,
+    power: bool,
     coefficients: ArrayD<f32>,
     flags: ArrayD<bool>,
 }
@@ -3897,6 +3886,7 @@ impl GainCurveGrid {
         path: &Path,
         coefficients: &ArrayValue,
         flags: &ArrayValue,
+        power: bool,
     ) -> Result<Self, ApplyExecutionError> {
         let coefficients = match coefficients {
             ArrayValue::Float32(values) => values.clone(),
@@ -3914,14 +3904,23 @@ impl GainCurveGrid {
                 shape: flags.shape().to_vec(),
             });
         };
-        if coefficients.ndim() != 2 || coefficients.shape()[0] % 4 != 0 {
+        let terms = if power {
+            crate::gencal::POWER_CURVE_TERMS
+        } else {
+            4
+        };
+        if coefficients.ndim() != 2
+            || coefficients.shape()[0] % terms != 0
+            || (power && coefficients.shape()[0] != 2 * terms)
+        {
             return Err(ApplyExecutionError::UnsupportedParameterShape {
                 path: path.display().to_string(),
                 shape: coefficients.shape().to_vec(),
             });
         }
         Ok(Self {
-            receptor_count: coefficients.shape()[0] / 4,
+            receptor_count: coefficients.shape()[0] / terms,
+            power,
             // EGainCurve::calcAllJones evaluates the coefficients and marks
             // each Jones term valid regardless of the input flags.
             flags: ArrayD::from_elem(IxDyn(coefficients.shape()), false),
@@ -3953,20 +3952,42 @@ impl GainCurveGrid {
                 path: context.path.display().to_string(),
                 source,
             })?;
-        let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees() as f32;
+        let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees();
         let receptor = receptor.min(self.receptor_count.saturating_sub(1));
-        let base = receptor * 4;
-        let mut gain = self.coefficients[[base, 0]];
-        let mut angle_power = 1.0_f32;
-        for coeff_index in 1..4 {
-            angle_power *= za_degrees;
-            gain += self.coefficients[[base + coeff_index, 0]] * angle_power;
-        }
-        let flagged = (0..4).any(|coeff_index| self.flags[[base + coeff_index, 0]]);
+        let (gain, flagged) = self.evaluate(receptor, za_degrees);
         Ok(GainSample {
             value: Complex32::new(gain, 0.0),
             flagged,
         })
+    }
+
+    fn evaluate(&self, receptor: usize, za_degrees: f64) -> (f32, bool) {
+        if self.power {
+            let terms = crate::gencal::POWER_CURVE_TERMS;
+            let base = receptor * terms;
+            let mut loss = f64::from(self.coefficients[[base, 0]]);
+            let mut angle_power = 1.0;
+            for index in 1..terms {
+                angle_power *= za_degrees;
+                loss += f64::from(self.coefficients[[base + index, 0]]) * angle_power;
+            }
+            let missing = self.flags[[base, 0]];
+            return if !missing && loss >= 0.0 {
+                (loss.sqrt() as f32, false)
+            } else {
+                (0.0, true)
+            };
+        }
+        let za_degrees = za_degrees as f32;
+        let base = receptor * 4;
+        let mut gain = self.coefficients[[base, 0]];
+        let mut angle_power = 1.0_f32;
+        for index in 1..4 {
+            angle_power *= za_degrees;
+            gain += self.coefficients[[base + index, 0]] * angle_power;
+        }
+        let flagged = (0..4).any(|index| self.flags[[base + index, 0]]);
+        (gain, flagged)
     }
 }
 
@@ -4127,7 +4148,7 @@ fn geometry_engine_for_plan(
     let needs_geometry = plan.calibration_tables.iter().any(|table| {
         matches!(
             table.summary.table_subtype.as_str(),
-            "KAntPos Jones" | "EGainCurve" | "TOpac"
+            "KAntPos Jones" | "EGainCurve" | "EPowerCurve" | "TOpac"
         )
     });
     if !needs_geometry {
@@ -4173,7 +4194,7 @@ fn load_parameters(
     let supports_calwt = table_plan.summary.parameter_family == CalibrationParameterFamily::Complex
         || matches!(
             table_plan.summary.table_subtype.as_str(),
-            "TOpac" | "EGainCurve"
+            "TOpac" | "EGainCurve" | "EPowerCurve"
         );
 
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
@@ -4254,7 +4275,10 @@ fn load_parameters(
                 )?)
             }
             CalibrationParameterFamily::Float
-                if table_plan.summary.table_subtype.as_str() == "EGainCurve" =>
+                if matches!(
+                    table_plan.summary.table_subtype.as_str(),
+                    "EGainCurve" | "EPowerCurve"
+                ) =>
             {
                 let coefficients = table
                     .cell_accessor(row_index, COL_FPARAM)
@@ -4267,6 +4291,7 @@ fn load_parameters(
                     &table_plan.spec.path,
                     coefficients,
                     flags,
+                    table_plan.summary.table_subtype == "EPowerCurve",
                 )?)
             }
             CalibrationParameterFamily::Float
@@ -5388,6 +5413,7 @@ mod tests {
             flagged: false,
         }));
         let gain_curve = Arc::new(CalibrationGrid::GainCurve(GainCurveGrid {
+            power: false,
             receptor_count: 1,
             coefficients: ArrayD::from_shape_vec(IxDyn(&[4, 1]).f(), vec![1.0_f32, 0.0, 0.0, 0.0])
                 .unwrap(),

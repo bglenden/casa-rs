@@ -160,7 +160,7 @@ fn refuse_report_in_product(
     request: &CalibrationTaskRequest,
     task: &TaskInvocation<'_>,
 ) -> Result<(), TaskFailure> {
-    let mut products = scientific_paths(request);
+    let mut products = scientific_paths(request)?;
     if task.surface() == "fluxscale"
         && let Some(vis) = task.text("vis")?
     {
@@ -184,7 +184,9 @@ fn refuse_report_in_product(
     Ok(())
 }
 
-fn scientific_paths(request: &CalibrationTaskRequest) -> Vec<std::path::PathBuf> {
+fn scientific_paths(
+    request: &CalibrationTaskRequest,
+) -> Result<Vec<std::path::PathBuf>, TaskFailure> {
     let (mut paths, chain) = match request {
         CalibrationTaskRequest::SolveGain(r) => (
             vec![r.measurement_set.clone(), r.output_table.clone()],
@@ -213,21 +215,19 @@ fn scientific_paths(request: &CalibrationTaskRequest) -> Vec<std::path::PathBuf>
             (vec![r.input_ms.clone(), r.output_ms.clone()], &[][..])
         }
         CalibrationTaskRequest::Gencal(r) => {
-            let r = &r.prior;
-            let mut paths = vec![r.measurement_set.clone(), r.output_table.clone()];
-            if r.caltype == crate::GencalType::Gceff
-                && let Some(source) = r
-                    .gaincurve_table
-                    .clone()
-                    .or_else(crate::gencal::default_vla_gaincurve_table)
-            {
-                paths.push(source);
-            }
+            let mut paths = vec![
+                r.prior.measurement_set.clone(),
+                r.prior.output_table.clone(),
+            ];
+            paths.extend(
+                crate::gencal::gaincurve_report_input(&r.prior, r.gaincurve_infile.as_deref())
+                    .map_err(|error| TaskFailure::validation(error.to_string()).at("vis"))?,
+            );
             (paths, &[][..])
         }
     };
     paths.extend(chain.iter().map(|table| table.path.clone()));
-    paths
+    Ok(paths)
 }
 
 /// What `surface` returns for `result`, as CASA's task of that name does;

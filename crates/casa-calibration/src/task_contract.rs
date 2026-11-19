@@ -173,6 +173,9 @@ pub struct GencalTaskRequest {
     /// Ordered CASA receptor selector. Empty applies the value to both receptors.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub polarization: String,
+    /// Explicit CASA gain-curve `infile`, which uses unmodified antenna names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gaincurve_infile: Option<PathBuf>,
 }
 
 /// Request for planning an `applycal`-class operation.
@@ -539,6 +542,7 @@ impl CalibrationTaskRequest {
             Self::Gencal(request) => crate::gencal::gencal_with_output_mode(
                 &request.prior,
                 &request.polarization,
+                request.gaincurve_infile.as_deref(),
                 mode.unwrap_or(Update),
             )
             .map(CalibrationTaskResult::Gencal)
