@@ -37,6 +37,7 @@ struct CliOptions {
     y_axis: Option<MsAxis>,
     y_axis2: Option<MsAxis>,
     data_column: MsDataColumn,
+    x_data_column: Option<MsDataColumn>,
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
     avgtime: Option<f64>,
@@ -216,12 +217,15 @@ fn run_task(
             })?;
             Some((load, library))
         };
-        (options_from_plotms(task)?, calibration)
+        (
+            options_from_plotms(task, calibration.is_some())?,
+            calibration,
+        )
     } else {
         (options_from(task)?, None)
     };
     if let Some((load, library)) = calibration {
-        return run_calibrated_plot(task, options, load, &library);
+        return run_calibrated_plot(task, options, payload, load, &library);
     }
     let outcome = run(options)?;
     let success = if task.surface() == "plotms" {
@@ -241,6 +245,7 @@ fn run_task(
 fn run_calibrated_plot(
     task: &TaskInvocation<'_>,
     options: CliOptions,
+    array_payload: Option<&Path>,
     load: PlotMsCalibrationLoader,
     library: &[String],
 ) -> Result<TaskSuccess, TaskFailure> {
@@ -257,14 +262,43 @@ fn run_calibrated_plot(
             options.ms_path.display()
         ))
     })?;
-    let calibration = load(&ms, &options.selection, library)?;
-    if let Some(output) = output {
+    let mut calibration = load(&ms, &options.selection, library)?;
+    calibration.x_data_column = options.x_data_column;
+    let show = task.flag("showgui")?;
+    let format = task.text("expformat")?.filter(|ext| !ext.is_empty());
+    let is_text = output.is_some_and(|path| {
+        format
+            .as_deref()
+            .or_else(|| path.extension().and_then(std::ffi::OsStr::to_str))
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+    });
+    let text_file = output.filter(|_| is_text);
+    let figure_file = output.filter(|_| !is_text);
+    let mut plots = Vec::new();
+    if output.is_some() || show {
         let spec = build_explore_spec(&options).map_err(TaskFailure::validation)?;
         let payload = build_calibrated_plotms_payload(&ms, &spec, &calibration)
             .map_err(TaskFailure::execution)?;
-        super::plotms_text::write_calibrated_export(task, &ms, &payload, output, library)?;
+        if show || figure_file.is_some() {
+            let arrays = array_payload.ok_or_else(|| {
+                TaskFailure::validation("use casars.tasks.plotms for rendered figures")
+            })?;
+            plots.push(super::plotms_figure::prepare(
+                task,
+                &payload,
+                arrays,
+                figure_file,
+                show,
+            )?);
+        }
+        if let Some(path) = text_file {
+            super::plotms_text::write_calibrated_export(task, &ms, &payload, path, library)?;
+        }
     }
-    TaskSuccess::new(CasaValue::None, &serde_json::json!({"text_file": output}))
+    TaskSuccess::new(
+        CasaValue::None,
+        &serde_json::json!({"text_file": text_file, "plots": plots}),
+    )
 }
 
 /// Run one command line. Everything a refusal can find is checked before the
@@ -981,6 +1015,7 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
         y_axis: parsed(task, "y_axis", MsAxis::parse)?,
         y_axis2: parsed(task, "y_axis2", MsAxis::parse)?,
         data_column: required(task, "datacolumn", MsDataColumn::parse)?,
+        x_data_column: None,
         color_by: required(task, "color_by", MsColorAxis::parse)?,
         avgchannel: parsed(task, "avgchannel", number::<usize>)?,
         avgtime: parsed(task, "avgtime", number::<f64>)?,
@@ -1031,7 +1066,10 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
 }
 
 /// Translate the CASA PlotMS spellings to the existing MS exploration request.
-fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
+fn options_from_plotms(
+    task: &TaskInvocation<'_>,
+    on_the_fly: bool,
+) -> Result<CliOptions, TaskFailure> {
     if task.flag("showatm")? || task.flag("showtsky")? {
         return Err(TaskFailure::validation(
             "MeasurementSet atmospheric overlays are pending #1526",
@@ -1050,12 +1088,16 @@ fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFail
             .and_then(std::ffi::OsStr::to_str)
             .map(str::to_owned)
     });
-    let plot_format = export_format
-        .as_deref()
-        .map(MsExportFormat::parse)
-        .transpose()
-        .map_err(|_| TaskFailure::validation("MeasurementSet figure export is pending #1032"))?
-        .unwrap_or(MsExportFormat::Txt);
+    let plot_format = if on_the_fly {
+        MsExportFormat::Txt
+    } else {
+        export_format
+            .as_deref()
+            .map(MsExportFormat::parse)
+            .transpose()
+            .map_err(|_| TaskFailure::validation("MeasurementSet figure export is pending #1032"))?
+            .unwrap_or(MsExportFormat::Txt)
+    };
     let x_axis = text("xaxis")?
         .map_or(Ok(MsAxis::Time), |axis| {
             MsAxis::parse(&axis.to_ascii_lowercase())
@@ -1086,14 +1128,13 @@ fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFail
     };
     let x_column = data_column(text("xdatacolumn")?)?;
     let y_column = data_column(plotms_column(task.value("ydatacolumn"))?)?;
-    if let (Some(x), Some(y)) = (x_column, y_column)
-        && x != y
-    {
+    let data_column = y_column.or(x_column).unwrap_or(MsDataColumn::Data);
+    let x_data_column = x_column.filter(|column| *column != data_column);
+    if x_data_column.is_some() && !on_the_fly {
         return Err(TaskFailure::validation(
             "distinct MeasurementSet X and Y data columns are pending #1032",
         ));
     }
-    let data_column = y_column.or(x_column).unwrap_or(MsDataColumn::Data);
     let color_by = text("coloraxis")?
         .map_or(Ok(MsColorAxis::None), |axis| {
             MsColorAxis::parse(&axis.to_ascii_lowercase())
@@ -1128,6 +1169,7 @@ fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFail
         y_axis: Some(y_axis),
         y_axis2,
         data_column,
+        x_data_column,
         color_by,
         avgchannel: average_text("avgchannel")?
             .map(|value| number::<usize>(&value))

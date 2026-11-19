@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use super::calibration::text::significant;
+use super::calibration::{
+    averaging,
+    text::{significant, write_averaging_header},
+};
 use super::{MsAxis, MsPlotPayload, MsScatterSeries, listobs};
 use crate::MeasurementSet;
 use crate::columns::main_ids;
@@ -33,6 +36,7 @@ pub(super) fn write_calibrated_export(
     write_header(&mut writer, task, &task.path("vis")?, library)?;
     let index = task.integer("plotindex")?;
     let verbose = task.flag("verbose")?;
+    let average_time = averaging::options(task)?.avgtime.is_some();
     let mut metadata = Metadata::new(ms).map_err(io)?;
     match payload {
         MsPlotPayload::Scatter(plot) => {
@@ -43,6 +47,7 @@ pub(super) fn write_calibrated_export(
                 plot.x_axis,
                 &plot.series,
                 verbose,
+                average_time,
             )
             .map_err(io)?;
         }
@@ -61,6 +66,7 @@ pub(super) fn write_calibrated_export(
                     grid.x_axis,
                     &plot.series,
                     verbose,
+                    average_time,
                 )
                 .map_err(io)?;
             }
@@ -116,6 +122,15 @@ fn write_header(
             }
         }
     }
+    let average = averaging::options(task)?;
+    let requested_channels = if task.flag("averagedata")? {
+        task.text("avgchannel")?
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|&value| value > 0.0)
+    } else {
+        None
+    };
+    write_averaging_header(output, &average, requested_channels).map_err(io)?;
     let label = match library {
         [filename] if !filename.contains('=') => std::path::absolute(filename)
             .map_err(io)?
@@ -132,6 +147,7 @@ fn write_series(
     x_axis: MsAxis,
     data: &[MsScatterSeries],
     verbose: bool,
+    average_time: bool,
 ) -> std::io::Result<()> {
     let mut previous_y = None;
     for series in data {
@@ -153,6 +169,13 @@ fn write_series(
             }
         }
         for (&(x, y), point) in series.points.iter().zip(&series.provenance) {
+            let time_coordinate = if average_time && x_axis == MsAxis::Time {
+                Some(x)
+            } else if average_time && series.y_axis == MsAxis::Time {
+                Some(y)
+            } else {
+                None
+            };
             let x = coordinate(x_axis, x);
             let y = coordinate(series.y_axis, y);
             if verbose {
@@ -178,7 +201,7 @@ fn write_series(
                     row.ant2,
                     row.ant1name,
                     row.ant2name,
-                    row.time,
+                    time_coordinate.unwrap_or(row.time),
                     row.spw,
                     row.observation
                 )?;
