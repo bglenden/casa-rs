@@ -181,7 +181,7 @@ impl RowUpdate {
         Self {
             row,
             values: ArrayValue::Float32(Array1::from_vec(values).into_dyn()),
-            row_flagged: (sigma && sample.row_flagged) || sample.flags.iter().all(|&flag| flag),
+            row_flagged: sample.flags.iter().all(|&flag| flag),
             flags: ArrayValue::Bool(sample.flags),
         }
     }
@@ -252,7 +252,6 @@ fn baseline_groups<'a>(
 struct Samples {
     values: ArrayD<Complex32>,
     flags: ArrayD<bool>,
-    row_flagged: bool,
 }
 
 impl Samples {
@@ -313,11 +312,7 @@ fn read_integration(
             }
             values -= model;
         }
-        samples.push(Samples {
-            values,
-            flags,
-            row_flagged: row.flag_row,
-        });
+        samples.push(Samples { values, flags });
     }
     let channels = samples[0].values.len_of(Axis(1));
     if samples
