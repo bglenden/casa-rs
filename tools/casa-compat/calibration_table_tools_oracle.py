@@ -225,6 +225,21 @@ def accumulate(root, driver, vis, gains, solved):
     for name, table in [('gain', gains), ('scalar', scalar)]:
         paired_accumulation(root, driver, vis, table, table, name)
     paired_accumulation(root, driver, vis, gains, gains, 'in-place', interp='nearest', alias=True)
+    linked = root/'file-linked.cal'
+    copy_ms(gains, linked)
+    link_sources = []
+    for i, relative in enumerate(('table.dat', 'SPECTRAL_WINDOW/table.dat')):
+        table_file = linked/relative
+        storage_file = root/f'outside-{i}.dat'
+        table_file.rename(storage_file)
+        table_file.symlink_to(storage_file)
+        link_sources.append((relative, storage_file, storage_file.read_bytes()))
+    _, independent = paired_accumulation(root, driver, vis, linked, gains, 'file-linked-input')
+    for relative, storage_file, original in link_sources:
+        assert storage_file.read_bytes() == original
+        assert (linked/relative).is_symlink()
+        assert not (independent/relative).is_symlink()
+
     control = root/'ordered.cal'
     ordered_view(solved, control)
     for name, extra in [
@@ -324,7 +339,7 @@ def accumulate(root, driver, vis, gains, solved):
     from casars import tasks as native
     apply_round_trip(root, native, vis, 'gain')
     bandpass_oracle(root, driver, vis)
-    print('28 paired accumulation case groups and four downstream applications', flush=True)
+    print('29 paired accumulation case groups and four downstream applications', flush=True)
 
 
 def main():

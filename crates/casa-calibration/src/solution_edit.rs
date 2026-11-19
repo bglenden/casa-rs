@@ -10,7 +10,7 @@ use casa_types::{ScalarValue, Value};
 use crate::CalibrationOutputMode;
 use crate::constants::{COL_SPECTRAL_WINDOW_ID, STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE};
 use crate::output::CalibrationOutput;
-use crate::paths::{copy_dir_recursive, normalized, overlap, subtable_owner};
+use crate::paths::{copy_editable_table_tree, normalized, overlap, subtable_owner};
 
 pub(crate) fn edit_calibration_table(
     input: &Path,
@@ -51,7 +51,7 @@ pub(crate) fn stage_calibration_table_edit(
             .deep_copy(TableOptions::new(&output.staging))
             .map_err(error_text)?;
     } else {
-        copy_dir_recursive(&input, &output.staging).map_err(error_text)?;
+        copy_editable_table_tree(&input, &output.staging).map_err(error_text)?;
     }
     let mut lock = TableWriteLock::acquire_to_reread(&output.staging, 1).map_err(error_text)?;
     let mut table = Table::open(TableOptions::new(&output.staging)).map_err(error_text)?;
@@ -98,7 +98,7 @@ fn stage_subtables(
             } else if target.exists() {
                 std::fs::remove_dir_all(&target).map_err(error_text)?;
             }
-            copy_dir_recursive(&origin, &target).map_err(error_text)?;
+            copy_editable_table_tree(&origin, &target).map_err(error_text)?;
         }
         staged.keywords_mut().upsert(
             name,
