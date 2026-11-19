@@ -12,7 +12,10 @@ use crate::tools::{LogLine, emit, table};
 use super::PyImageTool;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 
-fn history_messages(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
+pub(super) fn string_vector(
+    value: Option<&Bound<'_, PyAny>>,
+    argument: &str,
+) -> PyResult<Vec<String>> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -27,7 +30,7 @@ fn history_messages(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
         .map(|message| {
             message
                 .extract::<String>()
-                .map_err(|_| PyTypeError::new_err("list _history must contain strings"))
+                .map_err(|_| PyTypeError::new_err(format!("list _{argument} must contain strings")))
         })
         .collect()
 }
@@ -73,7 +76,7 @@ impl PyImageTool {
         origin: &str,
         history: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        let mut messages = history_messages(history)?;
+        let mut messages = string_vector(history, "history")?;
         let only_empty_string = matches!(messages.as_slice(), [message] if message.is_empty());
         let set = py.detach(|| {
             let state = self.state();

@@ -13415,6 +13415,52 @@
       "persistence_class": "profile"
     },
     {
+      "id": "statistics.listing_file",
+      "semantic_revision": 1,
+      "casa_name": "listfile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "file"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Write the solution listing to a new text file. Empty writes to the terminal.",
+        "details": null,
+        "examples": [
+          "solutions.txt"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "statistics.listing_pagerows",
+      "semantic_revision": 1,
+      "casa_name": "pagerows",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Maximum rows per page. Zero or a negative value prints a continuous listing.",
+        "details": null,
+        "examples": [
+          "50",
+          "0"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "plotms.vis",
       "semantic_revision": 1,
       "casa_name": "vis",

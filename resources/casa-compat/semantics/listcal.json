@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "task": "listcal",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35",
+  "parameters": {
+    "vis": {
+      "scope": "MeasurementSet supplying fields, antenna expressions and spectral-window/channel selection.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "solution-listing"
+      ]
+    },
+    "caltable": {
+      "scope": "Existing CASA antenna calibration table. Complex and real solutions use their subtype's units and labels.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "solution-listing"
+      ]
+    },
+    "field": {
+      "scope": "Field names, IDs and CASA field expressions. Empty lists all available fields.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "solution-listing"
+      ]
+    },
+    "antenna": {
+      "scope": "Antenna names, IDs, ranges and the first antenna list of a baseline expression.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "solution-listing"
+      ]
+    },
+    "spw": {
+      "scope": "Spectral windows and channel ranges, including stride. The first range for a repeated window is listed.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "solution-listing"
+      ]
+    },
+    "listfile": {
+      "scope": "A new text file or terminal output when empty. Existing files are preserved.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "solution-listing"
+      ]
+    },
+    "pagerows": {
+      "scope": "Rows per page and the terminal continue, quit and list-all controls. Zero and negative values print continuously.",
+      "evidence": [
+        "paired"
+      ],
+      "status": "Implemented",
+      "behaviors": [
+        "solution-listing"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "solution-listing",
+      "title": "Selected calibration solution listings",
+      "status": "Implemented",
+      "scope": "Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt.",
+      "gap": "The incomplete-antenna error behavior is recorded below.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "reject-incomplete-antenna-integration",
+      "state": "Proposed",
+      "inputs": "A standard G Jones calibration solution table with the final antenna row removed.",
+      "casa": "Terminates after opening the output while reshaping the window into antenna blocks.",
+      "ours": "Raises a recoverable layout error before publishing the output.",
+      "rationale": "An incomplete block cannot be associated with the requested antenna solutions.",
+      "impact": "The caller can handle the error and the listing path remains available for a corrected retry.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input Python task and terminal output",
+      "state": "passed",
+      "scope": "Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt.",
+      "result": "20 byte-exact files, eight terminal cases and 15 refusal cases passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35",
+      "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/listcal_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/listcal-20261119.json",
+      "links": [
+        "tools/casa-compat/listcal_oracle.py"
+      ]
+    }
+  }
+}
