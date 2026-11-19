@@ -277,17 +277,6 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
-    let source_column = request.data_column.source_name();
-    if !input
-        .main_table()
-        .schema()
-        .is_some_and(|schema| schema.contains_column(source_column))
-    {
-        return Err(MsTransformError::MissingDataColumn {
-            path: request.input_ms.display().to_string(),
-            column: source_column.to_string(),
-        });
-    }
     let stage_started_at = Instant::now();
     let selection_error = |error| MsTransformError::SelectRows {
         path: request.input_ms.display().to_string(),
@@ -313,6 +302,17 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
                 selector: request.spw.clone(),
                 reason: source.to_string(),
             })?;
+    let source_column = request.data_column.source_name();
+    if !input
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column(source_column))
+    {
+        return Err(MsTransformError::MissingDataColumn {
+            path: request.input_ms.display().to_string(),
+            column: source_column.to_string(),
+        });
+    }
     let mut selection = request.selection.clone();
     if selection.spw.is_none() {
         selection.spw = Some(spw.to_string());

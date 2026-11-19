@@ -35,12 +35,11 @@ fn main() -> ExitCode {
 /// Both surfaces run the one transform; CASA's tasks return None.
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = transform_request(task)?;
-    // The output the transform refuses before it starts is the argument's
-    // fault; anything else failed the transform.
     let report = mstransform(&request).map_err(|error| match error {
         MsTransformError::OutputExists { .. } | MsTransformError::SameInputOutput { .. } => {
             TaskFailure::validation(error.to_string()).at("outputvis")
         }
+        MsTransformError::InvalidSpw { .. } => TaskFailure::validation(error.to_string()).at("spw"),
         other => TaskFailure::execution(other.to_string()),
     })?;
     ms_task_success(CasaValue::None, &report)

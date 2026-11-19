@@ -142,6 +142,19 @@ def empty_selection(root, source, name, time):
         assert not path.exists(), path
 
 
+def malformed_spw(root, source, name):
+    for module in (casatasks, tasks):
+        path = root / f"{name}-spw-error-{module.__name__}.ms"
+        try:
+            getattr(module, name)(vis=str(source), outputvis=str(path), datacolumn="data",
+                                  spw="0:bogus")
+        except RuntimeError as error:
+            assert "bogus" in str(error), (name, str(error))
+        else:
+            raise AssertionError(f"{module.__name__}.{name} accepted a malformed channel selector")
+        assert not path.exists(), path
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14], casatasks.version()
     with TemporaryDirectory(prefix="ms-task-selection-") as scratch:
@@ -166,6 +179,7 @@ def main():
             for case, options in cases.items():
                 succeeds(root, source, name, case, options)
             empty_selection(root, source, name, times[-1] + 1)
+            malformed_spw(root, source, name)
         for column, values in columns_from_casacore(source, MAIN).items():
             np.testing.assert_array_equal(values, before[column], err_msg=f"input {column}")
         add_second_window(source)
@@ -176,7 +190,7 @@ def main():
             succeeds(root, source, name, "unused-window", {"field": "PHASE"}, subtables)
             selected = succeeds(root, source, name, "compact-second-window", {"spw": "SPW1:2~6"}, subtables)
             succeeds(root, selected, name, "native-input", {"spw": "SPW1:0~2"}, subtables)
-        print(f"{(len(cases) + 3) * 2} selected products and 2 rejected calls matched CASA 6.7.6.14")
+        print(f"{(len(cases) + 3) * 2} selected products and 4 rejected calls matched CASA 6.7.6.14")
 
 
 if __name__ == "__main__":

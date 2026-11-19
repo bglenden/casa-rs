@@ -218,6 +218,14 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_gencal(values)
     if name == "getantposalma":
         return _call_getantposalma(values)
+    if name in ("split", "mstransform"):
+        try:
+            return run(name, **values).value
+        except TaskParameterError as error:
+            message = error.completion.message or ""
+            if error.completion.parameter == "spw" and message.startswith("invalid spectral-window selection "):
+                raise RuntimeError(message) from error
+            raise
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):
