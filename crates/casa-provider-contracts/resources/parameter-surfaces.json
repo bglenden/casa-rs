@@ -12621,8 +12621,7 @@
             "provider": {"field": "optical"},
             "python": {"name": "optical"},
             "presentation": {"label": "Optical Velocity", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "bitpix",
@@ -12636,8 +12635,7 @@
             "provider": {"field": "bitpix"},
             "python": {"name": "bitpix"},
             "presentation": {"label": "Bits per Pixel", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "minpix",
@@ -12651,10 +12649,6 @@
             "provider": {"field": "minpix"},
             "python": {"name": "minpix"},
             "presentation": {"label": "Minimum Pixel", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "bitpix", "value": {"kind": "integer", "value": 16}}
           }
         },
         {
@@ -12669,10 +12663,6 @@
             "provider": {"field": "maxpix"},
             "python": {"name": "maxpix"},
             "presentation": {"label": "Maximum Pixel", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "bitpix", "value": {"kind": "integer", "value": 16}}
           }
         },
         {
@@ -12687,8 +12677,7 @@
             "provider": {"field": "dropstokes"},
             "python": {"name": "dropstokes"},
             "presentation": {"label": "Drop Stokes", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "stokeslast",
@@ -12702,8 +12691,7 @@
             "provider": {"field": "stokeslast"},
             "python": {"name": "stokeslast"},
             "presentation": {"label": "Stokes Last", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "history",
@@ -12717,8 +12705,7 @@
             "provider": {"field": "history"},
             "python": {"name": "history"},
             "presentation": {"label": "History", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "dropdeg",
@@ -12732,8 +12719,7 @@
             "provider": {"field": "dropdeg"},
             "python": {"name": "dropdeg"},
             "presentation": {"label": "Drop Degenerate Axes", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "imagename",
@@ -12935,7 +12921,7 @@
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
@@ -13159,7 +13145,7 @@
         },
         {
           "name": "array",
-          "concept": {"id": "ms.selection.array", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.array", "semantic_revision": 2},
           "order": 13,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13167,14 +13153,14 @@
           "projections": {
             "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
             "provider": {"field": "array"},
-            "python": {"name": "array"},
+            "python": {"name": "array", "type_hint": "str"},
             "presentation": {"label": "Array", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "reviewed_homonym": {"review_id": "#1614", "reason": "The transform tasks read the CASA variant without rewriting selector text."}
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 4},
           "order": 14,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13182,10 +13168,9 @@
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange"},
-            "python": {"name": "uvrange"},
+            "python": {"name": "uvrange", "type_hint": "str"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "observation",
@@ -13203,7 +13188,7 @@
         },
         {
           "name": "feed",
-          "concept": {"id": "ms.selection.feed", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.feed", "semantic_revision": 2},
           "order": 16,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13211,10 +13196,10 @@
           "projections": {
             "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
             "provider": {"field": "feed"},
-            "python": {"name": "feed"},
+            "python": {"name": "feed", "type_hint": "str"},
             "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "reviewed_homonym": {"review_id": "#1614", "reason": "The transform tasks read the CASA variant without rewriting selector text."}
         },
         {
           "name": "datacolumn",
@@ -13797,7 +13782,7 @@
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
@@ -13976,7 +13961,7 @@
         },
         {
           "name": "array",
-          "concept": {"id": "ms.selection.array", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.array", "semantic_revision": 2},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13984,14 +13969,13 @@
           "projections": {
             "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
             "provider": {"field": "array"},
-            "python": {"name": "array"},
+            "python": {"name": "array", "type_hint": "str | int"},
             "presentation": {"label": "Array", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 4},
           "order": 11,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13999,10 +13983,9 @@
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange"},
-            "python": {"name": "uvrange"},
+            "python": {"name": "uvrange", "type_hint": "str"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "observation",
@@ -14020,7 +14003,7 @@
         },
         {
           "name": "feed",
-          "concept": {"id": "ms.selection.feed", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.feed", "semantic_revision": 2},
           "order": 13,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -14028,10 +14011,9 @@
           "projections": {
             "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
             "provider": {"field": "feed"},
-            "python": {"name": "feed"},
+            "python": {"name": "feed", "type_hint": "str | int"},
             "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "datacolumn",
@@ -35152,6 +35134,460 @@
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Statistical weight estimation has its own binning and parameter domains."
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "calstat",
+      "contract_version": 1,
+      "display_name": "Calibration Statistics",
+      "category": "Calibration",
+      "summary": "Compute descriptive statistics for a calibration table column.",
+      "provider_family": "calibration",
+      "casa_task": "calstat",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "calstat"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "parameter.caltable",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Calibration Table",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset",
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat reads an existing table, while the calibration solve surfaces name an output."
+          }
+        },
+        {
+          "name": "axis",
+          "concept": {
+            "id": "statistics.calibration_axis",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "amplitude"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--axis"
+              ]
+            },
+            "provider": {
+              "field": "axis"
+            },
+            "python": {
+              "name": "axis"
+            },
+            "presentation": {
+              "label": "Statistics Axis",
+              "group": "Statistics"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat selects a numeric column or complex projection. The image moments axis selects a coordinate."
+          }
+        },
+        {
+          "name": "datacolumn",
+          "concept": {
+            "id": "statistics.calibration_datacolumn",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "gain"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--datacolumn"
+              ]
+            },
+            "provider": {
+              "field": "datacolumn"
+            },
+            "python": {
+              "name": "datacolumn"
+            },
+            "presentation": {
+              "label": "Data Column",
+              "group": "Statistics"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat names a literal calibration or visibility table column, including complex projection mode."
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "listcal",
+      "contract_version": 1,
+      "display_name": "List Calibration Solutions",
+      "category": "Calibration",
+      "summary": "List selected antenna calibration solutions and flags.",
+      "provider_family": "calibration",
+      "casa_task": "listcal",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "listcal"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "listfile",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "listfile"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "vis"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "parameter.caltable",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Calibration Table",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "ms.selection.field",
+            "semantic_revision": 4
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field"
+            },
+            "python": {
+              "name": "field"
+            },
+            "presentation": {
+              "label": "Fields",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "ms.selection.antenna",
+            "semantic_revision": 4
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ]
+            },
+            "provider": {
+              "field": "antenna"
+            },
+            "python": {
+              "name": "antenna"
+            },
+            "presentation": {
+              "label": "Antennas",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw"
+            },
+            "python": {
+              "name": "spw"
+            },
+            "presentation": {
+              "label": "Spectral Windows and Channels",
+              "group": "Selection"
+            }
+          }
+        },
+        {
+          "name": "listfile",
+          "concept": {
+            "id": "statistics.listing_file",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--listfile"
+              ]
+            },
+            "provider": {
+              "field": "listfile"
+            },
+            "python": {
+              "name": "listfile"
+            },
+            "presentation": {
+              "label": "Listing File",
+              "group": "Output"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "The listing file is the primary output of the solution listing task."
+          }
+        },
+        {
+          "name": "pagerows",
+          "concept": {
+            "id": "statistics.listing_pagerows",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 50
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pagerows"
+              ]
+            },
+            "provider": {
+              "field": "pagerows"
+            },
+            "python": {
+              "name": "pagerows"
+            },
+            "presentation": {
+              "label": "Rows Per Page",
+              "group": "Output"
+            }
           }
         }
       ]

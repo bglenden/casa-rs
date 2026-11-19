@@ -70,14 +70,48 @@ impl ImageHistoryEntry {
     }
 }
 
+/// Internal history entry retaining `PRIORITY` alongside time, location, and message for FITS export.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LogtableHistoryEntry {
+    pub(crate) time_mjd_seconds: f64,
+    pub(crate) priority: String,
+    pub(crate) location: String,
+    pub(crate) message: String,
+}
+
+/// Read the persistent image log including `PRIORITY` for `exportfits` `HISTORY` cards.
+pub(crate) fn read_logtable_full_history(
+    path: impl AsRef<Path>,
+) -> Result<Vec<LogtableHistoryEntry>, ImageError> {
+    read_logtable_entries(path.as_ref())
+}
+
 /// Read the persistent image log for replay by `imhead(mode="history")`.
 pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
-    let image = path.as_ref();
+    Ok(read_logtable_entries(path.as_ref())?
+        .into_iter()
+        .map(|entry| ImageHistoryEntry {
+            time_mjd_seconds: entry.time_mjd_seconds,
+            location: entry.location,
+            message: entry.message,
+        })
+        .collect())
+}
+
+fn read_logtable_entries(image: &Path) -> Result<Vec<LogtableHistoryEntry>, ImageError> {
     if image.is_file() {
-        return crate::fits_read::history_entries(image);
+        return Ok(crate::fits_read::history_entries(image)?
+            .into_iter()
+            .map(|entry| LogtableHistoryEntry {
+                time_mjd_seconds: entry.time_mjd_seconds,
+                priority: "INFO".to_string(),
+                location: entry.location,
+                message: entry.message,
+            })
+            .collect());
     }
-    let path = image.join(LOGTABLE_NAME);
-    if !path.exists() {
+    let logtable_path = image.join(LOGTABLE_NAME);
+    if !logtable_path.exists() {
         let table = Table::open(TableOptions::new(image))?;
         if table.keywords().get(LOGTABLE_KEYWORD).is_some() {
             return Err(ImageError::InvalidMetadata(
@@ -86,10 +120,21 @@ pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryE
         }
         return Ok(Vec::new());
     }
-    let table = Table::open(TableOptions::new(path))?;
-    let mut entries = Vec::new();
+    let table = Table::open(TableOptions::new(logtable_path))?;
+    let mut entries = Vec::with_capacity(table.row_count());
     for row in 0..table.row_count() {
         let time = table.cell_accessor(row, "TIME")?.value()?;
+        let priority = table
+            .cell_accessor(row, "PRIORITY")
+            .ok()
+            .and_then(|cell| cell.value().ok().flatten())
+            .and_then(|value| match value {
+                Value::Scalar(ScalarValue::String(priority)) if !priority.trim().is_empty() => {
+                    Some(priority.trim().to_string())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| "INFO".to_string());
         let location = table.cell_accessor(row, "LOCATION")?.value()?;
         let message = table.cell_accessor(row, "MESSAGE")?.value()?;
         match (time, location, message) {
@@ -97,8 +142,9 @@ pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryE
                 Some(Value::Scalar(ScalarValue::Float64(time))),
                 Some(Value::Scalar(ScalarValue::String(location))),
                 Some(Value::Scalar(ScalarValue::String(message))),
-            ) => entries.push(ImageHistoryEntry {
+            ) => entries.push(LogtableHistoryEntry {
                 time_mjd_seconds: *time,
+                priority,
                 location: location.clone(),
                 message: message.clone(),
             }),
@@ -2291,6 +2337,59 @@ impl<T: ImagePixel> PagedImage<T> {
         }
         if self.default_mask_name().as_deref() == Some(name) {
             self.table.keywords_mut().remove(DEFAULT_MASK_KEYWORD);
+        }
+        Ok(())
+    }
+
+    /// Renames a mask while preserving its contents, order, and default status.
+    ///
+    /// # Errors
+    /// Returns an error for invalid names, a missing source, an occupied
+    /// destination, or an unsuccessful subtable rename.
+    pub fn rename_mask(&mut self, from: &str, to: &str) -> Result<(), ImageError> {
+        for name in [from, to] {
+            if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "Invalid mask name {name}"
+                )));
+            }
+        }
+        let Some(Value::Record(mut masks)) = self.table.keywords().get(MASKS_KEYWORD).cloned()
+        else {
+            return Err(ImageError::MaskNotFound(from.into()));
+        };
+        if masks.get(to).is_some() {
+            return Err(ImageError::InvalidMetadata(format!(
+                "Mask {to} already exists"
+            )));
+        }
+        if !masks.rename_field(from, to) {
+            return Err(ImageError::MaskNotFound(from.into()));
+        }
+        if let Some(path) = &self.path {
+            let source = path.join(from);
+            if source.exists() {
+                casa_tables::publication::rename_without_replacing(&source, &path.join(to))
+                    .map_err(|error| ImageError::Io(error.to_string()))?;
+            }
+            if let Some(Value::Record(region)) = masks.get_mut(to)
+                && matches!(
+                    region.get("mask"),
+                    Some(Value::TableRef(_) | Value::Scalar(ScalarValue::String(_)))
+                )
+            {
+                region.upsert("mask", Value::TableRef(subtable_reference(to)));
+            }
+        }
+        if let Some(mask) = self.temp_masks.remove(from) {
+            self.temp_masks.insert(to.into(), mask);
+        }
+        self.persistent_masks.borrow_mut().remove(from);
+        self.table
+            .keywords_mut()
+            .upsert(MASKS_KEYWORD, Value::Record(masks));
+        if self.default_mask_name().as_deref() == Some(from) {
+            self.set_default_mask(to)?;
         }
         Ok(())
     }

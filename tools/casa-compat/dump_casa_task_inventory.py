@@ -52,6 +52,7 @@ PINNED_VERSION = "6.7.6.14"
 TASKS: tuple[tuple[str, str], ...] = (
     ("applycal", "casatasks"),
     ("bandpass", "casatasks"),
+    ("calstat", "casatasks"),
     ("clearcal", "casatasks"),
     ("concat", "casatasks"),
     ("delmod", "casatasks"),
@@ -74,6 +75,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("imregrid", "casatasks"),
     ("imstat", "casatasks"),
     ("imsubimage", "casatasks"),
+    ("listcal", "casatasks"),
     ("mstransform", "casatasks"),
     ("plotms", "casaplotms"),
     ("rerefant", "casatasks"),

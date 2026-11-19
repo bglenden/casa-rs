@@ -6326,6 +6326,15 @@ looking it up in FIELD, so it cannot select an unrelated field.
 [Issue #54](https://github.com/bglenden/casa-rs/issues/54) and
 [the casacore FIELD grammar](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSFieldGram.yy).
 
+## A reversed feed interval aborts MeasurementSet selection
+
+With FEED_ID 0 and 2 present, CASA 6.7.6.14 `split(feed="2~0&&")` aborts
+the Python process. The feed grammar builds an array with negative length
+and the uncaught `ArrayShapeError` terminates the process.
+
+The native transform checks the range before reading MAIN. It returns a
+feed selector error and leaves the input and output paths untouched (#1614).
+
 ## A bare FIELD escape can silently change the selection
 
 Outside a quoted pattern or slash regex, the casacore FIELD scanner prints
@@ -6956,6 +6965,19 @@ retain the spectrum obtained by expanding their original scalar values.
 The paired fixture compares this result with CASA's documented two-call
 sequence and checks unselected rows (#1524).
 
+## Column statistics change when the same NaN moves between rows
+
+CASA 6.7.6.14 derives `table.statistics` and `calstat` quantiles from
+an ordering that includes NaN. The rows `[0, 3, 1, NaN, 4, 8, 9]`
+gave a finite interquartile range of 7 and a NaN median. Moving that
+NaN to the start gave an interquartile range of 8, a median of 3 and
+NaN for both bounds. The sum and variance were NaN in each case.
+
+casa-rs returns deterministic bounds from the non-NaN samples, counts
+all samples and returns NaN for the moments and quantiles when a NaN
+makes those quantities undefined. This preserves the existing native
+table tool behavior in the public calibration task (#1526).
+
 ## Accumulating a bandpass updates a fraction of the Jones cells
 
 CASA 6.7.6.14's `calibrater.accumulate` is available with
@@ -7017,3 +7039,38 @@ cumulative rows' scan and observation metadata. In local comparisons,
 the per-scan output matched two independent single-field CASA controls.
 An independent SciPy natural spline matched 52 valid complex factors
 in the spline comparison (#1525).
+
+## `exportfits` drops characters when wrapping long `HISTORY` cards
+
+- Date noted: 2026-11-19
+- Status: CASA silently loses history text; casa-rs wraps losslessly (#977).
+- Affected code: casacore `ImageFITSConverter` FITS `HISTORY` card continuation writer.
+
+In CASA 6.7.6.14, `exportfits(..., history=True)` wraps logtable lines across
+80-byte FITS `HISTORY` cards by placing 72 characters on the first card and
+`>` followed by 71 characters on continuation cards, but skips character index
+143 on card 3 and subsequent continuation cards when the wrapped line spans
+more than 143 characters. On `cube_i.im` (`crates/casa-images/tests/data/exportfits/cube_i.im`),
+CASA drops `'y'` from `csys={...}` in the 202-character `ia.fromshape(...)`
+message and drops the closing `')'` of the 144-character
+`ia.setrestoringbeam(...)` message (emitting 47 `HISTORY` cards instead of 48);
+on a synthetic 160-digit `"0123..."` history entry, CASA drops `'3'` at index
+143 between `>...012` and `>456...`.
+
+casa-rs (`crates/casa-images/src/analysis/exportfits.rs`, `wrap_fits_history_text`)
+splits at 72 characters on the first card and `>` plus 71 characters on each
+continuation card without skipping characters, emitting all 48 cards on
+`cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
+all 17 original history entries intact (#977).
+
+## Listing an incomplete antenna integration can terminate CASA
+
+CASA 6.7.6.14's `listcal` reshapes each spectral window's solution
+rows into complete antenna integrations. Removing the last antenna
+row from an otherwise regular G Jones table terminated the paired
+CASA subprocess after opening the requested listing file.
+
+casa-rs validates the antenna blocks before publishing a listing. The
+same input raises a recoverable error and leaves the destination absent.
+Complete integrations retain their original order, even when two have
+the same time and field (#1526).

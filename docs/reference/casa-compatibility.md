@@ -18,10 +18,11 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
+| calstat | calstat | yes | 3 | 3 | 0 | 0 | 0 | 0 |
 | clearcal | clearcal | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
-| exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
+| exportfits | exportfits | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
@@ -41,14 +42,15 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
-| mstransform | mstransform | yes | 55 | 55 | 0 | 41 | 0 | 0 |
+| listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
+| mstransform | mstransform | yes | 55 | 55 | 0 | 38 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | smoothcal | smoothcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
-| split | split | yes | 19 | 19 | 0 | 7 | 1 | 0 |
+| split | split | yes | 19 | 19 | 0 | 4 | 1 | 0 |
 | statwt | statwt | yes | 25 | 25 | 0 | 0 | 0 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 3 | 22 | 0 |
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
@@ -223,6 +225,69 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 35, in CASA's order: yes
 - Defaults that differ: none
 
+### calstat
+
+- CASA source: `casatasks/calstat.py`, 3 parameters
+- Implementation: `casatasks/private/task_calstat.py`, `calstat` (line 6): 1 return statements, 0 raise statements
+  - returns at line 53: `s`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the caltable parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 3, in CASA's order: yes
+- Defaults that differ: none
+
+#### calstat parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `567b979d3f9780a690d1aa8afcdc5a7c9dedabb9`. Status counts: Default only: 0, Implemented: 3, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Existing casacore table or saved view. Supports local, home-relative and configured data paths. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `path` (calibration_table) | [paired](#calstat-evidence-paired) |
+| `axis` | `'amplitude'` | `'amplitude'`; `axis` → `axis` | Implemented | Complex amplitude, phase in radians, real or imaginary projection, or a literal scalar or array column. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `string` | [paired](#calstat-evidence-paired) |
+| `datacolumn` | `'gain'` | `'gain'`; `datacolumn` → `datacolumn` | Implemented | For complex projection axes only, the literal column name with CASA's corrected and model aliases. The default reads GAIN from legacy tables. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `string` | [paired](#calstat-evidence-paired) |
+
+#### calstat interacting modes and task behavior
+
+<a id="calstat-behavior-column-statistics"></a>
+##### Descriptive calibration statistics
+
+**Implemented** — CASA scalar and array return records, complex projections, real delays, flags retained in the sample population, literal column aliases, single-precision samples and squares, vector components, saved table views, argument errors and local, home-relative and configured data paths.
+
+The documented NaN behavior difference is recorded below.
+
+Evidence: [paired](#calstat-evidence-paired).
+
+#### calstat deviations and unfinished work
+
+##### deterministic-nan-statistics: Proposed
+
+- Inputs: A table column with both numeric values and NaN samples.
+- CASA: The median, quartile range and bounds can change when the same NaN moves between rows.
+- casa-rs: Preserves deterministic bounds over non-NaN samples, counts every sample and reports undefined moments and quantiles.
+- Rationale: The moments and quantiles of the unmasked data are undefined when a sample is NaN.
+- User impact: The selected row order does not change the native NaN policy.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#calstat-evidence-paired).
+
+#### calstat evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="calstat-evidence-paired"></a>
+##### paired
+
+**Same-input public task and table tool comparisons — passed.** 25 result comparisons, 17 error cases, four table-tool comparisons and independent moment checks passed. CASA scalar and array return records, complex projections, real delays, flags retained in the sample population, literal column aliases, single-precision samples and squares, vector components, saved table views, argument errors and local, home-relative and configured data paths.
+
+- [tools/casa-compat/calstat_oracle.py](https://github.com/bglenden/casa-rs/blob/567b979d3f9780a690d1aa8afcdc5a7c9dedabb9/tools/casa-compat/calstat_oracle.py)
+- Revision: `567b979d3f9780a690d1aa8afcdc5a7c9dedabb9`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calstat_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calstat-20261119.json`.
+
 ### clearcal
 
 - CASA source: `casatasks/clearcal.py`, 5 parameters
@@ -266,7 +331,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `optical`, `bitpix`, `minpix`, `maxpix`, `dropstokes`, `stokeslast`, `history`, `dropdeg`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none
@@ -921,6 +985,72 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
+### listcal
+
+- CASA source: `casatasks/listcal.py`, 7 parameters
+- Implementation: `casatasks/private/task_listcal.py`, `listcal` (line 6): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
+
+#### listcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `vis` | Implemented | MeasurementSet supplying fields, antenna expressions and spectral-window/channel selection. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (measurement_set) | [paired](#listcal-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Existing CASA antenna calibration table. Complex and real solutions use their subtype's units and labels. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (calibration_table) | [paired](#listcal-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Field names, IDs and CASA field expressions. Empty lists all available fields. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Antenna names, IDs, ranges and the first antenna list of a baseline expression. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral windows and channel ranges, including stride. The first range for a repeated window is listed. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `listfile` | `''` | `''`; `listfile` → `listfile` | Implemented | A new text file or terminal output when empty. Existing files are preserved. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (file) | [paired](#listcal-evidence-paired) |
+| `pagerows` | `50` | `50`; `pagerows` → `pagerows` | Implemented | Rows per page and the terminal continue, quit and list-all controls. Zero and negative values print continuously. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `integer` | [paired](#listcal-evidence-paired) |
+
+#### listcal interacting modes and task behavior
+
+<a id="listcal-behavior-solution-listing"></a>
+##### Selected calibration solution listings
+
+**Implemented** — Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt.
+
+The incomplete-antenna error behavior is recorded below.
+
+Evidence: [paired](#listcal-evidence-paired).
+
+#### listcal deviations and unfinished work
+
+##### reject-incomplete-antenna-integration: Proposed
+
+- Inputs: A standard G Jones calibration solution table with the final antenna row removed.
+- CASA: Terminates after opening the output while reshaping the window into antenna blocks.
+- casa-rs: Raises a recoverable layout error before publishing the output.
+- Rationale: An incomplete block cannot be associated with the requested antenna solutions.
+- User impact: The caller can handle the error and the listing path remains available for a corrected retry.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#listcal-evidence-paired).
+
+#### listcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="listcal-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and terminal output — passed.** 20 byte-exact files, eight terminal cases and 15 refusal cases passed. Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt.
+
+- [tools/casa-compat/listcal_oracle.py](https://github.com/bglenden/casa-rs/blob/d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35/tools/casa-compat/listcal_oracle.py)
+- Revision: `d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/listcal_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/listcal-20261119.json`.
+
 ### mstransform
 
 - CASA source: `casatasks/mstransform.py`, 55 parameters
@@ -931,7 +1061,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `correlation`, `array`, `uvrange`, `feed`, `realmodelcol`, `usewtspectrum`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
+- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `correlation`, `realmodelcol`, `usewtspectrum`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
 - Defaults that differ: none
@@ -1617,7 +1747,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `keepmms`, `correlation`, `array`, `uvrange`, `feed`, `timebin`, `combine`
+- Accepted only at CASA's default until #978: `keepmms`, `correlation`, `timebin`, `combine`
 - casa-rs parameters CASA lacks: `msselect`
 - Shared parameters: 19, in CASA's order: yes
 - Defaults that differ: none

@@ -458,10 +458,10 @@ def split(
     correlation: str = ...,
     timerange: str = ...,
     intent: str = ...,
-    array: str = ...,
+    array: str | int = ...,
     uvrange: str = ...,
     observation: str | int = ...,
-    feed: str = ...,
+    feed: str | int = ...,
     datacolumn: str = ...,
     keepflags: bool = ...,
     width: int = ...,
@@ -1183,6 +1183,24 @@ def statwt(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt')
+def calstat(
+    caltable: StrPath = ...,
+    axis: str = ...,
+    datacolumn: str = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt']
+def listcal(
+    vis: StrPath = ...,
+    caltable: StrPath = ...,
+    field: str = ...,
+    antenna: str = ...,
+    spw: str = ...,
+    listfile: StrPath = ...,
+    pagerows: int = ...,
+) -> Any:
+    ...
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt', 'calstat', 'listcal')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt', 'calstat', 'listcal']

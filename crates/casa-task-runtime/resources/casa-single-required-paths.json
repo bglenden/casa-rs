@@ -1,6 +1,7 @@
 {
   "applycal": "vis",
   "bandpass": "vis",
+  "calstat": "caltable",
   "clearcal": "vis",
   "delmod": "vis",
   "exportfits": "imagename",

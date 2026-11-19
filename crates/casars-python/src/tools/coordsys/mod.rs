@@ -3,6 +3,7 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
 
+mod inspect;
 mod reference;
 mod stubs;
 pub(crate) mod surface;
@@ -31,9 +32,11 @@ pub(crate) struct PyCoordsys {
     state: Mutex<CoordinateState>,
 }
 
+#[derive(Clone)]
 struct CoordinateState {
     coordinates: CoordinateSystem,
     record: RecordValue,
+    parent_name: String,
 }
 
 pub(crate) fn default_image_obs_info() -> ObsInfo {
@@ -55,6 +58,7 @@ impl CoordinateState {
         Ok(Self {
             coordinates,
             record,
+            parent_name: "unknown".into(),
         })
     }
 
@@ -71,6 +75,7 @@ impl CoordinateState {
         Self {
             coordinates,
             record,
+            parent_name: "unknown".into(),
         }
     }
 }
@@ -89,6 +94,14 @@ impl PyCoordsys {
     }
 
     fn state(&self) -> MutexGuard<'_, CoordinateState> {
+        let mut state = self.lock_state();
+        if state.parent_name.is_empty() {
+            state.parent_name = "unknown".into();
+        }
+        state
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, CoordinateState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }

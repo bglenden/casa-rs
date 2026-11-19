@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Tutorial-scoped image-analysis operations matching CASA image task semantics.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, FitsValue,
-    StokesType, fits::try_to_fits_header,
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, StokesType,
 };
 use casa_fft::Fft2;
 use casa_lattices::{
@@ -18,15 +17,13 @@ use casa_lattices::{
 use casa_provider_contracts::ParameterValue;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
-use fitsio::{
-    FitsFile,
-    images::{ImageDescription, ImageType as FitsImageType},
-};
+use fitsio::images::ImageType as FitsImageType;
 use ndarray::{Array2, Axis, Dimension, IxDyn, ShapeBuilder, Zip};
 use num_complex::Complex32;
 
 mod axes;
 mod custom_values;
+mod exportfits;
 mod extrema;
 mod imhead_fits;
 mod immath;
@@ -99,12 +96,7 @@ pub fn run_image_analysis_task(
             Ok(ImageAnalysisTaskResult::Feather(feather(&request)?))
         }
         ImageAnalysisTaskRequest::Exportfits(request) => {
-            Ok(ImageAnalysisTaskResult::Exportfits(export_fits(
-                &request.imagename,
-                &request.fitsimage,
-                request.velocity,
-                request.overwrite,
-            )?))
+            Ok(ImageAnalysisTaskResult::Exportfits(exportfits(&request)?))
         }
         ImageAnalysisTaskRequest::Importfits(request) => Ok(ImageAnalysisTaskResult::Importfits(
             import_fits(&request.fitsimage, &request.imagename, request.overwrite)?,
@@ -300,6 +292,12 @@ pub fn feather(request: &FeatherRequest) -> Result<FeatherSummary, ImageError> {
     }
 }
 
+/// Export a CASA image (or FITS image) to a primary-HDU FITS file using full
+/// CASA `exportfits` semantics.
+pub fn exportfits(request: &ExportFitsRequest) -> Result<FitsExportSummary, ImageError> {
+    exportfits::run(request)
+}
+
 /// Export a CASA image as a primary-HDU FITS image.
 pub fn export_fits(
     imagename: impl AsRef<Path>,
@@ -307,28 +305,13 @@ pub fn export_fits(
     velocity: bool,
     overwrite: bool,
 ) -> Result<FitsExportSummary, ImageError> {
-    let imagename = imagename.as_ref();
-    let fitsimage = fitsimage.as_ref();
-    let image = AnyPagedImage::open(imagename)?;
-    if fitsimage.exists() {
-        if overwrite {
-            fs::remove_file(fitsimage).map_err(|error| ImageError::Io(error.to_string()))?;
-        } else {
-            return Err(ImageError::Io(format!(
-                "FITS output already exists: {}",
-                fitsimage.display()
-            )));
-        }
-    }
-    match &image {
-        AnyPagedImage::Float32(image) => export_fits_typed(imagename, fitsimage, image, velocity),
-        AnyPagedImage::Float64(image) => export_fits_typed(imagename, fitsimage, image, velocity),
-        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-            Err(ImageError::InvalidMetadata(
-                "exportfits currently supports real-valued images".to_string(),
-            ))
-        }
-    }
+    exportfits(&ExportFitsRequest {
+        imagename: imagename.as_ref().to_path_buf(),
+        fitsimage: fitsimage.as_ref().to_path_buf(),
+        velocity,
+        overwrite,
+        ..ExportFitsRequest::default()
+    })
 }
 
 /// Import a primary-HDU FITS image as a CASA image.
@@ -4756,215 +4739,6 @@ fn moment_units(input_units: &str, moment: i32) -> String {
     }
 }
 
-fn export_fits_typed<T>(
-    imagename: &Path,
-    fitsimage: &Path,
-    image: &PagedImage<T>,
-    velocity: bool,
-) -> Result<FitsExportSummary, ImageError>
-where
-    T: ImagePixel + fitsio::images::WriteImage + Copy + FitsBlank,
-{
-    let layout = casa_fits_export_layout(image.coordinates(), image.shape());
-    let header = try_to_fits_header(&layout.coordinates, &layout.shape)?;
-    let velocity_overrides = if velocity {
-        velocity_fits_axis_overrides(&layout.coordinates)?
-    } else {
-        BTreeMap::new()
-    };
-    let fits_dimensions = layout.shape.iter().rev().copied().collect::<Vec<_>>();
-    let description = ImageDescription {
-        data_type: match image_pixel_type::<T>() {
-            ImagePixelType::Float32 => FitsImageType::Float,
-            ImagePixelType::Float64 => FitsImageType::Double,
-            _ => FitsImageType::Float,
-        },
-        dimensions: &fits_dimensions,
-    };
-    let mut fits = FitsFile::create(fitsimage)
-        .with_custom_primary(&description)
-        .open()
-        .map_err(|error| ImageError::Io(error.to_string()))?;
-    let hdu = fits
-        .primary_hdu()
-        .map_err(|error| ImageError::Io(error.to_string()))?;
-    let mut data = image.get()?;
-    if let Some(mask) = image.default_mask()? {
-        Zip::from(&mut data).and(&mask).for_each(|pixel, valid| {
-            if !*valid {
-                *pixel = T::fits_blank();
-            }
-        });
-    }
-    if layout.axis_order != (0..image.shape().len()).collect::<Vec<_>>() {
-        data = data.permuted_axes(layout.axis_order.clone()).to_owned();
-    }
-    let flat = data
-        .as_slice_memory_order()
-        .ok_or_else(|| ImageError::InvalidMetadata("image data is not contiguous".to_string()))?;
-    hdu.write_image(&mut fits, flat)
-        .map_err(|error| ImageError::Io(error.to_string()))?;
-    for keyword in header.iter() {
-        if keyword.name == "NAXIS"
-            || keyword
-                .name
-                .strip_prefix("NAXIS")
-                .is_some_and(|suffix| suffix.chars().all(|ch| ch.is_ascii_digit()))
-        {
-            continue;
-        }
-        if let Some(value) = velocity_overrides.get(&keyword.name) {
-            write_fits_key(&hdu, &mut fits, &keyword.name, value)?;
-            continue;
-        }
-        write_fits_key(&hdu, &mut fits, &keyword.name, &keyword.value)?;
-    }
-    if !image.units().is_empty() {
-        hdu.write_key(&mut fits, "BUNIT", image.units())
-            .map_err(|error| ImageError::Io(error.to_string()))?;
-    }
-    let info = image.image_info()?;
-    if !info.object_name.is_empty() {
-        hdu.write_key(&mut fits, "OBJECT", info.object_name.as_str())
-            .map_err(|error| ImageError::Io(error.to_string()))?;
-    }
-    if let Some(beam) = info.beam_set.single_beam()
-        && !beam.is_null()
-    {
-        hdu.write_key(&mut fits, "BMAJ", beam.major_in("deg")?)
-            .map_err(|error| ImageError::Io(error.to_string()))?;
-        hdu.write_key(&mut fits, "BMIN", beam.minor_in("deg")?)
-            .map_err(|error| ImageError::Io(error.to_string()))?;
-        let stored = image
-            .stored_restoring_beam()?
-            .ok_or_else(|| ImageError::InvalidMetadata("missing restoring beam record".into()))?;
-        let wrapped = stored.wrapped_position_angle()?;
-        let degrees = casa_types::quanta::Unit::new("deg").expect("built-in degrees");
-        let bpa = casa_types::quanta::casacore::get_conformant_value(&wrapped, &degrees)
-            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-        hdu.write_key(&mut fits, "BPA", bpa)
-            .map_err(|error| ImageError::Io(error.to_string()))?;
-    }
-    Ok(FitsExportSummary {
-        imagename: imagename.display().to_string(),
-        fitsimage: fitsimage.display().to_string(),
-        shape: layout.shape,
-        velocity,
-    })
-}
-
-trait FitsBlank {
-    fn fits_blank() -> Self;
-}
-
-impl FitsBlank for f32 {
-    fn fits_blank() -> Self {
-        f32::NAN
-    }
-}
-
-impl FitsBlank for f64 {
-    fn fits_blank() -> Self {
-        f64::NAN
-    }
-}
-
-struct FitsExportLayout {
-    coordinates: CoordinateSystem,
-    axis_order: Vec<usize>,
-    shape: Vec<usize>,
-}
-
-fn casa_fits_export_layout(
-    coordinates: &CoordinateSystem,
-    image_shape: &[usize],
-) -> FitsExportLayout {
-    let mut blocks = Vec::new();
-    let mut axis_start = 0usize;
-    for coordinate_index in 0..coordinates.n_coordinates() {
-        let coordinate = coordinates.coordinate(coordinate_index);
-        let axis_count = coordinate.n_pixel_axes();
-        let axes = (axis_start..axis_start + axis_count).collect::<Vec<_>>();
-        blocks.push((
-            casa_fits_coordinate_priority(coordinate.coordinate_type()),
-            coordinate_index,
-            axes,
-        ));
-        axis_start += axis_count;
-    }
-    blocks.sort_by_key(|(priority, coordinate_index, _)| (*priority, *coordinate_index));
-
-    let mut reordered = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
-    let mut axis_order = Vec::new();
-    for (_, coordinate_index, axes) in &blocks {
-        reordered.add_coordinate(coordinates.coordinate(*coordinate_index).clone());
-        axis_order.extend(axes.iter().copied());
-    }
-    let shape = axis_order
-        .iter()
-        .map(|axis| image_shape[*axis])
-        .collect::<Vec<_>>();
-
-    FitsExportLayout {
-        coordinates: reordered,
-        axis_order,
-        shape,
-    }
-}
-
-fn casa_fits_coordinate_priority(coordinate_type: CoordinateType) -> usize {
-    match coordinate_type {
-        CoordinateType::Direction => 0,
-        CoordinateType::Spectral => 1,
-        CoordinateType::Stokes => 2,
-        CoordinateType::Linear | CoordinateType::Tabular => 3,
-    }
-}
-
-fn velocity_fits_axis_overrides(
-    coordinates: &CoordinateSystem,
-) -> Result<BTreeMap<String, FitsValue>, ImageError> {
-    let mut axis = 1usize;
-    for coordinate_index in 0..coordinates.n_coordinates() {
-        let coordinate = coordinates.coordinate(coordinate_index);
-        if let casa_coordinates::CoordinateModel::Spectral(spectral) = coordinate {
-            let rest_frequency = spectral.rest_frequency_hz()?;
-            if rest_frequency <= 0.0 {
-                break;
-            }
-            let (_, crval_hz, cdelt_hz) = spectral.fits_linearized_axis_hz()?;
-            let crval_m_s = SPEED_OF_LIGHT_M_S * (1.0 - crval_hz / rest_frequency);
-            let cdelt_m_s = -SPEED_OF_LIGHT_M_S * cdelt_hz / rest_frequency;
-            let mut overrides = BTreeMap::new();
-            overrides.insert(
-                format!("CTYPE{axis}"),
-                FitsValue::String("VRAD".to_string()),
-            );
-            overrides.insert(format!("CRVAL{axis}"), FitsValue::Float(crval_m_s));
-            overrides.insert(format!("CDELT{axis}"), FitsValue::Float(cdelt_m_s));
-            overrides.insert(format!("CUNIT{axis}"), FitsValue::String("m/s".to_string()));
-            return Ok(overrides);
-        }
-        axis += coordinate.n_pixel_axes();
-    }
-    Ok(BTreeMap::new())
-}
-
-fn write_fits_key(
-    hdu: &fitsio::hdu::FitsHdu,
-    fits: &mut FitsFile,
-    name: &str,
-    value: &FitsValue,
-) -> Result<(), ImageError> {
-    match value {
-        FitsValue::String(value) => hdu.write_key(fits, name, value.as_str()),
-        FitsValue::Integer(value) => hdu.write_key(fits, name, *value),
-        FitsValue::Float(value) => hdu.write_key(fits, name, *value),
-        FitsValue::Logical(value) => hdu.write_key(fits, name, if *value { 1i16 } else { 0i16 }),
-    }
-    .map_err(|error| ImageError::Io(error.to_string()))
-}
-
 fn image_pixel_type<T: ImagePixel>() -> ImagePixelType {
     if std::any::TypeId::of::<T>() == std::any::TypeId::of::<f32>() {
         ImagePixelType::Float32
@@ -4986,6 +4760,7 @@ mod tests {
     use casa_types::Complex32;
     use casa_types::measures::direction::DirectionRef;
     use casa_types::measures::frequency::FrequencyRef;
+    use fitsio::FitsFile;
 
     /// An imstat request for a classic run with one selection.
     fn imstat_request(
@@ -5024,42 +4799,6 @@ mod tests {
             parse_image_channel_selection("0~8^2", 10).unwrap(),
             vec![0, 2, 4, 6, 8]
         );
-    }
-
-    #[test]
-    fn casa_fits_export_layout_places_spectral_before_stokes() {
-        let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(DirectionCoordinate::new(
-            DirectionRef::J2000,
-            Projection::new(ProjectionType::SIN),
-            [1.0, 0.5],
-            [-1.0e-6, 1.0e-6],
-            [4.0, 5.0],
-        ));
-        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
-        coordinates.add_coordinate(SpectralCoordinate::new(
-            FrequencyRef::LSRK,
-            372.0e9,
-            1.0e6,
-            0.0,
-            372.0e9,
-        ));
-
-        let layout = casa_fits_export_layout(&coordinates, &[10, 11, 1, 7]);
-        assert_eq!(layout.axis_order, vec![0, 1, 3, 2]);
-        assert_eq!(layout.shape, vec![10, 11, 7, 1]);
-
-        let header = try_to_fits_header(&layout.coordinates, &layout.shape).unwrap();
-        assert_eq!(
-            header.get("CTYPE3"),
-            Some(&FitsValue::String("FREQ".to_string()))
-        );
-        assert_eq!(
-            header.get("CTYPE4"),
-            Some(&FitsValue::String("STOKES".to_string()))
-        );
-        assert_eq!(header.get("NAXIS3"), Some(&FitsValue::Integer(7)));
-        assert_eq!(header.get("NAXIS4"), Some(&FitsValue::Integer(1)));
     }
 
     #[test]
@@ -5333,6 +5072,7 @@ mod tests {
             fitsimage: fits_path.clone(),
             velocity: true,
             overwrite: false,
+            ..ExportFitsRequest::default()
         }))
         .unwrap();
         assert!(fits_path.exists());
@@ -5674,6 +5414,16 @@ mod tests {
 
         let imported = PagedImage::<f32>::open(&imported_path).unwrap();
         assert_eq!(imported.shape(), &[3, 2, 5, 2]);
+        let imported_pixels = imported.get().unwrap();
+        for x in 0..3 {
+            for y in 0..2 {
+                for st in 0..2 {
+                    for ch in 0..5 {
+                        assert_eq!(imported_pixels[[x, y, ch, st]], data[[x, y, st, ch]]);
+                    }
+                }
+            }
+        }
         assert_eq!(imported.units(), "Jy/beam");
         let info = imported.image_info().unwrap();
         assert_eq!(info.object_name, "TW Hya");

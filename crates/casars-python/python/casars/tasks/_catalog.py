@@ -426,9 +426,6 @@ def exportfits(
     """Export CASA images to FITS
 
     CASA's ``exportfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``optical``, ``bitpix``, ``minpix``, ``maxpix``, ``dropstokes``,
-    ``stokeslast``, ``history``, ``dropdeg``.
     """
     return _call_casa(exportfits, locals())
 
@@ -494,15 +491,14 @@ def mstransform(
     CASA's ``mstransform``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,
-    ``correlation``, ``array``, ``uvrange``, ``feed``, ``realmodelcol``,
-    ``usewtspectrum``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,
-    ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,
-    ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,
-    ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,
-    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,
-    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,
-    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,
-    ``monolithic_processing``, ``reindex``.
+    ``correlation``, ``realmodelcol``, ``usewtspectrum``, ``combinespws``,
+    ``hanning``, ``regridms``, ``mode``, ``nchan``, ``start``, ``width``,
+    ``nspw``, ``interpolation``, ``phasecenter``, ``restfreq``,
+    ``outframe``, ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``,
+    ``timespan``, ``maxuvwdistance``, ``docallib``, ``callib``,
+    ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,
+    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,
+    ``ddistart``, ``monolithic_processing``, ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -517,10 +513,10 @@ def split(
     correlation: str = '',
     timerange: str = '',
     intent: str = '',
-    array: str = '',
+    array: str | int = '',
     uvrange: str = '',
     observation: str | int = '',
-    feed: str = '',
+    feed: str | int = '',
     datacolumn: str = 'corrected',
     keepflags: bool = True,
     width: int = 1,
@@ -533,8 +529,7 @@ def split(
 
     CASA's ``split``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``, ``correlation``, ``array``, ``uvrange``, ``feed``,
-    ``timebin``, ``combine``.
+    ``keepmms``, ``correlation``, ``timebin``, ``combine``.
     """
     return _call_casa(split, locals())
 
@@ -1401,6 +1396,32 @@ def statwt(
     """
     return _call_casa(statwt, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt')
+def calstat(
+    caltable: StrPath = '',
+    axis: str = 'amplitude',
+    datacolumn: str = 'gain',
+) -> Any:
+    """Compute descriptive statistics for a calibration table column.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt']
+    CASA's ``calstat``: its parameters, defaults and return value.
+    """
+    return _call_casa(calstat, locals())
+
+def listcal(
+    vis: StrPath = '',
+    caltable: StrPath = '',
+    field: str = '',
+    antenna: str = '',
+    spw: str = '',
+    listfile: StrPath = '',
+    pagerows: int = 50,
+) -> Any:
+    """List selected antenna calibration solutions and flags.
+
+    CASA's ``listcal``: its parameters, defaults and return value.
+    """
+    return _call_casa(listcal, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt', 'calstat', 'listcal')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'initweights', 'statwt', 'calstat', 'listcal']

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import functools
 from http import HTTPStatus
 import inspect
-from json import JSONDecodeError
+from json import JSONDecodeError, loads
 import os
 from os import PathLike
 from pathlib import Path
@@ -183,6 +183,13 @@ def run(
     else:
         resolved = TaskParameters.defaults(task, workspace=resolved_workspace)
     if values:
+        if task in ("split", "mstransform"):
+            for selector in ("array", "uvrange", "feed"):
+                if selector in values and not isinstance(values[selector], str):
+                    try:
+                        _ms_transform_selector_variant(selector, values[selector])
+                    except AssertionError as error:
+                        raise ValueError(str(error)) from error
         resolved.set_many(values)
     return _execute(task, resolved, resolved_workspace)
 
@@ -211,7 +218,20 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     }
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
-        _validate_required_vis(values, arguments["vis"])
+        _validate_required_path(values, "vis", arguments["vis"])
+    if name == "listcal":
+        return _call_listcal(values, arguments)
+    if name == "calstat":
+        _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
+        for parameter in ("axis", "datacolumn"):
+            value = arguments[parameter]
+            if not isinstance(value, str):
+                message = "null value not allowed" if value is None else "must be of cStr type"
+                raise AssertionError(str({parameter: [message]}))
+        try:
+            return run(name, **values).value
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
     if name == "applycal":
         return _call_applycal(values)
     if name == "gencal":
@@ -221,7 +241,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "initweights":
         return _call_initweights(values)
     if name in ("split", "mstransform"):
-        _coerce_ms_transform_selectors(values)
+        _coerce_ms_transform_selectors(name, values)
         try:
             return run(name, **values).value
         except TaskParameterError as error:
@@ -268,6 +288,57 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     return run(name, **values).value
 
 
+def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
+    for name in ("vis", "caltable"):
+        value = arguments[name]
+        if not isinstance(value, str):
+            raise AssertionError(f"the {name} parameter must be a path that exists ('{value}' does not exist)")
+        _validate_required_path(values, name, value, search_data=True)
+    for name in ("field", "antenna", "spw", "listfile"):
+        if not isinstance(arguments[name], str):
+            message = "null value not allowed" if arguments[name] is None else "must be of cStr type"
+            raise AssertionError(str({name: [message]}))
+    pagerows = arguments["pagerows"]
+    if not isinstance(pagerows, int):
+        import numpy as np
+
+        if not isinstance(pagerows, (np.int32, np.int64)):
+            message = "null value not allowed" if pagerows is None else "must be of cInt type"
+            raise AssertionError(str({"pagerows": [message]}))
+        values["pagerows"] = int(pagerows)
+    elif isinstance(pagerows, bool):
+        values["pagerows"] = int(pagerows)
+    try:
+        completion = run("listcal", **values)
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+    report = loads(completion.stdout)["result"]
+    if report["listfile"] is not None:
+        print(f"Writing output to file: {report['listfile']}")
+        return
+    prompt = True
+    quit_requested = False
+    solutions = 0
+    listing = report["listing"]
+    for part in listing["parts"]:
+        print(part["text"], end="")
+        solutions = part["solutions"]
+        if prompt and part["prompt"]:
+            try:
+                response = input("Type Q to quit, A to list all, or RETURN to continue [continue]: ")
+            except EOFError:
+                response = ""
+            command = response[:1].lower()
+            quit_requested |= command == "q"
+            prompt &= command != "a"
+        if quit_requested and part["last_in_integration"]:
+            break
+    else:
+        if listing["error"] is not None:
+            raise RuntimeError(listing["error"])
+    print(f"\nListed {solutions} antenna solutions.\n")
+
+
 def _call_initweights(values: dict[str, Any]) -> Any:
     import numpy as np
 
@@ -302,13 +373,15 @@ def _call_initweights(values: dict[str, Any]) -> Any:
         raise AssertionError(str(error)) from error
 
 
-def _coerce_ms_transform_selectors(values: dict[str, Any]) -> None:
-    for name in ("observation", "intent"):
-        value = values.get(name, "")
+def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
+    for name in ("observation", "intent", "array", "uvrange", "feed"):
+        if name not in values:
+            continue
+        value = values[name]
         if isinstance(value, str):
             continue
         converted, record_type = _ms_transform_selector_variant(name, value)
-        if name == "observation":
+        if name == "observation" or (task == "split" and name in ("array", "feed")):
             values[name] = converted
         elif record_type is None:
             # CASA's tool record conversion omits this scalar variant.
@@ -316,7 +389,7 @@ def _coerce_ms_transform_selectors(values: dict[str, Any]) -> None:
         else:
             raise RuntimeError(
                 "RecordRep::get_pointer - incorrect data type String   "
-                f"used for field intent with type {record_type:<8}"
+                f"used for field {name} with type {record_type:<8}"
             )
 
 
@@ -433,21 +506,37 @@ def _call_getantposalma(values: dict[str, Any]) -> Any:
         raise AssertionError(str(error)) from error
 
 
-def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:
-    _validate_required_path(values, "vis", vis)
-
-
-def _validate_required_path(values: dict[str, Any], name: str, value: Any) -> None:
-    # CASA's required-path validation runs before calibrater opens the MS.
-    # Keep PathLike as the native API's additional path form.
-    if isinstance(value, (str, PathLike)):
-        path = os.path.expanduser(os.fspath(value))
-        if not path or not os.path.exists(path):
-            raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
-        if path != os.fspath(value):
-            values[name] = path
+def _validate_required_path(
+    values: dict[str, Any], name: str, argument: Any, *, search_data: bool = False
+) -> None:
+    # CASA validates and expands a required path before opening the table.
+    if isinstance(argument, (str, PathLike)):
+        original = os.fspath(argument)
+        path = os.path.expanduser(original)
+        if (search_data and path and not Path(path).is_absolute()
+                and not path.startswith(("./", "../")) and not os.path.exists(path)):
+            path = _resolve_relative_data_path(path)
+        if path and os.path.exists(path):
+            if path != original:
+                values[name] = path
+            return
     else:
-        raise AssertionError(f"the {name} parameter must be a path that exists ('{value}' does not exist)")
+        path = argument
+    raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
+
+
+def _resolve_relative_data_path(path: str) -> str:
+    roots = []
+    if configured := os.environ.get("CASA_RS_MEASURESPATH"):
+        roots.append(Path(configured))
+    if installation := os.environ.get("CASAPATH", "").split():
+        roots.append(Path(installation[0]) / "data")
+    roots.append(Path.home() / ".casa" / "data")
+    for root in roots:
+        candidate = root / path
+        if candidate.exists():
+            return str(candidate)
+    return path
 
 
 def _call_applycal(values: dict[str, Any]) -> Any:
@@ -531,6 +620,9 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
     executable = _task_executable(task)
     command = (executable, *invocation.args)
     environment = dict(os.environ)
+    if task == "listcal":
+        # A later listing error takes effect only when the reader reaches it.
+        environment["CASARS_LISTCAL_PAGED_REPLY"] = "1"
     if task in {"simobserve", "simanalyze", "simalma"}:
         environment.pop("CASARS_PLOT_PAYLOAD", None)
     if payload is not None:

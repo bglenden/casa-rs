@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "oracle": "CASA listcal and casacore input tables",
+  "casa_version": "6.7.6.14",
+  "revision": "d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35",
+  "execution_date": "2026-11-19",
+  "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/listcal_oracle.py --work <empty-directory> --native-bin <calibrate>",
+  "result": "passed",
+  "files_compared_byte_for_byte": 20,
+  "terminal_cases": 8,
+  "refusals": 15,
+  "scope": "Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt."
+}

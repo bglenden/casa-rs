@@ -665,7 +665,7 @@ const METHODS: &[Method] = &[
             param("shape", K::Ints, Ints(&[0])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "makecomplex",
@@ -694,7 +694,7 @@ const METHODS: &[Method] = &[
             param("name", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "maxfit",
@@ -753,7 +753,12 @@ const METHODS: &[Method] = &[
         R::Any,
         Yes,
     ),
-    method("newimage", &[param("infile", K::Any, Required)], R::Any, No),
+    method(
+        "newimage",
+        &[param("infile", K::Any, Required)],
+        R::Any,
+        Yes,
+    ),
     method(
         "newimagefromarray",
         &[
@@ -766,13 +771,13 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("f")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "newimagefromfile",
         &[param("infile", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "newimagefromfits",
@@ -812,7 +817,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("f")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "open",
@@ -865,7 +870,7 @@ const METHODS: &[Method] = &[
         "pixelvalue",
         &[param("pixel", K::Ints, Ints(&[-1]))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "putchunk",

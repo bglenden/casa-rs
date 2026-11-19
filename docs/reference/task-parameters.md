@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 671
-- Surfaces: 41 (41 task, 0 session)
-- Surface bindings: 990
+- Concepts: 677
+- Surfaces: 43 (43 task, 0 session)
+- Surface bindings: 1000
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -25,8 +25,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 5 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
-| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 6 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
-| [Split](#surface-split)<br><code>split</code> | task | 6 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
+| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 7 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
+| [Split](#surface-split)<br><code>split</code> | task | 7 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
 | [Applycal](#surface-applycal)<br><code>applycal</code> | task | 7 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
@@ -57,6 +57,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Re-reference Calibration Solutions](#surface-rerefant)<br><code>rerefant</code> | task | 1 | <code>calibration</code> | 5 | Change the reference antenna in a calibration table. |
 | [Initialize Visibility Weights](#surface-initweights)<br><code>initweights</code> | task | 1 | <code>calibration</code> | 7 | Initialize MeasurementSet weights and their channel spectra. |
 | [Statistical Weights](#surface-statwt)<br><code>statwt</code> | task | 1 | <code>calibration</code> | 25 | Estimate MeasurementSet weights from visibility variance. |
+| [Calibration Statistics](#surface-calstat)<br><code>calstat</code> | task | 1 | <code>calibration</code> | 3 | Compute descriptive statistics for a calibration table column. |
+| [List Calibration Solutions](#surface-listcal)<br><code>listcal</code> | task | 1 | <code>calibration</code> | 7 | List selected antenna calibration solutions and flags. |
 
 <a id="surface-msexplore"></a>
 
@@ -513,7 +515,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## MSTransform (<code>mstransform</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Materialize a selected MeasurementSet into a new output MS.
@@ -533,10 +535,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
 | <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
-| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
+| <code>feed</code> | <code>ms.selection.feed@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA feed IDs and feed pair selection. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>realmodelcol</code> | <code>mstransform.realmodelcol@r1</code> | <code>bool</code> | <code>false</code>; optional | Data | Write a virtual MODEL column as a real one. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
@@ -581,7 +583,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Split (<code>split</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Create a selected MeasurementSet subset, equivalent to CASA split.
@@ -598,10 +600,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
 | <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
-| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
+| <code>feed</code> | <code>ms.selection.feed@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA feed IDs and feed pair selection. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
 | <code>width</code> | <code>ms.transform.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Selection | Number of adjacent selected channels averaged into each output channel. |
@@ -1580,5 +1582,41 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>flagbackup</code> | <code>parameter.flagbackup@r1</code> | <code>bool</code> | <code>true</code>; optional | Weights | Create a flagmanager backup before mutating flags. |
 | <code>preview</code> | <code>weightstats.preview@r1</code> | <code>bool</code> | <code>false</code>; optional | Weights | Preview mode. If True, no data is changed, although the amount of data that would have been flagged is reported. |
 | <code>datacolumn</code> | <code>weightstats.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Weights | Data column to use to compute weights. Supported values are "data", "corrected", "residual", and "residual_data" (case insensitive, minimum match supported). |
+
+<a id="surface-calstat"></a>
+
+## Calibration Statistics (<code>calstat</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Compute descriptive statistics for a calibration table column.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>caltable</code> | <code>parameter.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Input calibration table. |
+| <code>axis</code> | <code>statistics.calibration_axis@r1</code> | <code>string</code> | <code>"amplitude"</code>; optional | Statistics | Complex projection or a literal numeric column name. |
+| <code>datacolumn</code> | <code>statistics.calibration_datacolumn@r1</code> | <code>string</code> | <code>"gain"</code>; optional | Statistics | Column to summarize for amplitude, phase, real or imaginary statistics. |
+
+<a id="surface-listcal"></a>
+
+## List Calibration Solutions (<code>listcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: List selected antenna calibration solutions and flags.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
+| <code>caltable</code> | <code>parameter.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Input calibration table. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text. |
+| <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal antenna selector text. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
+| <code>listfile</code> | <code>statistics.listing_file@r1</code> | <code>path (file)</code> | <code>""</code>; optional | Output | Write the solution listing to a new text file. Empty writes to the terminal. |
+| <code>pagerows</code> | <code>statistics.listing_pagerows@r1</code> | <code>integer</code> | <code>50</code>; optional | Output | Maximum rows per page. Zero or a negative value prints a continuous listing. |
 
 _End of generated reference._

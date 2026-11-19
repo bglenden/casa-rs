@@ -50,6 +50,10 @@
     "interp": "cStrVec",
     "parang": "cBool"
   },
+  "calstat": {
+    "axis": "cStr",
+    "datacolumn": "cStr"
+  },
   "clearcal": {
     "field": "cStr",
     "spw": "cStr",
@@ -352,6 +356,13 @@
     "interp": "cStr",
     "spwmap": "cIntVec",
     "dowtsp": "cBool"
+  },
+  "listcal": {
+    "field": "cStr",
+    "antenna": "cStr",
+    "spw": "cStr",
+    "listfile": "cStr",
+    "pagerows": "cInt"
   },
   "mstransform": {
     "outputvis": "cStr",

@@ -8,8 +8,10 @@ mod create;
 mod default_record;
 mod handle;
 mod lifecycle;
+mod masks;
 mod metadata;
 mod pixels;
+mod point;
 mod records;
 mod stubs;
 pub(crate) mod surface;
@@ -41,6 +43,15 @@ struct ImageState {
 }
 
 impl PyImageTool {
+    fn attached(image: AttachedImage) -> Self {
+        Self {
+            state: Mutex::new(ImageState {
+                image: Some(image),
+                history: true,
+            }),
+        }
+    }
+
     fn state(&self) -> MutexGuard<'_, ImageState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }

@@ -585,6 +585,14 @@ fn default_impbcor_cutoff() -> f64 {
     -1.0
 }
 
+fn default_exportfits_bitpix() -> i32 {
+    -32
+}
+
+fn default_exportfits_maxpix() -> f64 {
+    -1.0
+}
+
 fn default_immath_mode() -> String {
     "evalexpr".to_string()
 }
@@ -719,9 +727,52 @@ pub struct ExportFitsRequest {
     /// Emit the spectral axis as velocity where possible.
     #[serde(default)]
     pub velocity: bool,
+    /// Use the optical velocity convention instead of radio.
+    #[serde(default)]
+    pub optical: bool,
+    /// Bits per FITS pixel (`-32` for IEEE float, `16` for scaled integer).
+    #[serde(default = "default_exportfits_bitpix")]
+    pub bitpix: i32,
+    /// Minimum physical value for `bitpix = 16` scaling (`minpix > maxpix` selects auto-scaling).
+    #[serde(default)]
+    pub minpix: f64,
+    /// Maximum physical value for `bitpix = 16` scaling (`minpix > maxpix` selects auto-scaling).
+    #[serde(default = "default_exportfits_maxpix")]
+    pub maxpix: f64,
     /// Replace an existing FITS file.
     #[serde(default)]
     pub overwrite: bool,
+    /// Drop a degenerate Stokes axis when writing FITS.
+    #[serde(default)]
+    pub dropstokes: bool,
+    /// Place the Stokes axis last in the exported FITS header.
+    #[serde(default = "default_true")]
+    pub stokeslast: bool,
+    /// Write the image history log into FITS `HISTORY` cards.
+    #[serde(default = "default_true")]
+    pub history: bool,
+    /// Drop all degenerate axes (`len == 1`) from the exported FITS image.
+    #[serde(default)]
+    pub dropdeg: bool,
+}
+
+impl Default for ExportFitsRequest {
+    fn default() -> Self {
+        Self {
+            imagename: PathBuf::new(),
+            fitsimage: PathBuf::new(),
+            velocity: false,
+            optical: false,
+            bitpix: default_exportfits_bitpix(),
+            minpix: 0.0,
+            maxpix: default_exportfits_maxpix(),
+            overwrite: false,
+            dropstokes: false,
+            stokeslast: true,
+            history: true,
+            dropdeg: false,
+        }
+    }
 }
 
 /// CASA `importfits` request.
