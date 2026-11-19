@@ -703,18 +703,21 @@ mod tests {
     }
 
     #[test]
-    fn earthmag_convert_rejects_igrf_references() {
-        let frame = test_frame();
-        let field = MEarthMagnetic::from_xyz_nt(-8.0, -1.0, 5.0, EarthMagneticRef::J2000);
+    fn earthmag_igrf_label_retains_vector_and_evaluation_requires_a_frame() {
+        let frame = MeasFrame::new();
+        let xyz = [-8.0, -1.0, 5.0];
+        let field = MEarthMagnetic::from_xyz_nt(xyz[0], xyz[1], xyz[2], EarthMagneticRef::J2000);
+        // CASA's explicit-vector-to-IGRF conversion sets the label without
+        // evaluating the model. The Python geometry fixture captures both
+        // that direction of conversion and the inverse with real frame data.
+        let labelled = field.convert_to(EarthMagneticRef::IGRF, &frame).unwrap();
+        assert_eq!(labelled.refer(), EarthMagneticRef::IGRF);
+        assert_eq!(labelled.xyz_nt(), xyz);
         assert!(matches!(
-            field.convert_to(EarthMagneticRef::IGRF, &frame),
-            Err(MeasureError::NotYetImplemented { .. })
-        ));
-
-        let igrf = MEarthMagnetic::from_xyz_nt(-8.0, -1.0, 5.0, EarthMagneticRef::IGRF);
-        assert!(matches!(
-            igrf.convert_to(EarthMagneticRef::J2000, &frame),
-            Err(MeasureError::NotYetImplemented { .. })
+            labelled.convert_to(EarthMagneticRef::ITRF, &frame),
+            Err(MeasureError::MissingFrameData {
+                what: "position (for IGRF)"
+            })
         ));
     }
 
