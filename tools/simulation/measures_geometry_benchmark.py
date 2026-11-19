@@ -42,6 +42,8 @@ names = [
     "baseline_touvw_0", "touvw_baseline_vector_4", "baseline_expand_0",
     "expand_baseline_vector_4", "baseline_convert_HADEC", "baseline_convert_J2000",
     "uvw_convert_B1950", "uvw_convert_J2000", "baseline_inspect_1_addxvalue",
+    "earthmagnetic_convert_HADEC", "earthmagnetic_convert_IGRF",
+    "earthmagnetic_fk4_B1950_APP_1", "earthmagnetic_fk4_APP_B1950_1",
 ]
 report = {}
 gc.disable()

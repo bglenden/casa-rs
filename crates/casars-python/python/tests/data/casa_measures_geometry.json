@@ -23839,20 +23839,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "J2000"
       ],
@@ -23899,15 +23899,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7762497351949706e-09
+          "value": 10000.0
         },
         "m1": {
           "unit": "nT",
-          "value": 4.895277334996045e-10
+          "value": 20000.0
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0260604299770064e-09
+          "value": 30000.0
         },
         "refer": "J2000",
         "type": "earthmagnetic"
@@ -23919,20 +23919,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "JMEAN"
       ],
@@ -23979,15 +23979,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.772033565669238e-09
+          "value": 9852.138932688129
         },
         "m1": {
           "unit": "nT",
-          "value": 5.019345780121632e-10
+          "value": 20044.392538340977
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0314512059224339e-09
+          "value": 30019.288569516622
         },
         "refer": "JMEAN",
         "type": "earthmagnetic"
@@ -23999,20 +23999,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "JTRUE"
       ],
@@ -24059,15 +24059,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7721031557299047e-09
+          "value": 9854.563155900847
         },
         "m1": {
           "unit": "nT",
-          "value": 5.01739827829364e-10
+          "value": 20043.918420450947
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0313589283862645e-09
+          "value": 30018.80942610264
         },
         "refer": "JTRUE",
         "type": "earthmagnetic"
@@ -24079,20 +24079,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "APP"
       ],
@@ -24139,15 +24139,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7720737406450173e-09
+          "value": 9851.238614202015
         },
         "m1": {
           "unit": "nT",
-          "value": 5.017398466041294e-10
+          "value": 20044.12366707603
         },
         "m2": {
           "unit": "nT",
-          "value": 1.031437978143142e-09
+          "value": 30019.763559778712
         },
         "refer": "APP",
         "type": "earthmagnetic"
@@ -24159,20 +24159,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "B1950"
       ],
@@ -24219,15 +24219,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.786501157353957e-09
+          "value": 10368.575335978707
         },
         "m1": {
           "unit": "nT",
-          "value": 4.5842420851009437e-10
+          "value": 19886.11498905657
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0125505145607116e-09
+          "value": 29950.543838501428
         },
         "refer": "B1950",
         "type": "earthmagnetic"
@@ -24239,20 +24239,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "BMEAN"
       ],
@@ -24299,15 +24299,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7720366159730657e-09
+          "value": 9852.223571016804
         },
         "m1": {
           "unit": "nT",
-          "value": 5.019152709223179e-10
+          "value": 20044.326217886286
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0314524031383008e-09
+          "value": 30019.305076158897
         },
         "refer": "BMEAN",
         "type": "earthmagnetic"
@@ -24319,20 +24319,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "BTRUE"
       ],
@@ -24379,15 +24379,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7721065428216373e-09
+          "value": 9854.659571831777
         },
         "m1": {
           "unit": "nT",
-          "value": 5.017194903354848e-10
+          "value": 20043.847355502643
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0313597178885638e-09
+          "value": 30018.82522668827
         },
         "refer": "BTRUE",
         "type": "earthmagnetic"
@@ -24399,20 +24399,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "GALACTIC"
       ],
@@ -24459,15 +24459,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": -1.0763699382469092e-09
+          "value": -32532.566881
         },
         "m1": {
           "unit": "nT",
-          "value": 1.9204599750139605e-09
+          "value": 18453.933293000002
         },
         "m2": {
           "unit": "nT",
-          "value": -2.03795516127864e-09
+          "value": 1041.3636170000009
         },
         "refer": "GALACTIC",
         "type": "earthmagnetic"
@@ -24479,20 +24479,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "HADEC"
       ],
@@ -24539,40 +24539,69 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.6100932879417765e-09
+          "value": 19050.157564660218
         },
         "m1": {
           "unit": "nT",
-          "value": 1.0599867085924322e-09
+          "value": -11657.868716226012
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0314358249759144e-09
+          "value": 30019.7647593623
         },
         "refer": "HADEC",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": -0.549164727021375
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9311581182640389
+        },
+        "refer": "HADEC",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "HADEC",
+        "m0": {
+          "value": 19050.15292152215,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": -11657.86587482725,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 30019.757442577033,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "earthmagnetic_convert_AZEL",
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "AZEL"
       ],
@@ -24619,40 +24648,69 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 1.9652617439282855e-09
+          "value": 35065.083246874994
         },
         "m1": {
           "unit": "nT",
-          "value": -1.0599867085924318e-09
+          "value": 11657.868716226016
         },
         "m2": {
           "unit": "nT",
-          "value": 2.003545135666879e-09
+          "value": 5876.624569900478
         },
         "refer": "AZEL",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.32096771624291387
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.1577123485762569
+        },
+        "refer": "AZEL",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "AZEL",
+        "m0": {
+          "value": 35065.074700382815,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": 11657.865874827256,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 5876.623137577453,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "earthmagnetic_convert_AZELSW",
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "AZELSW"
       ],
@@ -24699,40 +24757,69 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": -1.9652617439282855e-09
+          "value": -35065.083246874994
         },
         "m1": {
           "unit": "nT",
-          "value": 1.0599867085924318e-09
+          "value": -11657.868716226016
         },
         "m2": {
           "unit": "nT",
-          "value": 2.003545135666879e-09
+          "value": 5876.624569900478
         },
         "refer": "AZELSW",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.8206249373468792
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.1577123485762569
+        },
+        "refer": "AZELSW",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "AZELSW",
+        "m0": {
+          "value": -35065.074700382815,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": -11657.865874827261,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 5876.623137577453,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "earthmagnetic_convert_AZELNE",
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "AZELNE"
       ],
@@ -24779,40 +24866,69 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 1.9652617439282855e-09
+          "value": 35065.083246874994
         },
         "m1": {
           "unit": "nT",
-          "value": -1.0599867085924318e-09
+          "value": 11657.868716226016
         },
         "m2": {
           "unit": "nT",
-          "value": 2.003545135666879e-09
+          "value": 5876.624569900478
         },
         "refer": "AZEL",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.32096771624291387
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.1577123485762569
+        },
+        "refer": "AZEL",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "AZEL",
+        "m0": {
+          "value": 35065.074700382815,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": 11657.865874827256,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 5876.623137577453,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "earthmagnetic_convert_AZELGEO",
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "AZELGEO"
       ],
@@ -24859,40 +24975,69 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 1.970084929773601e-09
+          "value": 35079.145093366846
         },
         "m1": {
           "unit": "nT",
-          "value": -1.0599867085924318e-09
+          "value": 11657.868716226018
         },
         "m2": {
           "unit": "nT",
-          "value": 1.99880269218385e-09
+          "value": 5792.094523084708
         },
         "refer": "AZELGEO",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.3208477044753496
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.15542521214213612
+        },
+        "refer": "AZELGEO",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "AZELGEO",
+        "m0": {
+          "value": 35079.13654344735,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": 11657.865874827256,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 5792.093111364384,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "earthmagnetic_convert_AZELSWGEO",
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "AZELSWGEO"
       ],
@@ -24939,40 +25084,69 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": -1.970084929773601e-09
+          "value": -35079.145093366846
         },
         "m1": {
           "unit": "nT",
-          "value": 1.0599867085924318e-09
+          "value": -11657.868716226018
         },
         "m2": {
           "unit": "nT",
-          "value": 1.99880269218385e-09
+          "value": 5792.094523084708
         },
         "refer": "AZELSWGEO",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.8207449491144434
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.15542521214213612
+        },
+        "refer": "AZELSWGEO",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "AZELSWGEO",
+        "m0": {
+          "value": -35079.13654344735,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": -11657.865874827265,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 5792.093111364384,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "earthmagnetic_convert_AZELNEGEO",
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "AZELNEGEO"
       ],
@@ -25019,40 +25193,69 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 1.970084929773601e-09
+          "value": 35079.145093366846
         },
         "m1": {
           "unit": "nT",
-          "value": -1.0599867085924318e-09
+          "value": 11657.868716226018
         },
         "m2": {
           "unit": "nT",
-          "value": 1.99880269218385e-09
+          "value": 5792.094523084708
         },
         "refer": "AZELGEO",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.3208477044753496
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.15542521214213612
+        },
+        "refer": "AZELGEO",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "AZELGEO",
+        "m0": {
+          "value": 35079.13654344735,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": 11657.865874827256,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 5792.093111364384,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "earthmagnetic_convert_JNAT",
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "JNAT"
       ],
@@ -25099,15 +25302,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7762497199427895e-09
+          "value": 9999.999841284221
         },
         "m1": {
           "unit": "nT",
-          "value": 4.895277808142303e-10
+          "value": 20000.00021520628
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0260604486718523e-09
+          "value": 29999.999909434402
         },
         "refer": "JNAT",
         "type": "earthmagnetic"
@@ -25119,20 +25322,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "ECLIPTIC"
       ],
@@ -25179,15 +25382,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7762497351949706e-09
+          "value": 10000.0
         },
         "m1": {
           "unit": "nT",
-          "value": 8.572763140218002e-10
+          "value": 30282.955919341046
         },
         "m2": {
           "unit": "nT",
-          "value": 7.466690895216266e-10
+          "value": 19568.91874343718
         },
         "refer": "ECLIPTIC",
         "type": "earthmagnetic"
@@ -25199,20 +25402,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "MECLIPTIC"
       ],
@@ -25259,15 +25462,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.772033565669238e-09
+          "value": 9852.138932688129
         },
         "m1": {
           "unit": "nT",
-          "value": 8.707698053324922e-10
+          "value": 30330.469541994848
         },
         "m2": {
           "unit": "nT",
-          "value": 7.467193963761119e-10
+          "value": 19570.334075154
         },
         "refer": "MECLIPTIC",
         "type": "earthmagnetic"
@@ -25279,20 +25482,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "TECLIPTIC"
       ],
@@ -25339,15 +25542,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7721031557299047e-09
+          "value": 9854.563155900847
         },
         "m1": {
           "unit": "nT",
-          "value": 8.705482393687318e-10
+          "value": 30329.68198305462
         },
         "m2": {
           "unit": "nT",
-          "value": 7.467193963761119e-10
+          "value": 19570.334075153998
         },
         "refer": "TECLIPTIC",
         "type": "earthmagnetic"
@@ -25359,20 +25562,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "SUPERGAL"
       ],
@@ -25419,15 +25622,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.0925844021967568e-09
+          "value": 36433.729307975176
         },
         "m1": {
           "unit": "nT",
-          "value": -2.100863106164137e-09
+          "value": 1965.8493958540666
         },
         "m2": {
           "unit": "nT",
-          "value": 4.554829610597309e-10
+          "value": -8289.680627023814
         },
         "refer": "SUPERGAL",
         "type": "earthmagnetic"
@@ -25439,20 +25642,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "ITRF"
       ],
@@ -25499,40 +25702,69 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 7.005233821420377e-12
+          "value": 18002.008381153344
         },
         "m1": {
           "unit": "nT",
-          "value": -2.8171101719404654e-09
+          "value": -13219.005276042019
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0314358249759144e-09
+          "value": 30019.7647593623
         },
         "refer": "ITRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": -0.6333818684836142
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9311581182640389
+        },
+        "refer": "ITRF",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "ITRF",
+        "m0": {
+          "value": 18002.00399348305,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": -13219.002054143913,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 30019.757442577033,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "earthmagnetic_convert_TOPO",
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "TOPO"
       ],
@@ -25579,15 +25811,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7720737406450173e-09
+          "value": 9851.238614202015
         },
         "m1": {
           "unit": "nT",
-          "value": 5.017398466041294e-10
+          "value": 20044.12366707603
         },
         "m2": {
           "unit": "nT",
-          "value": 1.031437978143142e-09
+          "value": 30019.763559778712
         },
         "refer": "TOPO",
         "type": "earthmagnetic"
@@ -25599,20 +25831,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "ICRS"
       ],
@@ -25659,15 +25891,15 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 2.7762496871834366e-09
+          "value": 9999.998998790623
         },
         "m1": {
           "unit": "nT",
-          "value": 4.895275030669029e-10
+          "value": 19999.998300359697
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0260606698216995e-09
+          "value": 30000.001466829894
         },
         "refer": "ICRS",
         "type": "earthmagnetic"
@@ -25679,20 +25911,20 @@
       "method": "measure",
       "args": [
         {
+          "type": "earthmagnetic",
+          "refer": "J2000",
           "m0": {
-            "unit": "nT",
-            "value": 2.7762497351949706e-09
+            "value": 10000.0,
+            "unit": "nT"
           },
           "m1": {
-            "unit": "nT",
-            "value": 4.895277334996045e-10
+            "value": 20000.0,
+            "unit": "nT"
           },
           "m2": {
-            "unit": "nT",
-            "value": 1.0260604299770064e-09
-          },
-          "refer": "J2000",
-          "type": "earthmagnetic"
+            "value": 30000.0,
+            "unit": "nT"
+          }
         },
         "IGRF"
       ],
@@ -25739,20 +25971,49 @@
       "result": {
         "m0": {
           "unit": "nT",
-          "value": 7.005233821420377e-12
+          "value": 18002.008381153344
         },
         "m1": {
           "unit": "nT",
-          "value": -2.8171101719404654e-09
+          "value": -13219.005276042019
         },
         "m2": {
           "unit": "nT",
-          "value": 1.0314358249759144e-09
+          "value": 30019.7647593623
         },
         "refer": "IGRF",
         "type": "earthmagnetic"
       },
-      "python_type": "dict"
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": -0.6333818684836142
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9311581182640389
+        },
+        "refer": "ITRF",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "IGRF",
+        "m0": {
+          "value": 18002.00399348305,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": -13219.002054143913,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 30019.757442577033,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Preserve field strength through diurnal aberration. CASA changes the norm; its separate direction conversion supplies the control."
     },
     {
       "name": "asbaseline_0",
@@ -28295,6 +28556,1166 @@
         "type": "uvw"
       },
       "python_type": "dict"
+    },
+    {
+      "name": "baseline_position_sentinel_radius",
+      "method": "baseline",
+      "args": [
+        "ITRF",
+        "743.5685m",
+        "0m",
+        "0m"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m2": {
+          "unit": "m",
+          "value": 743.5685
+        },
+        "refer": "ITRF",
+        "type": "baseline"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "baseline_position_sentinel_show",
+      "method": "show",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m2": {
+            "unit": "m",
+            "value": 743.5685
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        }
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "result": "[743.568, 0, 0] ITRF",
+      "python_type": "str"
+    },
+    {
+      "name": "baseline_position_sentinel_cartesian",
+      "method": "addxvalue",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m2": {
+            "unit": "m",
+            "value": 743.5685
+          },
+          "refer": "ITRF",
+          "type": "baseline"
+        }
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "result": {
+        "unit": "m",
+        "value": [
+          743.5685,
+          0.0,
+          0.0
+        ]
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_position_sentinel_radius",
+      "method": "uvw",
+      "args": [
+        "ITRF",
+        "743.5685m",
+        "0m",
+        "0m"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m2": {
+          "unit": "m",
+          "value": 743.5685
+        },
+        "refer": "ITRF",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_position_sentinel_show",
+      "method": "show",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m2": {
+            "unit": "m",
+            "value": 743.5685
+          },
+          "refer": "ITRF",
+          "type": "uvw"
+        }
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "result": "[743.568, 0, 0] ITRF",
+      "python_type": "str"
+    },
+    {
+      "name": "uvw_position_sentinel_cartesian",
+      "method": "addxvalue",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m2": {
+            "unit": "m",
+            "value": 743.5685
+          },
+          "refer": "ITRF",
+          "type": "uvw"
+        }
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "result": {
+        "unit": "m",
+        "value": [
+          743.5685,
+          0.0,
+          0.0
+        ]
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_ITRF_HADEC_epoch_required",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "ITRF",
+          "type": "uvw"
+        },
+        "HADEC"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "ITRF",
+          "type": "direction"
+        }
+      ],
+      "result": {},
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_ITRF_HADEC_terrestrial_phase",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "ITRF",
+          "type": "uvw"
+        },
+        "HADEC"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "ITRF",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.7416573867739418
+        },
+        "refer": "HADEC",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_HADEC_ITRF_epoch_required",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "HADEC",
+          "type": "uvw"
+        },
+        "ITRF"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "HADEC",
+          "type": "direction"
+        }
+      ],
+      "result": {},
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_HADEC_ITRF_terrestrial_phase",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "HADEC",
+          "type": "uvw"
+        },
+        "ITRF"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "HADEC",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.930274014115472
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.7416573867739413
+        },
+        "refer": "ITRF",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_AZEL_HADEC_epoch_required",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "AZEL",
+          "type": "uvw"
+        },
+        "HADEC"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        }
+      ],
+      "result": {},
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_AZEL_HADEC_terrestrial_phase",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "AZEL",
+          "type": "uvw"
+        },
+        "HADEC"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.8019758856377228
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154725
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "HADEC",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_AZEL_AZELSW_epoch_required",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "AZEL",
+          "type": "uvw"
+        },
+        "AZELSW"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        }
+      ],
+      "result": {},
+      "python_type": "dict"
+    },
+    {
+      "name": "uvw_hop_AZEL_AZELSW_terrestrial_phase",
+      "method": "measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 3.7416573867739413
+          },
+          "refer": "AZEL",
+          "type": "uvw"
+        },
+        "AZELSW"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 3.741657386773941
+        },
+        "refer": "AZELSW",
+        "type": "uvw"
+      },
+      "python_type": "dict"
+    },
+    {
+      "name": "earthmagnetic_fk4_B1950_APP_0.0001",
+      "method": "measure",
+      "args": [
+        {
+          "type": "earthmagnetic",
+          "refer": "B1950",
+          "m0": {
+            "value": 1.0,
+            "unit": "nT"
+          },
+          "m1": {
+            "value": 2.0,
+            "unit": "nT"
+          },
+          "m2": {
+            "value": 3.0,
+            "unit": "nT"
+          }
+        },
+        "APP"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 0.9479816101885041
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 2.0150710167049044
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 3.006436507374205
+        },
+        "refer": "APP",
+        "type": "earthmagnetic"
+      },
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1310904684842351
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9332594562853388
+        },
+        "refer": "APP",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "APP",
+        "m0": {
+          "value": 0.9480177776222855,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": 2.015252905432463,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 3.006662272430696,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Use the direct FK4 transformation on a unit vector and preserve field strength. CASA changes the norm or produces NaNs; the separate direction conversion supplies the control."
+    },
+    {
+      "name": "earthmagnetic_fk4_B1950_APP_1",
+      "method": "measure",
+      "args": [
+        {
+          "type": "earthmagnetic",
+          "refer": "B1950",
+          "m0": {
+            "value": 10000.0,
+            "unit": "nT"
+          },
+          "m1": {
+            "value": 20000.0,
+            "unit": "nT"
+          },
+          "m2": {
+            "value": 30000.0,
+            "unit": "nT"
+          }
+        },
+        "APP"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 5647.743746097544
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 12004.862054304665
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 17911.058674526244
+        },
+        "refer": "APP",
+        "type": "earthmagnetic"
+      },
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1310904684842351
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9332594562853388
+        },
+        "refer": "APP",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "APP",
+        "m0": {
+          "value": 9480.177776222854,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": 20152.52905432463,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 30066.62272430696,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Use the direct FK4 transformation on a unit vector and preserve field strength. CASA changes the norm or produces NaNs; the separate direction conversion supplies the control."
+    },
+    {
+      "name": "earthmagnetic_fk4_APP_B1950_0.0001",
+      "method": "measure",
+      "args": [
+        {
+          "type": "earthmagnetic",
+          "refer": "APP",
+          "m0": {
+            "value": 1.0,
+            "unit": "nT"
+          },
+          "m1": {
+            "value": 2.0,
+            "unit": "nT"
+          },
+          "m2": {
+            "value": 3.0,
+            "unit": "nT"
+          }
+        },
+        "B1950"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": 1.0517338429006517
+        },
+        "m1": {
+          "unit": "nT",
+          "value": 1.9841187980169575
+        },
+        "m2": {
+          "unit": "nT",
+          "value": 2.9932094510779996
+        },
+        "refer": "B1950",
+        "type": "earthmagnetic"
+      },
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.0833581631164075
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.927142198643768
+        },
+        "refer": "B1950",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "B1950",
+        "m0": {
+          "value": 1.051688984348739,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": 1.9839372349253748,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 2.992982346769886,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Use the direct FK4 transformation on a unit vector and preserve field strength. CASA changes the norm or produces NaNs; the separate direction conversion supplies the control."
+    },
+    {
+      "name": "earthmagnetic_fk4_APP_B1950_1",
+      "method": "measure",
+      "args": [
+        {
+          "type": "earthmagnetic",
+          "refer": "APP",
+          "m0": {
+            "value": 10000.0,
+            "unit": "nT"
+          },
+          "m1": {
+            "value": 20000.0,
+            "unit": "nT"
+          },
+          "m2": {
+            "value": 30000.0,
+            "unit": "nT"
+          }
+        },
+        "B1950"
+      ],
+      "kwargs": {},
+      "initial_frame": "empty after done; existing owner decision",
+      "frame": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 58849.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "nT",
+          "value": "nan"
+        },
+        "m1": {
+          "unit": "nT",
+          "value": "nan"
+        },
+        "m2": {
+          "unit": "nT",
+          "value": "nan"
+        },
+        "refer": "B1950",
+        "type": "earthmagnetic"
+      },
+      "python_type": "dict",
+      "direction_control": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.0833581631164075
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.927142198643768
+        },
+        "refer": "B1950",
+        "type": "direction"
+      },
+      "native_result": {
+        "type": "earthmagnetic",
+        "refer": "B1950",
+        "m0": {
+          "value": 10516.889843487388,
+          "unit": "nT"
+        },
+        "m1": {
+          "value": 19839.372349253747,
+          "unit": "nT"
+        },
+        "m2": {
+          "value": 29929.82346769886,
+          "unit": "nT"
+        }
+      },
+      "deviation": "Use the direct FK4 transformation on a unit vector and preserve field strength. CASA changes the norm or produces NaNs; the separate direction conversion supplies the control."
     },
     {
       "name": "addxvalue_vector_direction",

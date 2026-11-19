@@ -19,6 +19,7 @@ use std::str::FromStr;
 
 use time::Month;
 
+use super::direction::vector_rotation::convert_magnetic_direction;
 use super::direction::{DirectionRef, MDirection};
 use super::epoch::{EpochRef, MEpoch};
 use super::error::MeasureError;
@@ -93,22 +94,22 @@ impl EarthMagneticRef {
             Self::JTRUE => 2,
             Self::APP => 3,
             Self::B1950 => 4,
-            Self::BMEAN => 6,
-            Self::BTRUE => 7,
-            Self::GALACTIC => 8,
-            Self::HADEC => 9,
-            Self::AZEL => 10,
-            Self::AZELSW => 11,
-            Self::AZELGEO => 12,
-            Self::AZELSWGEO => 13,
-            Self::JNAT => 14,
-            Self::ECLIPTIC => 15,
-            Self::MECLIPTIC => 16,
-            Self::TECLIPTIC => 17,
-            Self::SUPERGAL => 18,
-            Self::ITRF => 19,
-            Self::TOPO => 20,
-            Self::ICRS => 21,
+            Self::BMEAN => 5,
+            Self::BTRUE => 6,
+            Self::GALACTIC => 7,
+            Self::HADEC => 8,
+            Self::AZEL => 9,
+            Self::AZELSW => 10,
+            Self::AZELGEO => 11,
+            Self::AZELSWGEO => 12,
+            Self::JNAT => 13,
+            Self::ECLIPTIC => 14,
+            Self::MECLIPTIC => 15,
+            Self::TECLIPTIC => 16,
+            Self::SUPERGAL => 17,
+            Self::ITRF => 18,
+            Self::TOPO => 19,
+            Self::ICRS => 20,
             Self::IGRF => 32,
         }
     }
@@ -121,22 +122,22 @@ impl EarthMagneticRef {
             2 => Some(Self::JTRUE),
             3 => Some(Self::APP),
             4 => Some(Self::B1950),
-            6 => Some(Self::BMEAN),
-            7 => Some(Self::BTRUE),
-            8 => Some(Self::GALACTIC),
-            9 => Some(Self::HADEC),
-            10 => Some(Self::AZEL),
-            11 => Some(Self::AZELSW),
-            12 => Some(Self::AZELGEO),
-            13 => Some(Self::AZELSWGEO),
-            14 => Some(Self::JNAT),
-            15 => Some(Self::ECLIPTIC),
-            16 => Some(Self::MECLIPTIC),
-            17 => Some(Self::TECLIPTIC),
-            18 => Some(Self::SUPERGAL),
-            19 => Some(Self::ITRF),
-            20 => Some(Self::TOPO),
-            21 => Some(Self::ICRS),
+            5 => Some(Self::BMEAN),
+            6 => Some(Self::BTRUE),
+            7 => Some(Self::GALACTIC),
+            8 => Some(Self::HADEC),
+            9 => Some(Self::AZEL),
+            10 => Some(Self::AZELSW),
+            11 => Some(Self::AZELGEO),
+            12 => Some(Self::AZELSWGEO),
+            13 => Some(Self::JNAT),
+            14 => Some(Self::ECLIPTIC),
+            15 => Some(Self::MECLIPTIC),
+            16 => Some(Self::TECLIPTIC),
+            17 => Some(Self::SUPERGAL),
+            18 => Some(Self::ITRF),
+            19 => Some(Self::TOPO),
+            20 => Some(Self::ICRS),
             32 => Some(Self::IGRF),
             _ => None,
         }
@@ -318,12 +319,12 @@ impl MEarthMagnetic {
         if self.refer == target {
             return Ok(self.clone());
         }
-        // casacore's R_MODEL0 only tags an explicit vector with the model.
+        // An explicit input is converted to ITRF before labelling the
+        // result as IGRF. Only a model-labelled source triggers evaluation.
         if target == EarthMagneticRef::IGRF {
-            return Ok(Self {
-                vector_nt: self.vector_nt,
-                refer: target,
-            });
+            let mut converted = self.convert_to(EarthMagneticRef::ITRF, frame)?;
+            converted.refer = target;
+            return Ok(converted);
         }
         if self.refer == EarthMagneticRef::IGRF {
             let position = frame.position().ok_or(MeasureError::MissingFrameData {
@@ -364,9 +365,8 @@ impl MEarthMagnetic {
             return Ok(Self::from_xyz_nt(0.0, 0.0, 0.0, target));
         }
 
-        let dir = MDirection::from_cosines(self.vector_nt, src_dir);
-        let converted = dir.convert_to(dst_dir, frame)?;
-        let cosines = converted.cosines();
+        let unit = self.vector_nt.map(|component| component / length);
+        let cosines = convert_magnetic_direction(unit, src_dir, dst_dir, frame)?;
         Ok(Self::from_xyz_nt(
             cosines[0] * length,
             cosines[1] * length,
@@ -641,12 +641,37 @@ mod tests {
     }
 
     #[test]
-    fn earthmag_ref_aliases_and_codes_roundtrip() {
-        for refer in EarthMagneticRef::ALL {
-            assert_eq!(
-                EarthMagneticRef::from_casacore_code(refer.casacore_code()),
-                Some(refer)
-            );
+    fn earthmag_ref_aliases_and_codes_match_casacore() {
+        use EarthMagneticRef::*;
+        // MEarthMagnetic::Types, independently of the Rust mappings.
+        let expected = [
+            (J2000, 0),
+            (JMEAN, 1),
+            (JTRUE, 2),
+            (APP, 3),
+            (B1950, 4),
+            (BMEAN, 5),
+            (BTRUE, 6),
+            (GALACTIC, 7),
+            (HADEC, 8),
+            (AZEL, 9),
+            (AZELSW, 10),
+            (AZELGEO, 11),
+            (AZELSWGEO, 12),
+            (JNAT, 13),
+            (ECLIPTIC, 14),
+            (MECLIPTIC, 15),
+            (TECLIPTIC, 16),
+            (SUPERGAL, 17),
+            (ITRF, 18),
+            (TOPO, 19),
+            (ICRS, 20),
+            (IGRF, 32),
+        ];
+        assert_eq!(EarthMagneticRef::ALL.len(), expected.len());
+        for (refer, code) in expected {
+            assert_eq!(refer.casacore_code(), code);
+            assert_eq!(EarthMagneticRef::from_casacore_code(code), Some(refer));
             assert_eq!(refer.to_string(), refer.as_str());
         }
 
@@ -674,7 +699,9 @@ mod tests {
             "bogus".parse::<EarthMagneticRef>(),
             Err(MeasureError::UnknownRefType { .. })
         ));
-        assert_eq!(EarthMagneticRef::from_casacore_code(999), None);
+        for unknown in (21..32).chain([999]) {
+            assert_eq!(EarthMagneticRef::from_casacore_code(unknown), None);
+        }
     }
 
     #[test]
@@ -703,13 +730,11 @@ mod tests {
     }
 
     #[test]
-    fn earthmag_igrf_label_retains_vector_and_evaluation_requires_a_frame() {
+    fn earthmag_igrf_label_retains_itrf_vector_and_evaluation_requires_a_frame() {
         let frame = MeasFrame::new();
         let xyz = [-8.0, -1.0, 5.0];
-        let field = MEarthMagnetic::from_xyz_nt(xyz[0], xyz[1], xyz[2], EarthMagneticRef::J2000);
-        // CASA's explicit-vector-to-IGRF conversion sets the label without
-        // evaluating the model. The Python geometry fixture captures both
-        // that direction of conversion and the inverse with real frame data.
+        let field = MEarthMagnetic::from_xyz_nt(xyz[0], xyz[1], xyz[2], EarthMagneticRef::ITRF);
+        // An ITRF vector already has the coordinates used by the IGRF model.
         let labelled = field.convert_to(EarthMagneticRef::IGRF, &frame).unwrap();
         assert_eq!(labelled.refer(), EarthMagneticRef::IGRF);
         assert_eq!(labelled.xyz_nt(), xyz);

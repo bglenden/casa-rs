@@ -525,8 +525,12 @@ impl Measure {
                 let (lon, lat) = direction_angles(cosines);
                 [lon, lat, 0.0]
             }
-            MeasureValue::Position(xyz) | MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) => {
+            MeasureValue::Position(xyz) => {
                 let (lon, lat, length) = position_spherical(xyz);
+                [lon, lat, length]
+            }
+            MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) => {
+                let (lon, lat, length) = spatial_spherical(xyz);
                 [lon, lat, length]
             }
             MeasureValue::Frequency(hz) => [hz, 0.0, 0.0],
@@ -870,16 +874,22 @@ pub(crate) fn position_vector(longitude: f64, latitude: f64, length_m: f64) -> [
 
 /// `MVPosition::get`: longitude, latitude and the (decoded) length.
 pub(crate) fn position_spherical(xyz: [f64; 3]) -> (f64, f64, f64) {
-    let mut length = norm(xyz);
+    let (longitude, latitude, mut length) = spatial_spherical(xyz);
+    if length > LO_LIMIT_M && length < HI_LIMIT_M {
+        length = (length - HI_LIMIT_M) * 1e7;
+    }
+    (longitude, latitude, length)
+}
+
+/// Raw vector angles and magnitude without position height decoding.
+pub(crate) fn spatial_spherical(xyz: [f64; 3]) -> (f64, f64, f64) {
+    let length = norm(xyz);
     let longitude = if xyz[0] != 0.0 || xyz[1] != 0.0 {
         xyz[1].atan2(xyz[0])
     } else {
         0.0
     };
     let latitude = (xyz[2] / if length == 0.0 { 1.0 } else { length }).asin();
-    if length > LO_LIMIT_M && length < HI_LIMIT_M {
-        length = (length - HI_LIMIT_M) * 1e7;
-    }
     (longitude, latitude, length)
 }
 

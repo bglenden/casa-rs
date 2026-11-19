@@ -81,6 +81,28 @@ pub fn baseline_rotation(
     Ok(rotation)
 }
 
+/// Apply the MCEarthMagnetic route to a unit field vector. Keeping the
+/// input and output at unit scale isolates direction corrections from the
+/// field magnitude. The graph also contains the direct FK4 apparent edge.
+pub(in crate::measures) fn convert_magnetic_direction(
+    mut unit: [f64; 3],
+    from: DirectionRef,
+    to: DirectionRef,
+    frame: &MeasFrame,
+) -> Result<[f64; 3], MeasureError> {
+    use DirectionRef::*;
+    let context = ConvCtx::new();
+    let mut source = from;
+    for target in route(from, to) {
+        unit = match (source, target) {
+            (B1950, APP) | (APP, B1950) => fk4_apparent_direction(unit, target, frame)?,
+            _ => apply_hop(unit, source, target, frame, &context)?,
+        };
+        source = target;
+    }
+    Ok(sofars::vm::pn(&unit).1)
+}
+
 // Casacore MCBase counts every edge plus its FK4 penalty. The direct
 // APP/B1950 conversion is part of the baseline graph even when a caller
 // starts in a terrestrial frame. Direct conversions retain their own edge.
@@ -308,7 +330,19 @@ fn fk4_apparent_direction(
         let v = add(source, aberration.map(|v| -v));
         let v = casacore_frames::besselian_nutation(v, epoch, true);
         let v = casacore_frames::besselian_precession(v, epoch, true);
-        Ok(add(v, e_terms_shift(v).map(|v| -v)))
+        // MeasMath::deapplyETerms stops at a residual of 1e-5. The
+        // default epoch used here can require a second correction.
+        let mut guess = v;
+        loop {
+            let shift = e_terms_shift(guess);
+            let residual = std::array::from_fn(|i| guess[i] - v[i] + shift[i]);
+            guess = std::array::from_fn(|i| guess[i] - residual[i]);
+            let radius = sofars::vm::pm(residual);
+            if radius.is_nan() || radius <= 1e-5 {
+                break;
+            }
+        }
+        Ok(sofars::vm::pn(&guess).1)
     }
 }
 
@@ -327,6 +361,11 @@ fn uvw_hop_direction(
             let mean = sky.convert_to(JMEAN, frame)?;
             let value = apply_hop(mean.cosines(), JTRUE, TECLIPTIC, frame, &ConvCtx::new())?;
             return Ok(value);
+        }
+        // MCuvw obtains the terrestrial phase centre from APP first,
+        // even when the supplied direction already has the source label.
+        (TOPO | HADEC | ITRF | AZEL | AZELSW | AZELGEO | AZELSWGEO, _) => {
+            sky.convert_to(APP, frame)?.convert_to(from, frame)?
         }
         _ => sky.convert_to(from, frame)?,
     };

@@ -32,7 +32,7 @@ fn cartesian(value: Measure) -> Result<[f64; 3], String> {
     }
 }
 
-/// Expand each ordered i<j pair to position[j]-position[i], retaining metadata.
+/// Expand each ordered `i < j` pair to `position[j] - position[i]`, retaining metadata.
 /// CASA forces the input to uvw for decoding and restores its original labels.
 pub(super) fn expand(input: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
     let mut fields = input.0.clone();

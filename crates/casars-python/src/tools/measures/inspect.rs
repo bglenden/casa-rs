@@ -9,7 +9,9 @@
 //! Hz; then, with `refcode`, its reference code.
 
 use crate::convert::RecordArg;
-use crate::convert::holder::{Measure, MeasureValue, direction_angles, position_spherical};
+use crate::convert::holder::{
+    Measure, MeasureValue, direction_angles, position_spherical, spatial_spherical,
+};
 use crate::convert::value::{CasaValue, stream_double};
 use crate::tools::LogLine;
 
@@ -108,11 +110,12 @@ pub(super) fn show(v: &RecordArg, refcode: bool, lines: &mut Vec<LogLine>) -> Ca
             stream_double(value * crate::convert::holder::C_MPS)
         ),
         MeasureValue::RadialVelocity(value) => format!("{} m/s", stream_double(value)),
-        MeasureValue::Position(xyz)
-        | MeasureValue::Baseline(xyz)
-        | MeasureValue::Uvw(xyz)
-        | MeasureValue::EarthMagnetic(xyz) => {
+        MeasureValue::Position(xyz) => {
             let (longitude, latitude, length) = position_spherical(xyz);
+            vector(&[length, longitude, latitude])
+        }
+        MeasureValue::Baseline(xyz) | MeasureValue::Uvw(xyz) | MeasureValue::EarthMagnetic(xyz) => {
+            let (longitude, latitude, length) = spatial_spherical(xyz);
             vector(&[length, longitude, latitude])
         }
     };

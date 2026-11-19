@@ -42,16 +42,22 @@ def cartesian(record):
 def compare(actual, expected):
     if isinstance(expected, dict):
         assert actual.keys() == expected.keys()
-        if expected.get("type") in ("baseline", "uvw") and all(
+        kind = expected.get("type")
+        if kind in ("baseline", "uvw", "earthmagnetic") and all(
             key in expected for key in COMPONENTS
         ):
-            # Compare physical vectors without depending on undefined angles
-            # when the output reference offset leaves a zero-length vector.
             for key in COMPONENTS:
                 assert actual[key].keys() == expected[key].keys()
                 assert actual[key]["unit"] == expected[key]["unit"]
                 assert np.shape(actual[key]["value"]) == np.shape(expected[key]["value"])
-            assert_close(cartesian(actual), cartesian(expected))
+            if kind == "earthmagnetic":
+                values = np.array([expected[key]["value"] for key in COMPONENTS])
+                result = np.array([actual[key]["value"] for key in COMPONENTS])
+                tolerance = 2e-11 * np.max(np.abs(values), initial=0.0)
+                np.testing.assert_allclose(result, values, rtol=2e-11, atol=tolerance)
+            else:
+                # A zero-length vector has undefined spherical angles.
+                assert_close(cartesian(actual), cartesian(expected))
             for name, value in expected.items():
                 if name not in COMPONENTS:
                     compare(actual[name], value)

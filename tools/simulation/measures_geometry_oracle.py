@@ -25,7 +25,8 @@ def clean(v):
     if isinstance(v,bytes):return {'__python_bytes__':list(v)}
     if isinstance(v,dict):return {k:clean(x) for k,x in v.items()}
     if isinstance(v,(list,tuple,np.ndarray)):return [clean(x) for x in v]
-    if isinstance(v,np.generic):return v.item()
+    if isinstance(v,np.generic):return clean(v.item())
+    if isinstance(v,float) and not math.isfinite(v):return str(v)
     return v
 
 cases=[]
@@ -83,7 +84,12 @@ for kind,base in records.items():
 
 for kind in ['baseline','uvw','earthmagnetic']:
     base=deepcopy(records[kind])
-    if kind=='earthmagnetic':base=m.earthmagnetic('J2000','3nT','10deg','20deg')
+    if kind=='earthmagnetic':
+        base = {
+            'type': kind, 'refer': 'J2000',
+            **{f'm{i}': {'value': value, 'unit': 'nT'}
+               for i, value in enumerate((10000., 20000., 30000.))},
+        }
     codes=m.listcodes(base)['normal']
     for ref in codes:
         capture(kind+'_convert_'+ref,'measure',[base,ref],frame=frame)
@@ -109,6 +115,66 @@ for kind in ['baseline', 'uvw']:
                            ('ITRF','HADEC'), ('HADEC','AZEL'), ('AZEL','HADEC')]:
         value = getattr(m, kind)(source, '1m', '2m', '3m')
         capture(f'{kind}_hop_{source}_{target}', 'measure', [value, target], frame=frame)
+# An ordinary vector may happen to share the encoded radius of a
+# negative geodetic height. Baseline and UVW records must preserve it.
+for kind in ['baseline', 'uvw']:
+    capture(f'{kind}_position_sentinel_radius', kind, ['ITRF', '743.5685m', '0m', '0m'])
+    value = getattr(m, kind)('ITRF', '743.5685m', '0m', '0m')
+    capture(f'{kind}_position_sentinel_show', 'show', [value])
+    capture(f'{kind}_position_sentinel_cartesian', 'addxvalue', [value])
+
+for source, target in [('ITRF', 'HADEC'), ('HADEC', 'ITRF'),
+                       ('AZEL', 'HADEC'), ('AZEL', 'AZELSW')]:
+    value = m.uvw(source, '1m', '2m', '3m')
+    terrestrial = [frame[1], m.direction(source, '10deg', '20deg')]
+    capture(f'uvw_hop_{source}_{target}_epoch_required', 'measure', [value, target], frame=terrestrial)
+    capture(f'uvw_hop_{source}_{target}_terrestrial_phase', 'measure', [value, target],
+            frame=[frame[0], *terrestrial])
+
+# Independent CASA direction conversions normalize the input to each
+# aberration hop. MVEarthMagnetic skips that normalization and changes
+# the field strength, especially on the direct FK4 APP/B1950 route.
+xyz = [10000., 20000., 30000.]
+length = math.hypot(*xyz)
+assert all(m.doframe(element) for element in frame)
+
+
+def direction_control(case, destination, magnitude, explanation):
+    source = case['args'][0]['refer']
+    direction = m.direction(source, {'value': math.atan2(xyz[1], xyz[0]), 'unit': 'rad'},
+                            {'value': math.asin(xyz[2] / length), 'unit': 'rad'})
+    reference = m.measure(direction, destination)
+    lon, lat = (reference[f'm{i}']['value'] for i in range(2))
+    unit = [math.cos(lat) * math.cos(lon), math.cos(lat) * math.sin(lon), math.sin(lat)]
+    case['direction_control'] = clean(reference)
+    case['native_result'] = {
+        'type': 'earthmagnetic', 'refer': case['result']['refer'],
+        **{f'm{i}': {'value': v * magnitude, 'unit': 'nT'} for i, v in enumerate(unit)},
+    }
+    case['deviation'] = explanation
+
+
+horizon_refs = {'HADEC', 'AZEL', 'AZELSW', 'AZELNE', 'AZELGEO',
+                'AZELSWGEO', 'AZELNEGEO', 'ITRF', 'IGRF'}
+for case in cases:
+    if case['name'].startswith('earthmagnetic_convert_') and case['args'][1] in horizon_refs:
+        target = case['args'][1]
+        direction_control(case, 'ITRF' if target == 'IGRF' else target, length,
+                          'Preserve field strength through diurnal aberration. '
+                          'CASA changes the norm; its separate direction conversion supplies the control.')
+
+for source, target in [('B1950', 'APP'), ('APP', 'B1950')]:
+    for scale in [1e-4, 1.]:
+        field = {
+            'type': 'earthmagnetic', 'refer': source,
+            **{f'm{i}': {'value': v * scale, 'unit': 'nT'} for i, v in enumerate(xyz)},
+        }
+        capture(f'earthmagnetic_fk4_{source}_{target}_{scale:g}', 'measure', [field, target], frame=frame)
+        direction_control(cases[-1], target, length * scale,
+                          'Use the direct FK4 transformation on a unit vector and preserve '
+                          'field strength. CASA changes the norm or produces NaNs; the '
+                          'separate direction conversion supplies the control.')
+m.done()
 # Qualify the observed CASA defects with independent quantity/record paths.
 qa=quanta()
 for case in cases:

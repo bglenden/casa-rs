@@ -5328,6 +5328,26 @@ The inputs, raw outputs and independent controls are in
 These corrections follow the standing rule on data loss, unit corruption,
 and behavior contradicting evident intent (#1252).
 
+## Magnetic reference changes can corrupt field strength
+
+With a frame of 2020-01-01 UTC at ALMA, CASA 6.7.6.14 converts the
+Cartesian field `[10000, 20000, 30000]` nT from B1950 to APP with a
+magnitude of 22289.454 nT, down from 37416.574 nT. Supplying that same
+Cartesian field in APP and requesting B1950 produces three NaNs.
+In `MCEarthMagnetic` the direct FK4 E-term correction can act on an
+unnormalized magnetic vector, and `MVEarthMagnetic::adjust()` leaves the
+norm unchanged during corrections. The same normalization omission is
+visible in diurnal aberration: converting this field from J2000 to ITRF
+increases its magnitude by 0.009120 nT. An IGRF output uses the ITRF
+coordinates and inherits the same error.
+
+Casa-rs applies the casacore direction corrections to a unit vector,
+then restores the input field strength. The geometry fixture retains
+the raw CASA magnetic outputs and separately captures CASA's direction
+conversion at the same angles. The normalized FK4 controls return
+finite vectors in both directions and preserve the input strength
+(#1252).
+
 ## Component spectrum changes can discard data
 
 - Date noted: 2026-11-06
