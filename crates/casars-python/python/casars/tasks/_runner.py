@@ -261,6 +261,11 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
         _validate_ms_transform_datacolumn(arguments["datacolumn"])
+        for parameter in ("timebin", "combine" if name == "split" else "timespan"):
+            value = arguments[parameter]
+            if not isinstance(value, str):
+                message = "null value not allowed" if value is None else "must be of cStr type"
+                raise AssertionError(str({parameter: [message]}))
         _coerce_ms_transform_selectors(name, values)
         _coerce_ms_channel_width(name, values)
         try:

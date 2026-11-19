@@ -28,18 +28,24 @@ pub(super) struct TimeSample {
     pub(super) uvw: [f64; 3],
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TimeInputRow {
+    pub(super) physical: usize,
+    pub(super) buffer_first: usize,
+}
+
 /// A baseline accumulation, anchored on the first selected physical row.
 #[derive(Debug)]
 pub(super) struct TimeGroup {
     pub(super) first: TimeSample,
-    pub(super) rows: Vec<usize>,
+    pub(super) rows: Vec<TimeInputRow>,
 }
 
 impl TimeGroup {
-    fn new(first: TimeSample) -> Self {
+    fn new(first: TimeSample, row: TimeInputRow) -> Self {
         Self {
             first,
-            rows: vec![first.row],
+            rows: vec![row],
         }
     }
 
@@ -169,22 +175,32 @@ pub(super) fn group_baselines(
     let mut finished = Vec::new();
     let mut baselines = BTreeMap::<[i32; 2], usize>::new();
     let mut active: Vec<TimeGroup> = Vec::new();
-    let mut chunk_start: Option<TimeSample> = None;
+    let mut chunk = None;
+    let mut buffer_start: Option<TimeSample> = None;
     for sample in samples {
-        if chunk_start
-            .is_none_or(|start| start.chunk != sample.chunk || sample.time - start.time >= timebin)
-        {
+        if chunk != Some(sample.chunk) {
             finished.append(&mut active);
             baselines.clear();
-            chunk_start = Some(sample);
+            chunk = Some(sample.chunk);
         }
+        let first = buffer_start
+            .filter(|start| start.chunk == sample.chunk && start.time == sample.time)
+            .unwrap_or(sample);
+        buffer_start = Some(first);
+        let row = TimeInputRow {
+            physical: sample.row,
+            buffer_first: first.row,
+        };
         let slot = *baselines.entry(sample.antenna_pair).or_insert(active.len());
         if slot == active.len() {
-            active.push(TimeGroup::new(sample));
+            active.push(TimeGroup::new(sample, row));
         } else if active[slot].exceeds(&sample, max_time, max_uvw_squared) {
-            finished.push(std::mem::replace(&mut active[slot], TimeGroup::new(sample)));
+            finished.push(std::mem::replace(
+                &mut active[slot],
+                TimeGroup::new(sample, row),
+            ));
         } else {
-            active[slot].rows.push(sample.row);
+            active[slot].rows.push(row);
         }
     }
     finished.append(&mut active);
@@ -266,12 +282,15 @@ impl TimeCoordinatesAverage {
             interval,
             exposure: self.exposure,
             uvw: self.uvw.map(|coordinate| coordinate / normalization),
-            flag_row: self.flagged,
+            // The time iterator uses its row flag during accumulation and
+            // clears it on output. The selected cell flags carry through.
+            flag_row: false,
         }
     }
 }
 
-use ndarray::{Array1, Array2, ArrayD, Ix2};
+use ndarray::{Array1, Array2, ArrayD, ArrayView2, Ix2};
+use num_complex::Complex32;
 use std::ops::{AddAssign, Div, Mul};
 
 use crate::schema::main_table::OptionalMainColumn;
@@ -308,6 +327,66 @@ pub(super) struct TimeVisibilityAverage {
     observed: bool,
     corrected: bool,
     floating: bool,
+    lag_only: bool,
+    lags: Option<LagVisibilityAverage>,
+}
+
+/// LAG_DATA has no channel correspondence. A whole correlation is usable
+/// when any of its selected frequency flags are clear.
+struct LagVisibilityAverage {
+    sum: Array2<Complex32>,
+    weights: Vec<f32>,
+    flagged: Vec<bool>,
+}
+
+impl LagVisibilityAverage {
+    fn new(shape: (usize, usize)) -> Self {
+        Self {
+            sum: Array2::zeros(shape),
+            weights: vec![0.0; shape.0],
+            flagged: vec![true; shape.0],
+        }
+    }
+
+    fn add(
+        &mut self,
+        values: ArrayView2<'_, Complex32>,
+        flags: &ArrayView2<'_, bool>,
+        weight: &InputStatistic<'_>,
+    ) -> Result<(), TableError> {
+        if self.sum.dim() != values.dim() || values.nrows() != flags.nrows() {
+            return Err(TableError::Schema(
+                "LAG_DATA shapes differ during time averaging".to_string(),
+            ));
+        }
+        for correlation in 0..values.nrows() {
+            let flagged = flags.row(correlation).iter().all(|&flag| flag);
+            if !self.flagged[correlation] && flagged {
+                continue;
+            }
+            let mut sum = self.sum.row_mut(correlation);
+            if self.flagged[correlation] && !flagged {
+                self.weights[correlation] = 0.0;
+                self.flagged[correlation] = false;
+                sum.fill(Complex32::default());
+            }
+            let weight = weight.value(correlation, 0);
+            self.weights[correlation] += weight;
+            for (sum, &value) in sum.iter_mut().zip(values.row(correlation)) {
+                *sum += value * weight;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> ArrayValue {
+        for (mut row, weight) in self.sum.rows_mut().into_iter().zip(self.weights) {
+            if weight > 0.0 {
+                row.mapv_inplace(|value| value / weight);
+            }
+        }
+        ArrayValue::Complex32(self.sum.into_dyn())
+    }
 }
 
 pub(super) struct TimeVisibilityRow<'a> {
@@ -334,6 +413,7 @@ impl TimeVisibilityAverage {
         let observed = has(Data);
         let corrected = has(CorrectedData);
         let floating = has(FloatData);
+        let lag_only = columns.copies().len() == 1 && has(LagData);
         let columns = columns
             .copies()
             .iter()
@@ -365,6 +445,8 @@ impl TimeVisibilityAverage {
             observed,
             corrected,
             floating,
+            lag_only,
+            lags: None,
         }
     }
 
@@ -412,17 +494,32 @@ impl TimeVisibilityAverage {
             }
         });
         for (column, value) in self.columns.iter_mut().zip(row.values) {
+            if column.physical == OptionalMainColumn::LagData {
+                if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
+                    let ArrayValue::Complex32(values) = value else {
+                        return Err(TableError::Schema(
+                            "LAG_DATA must hold Complex32".to_string(),
+                        ));
+                    };
+                    let lags = values.view().into_dimensionality::<Ix2>().map_err(|_| {
+                        TableError::Schema(
+                            "LAG_DATA must have correlation and lag axes".to_string(),
+                        )
+                    })?;
+                    let row_weight_values =
+                        InputStatistic::from_cells(row.weight, None, shape, "WEIGHT")?;
+                    self.lags
+                        .get_or_insert_with(|| LagVisibilityAverage::new(lags.dim()))
+                        .add(lags, &flags, &row_weight_values)?;
+                }
+                continue;
+            }
             match (column.sum.as_mut(), value.as_ref()) {
                 (Some(ArrayValue::Complex32(sum)), Some(ArrayValue::Complex32(value))) => {
                     add_visibility(sum, value, &changes, column.weight)?;
                 }
                 (Some(ArrayValue::Float32(sum)), Some(ArrayValue::Float32(value))) => {
                     add_visibility(sum, value, &changes, column.weight)?;
-                }
-                _ if column.physical == OptionalMainColumn::LagData => {
-                    if column.sum.is_none() {
-                        column.sum = value.clone();
-                    }
                 }
                 _ => {
                     return Err(TableError::Schema(format!(
@@ -442,15 +539,15 @@ impl TimeVisibilityAverage {
         Ok((flags.iter().all(|&flag| flag), adjusted_weight))
     }
 
-    pub(super) fn finish(self) -> AveragedTimeVisibilities {
-        let output_weight = if self.corrected {
+    pub(super) fn finish(mut self) -> AveragedTimeVisibilities {
+        let output_weight = if self.corrected || self.lag_only {
             TimeWeight::Calibrated
         } else if self.observed || self.floating {
             TimeWeight::Observed
         } else {
             TimeWeight::Unit
         };
-        let output_variance = if self.observed && self.corrected {
+        let output_variance = if (self.observed || self.floating) && self.corrected {
             TimeWeight::Observed
         } else {
             output_weight
@@ -465,11 +562,12 @@ impl TimeVisibilityAverage {
             .columns
             .into_iter()
             .map(|column| {
+                if column.physical == OptionalMainColumn::LagData {
+                    return self.lags.take().map(LagVisibilityAverage::finish);
+                }
                 column.sum.map(|mut value| {
                     match &mut value {
-                        ArrayValue::Complex32(array)
-                            if column.physical != OptionalMainColumn::LagData =>
-                        {
+                        ArrayValue::Complex32(array) => {
                             finish_visibility(array, &self.sum_weights, column.weight);
                         }
                         ArrayValue::Float32(array) => {

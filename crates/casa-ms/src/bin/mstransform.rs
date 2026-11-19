@@ -88,11 +88,21 @@ fn time_average_options(
         return Ok(None);
     }
     let interval = task.required_text("timebin")?;
+    let quantity = Quantity::read(&interval).map_err(|_| {
+        TaskFailure::execution(format!(
+            "Error in QuantumHolder::fromString with input string {interval:?}: Illegal input units or format"
+        )).at("timebin")
+    })?;
     let seconds = Unit::new("s").expect("seconds are a defined unit");
-    let interval_seconds = interval
-        .parse::<Quantity>()
-        .and_then(|time| time.get_value_in(&seconds))
-        .map_err(|error| TaskFailure::validation(error.to_string()).at("timebin"))?;
+    let radians = Unit::new("rad").expect("radians are a defined unit");
+    let interval_seconds = quantity
+        .get_value_in(&seconds)
+        .or_else(|_| {
+            quantity
+                .get_value_in(&radians)
+                .map(|angle| angle * 43_200.0 / std::f64::consts::PI)
+        })
+        .unwrap_or_else(|_| quantity.get_si_value());
     if interval_seconds <= 0.0 || !interval_seconds.is_finite() {
         return if split {
             Ok(None)

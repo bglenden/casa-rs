@@ -495,11 +495,10 @@ def mstransform(
     ``realmodelcol``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,
     ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,
     ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,
-    ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,
-    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,
-    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,
-    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,
-    ``monolithic_processing``, ``reindex``.
+    ``preaverage``, ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``,
+    ``fitorder``, ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``,
+    ``disableparallel``, ``ddistart``, ``monolithic_processing``,
+    ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -530,7 +529,7 @@ def split(
 
     CASA's ``split``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``, ``timebin``, ``combine``.
+    ``keepmms``.
     """
     return _call_casa(split, locals())
 
