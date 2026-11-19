@@ -233,6 +233,15 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         limit_channels: task.flag("chanrangeSetXrange")?,
         resample: unsigned(task, "resample")?,
     };
+    run_request(task, &request, &display)
+}
+
+fn run_request(
+    task: &TaskInvocation<'_>,
+    request: &PlotRequest<'_>,
+    display: &DisplayOptions<'_>,
+) -> Result<TaskSuccess, TaskFailure> {
+    let figfile = display.figfile;
     let build_pdf = task.flag("buildpdf")?;
     if figfile.is_empty()
         && (build_pdf || (!display.interactive && request.derivative_sigma == 0.0))
@@ -248,7 +257,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .and_then(|text| text.parse::<usize>().ok());
     let panel_limit = completed_pages
         .map(|count| count.saturating_mul(display.layout[0] as usize * display.layout[1] as usize));
-    let plan = prepare_bandpass(&request, panel_limit).map_err(TaskFailure::execution)?;
+    let plan = prepare_bandpass(request, panel_limit).map_err(TaskFailure::execution)?;
     if let Some(ChannelRange::Indices([start, end])) = display.channel_range
         && plan.panels.iter().any(|panel| {
             !panel.frequency_channels.is_empty()
@@ -287,8 +296,11 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                     .map_or_else(String::new, |ms| ms.display().to_string())
             ),
             format!(
-                "Preparing {} bandpass panels for {y_axis} versus {axis}, overlay={raw_overlay:?}",
-                plan.panels.len()
+                "Preparing {} bandpass panels for {} versus {}, overlay={:?}",
+                plan.panels.len(),
+                request.y_axis,
+                task.text("xaxis")?.unwrap_or_default(),
+                task.text("overlay")?.unwrap_or_default(),
             ),
         ]
     } else {
@@ -297,7 +309,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     diagnostics.extend(plan.selection_notice.iter().cloned());
     let reply = Reply {
         pages: if completed_pages.is_none() {
-            pages(plan, &display).map_err(TaskFailure::execution)?
+            pages(plan, display).map_err(TaskFailure::execution)?
         } else {
             Vec::new()
         },

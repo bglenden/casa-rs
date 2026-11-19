@@ -412,30 +412,13 @@ fn panel(
             let (curve, statistics) = if derivative {
                 let differentiated =
                     raw.differentiate(ordinate == Ordinate::Amplitude, request.edge);
-                let can_report = ordinate != Ordinate::Phase
-                    || differentiated
-                        .curve
-                        .y
-                        .iter()
-                        .map(|value| value.abs())
-                        .sum::<f64>()
-                        >= 0.002;
-                if can_report
-                    && let Some(outliers) =
-                        differentiated.outliers(request.derivative_sigma, request.edge)
-                {
-                    let name = antenna_name(source, address.antenna);
-                    let kind = if ordinate == Ordinate::Phase {
-                        "phs"
-                    } else {
-                        "amp"
-                    };
-                    diagnostics.push(format!(
-                        "{name}, Pol {receptor}, spw {}, {kind}: {} points exceed {:.1} sigma (worst={:.2} at chan {})",
-                        address.window, outliers.count, request.derivative_sigma, outliers.worst_sigma,
-                        outliers.coordinate as i32,
-                    ));
-                }
+                diagnostics.extend(outlier_message(
+                    context,
+                    &differentiated,
+                    address,
+                    receptor,
+                    ordinate,
+                ));
                 let Derivative {
                     curve,
                     deviation,
@@ -517,6 +500,35 @@ fn panel(
         epoch: source.rows[selected[0].row].time,
         overlay: request.overlay,
     })
+}
+
+fn outlier_message(
+    context: &PanelContext<'_, '_>,
+    derivative: &Derivative,
+    row: table::SolutionRow,
+    receptor: usize,
+    ordinate: Ordinate,
+) -> Option<String> {
+    let phase = ordinate == Ordinate::Phase;
+    if phase
+        && derivative
+            .curve
+            .y
+            .iter()
+            .map(|value| value.abs())
+            .sum::<f64>()
+            < 0.002
+    {
+        return None;
+    }
+    let sigma = context.request.derivative_sigma;
+    let outliers = derivative.outliers(sigma, context.request.edge)?;
+    let name = antenna_name(context.source, row.antenna);
+    let kind = if phase { "phs" } else { "amp" };
+    Some(format!(
+        "{name}, Pol {receptor}, spw {}, {kind}: {} points exceed {sigma:.1} sigma (worst={:.2} at chan {})",
+        row.window, outliers.count, outliers.worst_sigma, outliers.coordinate as i32,
+    ))
 }
 
 fn fdm_windows(source: &Solutions, requested: bool) -> Option<Vec<SolutionWindow>> {

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Compare CASA 6.7.6.14 and casars plotbandpass data and products.
 
 Run with the pinned CASA interpreter, a built casars Python package, and
@@ -22,8 +23,10 @@ import numpy as np
 
 from casatasks import bandpass, plotbandpass as reference
 from casatasks.private import task_plotbandpass
+from casatools import table
 from casars.tasks import plotbandpass as native
 
+from bpoly_oracle import multiwindow_data
 from calibration_smoothcal_oracle import opened
 from record_casa_returns import make_cal_ms
 
@@ -35,7 +38,6 @@ def fixtures(root):
     weather.write_text("ANTENNA_ID TIME INTERVAL TEMPERATURE PRESSURE REL_HUMIDITY WIND_DIRECTION WIND_SPEED\n"
                        "I D D R R R R R\n"
                        "0 5084550000 60 270 940 22 0 2\n")
-    from casatools import table
     tool = table()
     tool.fromascii(str(ms / "WEATHER"), str(weather), sep=" ")
     tool.close()
@@ -57,6 +59,62 @@ def fixtures(root):
     bandpass(str(ms), str(polynomial), field="FLUX", solint="inf", refant="A0",
              minsnr=0.0, bandtype="BPOLY", degamp=2, degphase=1)
     return ms, current, scaled, polynomial
+
+
+def multiband_fixture(root, source):
+    ms = root / "multi.ms"
+    multiwindow_data(source, ms)
+    with opened(ms / "SPECTRAL_WINDOW", write=True) as tool:
+        tool.addcols({"BBC_NO": {"valueType": "int"}})
+        tool.putcol("BBC_NO", [1, 1])
+        tool.addrows(1)
+        frequency = np.arange(96) * 0.04e6 + 100.002e9
+        widths = np.full(96, 0.04e6)
+        for column, value in {
+            "BBC_NO": 1, "CHAN_FREQ": frequency, "REF_FREQUENCY": frequency[30],
+            "NUM_CHAN": 96, "NAME": "EXTRA_FDM", "CHAN_WIDTH": widths,
+            "RESOLUTION": widths, "EFFECTIVE_BW": widths, "MEAS_FREQ_REF": 5,
+            "NET_SIDEBAND": 1, "TOTAL_BANDWIDTH": 96 * 0.04e6, "FLAG_ROW": False,
+        }.items():
+            tool.putcell(column, 2, value)
+    cal = root / "multi.bcal"
+    bandpass(str(ms), str(cal), refant="A0", solint="inf", minsnr=0.0)
+    with opened(cal, write=True) as tool:
+        tool.putkeyword("MSName", str(ms))
+    return ms, cal
+
+
+def masked_fixture(root, current):
+    masked = root / "masked.bcal"
+    copytree(current, masked)
+    with opened(masked, write=True) as tool:
+        flags = tool.getcol("FLAG")
+        flags[0, 2, :] = True
+        tool.putcol("FLAG", flags)
+        tool.putkeyword("MSName", "unavailable.ms")
+    return masked
+
+
+def check_platforming(root):
+    ms, cal = root / "wide.ms", root / "wide.bcal"
+    make_cal_ms(str(ms), channels=64)
+    bandpass(str(ms), str(cal), field="FLUX", refant="A0", solint="inf", minsnr=0.0)
+    with opened(cal, write=True) as tool:
+        values = tool.getcol("CPARAM")
+        values[:, 32:, :] *= 1.5
+        tool.putcol("CPARAM", values)
+    options = dict(caltable=str(cal), vis=str(ms), antenna="A0", interactive=False,
+                   channeldiff=5, edge=1, platformingSigma=0.0, figfile=False)
+    error, *_ = capture(reference, root / "platforming-casa", options)
+    assert error == ("TypeError", "'float' object cannot be interpreted as an integer"), error
+    for threshold, detected in [(10.0, True), (100.0, False)]:
+        result, *_ = capture(native, root / f"platforming-{threshold:.0f}", options | {
+            "platformingThreshold": threshold,
+        })
+        assert bool(result["platforming"]) == detected, result
+        if detected:
+            assert set(result["platforming"]["A0"][0]) == {0, 1}
+    print("verified analytic interior-step platforming at two thresholds")
 
 
 def artist_data(figure):
@@ -147,6 +205,9 @@ def comparisons(root):
     ms, current, scaled, polynomial = fixtures(root)
     common = dict(caltable=str(current), vis=str(ms), antenna="A0", spw="0",
                   subplot="11", interactive=False)
+    multi_ms, multi = multiband_fixture(root, ms)
+    multiband = dict(caltable=str(multi), vis=str(multi_ms), xaxis="freq", timeranges="0")
+    masked = masked_fixture(root, current)
     plots = {
         "channels": {},
         "frequency": dict(xaxis="freq"),
@@ -164,6 +225,10 @@ def comparisons(root):
         "polynomial": dict(caltable=str(polynomial), xaxis="freq", field="FLUX"),
         "polynomial-overlay": dict(xaxis="freq", caltable2=str(polynomial), field="FLUX",
                                    timeranges="0"),
+        "three-tables": dict(xaxis="freq", caltable2=str(polynomial), caltable3=str(polynomial),
+                             field="FLUX", timeranges="0"),
+        "mask": dict(caltable=str(masked)),
+        "show-flagged": dict(caltable=str(masked), showflagged=True),
         "atmosphere": dict(xaxis="freq", showatm=True, pwv=1.1, timeranges="0"),
         "sky": dict(xaxis="freq", showtsky=True, pwv="auto", timeranges="0"),
         "image": dict(xaxis="freq", showatm=True, showimage=True, lo1="99.8", pwv=1.1,
@@ -171,6 +236,10 @@ def comparisons(root):
         "derivative": dict(channeldiff=4, edge=1, antenna="A2"),
         "derivative-phase": dict(channeldiff=3, edge=1, yaxis="phase", antenna="A2"),
         "debug": dict(debug=True, solutionTimeThresholdSeconds=45.0, timeranges="0"),
+        "fdm": multiband | dict(showfdm=True, showBasebandNumber=True, basebands=[1]),
+        "spw-overlay": multiband | dict(overlay="spw", spw=[0, 1]),
+        "baseband-overlay": multiband | dict(overlay="baseband", spw="", scans=[2]),
+        "antenna-time": multiband | dict(overlay="antenna,time", antenna=[0, 2], spw=[1]),
     }
     failures = []
 
@@ -230,6 +299,7 @@ def comparisons(root):
         )
         pages = next(line for line in summary.splitlines() if line.startswith("Pages:"))
         assert pages.split()[-1] == "2", summary
+    check_platforming(root)
     print(f"{len(plots)} plot cases, {len(prompts)} terminal cases, {len(domains)} domain cases, "
           f"{panels} rendered panels and paired two-page PDFs", flush=True)
     assert not failures, failures
