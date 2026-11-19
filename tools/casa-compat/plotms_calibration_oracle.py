@@ -91,12 +91,17 @@ def exports(root, products, native):
         ("antenna-position-xz", "antpos", dict(yaxis="antpos", antpos="XZ")),
         ("position-selector-on-bandpass", "bandpass", dict(antpos="X")),
         ("calibration-rest-frequency", "bandpass", dict(xaxis="frequency", restfreq="100GHz")),
+        ("ignored-unparseable-rest-frequency", "bandpass", dict(xaxis="frequency", restfreq="nonsense")),
+        ("ignored-negative-rest-frequency", "bandpass", dict(xaxis="frequency", restfreq="-1GHz")),
+        ("ignored-zero-rest-frequency", "bandpass", dict(xaxis="frequency", restfreq="0")),
         ("disabled-transform", "bandpass", dict(freqframe="BARY", transform=False)),
-
+        ("antenna-position-iteration", "antpos", dict(iteraxis="antpos", antpos="XZ", gridcols=2)),
         ("table-expression", "bandpass", dict(antenna="", msselect="ANTENNA1==0")),
         ("compound-table-expression", "bandpass",
          dict(antenna="", msselect="ANTENNA1==0 && SCAN_NUMBER==2")),
-
+        ("table-expression-with-default-time", "bandpass",
+         dict(antenna="", msselect="SCAN_NUMBER==2", timerange="*:*:*")),
+        ("table-expression-row-number", "bandpass", dict(antenna="", msselect="ROWNUMBER()==1")),
     ]
     total = 0
     for name, kind, options in cases:
@@ -162,13 +167,20 @@ def plot_pages(root, products, native):
     source = str(products["bandpass"])
     from casars import tasks
 
-    for axis, antenna in (("scan", "A0"), ("time", "A0"), ("baseline", "")):
+    cases = (
+        ("scan", "bandpass", dict(antenna="A0")),
+        ("time", "bandpass", dict(antenna="A0")),
+        ("baseline", "bandpass", dict(antenna="")),
+        ("poln", "antpos", dict(antpos="XZ")),
+        ("antpos", "antpos", dict(antpos="XZ")),
+    )
+    for axis, kind, selectors in cases:
         expected = root / f"pages-{axis}-casa"
         actual = root / f"pages-{axis}-native"
         expected.mkdir()
         actual.mkdir()
-        controls = dict(caltable=source, spw="0", antenna=antenna,
-                        showgui=False, iteraxis=axis, exprange="all")
+        controls = dict(caltable=str(products[kind]), spw="0",
+                        showgui=False, iteraxis=axis, exprange="all", **selectors)
         assert reference(plotfile=str(expected / "plot.png"), **controls) is None
         completion = tasks.run("plotms", plotfile=str(actual / "plot.png"), **controls)
         assert completion.value is None

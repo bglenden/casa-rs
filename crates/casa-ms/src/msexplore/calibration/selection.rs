@@ -106,7 +106,8 @@ impl Selection {
         if !expressions.timerange.is_empty() && table.rows() > 0 {
             let defaults = |row: SampleCoordinates| TimeDefaults {
                 time_mjd_s: row.time,
-                exposure_s: row.interval,
+                // MSTimeParse uses 0.1 seconds for calibration tables.
+                exposure_s: 0.1,
             };
             let row_zero = table.coordinates(0)?;
             let mut first = row_zero;
