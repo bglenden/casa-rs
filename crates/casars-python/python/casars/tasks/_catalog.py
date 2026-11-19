@@ -917,8 +917,7 @@ def plotms(
     ``yframe``, ``yinterp``, ``phasecenter``, ``extendflag``, ``extcorr``,
     ``extchannel``, ``clearplots``.
     Accepted only at CASA's default, where CASA reads them, until #1526:
-    ``callib``, ``showatm``, ``showtsky``, ``showimage``,
-    ``colorizeoverlay``.
+    ``callib``, ``colorizeoverlay``.
     """
     return _call_casa(plotms, locals())
 

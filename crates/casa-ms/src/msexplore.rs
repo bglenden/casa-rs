@@ -24,6 +24,7 @@
 //! fields are already modeled in the public specification types so future
 //! waves can extend the implementation without redesigning the interface.
 
+mod atmosphere;
 mod calibration;
 pub mod cli;
 pub mod task_contract;

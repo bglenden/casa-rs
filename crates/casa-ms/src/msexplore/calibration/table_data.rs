@@ -10,7 +10,7 @@ use num_complex::Complex64;
 use super::axis::SampleCoordinates;
 
 pub(super) struct CalibrationTable {
-    table: Table,
+    pub(super) table: Table,
     pub(super) windows: Vec<Window>,
     pub(super) antennas: Vec<Antenna>,
     pub(super) fields: Vec<Field>,
@@ -223,7 +223,7 @@ impl Field {
     }
 }
 
-fn subtable(table: &Table, owner: &Path, name: &str) -> Result<Table, String> {
+pub(super) fn subtable(table: &Table, owner: &Path, name: &str) -> Result<Table, String> {
     let child = table
         .keywords()
         .get(name)
@@ -241,7 +241,11 @@ fn has_column(table: &Table, column: &str) -> bool {
         .is_some_and(|schema| schema.column(column).is_some())
 }
 
-fn array<'a>(table: &'a Table, row: usize, column: &str) -> Result<&'a ArrayValue, String> {
+pub(super) fn array<'a>(
+    table: &'a Table,
+    row: usize,
+    column: &str,
+) -> Result<&'a ArrayValue, String> {
     table
         .cell_accessor(row, column)
         .and_then(|cell| cell.array())
@@ -259,14 +263,14 @@ fn scalar<'a>(table: &'a Table, row: usize, column: &str) -> Option<&'a ScalarVa
     table.cell_accessor(row, column).ok()?.scalar().ok()
 }
 
-fn text<'a>(table: &'a Table, row: usize, column: &str) -> Option<&'a str> {
+pub(super) fn text<'a>(table: &'a Table, row: usize, column: &str) -> Option<&'a str> {
     match scalar(table, row, column)? {
         ScalarValue::String(value) => Some(value),
         _ => None,
     }
 }
 
-fn number(table: &Table, row: usize, column: &str) -> Option<f64> {
+pub(super) fn number(table: &Table, row: usize, column: &str) -> Option<f64> {
     match scalar(table, row, column)? {
         ScalarValue::Float64(value) => Some(*value),
         ScalarValue::Float32(value) => Some(f64::from(*value)),
@@ -274,7 +278,7 @@ fn number(table: &Table, row: usize, column: &str) -> Option<f64> {
     }
 }
 
-fn integer(table: &Table, row: usize, column: &str) -> Option<i32> {
+pub(super) fn integer(table: &Table, row: usize, column: &str) -> Option<i32> {
     match scalar(table, row, column)? {
         ScalarValue::Int32(value) => Some(*value),
         _ => None,

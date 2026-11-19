@@ -22909,7 +22909,6 @@
         },
         {
           "name": "showatm",
-          "unimplemented": {"issue": 1526},
           "concept": {
             "id": "plotbandpass.showatm",
             "semantic_revision": 1
@@ -22954,7 +22953,6 @@
         },
         {
           "name": "showtsky",
-          "unimplemented": {"issue": 1526},
           "concept": {
             "id": "plotbandpass.showtsky",
             "semantic_revision": 1
@@ -22999,7 +22997,6 @@
         },
         {
           "name": "showimage",
-          "unimplemented": {"issue": 1526},
           "concept": {
             "id": "plotbandpass.showimage",
             "semantic_revision": 1

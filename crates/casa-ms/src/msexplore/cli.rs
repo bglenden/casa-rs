@@ -973,6 +973,12 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
 
 /// Translate the CASA PlotMS spellings to the existing MS exploration request.
 fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
+    if task.flag("showatm")? || task.flag("showtsky")? {
+        return Err(TaskFailure::validation(
+            "MeasurementSet atmospheric overlays are pending #1526",
+        ));
+    }
+
     let text = |name| {
         task.text(name)
             .map(|text| text.filter(|value| !value.is_empty()))

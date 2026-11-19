@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Calibration table input for the shared PlotMS provider.
 
+mod atmosphere;
 mod averaging;
 mod axis;
 mod figure;
@@ -128,7 +129,18 @@ pub(super) fn run(
         })
         .collect::<Result<Vec<_>, TaskFailure>>()?;
     let samples = series.iter().map(|line| line.points.len()).sum();
-    let panels = PlotPanels::prepare(task, &table, series)?;
+    let mut panels = PlotPanels::prepare(task, &table, series)?;
+    if let Some(options) = atmosphere::Options::from_task(task)? {
+        atmosphere::append_overlays(
+            &table,
+            path,
+            &selection,
+            &expressions,
+            &options,
+            &mut panels,
+            averaging.avgchannel.is_some_and(|width| width > 1),
+        )?;
+    }
     let expformat = task.text("expformat")?.unwrap_or_default();
     let mut figure_path = output;
     let mut text_file = None;
@@ -345,7 +357,7 @@ fn write_export(
         } else {
             writeln!(output, "# From plot {index} iteration {}", index + 1)?;
         }
-        for (index, series) in panel.series.iter().enumerate() {
+        for (index, series) in panel.series.iter().chain(&panel.overlay).enumerate() {
             let show_flagged = figure::shows_flagged(header.flagged_symbols, index);
             let mut points = series
                 .points
