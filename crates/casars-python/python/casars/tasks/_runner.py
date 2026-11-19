@@ -216,6 +216,15 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_applycal(values)
     if name == "gencal":
         return _call_gencal(values)
+    if name == "getantposalma":
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            if error.completion.parameter == "hosts.json":
+                raise JSONDecodeError(error.completion.message, "", 0) from error
+            if error.completion.parameter == "snr.type":
+                raise TypeError(error.completion.message) from error
+            raise
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):

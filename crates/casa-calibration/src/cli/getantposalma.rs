@@ -152,8 +152,8 @@ fn query_string(parameters: &[(&str, Value)]) -> String {
 }
 
 fn retrieve(hosts: &[String], query: &str, attempts: Retry) -> Result<(String, Value), TaskFailure> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(400))).build().into();
+    let agent = crate::calibration_service::agent(Duration::from_secs(400))
+        .map_err(|error| TaskFailure::execution(error.to_string()).at("hosts"))?;
     for attempt in 0..=attempts.count {
         if attempt > 0 {
             std::thread::sleep(Duration::from_secs_f64(attempts.delay_seconds));
