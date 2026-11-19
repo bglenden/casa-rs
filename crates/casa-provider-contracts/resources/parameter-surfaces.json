@@ -34683,12 +34683,16 @@
               "group": "Input"
             }
           },
-          "context_role": "input_dataset"
+          "context_role": "input_dataset",
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat reads an existing table, while the calibration solve surfaces name an output."
+          }
         },
         {
           "name": "axis",
           "concept": {
-            "id": "calstat.axis",
+            "id": "statistics.calibration_axis",
             "semantic_revision": 1
           },
           "order": 1,
@@ -34721,12 +34725,16 @@
               "label": "Statistics Axis",
               "group": "Statistics"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat selects a numeric column or complex projection rather than a coordinate axis for image moments."
           }
         },
         {
           "name": "datacolumn",
           "concept": {
-            "id": "calstat.datacolumn",
+            "id": "statistics.calibration_datacolumn",
             "semantic_revision": 1
           },
           "order": 2,
@@ -34759,6 +34767,10 @@
               "label": "Data Column",
               "group": "Statistics"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat names a literal calibration or visibility table column, including complex projection mode."
           }
         }
       ]

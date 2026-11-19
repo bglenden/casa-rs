@@ -1555,7 +1555,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>caltable</code> | <code>parameter.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Input calibration table. |
-| <code>axis</code> | <code>calstat.axis@r1</code> | <code>string</code> | <code>"amplitude"</code>; optional | Statistics | Complex projection or a literal numeric column name. |
-| <code>datacolumn</code> | <code>calstat.datacolumn@r1</code> | <code>string</code> | <code>"gain"</code>; optional | Statistics | Column to summarize for amplitude, phase, real or imaginary statistics. |
+| <code>axis</code> | <code>statistics.calibration_axis@r1</code> | <code>string</code> | <code>"amplitude"</code>; optional | Statistics | Complex projection or a literal numeric column name. |
+| <code>datacolumn</code> | <code>statistics.calibration_datacolumn@r1</code> | <code>string</code> | <code>"gain"</code>; optional | Statistics | Column to summarize for amplitude, phase, real or imaginary statistics. |
 
 _End of generated reference._

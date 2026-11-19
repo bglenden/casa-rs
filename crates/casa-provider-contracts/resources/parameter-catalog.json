@@ -13199,7 +13199,7 @@
       "persistence_class": "profile"
     },
     {
-      "id": "calstat.axis",
+      "id": "statistics.calibration_axis",
       "semantic_revision": 1,
       "casa_name": "axis",
       "value_domain": {
@@ -13223,7 +13223,7 @@
       "persistence_class": "profile"
     },
     {
-      "id": "calstat.datacolumn",
+      "id": "statistics.calibration_datacolumn",
       "semantic_revision": 1,
       "casa_name": "datacolumn",
       "value_domain": {
