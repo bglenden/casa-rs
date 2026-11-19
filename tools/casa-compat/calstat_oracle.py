@@ -63,9 +63,11 @@ def legacy_table(path):
 
 
 def run(root, native, native_table):
-    source, gain, legacy = root/'source.ms', root/'gain.cal', root/'legacy.cal'
+    source = root/'source.ms'
+    gain, delay, legacy = (root/f'{name}.cal' for name in ('gain', 'delay', 'legacy'))
     make_cal_ms(str(source))
     casa.gaincal(str(source), str(gain), refant='A0', solint='int', minsnr=0.)
+    casa.gencal(str(source), str(delay), 'sbd', parameter=[2.5, -4.5])
     tool = table()
     tool.open(str(gain), nomodify=False)
     flags = tool.getcol('FLAG')
@@ -89,6 +91,8 @@ def run(root, native, native_table):
         (gain, 'paramerr', 'unused'),
         (gain, 'snr', 'unused'),
         (gain, 'amplitude', 'flag'),
+        (delay, 'FPARAM', 'unused'),
+        (delay, 'amplitude', 'fparam'),
         (legacy, 'amplitude', 'gain'),
         (legacy, 'real', 'corrected'),
         (legacy, 'phase', 'model'),
@@ -125,6 +129,20 @@ def run(root, native, native_table):
         for task in (casa.calstat, native.calstat):
             refuse(lambda: task(*parameters), prefix)
 
+    invalid_types = [
+        ([str(gain)], 'amplitude', 'CPARAM'),
+        (str(gain), 1, 'CPARAM'),
+        (str(gain), 'amplitude', 1),
+    ]
+    for parameters in invalid_types:
+        for task in (casa.calstat, native.calstat):
+            try:
+                task(*parameters)
+            except (AssertionError, TypeError, ValueError):
+                pass
+            else:
+                raise AssertionError(f'Incorrectly accepted {parameters}')
+
     expected_tool, result_tool = table(), native_table()
     for instance in (expected_tool, result_tool):
         assert instance.open(str(legacy))
@@ -144,7 +162,7 @@ def run(root, native, native_table):
     np.testing.assert_allclose(expected['var'], cast.var(ddof=1), rtol=2e-7)
     samples = cast.astype(np.float32)
     assert expected['sumsq'] == np.square(samples).sum(dtype=np.float64)
-    print(f'{len(successes) + 3} public statistics comparisons, {len(errors)} errors, '
+    print(f'{len(successes) + 3} public statistics comparisons, {len(errors) + len(invalid_types)} errors, '
           'four table-tool comparisons, NaN behavior and independent moment checks passed')
 
 
