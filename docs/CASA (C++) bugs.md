@@ -158,6 +158,7 @@ Calibration behaviours casa-rs does not follow:
 [component spectra in another frame](#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame).
 Flagging behaviours casa-rs does not follow:
 [a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
+[the choice of samples to clip](#flagdata-can-choose-the-wrong-samples-when-float_data-is-present),
 [a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
 Coordinate behaviours casa-rs does not follow:
 [a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
@@ -3768,6 +3769,21 @@ CASA 6.7.6.14 lists `{0: {'name': 'v1.old.1793292269', 'comment': 'second'},
 and then `'second'`; the first comment is lost. casa-rs renames the version
 the same way and keeps its own comment (`flagmanager`'s
 `keep_existing_version`).
+
+## `flagdata` can choose the wrong samples when FLOAT_DATA is present
+
+CASA 6.7.6.14 can evaluate the magnitude of `FLOAT_DATA` when
+`flagdata(mode="clip", datacolumn="DATA")` opens an MS containing both
+physical columns. The paired fixture holds complex DATA within the requested
+range and puts signed floats outside it. CASA flags the samples from the
+float column. casa-rs computes the range from the requested complex DATA.
+
+With `datacolumn="FLOAT_DATA", clipzeros=True`, CASA also flags finite
+negative values outside the zero tolerance. casa-rs applies the zero
+tolerance to the magnitude of each sample. An explicit inside or outside
+range on FLOAT_DATA uses the signed values, as CASA does. The
+`tools/casa-compat/flagdata_clip_range_oracle.py` comparison verifies both
+choices with independent expected flags.
 
 ## `flagdata`'s summary aborts on a correlation it cannot name
 

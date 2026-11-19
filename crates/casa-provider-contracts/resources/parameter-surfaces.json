@@ -22200,8 +22200,7 @@
             "provider": {"field": "clipminmax"},
             "python": {"name": "clipminmax"},
             "presentation": {"label": "Clip Range", "group": "Clip", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}}}
+          }
         },
         {
           "name": "clipoutside",
@@ -22213,10 +22212,9 @@
           "projections": {
             "cli": {"flags": ["--clipoutside"], "false_flags": ["--no-clipoutside"]},
             "provider": {"field": "clipoutside"},
-            "python": {"name": "clipoutside"},
+            "python": {"name": "clipoutside", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Clip Outside", "group": "Clip", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}}}
+          }
         },
         {
           "name": "channelavg",
