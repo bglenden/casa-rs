@@ -47,11 +47,10 @@ fn source(state: &mut State, coords: &Variant) -> PyResult<Result<MDirection, &'
             let Ok(values) = Measures::read_variant(record) else {
                 return Ok(Err(FAILED));
             };
-            let scalar = values.into_reference_origin();
-            let Ok(scalar) = scalar.resolve(state, scalar.values[0].refer)? else {
+            let Ok(target) = values.values[0].refer.parse() else {
                 return Ok(Err(FAILED));
             };
-            scalar.values[0]
+            return Ok(values.direction_without_frame(target).map_err(|_| FAILED));
         }
         Variant::Text(_) | Variant::Texts(_) => {
             let data = state.measures().map_err(no_measures)?;
@@ -80,7 +79,7 @@ fn crossings(
         .ok_or(MeasureError::MissingFrameData { what: "position" })?
         .geocentric_latitude_rad();
     let (source, distance_m) = frame::resolve_direction(state, source, frame)?;
-    let apparent = source.convert_to(DirectionRef::APP, frame)?;
+    let apparent = source.to_apparent(frame)?;
     let hour_angle = if source.refer() == DirectionRef::HADEC {
         source
     } else {

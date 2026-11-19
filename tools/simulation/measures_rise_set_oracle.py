@@ -72,10 +72,19 @@ def capture():
         ("ref_text", southern, ["J2000 10deg 20deg"]),
         ("text_list", southern, [["J2000", "10deg", "20deg"]]),
         ("app", southern, [tool.direction("APP", "10deg", "20deg")]),
+        ("b1950_tangent", southern,
+         [tool.direction("B1950", "10deg", "20deg"), "46.7775deg"]),
+        ("b1950_crossings", southern, [tool.direction("B1950", "10deg", "20deg")]),
         ("hadec", southern, [tool.direction("HADEC", "10deg", "20deg")]),
         ("azel", northern, [tool.direction("AZEL", "120deg", "30deg")]),
         ("sun", southern, ["SUN", "-0.833deg"]),
         ("moon", northern, [tool.direction("MOON"), "1deg"]),
+        ("same_reference_offset", southern,
+         [dict(source, offset=tool.direction("J2000", "47deg", "-25deg"))]),
+        ("fixed_reference_offset", southern,
+         [dict(source, offset=tool.direction("GALACTIC", "47deg", "-25deg"))]),
+        ("frame_dependent_offset", southern,
+         [dict(source, offset=tool.direction("APP", "47deg", "-25deg"))]),
         ("no_coordinates", southern, []),
         ("unknown_coordinates", southern, ["nonsense"]),
         ("bad_record", southern, [{}]),
@@ -110,7 +119,7 @@ def benchmark(backend):
 
     names = {
         "horizon", "positive", "above", "below", "north", "turn_boundary",
-        "angles_text", "sun", "moon",
+        "angles_text", "sun", "moon", "b1950_crossings", "same_reference_offset",
     }
     cases = json.loads(FIXTURE.read_text())["cases"]
     rows = {}
