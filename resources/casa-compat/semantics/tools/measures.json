@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "measures",
  "casa_version": "6.7.6.14",
- "audit_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
+ "audit_revision": "5174d43c3bb74b538b0477741ed412792b2d7926",
  "methods": {
   "addxvalue": {
    "status": "Implemented",
@@ -120,7 +120,7 @@
   },
   "earthmagnetic": {
    "status": "Implemented",
-   "scope": "Defines field strength and direction in the supported reference, reads explicit magnetic vectors and evaluates IGRF at the frame position and exact TDB epoch.",
+   "scope": "Defines field strength and direction in the supported reference, reads explicit magnetic vectors and evaluates IGRF at the frame position and exact TDB epoch. Explicit IGRF outputs use ITRF coordinates. Reference changes preserve the input field strength.",
    "evidence": [
     "signature",
     "geometry-casa"
@@ -542,6 +542,21 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct data loss, corruption and contradictions of evident intent."
+  },
+  {
+   "id": "geometry-magnetic-strength",
+   "record": "Magnetic reference changes can corrupt field strength",
+   "inputs": "Physical-strength fields transformed through diurnal aberration or directly between B1950 and APP.",
+   "casa": "Changes field strength. For 37416.574 nT in B1950, the APP result has norm 22289.454 nT. A physical-strength reverse input produces NaNs.",
+   "ours": "Uses the casacore conversion route on a unit vector, then restores the original field strength.",
+   "rationale": "Direction corrections should leave field strength invariant. Independent CASA direction conversions supply the control.",
+   "impact": "Corrects the changed magnitudes and finite-input NaNs.",
+   "evidence": [
+    "geometry-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct data loss, corruption and contradictions of evident intent."
   }
  ],
  "evidence": {
@@ -587,7 +602,7 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ],
-   "source_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4"
+   "source_revision": "5174d43c3bb74b538b0477741ed412792b2d7926"
   },
   "casa-lists": {
    "kind": "CASA-recorded values",
@@ -700,7 +715,7 @@
    "kind": "CASA 6.7.6.14 direct geometry comparisons and release performance",
    "state": "passed",
    "scope": "Six geometry methods, their common record consumers, and rigid reference conversions on the bundled measures snapshot.",
-   "result": "362 CASA cases pass on the matching bundled snapshot. The affected Python selection passes 1135 tests. All 20 release benchmark cases are faster than CASA, see the receipt for the minimum speedup.",
+   "result": "380 CASA geometry cases or independent controls pass on the bundled snapshot. The affected Python selection passes 1153 tests. All 24 release benchmark calls are faster than CASA, with a minimum 1.98x speedup.",
    "links": [
     "tools/simulation/measures_geometry_oracle.py",
     "tools/simulation/measures_geometry_benchmark.py",
@@ -708,9 +723,9 @@
     "crates/casars-python/python/tests/test_measures_geometry.py",
     "docs/CASA (C++) bugs.md"
    ],
-   "source_revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
+   "source_revision": "5174d43c3bb74b538b0477741ed412792b2d7926",
    "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
-   "revision": "6946e1c3e6f10636c55b8b2c5a9423f87aeb57c4",
+   "revision": "5174d43c3bb74b538b0477741ed412792b2d7926",
    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_geometry.py; CASAPY tools/simulation/measures_geometry_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --repeat 1000 --samples 7",
    "receipt": "resources/casa-compat/evidence/me-geometry-equivalence-20261118.json"
   }
