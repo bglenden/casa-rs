@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>CasaDefault::{Bool, Empty, EmptyRecord, Required, Text};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>Kind <span class="kw">as </span>K;
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>Returns <span class="kw">as </span>R;
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>Status::{Implemented <span class="kw">as </span>Yes, NotYetImplemented <span class="kw">as </span>No};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>Status::Implemented <span class="kw">as </span>Yes;
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">const </span>OFF: Parameter = param(<span class="string">"off"</span>, K::Record, EmptyRecord);
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">const </span>V: [Parameter; <span class="number">1</span>] = [param(<span class="string">"v"</span>, K::Record, Required)];
@@ -137,8 +137,8 @@
 <a href=#137 id=137 data-nosnippet>137</a>    method(<span class="string">"posangle"</span>, <span class="kw-2">&amp;</span>PAIR, R::Record, Yes),
 <a href=#138 id=138 data-nosnippet>138</a>    method(<span class="string">"position"</span>, <span class="kw-2">&amp;</span>POSITION, R::Record, Yes),
 <a href=#139 id=139 data-nosnippet>139</a>    method(<span class="string">"radialvelocity"</span>, <span class="kw-2">&amp;</span>RADIALVELOCITY, R::Record, Yes),
-<a href=#140 id=140 data-nosnippet>140</a>    method(<span class="string">"rise"</span>, <span class="kw-2">&amp;</span>RISE, R::Record, No),
-<a href=#141 id=141 data-nosnippet>141</a>    method(<span class="string">"riseset"</span>, <span class="kw-2">&amp;</span>RISE, R::Record, No),
+<a href=#140 id=140 data-nosnippet>140</a>    method(<span class="string">"rise"</span>, <span class="kw-2">&amp;</span>RISE, R::Record, Yes),
+<a href=#141 id=141 data-nosnippet>141</a>    method(<span class="string">"riseset"</span>, <span class="kw-2">&amp;</span>RISE, R::Record, Yes),
 <a href=#142 id=142 data-nosnippet>142</a>    method(<span class="string">"separation"</span>, <span class="kw-2">&amp;</span>PAIR, R::Record, Yes),
 <a href=#143 id=143 data-nosnippet>143</a>    method(
 <a href=#144 id=144 data-nosnippet>144</a>        <span class="string">"shift"</span>,

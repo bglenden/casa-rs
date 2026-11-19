@@ -245,145 +245,159 @@
 <a href=#245 id=245 data-nosnippet>245</a>    target: DirectionRef,
 <a href=#246 id=246 data-nosnippet>246</a>    frame: <span class="kw-2">&amp;</span>MeasFrame,
 <a href=#247 id=247 data-nosnippet>247</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MDirection, casa_types::measures::MeasureError&gt; {
-<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">use </span>casa_measures_data::PlanetaryTable;
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">use </span>casa_types::measures::MeasureError;
-<a href=#250 id=250 data-nosnippet>250</a>
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">let </span>refer = direction.refer();
-<a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">if </span>refer == DirectionRef::COMET &amp;&amp; target != refer &amp;&amp; state.frame.comet.is_some() {
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MeasureError::NotYetImplemented {
-<a href=#254 id=254 data-nosnippet>254</a>            route: <span class="macro">format!</span>(<span class="string">"COMET → {target} (casa-rs #1252)"</span>),
-<a href=#255 id=255 data-nosnippet>255</a>        });
-<a href=#256 id=256 data-nosnippet>256</a>    }
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">if </span>refer == target || refer.casacore_code() &lt; <span class="number">32 </span>|| refer == DirectionRef::COMET {
-<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">return </span>direction.convert_to(target, frame);
-<a href=#259 id=259 data-nosnippet>259</a>    }
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">if </span>frame.epoch().is_none() {
-<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MeasureError::MissingFrameData { what: <span class="string">"epoch" </span>});
-<a href=#262 id=262 data-nosnippet>262</a>    }
-<a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">let </span>model_error = |error: casa_measures_data::MeasuresDataError| MeasureError::ModelError {
-<a href=#264 id=264 data-nosnippet>264</a>        model: <span class="string">"DE200"</span>,
-<a href=#265 id=265 data-nosnippet>265</a>        reason: error.to_string(),
-<a href=#266 id=266 data-nosnippet>266</a>    };
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">if </span>state.planets.is_none() {
-<a href=#268 id=268 data-nosnippet>268</a>        state.planets = <span class="prelude-val">Some</span>(PlanetaryTable::open_discovered().map_err(model_error)<span class="question-mark">?</span>);
-<a href=#269 id=269 data-nosnippet>269</a>    }
-<a href=#270 id=270 data-nosnippet>270</a>    state
-<a href=#271 id=271 data-nosnippet>271</a>        .planets
-<a href=#272 id=272 data-nosnippet>272</a>        .as_ref()
-<a href=#273 id=273 data-nosnippet>273</a>        .expect(<span class="string">"the planetary table has been opened"</span>)
-<a href=#274 id=274 data-nosnippet>274</a>        .geocentric_direction(direction, frame)
-<a href=#275 id=275 data-nosnippet>275</a>        .map_err(model_error)<span class="question-mark">?
-<a href=#276 id=276 data-nosnippet>276</a>        </span>.convert_to(target, frame)
-<a href=#277 id=277 data-nosnippet>277</a>}
-<a href=#278 id=278 data-nosnippet>278</a>
-<a href=#279 id=279 data-nosnippet>279</a><span class="doccomment">/// Build the explicit native frame once for a conversion or vector plan.
-<a href=#280 id=280 data-nosnippet>280</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>native_frame(state: <span class="kw-2">&amp;mut </span>State) -&gt; PyResult&lt;<span class="prelude-ty">Result</span>&lt;MeasFrame, String&gt;&gt; {
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">let </span>measures = state.measures().map_err(no_measures)<span class="question-mark">?</span>;
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="prelude-val">Ok</span>(materialize(
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw-2">&amp;</span>state.frame,
-<a href=#284 id=284 data-nosnippet>284</a>        MeasFrame::new().with_measures(measures),
-<a href=#285 id=285 data-nosnippet>285</a>    ))
-<a href=#286 id=286 data-nosnippet>286</a>}
-<a href=#287 id=287 data-nosnippet>287</a>
-<a href=#288 id=288 data-nosnippet>288</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>materialize(
-<a href=#289 id=289 data-nosnippet>289</a>    elements: <span class="kw-2">&amp;</span><span class="kw">super</span>::Frame,
-<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw-2">mut </span>frame: MeasFrame,
-<a href=#291 id=291 data-nosnippet>291</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MeasFrame, String&gt; {
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">for </span>element <span class="kw">in </span>[elements.epoch, elements.position, elements.direction]
-<a href=#293 id=293 data-nosnippet>293</a>        .into_iter()
-<a href=#294 id=294 data-nosnippet>294</a>        .flatten()
-<a href=#295 id=295 data-nosnippet>295</a>    {
-<a href=#296 id=296 data-nosnippet>296</a>        frame = <span class="kw">match </span>element.to_casa()<span class="question-mark">? </span>{
-<a href=#297 id=297 data-nosnippet>297</a>            CasaMeasure::Epoch(epoch) =&gt; frame.with_epoch(epoch),
-<a href=#298 id=298 data-nosnippet>298</a>            CasaMeasure::Position(position) =&gt; frame.with_position(position),
-<a href=#299 id=299 data-nosnippet>299</a>            CasaMeasure::Direction(direction) =&gt; frame.with_direction(direction),
-<a href=#300 id=300 data-nosnippet>300</a>            CasaMeasure::RadialVelocity(value) =&gt; frame.with_radial_velocity(value),
-<a href=#301 id=301 data-nosnippet>301</a>            CasaMeasure::Frequency(<span class="kw">_</span>) | CasaMeasure::Doppler(<span class="kw">_</span>) =&gt; frame,
-<a href=#302 id=302 data-nosnippet>302</a>        };
-<a href=#303 id=303 data-nosnippet>303</a>    }
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(velocity) = <span class="kw-2">&amp;</span>elements.radial_velocity {
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>value = velocity.radial_velocity(<span class="kw-2">&amp;</span>frame)<span class="question-mark">?</span>;
-<a href=#306 id=306 data-nosnippet>306</a>        frame = frame.with_radial_velocity(value);
-<a href=#307 id=307 data-nosnippet>307</a>    }
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="prelude-val">Ok</span>(frame)
-<a href=#309 id=309 data-nosnippet>309</a>}
-<a href=#310 id=310 data-nosnippet>310</a>
-<a href=#311 id=311 data-nosnippet>311</a><span class="doccomment">/// What `me.separation` and `me.posangle` compute.
-<a href=#312 id=312 data-nosnippet>312</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-<a href=#313 id=313 data-nosnippet>313</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>Between {
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="doccomment">/// The angle between two directions.
-<a href=#315 id=315 data-nosnippet>315</a>    </span>Separation,
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="doccomment">/// The position angle of the second from the first, north through east.
-<a href=#317 id=317 data-nosnippet>317</a>    </span>PositionAngle,
-<a href=#318 id=318 data-nosnippet>318</a>}
-<a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a><span class="doccomment">/// `me.separation(m1, m2)` and `me.posangle(m1, m2)`, in degrees, with `m2`
-<a href=#321 id=321 data-nosnippet>321</a>/// converted to `m1`'s code when they differ. A failure is logged and gives
-<a href=#322 id=322 data-nosnippet>322</a>/// casatools' `{'unit': 'deg', 'value': array([0.])}`.
-<a href=#323 id=323 data-nosnippet>323</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>between(
-<a href=#324 id=324 data-nosnippet>324</a>    state: <span class="kw-2">&amp;mut </span>State,
-<a href=#325 id=325 data-nosnippet>325</a>    m1: <span class="kw-2">&amp;</span>RecordArg,
-<a href=#326 id=326 data-nosnippet>326</a>    m2: <span class="kw-2">&amp;</span>RecordArg,
-<a href=#327 id=327 data-nosnippet>327</a>    what: Between,
-<a href=#328 id=328 data-nosnippet>328</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
-<a href=#329 id=329 data-nosnippet>329</a>) -&gt; PyResult&lt;CasaValue&gt; {
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">let </span>zero = || {
-<a href=#331 id=331 data-nosnippet>331</a>        CasaValue::record([
-<a href=#332 id=332 data-nosnippet>332</a>            (<span class="string">"unit"</span>, CasaValue::Text(<span class="string">"deg"</span>.to_string())),
-<a href=#333 id=333 data-nosnippet>333</a>            (<span class="string">"value"</span>, CasaValue::floats(<span class="macro">vec!</span>[<span class="number">0.0</span>])),
-<a href=#334 id=334 data-nosnippet>334</a>        ])
-<a href=#335 id=335 data-nosnippet>335</a>    };
-<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">let </span><span class="kw-2">mut </span>directions = Vec::with_capacity(<span class="number">2</span>);
-<a href=#337 id=337 data-nosnippet>337</a>    <span class="kw">for </span>(name, record) <span class="kw">in </span>[(<span class="string">"m1"</span>, m1), (<span class="string">"m2"</span>, m2)] {
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">let </span>context = <span class="macro">format!</span>(<span class="string">"Non-measure type {name} in measure conversion\n"</span>);
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(measure) = read(record, context.trim_end(), lines) <span class="kw">else </span>{
-<a href=#340 id=340 data-nosnippet>340</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(zero());
-<a href=#341 id=341 data-nosnippet>341</a>        };
-<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">if </span>measure.kind() != MeasureKind::Direction {
-<a href=#343 id=343 data-nosnippet>343</a>            lines.push(LogLine::error(
-<a href=#344 id=344 data-nosnippet>344</a>                <span class="string">"Trying to convert non-direction to direction"</span>,
-<a href=#345 id=345 data-nosnippet>345</a>            ));
-<a href=#346 id=346 data-nosnippet>346</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(zero());
-<a href=#347 id=347 data-nosnippet>347</a>        }
-<a href=#348 id=348 data-nosnippet>348</a>        directions.push(measure);
-<a href=#349 id=349 data-nosnippet>349</a>    }
-<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">let </span>(first, second) = (directions[<span class="number">0</span>], directions[<span class="number">1</span>]);
-<a href=#351 id=351 data-nosnippet>351</a>    <span class="kw">let </span>second = <span class="kw">match </span>convert(state, <span class="kw-2">&amp;</span>second, first.refer)<span class="question-mark">? </span>{
-<a href=#352 id=352 data-nosnippet>352</a>        <span class="prelude-val">Ok</span>(second) =&gt; second,
-<a href=#353 id=353 data-nosnippet>353</a>        <span class="prelude-val">Err</span>(reason) =&gt; {
-<a href=#354 id=354 data-nosnippet>354</a>            lines.push(LogLine::error(<span class="macro">format!</span>(<span class="string">"Exception Reports: {reason}"</span>)));
-<a href=#355 id=355 data-nosnippet>355</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(zero());
-<a href=#356 id=356 data-nosnippet>356</a>        }
-<a href=#357 id=357 data-nosnippet>357</a>    };
-<a href=#358 id=358 data-nosnippet>358</a>    <span class="kw">let </span>(MeasureValue::Direction(a), MeasureValue::Direction(b)) = (first.value, second.value)
-<a href=#359 id=359 data-nosnippet>359</a>    <span class="kw">else </span>{
-<a href=#360 id=360 data-nosnippet>360</a>        <span class="macro">unreachable!</span>(<span class="string">"both are directions"</span>);
-<a href=#361 id=361 data-nosnippet>361</a>    };
-<a href=#362 id=362 data-nosnippet>362</a>    <span class="kw">let </span>radians = <span class="kw">match </span>what {
-<a href=#363 id=363 data-nosnippet>363</a>        Between::Separation =&gt; separation(a, b),
-<a href=#364 id=364 data-nosnippet>364</a>        Between::PositionAngle =&gt; position_angle(a, b),
-<a href=#365 id=365 data-nosnippet>365</a>    };
-<a href=#366 id=366 data-nosnippet>366</a>    <span class="prelude-val">Ok</span>(CasaValue::quantity(radians * (<span class="number">1.0 </span>/ DEGREE), <span class="string">"deg"</span>))
-<a href=#367 id=367 data-nosnippet>367</a>}
-<a href=#368 id=368 data-nosnippet>368</a>
-<a href=#369 id=369 data-nosnippet>369</a><span class="doccomment">/// `MVDirection::separation`.
-<a href=#370 id=370 data-nosnippet>370</a></span><span class="kw">fn </span>separation(a: [f64; <span class="number">3</span>], b: [f64; <span class="number">3</span>]) -&gt; f64 {
-<a href=#371 id=371 data-nosnippet>371</a>    <span class="kw">let </span>half = ((a[<span class="number">0</span>] - b[<span class="number">0</span>]).powi(<span class="number">2</span>) + (a[<span class="number">1</span>] - b[<span class="number">1</span>]).powi(<span class="number">2</span>) + (a[<span class="number">2</span>] - b[<span class="number">2</span>]).powi(<span class="number">2</span>)).sqrt() / <span class="number">2.0</span>;
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="number">2.0 </span>* half.min(<span class="number">1.0</span>).asin()
-<a href=#373 id=373 data-nosnippet>373</a>}
-<a href=#374 id=374 data-nosnippet>374</a>
-<a href=#375 id=375 data-nosnippet>375</a><span class="doccomment">/// `MVDirection::positionAngle`.
-<a href=#376 id=376 data-nosnippet>376</a></span><span class="kw">fn </span>position_angle(a: [f64; <span class="number">3</span>], b: [f64; <span class="number">3</span>]) -&gt; f64 {
-<a href=#377 id=377 data-nosnippet>377</a>    <span class="kw">let </span>longitude_difference = direction_angles(a).<span class="number">0 </span>- direction_angles(b).<span class="number">0</span>;
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">let </span>(sin_lat1, sin_lat2) = (a[<span class="number">2</span>], b[<span class="number">2</span>]);
-<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">let </span>cos_lat2 = (<span class="number">1.0 </span>- sin_lat2 * sin_lat2).abs().sqrt();
-<a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">let </span>s1 = -cos_lat2 * longitude_difference.sin();
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">let </span>c1 = (<span class="number">1.0 </span>- sin_lat1 * sin_lat1).abs().sqrt() * sin_lat2
-<a href=#382 id=382 data-nosnippet>382</a>        - sin_lat1 * cos_lat2 * longitude_difference.cos();
-<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">if </span>s1 != <span class="number">0.0 </span>|| c1 != <span class="number">0.0 </span>{
-<a href=#384 id=384 data-nosnippet>384</a>        s1.atan2(c1)
-<a href=#385 id=385 data-nosnippet>385</a>    } <span class="kw">else </span>{
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="number">0.0
-<a href=#387 id=387 data-nosnippet>387</a>    </span>}
-<a href=#388 id=388 data-nosnippet>388</a>}
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">use </span>casa_types::measures::MeasureError;
+<a href=#249 id=249 data-nosnippet>249</a>
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">let </span>refer = direction.refer();
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">if </span>refer == DirectionRef::COMET &amp;&amp; target != refer &amp;&amp; state.frame.comet.is_some() {
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MeasureError::NotYetImplemented {
+<a href=#253 id=253 data-nosnippet>253</a>            route: <span class="macro">format!</span>(<span class="string">"COMET → {target} (casa-rs #1252)"</span>),
+<a href=#254 id=254 data-nosnippet>254</a>        });
+<a href=#255 id=255 data-nosnippet>255</a>    }
+<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">if </span>refer == target {
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">return </span>direction.convert_to(target, frame);
+<a href=#258 id=258 data-nosnippet>258</a>    }
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">let </span>(resolved, distance_m) = resolve_direction(state, direction, frame)<span class="question-mark">?</span>;
+<a href=#260 id=260 data-nosnippet>260</a>    resolved.convert_with_parallax(target, frame, distance_m)
+<a href=#261 id=261 data-nosnippet>261</a>}
+<a href=#262 id=262 data-nosnippet>262</a>
+<a href=#263 id=263 data-nosnippet>263</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_direction(
+<a href=#264 id=264 data-nosnippet>264</a>    state: <span class="kw-2">&amp;mut </span>State,
+<a href=#265 id=265 data-nosnippet>265</a>    direction: <span class="kw-2">&amp;</span>MDirection,
+<a href=#266 id=266 data-nosnippet>266</a>    frame: <span class="kw-2">&amp;</span>MeasFrame,
+<a href=#267 id=267 data-nosnippet>267</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MDirection, f64), casa_types::measures::MeasureError&gt; {
+<a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">use </span>casa_measures_data::PlanetaryTable;
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="kw">use </span>casa_types::measures::MeasureError;
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>refer = direction.refer();
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">if </span>refer.casacore_code() &lt; <span class="number">32 </span>|| refer == DirectionRef::COMET {
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((direction.clone(), <span class="number">0.0</span>));
+<a href=#274 id=274 data-nosnippet>274</a>    }
+<a href=#275 id=275 data-nosnippet>275</a>    <span class="kw">if </span>frame.epoch().is_none() {
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MeasureError::MissingFrameData { what: <span class="string">"epoch" </span>});
+<a href=#277 id=277 data-nosnippet>277</a>    }
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span>model_error = |error: casa_measures_data::MeasuresDataError| MeasureError::ModelError {
+<a href=#279 id=279 data-nosnippet>279</a>        model: <span class="string">"DE200"</span>,
+<a href=#280 id=280 data-nosnippet>280</a>        reason: error.to_string(),
+<a href=#281 id=281 data-nosnippet>281</a>    };
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">if </span>state.planets.is_none() {
+<a href=#283 id=283 data-nosnippet>283</a>        state.planets = <span class="prelude-val">Some</span>(PlanetaryTable::open_discovered().map_err(model_error)<span class="question-mark">?</span>);
+<a href=#284 id=284 data-nosnippet>284</a>    }
+<a href=#285 id=285 data-nosnippet>285</a>    state
+<a href=#286 id=286 data-nosnippet>286</a>        .planets
+<a href=#287 id=287 data-nosnippet>287</a>        .as_ref()
+<a href=#288 id=288 data-nosnippet>288</a>        .expect(<span class="string">"the planetary table has been opened"</span>)
+<a href=#289 id=289 data-nosnippet>289</a>        .geocentric_direction(direction, frame)
+<a href=#290 id=290 data-nosnippet>290</a>        .map_err(model_error)
+<a href=#291 id=291 data-nosnippet>291</a>}
+<a href=#292 id=292 data-nosnippet>292</a>
+<a href=#293 id=293 data-nosnippet>293</a><span class="doccomment">/// Build the explicit native frame once for a conversion or vector plan.
+<a href=#294 id=294 data-nosnippet>294</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>native_frame(state: <span class="kw-2">&amp;mut </span>State) -&gt; PyResult&lt;<span class="prelude-ty">Result</span>&lt;MeasFrame, String&gt;&gt; {
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">let </span>measures = state.measures().map_err(no_measures)<span class="question-mark">?</span>;
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="prelude-val">Ok</span>(materialize(
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw-2">&amp;</span>state.frame,
+<a href=#298 id=298 data-nosnippet>298</a>        MeasFrame::new().with_measures(measures),
+<a href=#299 id=299 data-nosnippet>299</a>    ))
+<a href=#300 id=300 data-nosnippet>300</a>}
+<a href=#301 id=301 data-nosnippet>301</a>
+<a href=#302 id=302 data-nosnippet>302</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>materialize(
+<a href=#303 id=303 data-nosnippet>303</a>    elements: <span class="kw-2">&amp;</span><span class="kw">super</span>::Frame,
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw-2">mut </span>frame: MeasFrame,
+<a href=#305 id=305 data-nosnippet>305</a>) -&gt; <span class="prelude-ty">Result</span>&lt;MeasFrame, String&gt; {
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">for </span>element <span class="kw">in </span>[elements.epoch, elements.position, elements.direction]
+<a href=#307 id=307 data-nosnippet>307</a>        .into_iter()
+<a href=#308 id=308 data-nosnippet>308</a>        .flatten()
+<a href=#309 id=309 data-nosnippet>309</a>    {
+<a href=#310 id=310 data-nosnippet>310</a>        frame = <span class="kw">match </span>element.to_casa()<span class="question-mark">? </span>{
+<a href=#311 id=311 data-nosnippet>311</a>            CasaMeasure::Epoch(epoch) =&gt; frame.with_epoch(epoch),
+<a href=#312 id=312 data-nosnippet>312</a>            CasaMeasure::Position(position) =&gt; frame.with_position(position),
+<a href=#313 id=313 data-nosnippet>313</a>            CasaMeasure::Direction(direction) =&gt; frame.with_direction(direction),
+<a href=#314 id=314 data-nosnippet>314</a>            CasaMeasure::RadialVelocity(value) =&gt; frame.with_radial_velocity(value),
+<a href=#315 id=315 data-nosnippet>315</a>            CasaMeasure::Frequency(<span class="kw">_</span>) | CasaMeasure::Doppler(<span class="kw">_</span>) =&gt; frame,
+<a href=#316 id=316 data-nosnippet>316</a>        };
+<a href=#317 id=317 data-nosnippet>317</a>    }
+<a href=#318 id=318 data-nosnippet>318</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(velocity) = <span class="kw-2">&amp;</span>elements.radial_velocity {
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="kw">let </span>value = velocity.radial_velocity(<span class="kw-2">&amp;</span>frame)<span class="question-mark">?</span>;
+<a href=#320 id=320 data-nosnippet>320</a>        frame = frame.with_radial_velocity(value);
+<a href=#321 id=321 data-nosnippet>321</a>    }
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="prelude-val">Ok</span>(frame)
+<a href=#323 id=323 data-nosnippet>323</a>}
+<a href=#324 id=324 data-nosnippet>324</a>
+<a href=#325 id=325 data-nosnippet>325</a><span class="doccomment">/// What `me.separation` and `me.posangle` compute.
+<a href=#326 id=326 data-nosnippet>326</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#327 id=327 data-nosnippet>327</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>Between {
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="doccomment">/// The angle between two directions.
+<a href=#329 id=329 data-nosnippet>329</a>    </span>Separation,
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="doccomment">/// The position angle of the second from the first, north through east.
+<a href=#331 id=331 data-nosnippet>331</a>    </span>PositionAngle,
+<a href=#332 id=332 data-nosnippet>332</a>}
+<a href=#333 id=333 data-nosnippet>333</a>
+<a href=#334 id=334 data-nosnippet>334</a><span class="doccomment">/// `me.separation(m1, m2)` and `me.posangle(m1, m2)`, in degrees, with `m2`
+<a href=#335 id=335 data-nosnippet>335</a>/// converted to `m1`'s code when they differ. A failure is logged and gives
+<a href=#336 id=336 data-nosnippet>336</a>/// casatools' `{'unit': 'deg', 'value': array([0.])}`.
+<a href=#337 id=337 data-nosnippet>337</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>between(
+<a href=#338 id=338 data-nosnippet>338</a>    state: <span class="kw-2">&amp;mut </span>State,
+<a href=#339 id=339 data-nosnippet>339</a>    m1: <span class="kw-2">&amp;</span>RecordArg,
+<a href=#340 id=340 data-nosnippet>340</a>    m2: <span class="kw-2">&amp;</span>RecordArg,
+<a href=#341 id=341 data-nosnippet>341</a>    what: Between,
+<a href=#342 id=342 data-nosnippet>342</a>    lines: <span class="kw-2">&amp;mut </span>Vec&lt;LogLine&gt;,
+<a href=#343 id=343 data-nosnippet>343</a>) -&gt; PyResult&lt;CasaValue&gt; {
+<a href=#344 id=344 data-nosnippet>344</a>    <span class="kw">let </span>zero = || {
+<a href=#345 id=345 data-nosnippet>345</a>        CasaValue::record([
+<a href=#346 id=346 data-nosnippet>346</a>            (<span class="string">"unit"</span>, CasaValue::Text(<span class="string">"deg"</span>.to_string())),
+<a href=#347 id=347 data-nosnippet>347</a>            (<span class="string">"value"</span>, CasaValue::floats(<span class="macro">vec!</span>[<span class="number">0.0</span>])),
+<a href=#348 id=348 data-nosnippet>348</a>        ])
+<a href=#349 id=349 data-nosnippet>349</a>    };
+<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">let </span><span class="kw-2">mut </span>directions = Vec::with_capacity(<span class="number">2</span>);
+<a href=#351 id=351 data-nosnippet>351</a>    <span class="kw">for </span>(name, record) <span class="kw">in </span>[(<span class="string">"m1"</span>, m1), (<span class="string">"m2"</span>, m2)] {
+<a href=#352 id=352 data-nosnippet>352</a>        <span class="kw">let </span>context = <span class="macro">format!</span>(<span class="string">"Non-measure type {name} in measure conversion\n"</span>);
+<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(measure) = read(record, context.trim_end(), lines) <span class="kw">else </span>{
+<a href=#354 id=354 data-nosnippet>354</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(zero());
+<a href=#355 id=355 data-nosnippet>355</a>        };
+<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">if </span>measure.kind() != MeasureKind::Direction {
+<a href=#357 id=357 data-nosnippet>357</a>            lines.push(LogLine::error(
+<a href=#358 id=358 data-nosnippet>358</a>                <span class="string">"Trying to convert non-direction to direction"</span>,
+<a href=#359 id=359 data-nosnippet>359</a>            ));
+<a href=#360 id=360 data-nosnippet>360</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(zero());
+<a href=#361 id=361 data-nosnippet>361</a>        }
+<a href=#362 id=362 data-nosnippet>362</a>        directions.push(measure);
+<a href=#363 id=363 data-nosnippet>363</a>    }
+<a href=#364 id=364 data-nosnippet>364</a>    <span class="kw">let </span>(first, second) = (directions[<span class="number">0</span>], directions[<span class="number">1</span>]);
+<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">let </span>second = <span class="kw">match </span>convert(state, <span class="kw-2">&amp;</span>second, first.refer)<span class="question-mark">? </span>{
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="prelude-val">Ok</span>(second) =&gt; second,
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="prelude-val">Err</span>(reason) =&gt; {
+<a href=#368 id=368 data-nosnippet>368</a>            lines.push(LogLine::error(<span class="macro">format!</span>(<span class="string">"Exception Reports: {reason}"</span>)));
+<a href=#369 id=369 data-nosnippet>369</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(zero());
+<a href=#370 id=370 data-nosnippet>370</a>        }
+<a href=#371 id=371 data-nosnippet>371</a>    };
+<a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">let </span>(MeasureValue::Direction(a), MeasureValue::Direction(b)) = (first.value, second.value)
+<a href=#373 id=373 data-nosnippet>373</a>    <span class="kw">else </span>{
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="macro">unreachable!</span>(<span class="string">"both are directions"</span>);
+<a href=#375 id=375 data-nosnippet>375</a>    };
+<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">let </span>radians = <span class="kw">match </span>what {
+<a href=#377 id=377 data-nosnippet>377</a>        Between::Separation =&gt; separation(a, b),
+<a href=#378 id=378 data-nosnippet>378</a>        Between::PositionAngle =&gt; position_angle(a, b),
+<a href=#379 id=379 data-nosnippet>379</a>    };
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="prelude-val">Ok</span>(CasaValue::quantity(radians * (<span class="number">1.0 </span>/ DEGREE), <span class="string">"deg"</span>))
+<a href=#381 id=381 data-nosnippet>381</a>}
+<a href=#382 id=382 data-nosnippet>382</a>
+<a href=#383 id=383 data-nosnippet>383</a><span class="doccomment">/// `MVDirection::separation`.
+<a href=#384 id=384 data-nosnippet>384</a></span><span class="kw">fn </span>separation(a: [f64; <span class="number">3</span>], b: [f64; <span class="number">3</span>]) -&gt; f64 {
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">let </span>half = ((a[<span class="number">0</span>] - b[<span class="number">0</span>]).powi(<span class="number">2</span>) + (a[<span class="number">1</span>] - b[<span class="number">1</span>]).powi(<span class="number">2</span>) + (a[<span class="number">2</span>] - b[<span class="number">2</span>]).powi(<span class="number">2</span>)).sqrt() / <span class="number">2.0</span>;
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="number">2.0 </span>* half.min(<span class="number">1.0</span>).asin()
+<a href=#387 id=387 data-nosnippet>387</a>}
+<a href=#388 id=388 data-nosnippet>388</a>
+<a href=#389 id=389 data-nosnippet>389</a><span class="doccomment">/// `MVDirection::positionAngle`.
+<a href=#390 id=390 data-nosnippet>390</a></span><span class="kw">fn </span>position_angle(a: [f64; <span class="number">3</span>], b: [f64; <span class="number">3</span>]) -&gt; f64 {
+<a href=#391 id=391 data-nosnippet>391</a>    <span class="kw">let </span>longitude_difference = direction_angles(a).<span class="number">0 </span>- direction_angles(b).<span class="number">0</span>;
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="kw">let </span>(sin_lat1, sin_lat2) = (a[<span class="number">2</span>], b[<span class="number">2</span>]);
+<a href=#393 id=393 data-nosnippet>393</a>    <span class="kw">let </span>cos_lat2 = (<span class="number">1.0 </span>- sin_lat2 * sin_lat2).abs().sqrt();
+<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">let </span>s1 = -cos_lat2 * longitude_difference.sin();
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="kw">let </span>c1 = (<span class="number">1.0 </span>- sin_lat1 * sin_lat1).abs().sqrt() * sin_lat2
+<a href=#396 id=396 data-nosnippet>396</a>        - sin_lat1 * cos_lat2 * longitude_difference.cos();
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="kw">if </span>s1 != <span class="number">0.0 </span>|| c1 != <span class="number">0.0 </span>{
+<a href=#398 id=398 data-nosnippet>398</a>        s1.atan2(c1)
+<a href=#399 id=399 data-nosnippet>399</a>    } <span class="kw">else </span>{
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="number">0.0
+<a href=#401 id=401 data-nosnippet>401</a>    </span>}
+<a href=#402 id=402 data-nosnippet>402</a>}
 </code></pre></div></section></main></body></html>
