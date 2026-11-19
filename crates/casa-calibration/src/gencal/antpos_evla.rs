@@ -38,6 +38,13 @@ pub(super) fn resolve(
     let observation = ms
         .subtable(SubtableId::Observation)
         .ok_or_else(|| invalid("missing OBSERVATION subtable"))?;
+    match observation.row_count() {
+        0 => return Ok(None),
+        1 => {}
+        _ => return Err(GencalError::AutomaticPositionInput(
+            "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()".to_string(),
+        )),
+    }
     let telescope = get_string(observation, 0, "TELESCOPE_NAME")?;
     if telescope != "VLA" && telescope != "EVLA" {
         return Ok(None);
@@ -61,6 +68,8 @@ pub(super) fn resolve(
         .map_err(invalid)?
         .as_secs_f64();
     let year = MvTime::from_mjd_seconds(unix_seconds + 40_587.0 * 86_400.0).year();
+    // CASA's archive comparison is based on its whole-second YMD string.
+    let observed = MvTime::from_mjd_seconds(start.as_mjd_seconds().round());
     for correction_year in FIRST_EVLA_YEAR..=year {
         let failure = |source| GencalError::VlaArchive {
             url: format!("{scheme}://{ARCHIVE}{correction_year}"),
@@ -68,7 +77,7 @@ pub(super) fn resolve(
         };
         let mut response = query(scheme, correction_year).map_err(failure)?;
         let text = response.body_mut().read_to_string().map_err(failure)?;
-        accumulate(&mut antennas, start, time_limit, correction_year, &text)?;
+        accumulate(&mut antennas, observed, time_limit, correction_year, &text)?;
     }
     let mut selected = Vec::new();
     let mut offsets = Vec::new();

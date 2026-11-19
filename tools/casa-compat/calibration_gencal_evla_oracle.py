@@ -151,7 +151,7 @@ def affected_epoch(root, fixture, native):
         result, values = compare_case(root, 'tropo-marker', fixture, 'antpos', {}, native)
     assert not np.any(values['FPARAM'])
     case = root / 'tropo-marker'
-    for scale in (1.0, 0.0, -2.0):
+    for scale in (1.0, 0.0, -2.0, np.int64(-2)):
         for writer in ('casa', 'native'):
             tool = table()
             assert tool.open(str(case / f'{writer}.cal'), nomodify=False)
@@ -165,6 +165,48 @@ def affected_epoch(root, fixture, native):
         result[f'tropo_scale_{scale}_nrms'] = apply_both(
             output, fixture, case / 'casa.cal', case / 'native.cal', native, calwt=False)
     return result
+
+
+def lookup_scope(root, base, fixture, native):
+    old = configure_ms(root, 'before-evla', base, datetime(2009, 12, 1, tzinfo=timezone.utc))
+    alma = configure_ms(root, 'alma', base, datetime(2013, 3, 1, tzinfo=timezone.utc), 'ALMA')
+    boundary = configure_ms(root, 'posting-boundary', base,
+                            datetime(2010, 7, 18, 21, 44, 0, 600000, tzinfo=timezone.utc))
+    tool = table()
+    assert tool.open(str(boundary / 'OBSERVATION'), nomodify=False)
+    bounds = tool.getcell('TIME_RANGE', 0)
+    bounds[0] = datetime(2010, 7, 18, 21, 43, 59, 600000, tzinfo=timezone.utc).timestamp() + 40587 * 86400
+    tool.putcell('TIME_RANGE', 0, bounds)
+    tool.close()
+    multi = root / 'multiple-observations.ms'
+    copy_ms(fixture, multi)
+    tool = table()
+    assert tool.open(str(multi / 'OBSERVATION'), nomodify=False)
+    tool.addrows(1)
+    for column in tool.colnames():
+        if tool.iscelldefined(column, 0):
+            tool.putcell(column, 1, tool.getcell(column, 0))
+    tool.close()
+    with archive_proxy() as calls:
+        for label, engine in (('casa', casa), ('native', native)):
+            path = root / f'outside-archive-{label}.cal'
+            for vis in (old, alma):
+                generate(engine, vis, path, [('antpos', {})])
+                assert not path.exists()
+            try:
+                generate(engine, multi, path, [('antpos', {})])
+            except ValueError:
+                assert not path.exists()
+            else:
+                raise AssertionError(f'{label} selected a single row of multiple observations')
+        assert not calls
+    with archive_proxy():
+        for label, engine in (('casa', casa), ('native', native)):
+            path = root / f'posting-boundary-{label}.cal'
+            generate(engine, boundary, path, [('antpos', {'ant_pos_time_limit': 1})])
+            assert not path.exists()
+    return {'pre_evla_and_alma_skipped': True, 'multiple_observations_refused': True,
+            'whole_second_posting_boundary': True}
 
 
 def main():
@@ -185,6 +227,7 @@ def main():
                 antenna_names=[f'ea{index:02}' for index in range(1, 6)])
     fixture = configure_ms(root, 'archive', base, datetime(2010, 7, 17, 12, tzinfo=timezone.utc))
     results = freeze_results(root, fixture, native)
+    results['lookup-scope'] = lookup_scope(root, base, fixture, native)
     affected = configure_ms(root, '2016B', base, datetime(2016, 9, 1, 9, tzinfo=timezone.utc))
     results['tropo-marker'] = affected_epoch(root, affected, native)
     if args.live:

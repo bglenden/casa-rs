@@ -127,6 +127,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             .map(CalibrationTaskResult::Gencal)
             .map_err(|error| match error {
                 crate::GencalError::PositionInput(error) => position_input_failure(error),
+                crate::GencalError::AutomaticPositionInput(reason) => {
+                    TaskFailure::validation(reason).at("antenna")
+                }
                 ref error @ crate::GencalError::VlaArchive { ref source, .. } => {
                     let parameter = match source.as_ref() {
                         ureq::Error::StatusCode(code) => format!("antenna.archive.http.{code}"),

@@ -213,6 +213,9 @@ pub enum GencalError {
     /// A supplied ALMA position file or its arguments are invalid.
     #[error(transparent)]
     PositionInput(#[from] AntposInputError),
+    /// The MeasurementSet does not identify one observation for automatic lookup.
+    #[error("{0}")]
+    AutomaticPositionInput(String),
     /// A VLA archive request failed after the initial connection probe.
     #[error("{source} at {url}")]
     VlaArchive {

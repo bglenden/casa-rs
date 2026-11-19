@@ -4409,7 +4409,11 @@ fn load_antpos_tropo(
     let scale = match value {
         Value::Scalar(ScalarValue::Float64(scale)) => *scale,
         Value::Scalar(ScalarValue::Float32(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::UInt8(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::Int16(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::UInt32(scale)) => f64::from(*scale),
         Value::Scalar(ScalarValue::Int32(scale)) => f64::from(*scale),
+        Value::Scalar(ScalarValue::Int64(scale)) => *scale as f64,
         _ => {
             return Err(ApplyExecutionError::UnsupportedCalibrationTable {
                 path: table
