@@ -6941,6 +6941,21 @@ reference calculation for real-valued parameters.
 casa-rs raises a task error for unsupported table types before publishing
 a result. The paired oracle runs this CASA check in a child process (#1525).
 
+## `statwt` creates spectra then fails on an explicitly selected subset
+
+CASA 6.7.6.14 initializes a required `WEIGHT_SPECTRUM` or `SIGMA_SPECTRUM`
+column for the original MS when `chanbin` requests channel bins. When the
+selected table predates the new column, CASA then raises a `RuntimeError`
+and asks the caller to rerun the selection. The first call writes the
+initial spectrum across the MS and leaves the original flags and scalar
+columns intact.
+
+casa-rs initializes the physical MAIN tables and subsequently applies
+statistical weights to the requested rows in one call. Unselected rows
+retain the spectrum obtained by expanding their original scalar values.
+The paired fixture compares this result with CASA's documented two-call
+sequence and checks unselected rows (#1524).
+
 ## Accumulating a bandpass updates a fraction of the Jones cells
 
 CASA 6.7.6.14's `calibrater.accumulate` is available with
@@ -6966,20 +6981,6 @@ time-ordered CASA control. It preserves the prior numerical payload
 at flagged cells. In a selected gain-field comparison, CASA replaced
 one flagged payload with complex unity. The flags and valid values
 matched (#1525).
-## `statwt` creates spectra then fails on an explicitly selected subset
-
-CASA 6.7.6.14 initializes a required `WEIGHT_SPECTRUM` or `SIGMA_SPECTRUM`
-column for the original MS when `chanbin` requests channel bins. When the
-selected table predates the new column, CASA then raises a `RuntimeError`
-and asks the caller to rerun the selection. The first call writes the
-initial spectrum across the MS and leaves the original flags and scalar
-columns intact.
-
-casa-rs initializes the physical MAIN tables and subsequently applies
-statistical weights to the requested rows in one call. Unselected rows
-retain the spectrum obtained by expanding their original scalar values.
-The paired fixture compares this result with CASA's documented two-call
-sequence and checks unselected rows (#1524).
 
 ## Selecting a field in simultaneous calibration rows modifies other fields
 
@@ -6992,3 +6993,27 @@ also changes PHASE rows. Selecting PHASE skips all the rows.
 casa-rs applies the correction within each selected field. The paired
 fixture checks the product on every eligible row and checks the
 unselected rows byte for byte (#1525).
+
+## Accumulation repairs a legacy input even when a separate output is requested
+
+CASA 6.7.6.14's old accumulation path upgrades a pre-4.1 cumulative
+table when it opens the source. The paired input lost its original schema:
+CASA added OBSERVATION_ID and OBSERVATION before publishing the requested
+separate product.
+
+casa-rs applies the same legacy upgrade inside the output snapshot.
+The result matches the upgraded CASA product and a separately named original
+retains its legacy schema (#1525).
+
+## Accumulation can terminate during contextual time interpolation
+
+With the old CASA 6.7.6.14 visibility iterator, accumulation terminated
+the process on the test fixtures for `spline` and `linearperscan`.
+`linearperobs` completed when there was one observation and terminated
+on the two-observation probe.
+
+casa-rs uses the calibration application's time interpolator with the
+cumulative rows' scan and observation metadata. In local comparisons,
+the per-scan output matched two independent single-field CASA controls.
+An independent SciPy natural spline matched 52 valid complex factors
+in the spline comparison (#1525).
