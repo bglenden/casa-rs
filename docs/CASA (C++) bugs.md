@@ -6940,3 +6940,29 @@ reference calculation for real-valued parameters.
 
 casa-rs raises a task error for unsupported table types before publishing
 a result. The paired oracle runs this CASA check in a child process (#1525).
+
+## Accumulating a bandpass updates a fraction of the Jones cells
+
+CASA 6.7.6.14's `calibrater.accumulate` is available with
+`setvi(old=True)`. In the paired eight-channel B Jones fixture it
+changed 20 of 160 valid complex cells. At each of two solution times,
+only the first five channels of antenna 0 received the Jones product.
+The other valid factors remained as they were.
+
+casa-rs multiplies the per-receptor, per-channel factors for every
+antenna. The analytic self-accumulation check squares all 160 valid
+factors and checks flags separately (#1525).
+
+## Accumulation depends on the physical order of overlapping field times
+
+In CASA 6.7.6.14, the old accumulation method passes the incremental
+table's time column to `CTTimeInterp1`. The interpolator uses binary
+search on those times. Physically grouping rows by field can leave that
+column out of chronological order when time ranges overlap.
+
+CASA changed valid gains when the paired fixture was sorted by time.
+casa-rs orders its time series before interpolation and matches the
+time-ordered CASA control. It preserves the prior numerical payload
+at flagged cells. In a selected gain-field comparison, CASA replaced
+one flagged payload with complex unity. The flags and valid values
+matched (#1525).

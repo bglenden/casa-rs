@@ -136,7 +136,7 @@ pub fn accumulate_calibration(
 
 struct Increment<'a> {
     lookup: CalibrationTableLookup,
-    frequencies: Vec<FrequencyAxis>,
+    frequencies: Vec<Vec<f64>>,
     fields: &'a [i32],
     spec: ApplyCalibrationTableSpec,
     interpolation: ApplyInterpolationMode,
@@ -187,7 +187,10 @@ impl Increment<'_> {
             let axis = output_frequencies
                 .get(target)
                 .ok_or("cumulative spectral window is missing")?;
-            let phase_reference = (axis.channels.len() == 1).then_some(axis.reference);
+            let phase_frequency = match axis.as_slice() {
+                [frequency] => Some(*frequency),
+                _ => None,
+            };
             for row in rows {
                 let antenna = read_i32(table, row, COL_ANTENNA1)?;
                 let observation = read_i32(table, row, COL_OBSERVATION_ID)?;
@@ -200,11 +203,11 @@ impl Increment<'_> {
                         mapped,
                         antenna,
                         f64::from_bits(time),
-                        phase_reference,
+                        phase_frequency,
                     )
                     .map_err(error_text)?;
                 let correction = correction
-                    .map(|corr| self.resample(corr, source, &axis.channels))
+                    .map(|corr| self.resample(corr, source, axis))
                     .transpose()?;
                 multiply_row(table, row, correction)?;
             }
@@ -221,11 +224,10 @@ impl Increment<'_> {
         if solution.channels == 1 {
             return Ok(solution);
         }
-        let input = &self
+        let input = self
             .frequencies
             .get(source)
-            .ok_or("incremental spectral window is missing")?
-            .channels;
+            .ok_or("incremental spectral window is missing")?;
         if input == output {
             return Ok(solution);
         }
@@ -254,7 +256,7 @@ fn incremental_lookup(
     path: &Path,
     interpolation: ApplyInterpolationMode,
     fields: &[i32],
-) -> Result<(CalibrationTableLookup, Vec<FrequencyAxis>), String> {
+) -> Result<(CalibrationTableLookup, Vec<Vec<f64>>), String> {
     let observation_count = ms.observation().map_err(error_text)?.row_count();
     let spectral = spectral_window_path(path)
         .map_err(error_text)?
@@ -370,21 +372,11 @@ fn id(name: &str, value: i32) -> RecordField {
     RecordField::new(name, Value::Scalar(ScalarValue::Int32(value)))
 }
 
-struct FrequencyAxis {
-    channels: Vec<f64>,
-    reference: f64,
-}
-
-fn table_frequencies(path: &Path) -> Result<Vec<FrequencyAxis>, String> {
+fn table_frequencies(path: &Path) -> Result<Vec<Vec<f64>>, String> {
     let table = Table::open(TableOptions::new(path)).map_err(error_text)?;
     let spectrum = casa_ms::subtables::MsSpectralWindow::new(&table);
     (0..table.row_count())
-        .map(|row| {
-            Ok(FrequencyAxis {
-                channels: spectrum.chan_freq(row).map_err(error_text)?,
-                reference: spectrum.ref_frequency(row).map_err(error_text)?,
-            })
-        })
+        .map(|row| spectrum.chan_freq(row).map_err(error_text))
         .collect()
 }
 
