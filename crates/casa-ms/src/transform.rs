@@ -157,6 +157,10 @@ pub enum MsTransformError {
         column: String,
     },
 
+    /// The input has no visibility column in the requested layout.
+    #[error("Did not find and select any data columns.")]
+    NoDataColumns,
+
     /// The row selection failed.
     #[error("failed to select rows from MeasurementSet {path}: {source}")]
     SelectRows {
@@ -463,6 +467,7 @@ fn mstransform_staged(
         selected_rows.len(),
         &request.output_ms,
         &visibility,
+        grammar,
     )?;
     maybe_log_transform_progress(
         "materialize_selected_main",
@@ -661,10 +666,18 @@ fn mstransform_staged(
             for (column, values) in &mut data_values {
                 let source = column.source.name();
                 let target = column.output.name();
-                let value = values
-                    .next()
-                    .flatten()
-                    .ok_or_else(|| missing_column_error(&request.output_ms, row_index, source))?;
+                let Some(value) = values.next().flatten() else {
+                    if column.source == OptionalMainColumn::LagData {
+                        write_session.push_undefined_row(target).map_err(|error| {
+                            MsTransformError::WriteMeasurementSet {
+                                path: request.output_ms.display().to_string(),
+                                reason: error.to_string(),
+                            }
+                        })?;
+                        continue;
+                    }
+                    return Err(missing_column_error(&request.output_ms, row_index, source));
+                };
                 let value = select_correlations(value, source)?;
                 let transformed = if column.source == OptionalMainColumn::LagData {
                     value
@@ -1070,7 +1083,7 @@ fn transform_array_write_plan(
         reason: error.to_string(),
     };
     let (lag_shapes, maximum_lag_bytes) = if visibility.contains_output("LAG_DATA") {
-        plan_lag_shapes(input, selected_rows, selected_ddids, correlations)?
+        plan_lag_shapes(input, selected_rows, selected_ddids, &dimensions)?
     } else {
         (Vec::new(), 0)
     };
@@ -1226,16 +1239,16 @@ fn plan_flag_category_shapes(
     let mut counts = BTreeMap::new();
     let mut largest_input = 0;
     for (&row, ddid) in selected_rows.iter().zip(selected_ddids) {
-        let original = main.array_shape(row, "FLAG_CATEGORY").map_err(|source| {
-            MsTransformError::MutateMeasurementSet {
+        let original = main
+            .array_shape_uncached(row, "FLAG_CATEGORY")
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: input
                     .path()
                     .unwrap_or_else(|| Path::new("<memory>"))
                     .display()
                     .to_string(),
                 source: Box::new(source),
-            }
-        })?;
+            })?;
         let shape = &dimensions[ddid];
         let cell = match original.as_deref() {
             Some(&[corr, chan, categories]) if corr > 0 && chan > 0 && categories > 0 => {
@@ -1278,7 +1291,7 @@ fn plan_lag_shapes(
     input: &MeasurementSet,
     rows: &[usize],
     descriptions: &[i32],
-    correlations: Option<&CorrelationSelection>,
+    dimensions: &BTreeMap<i32, TransformArrayDimensions>,
 ) -> Result<(Vec<MeasurementSetArrayShapePlan>, usize), MsTransformError> {
     let path = input.path().unwrap_or_else(|| Path::new("<memory>"));
     let mut counts = BTreeMap::new();
@@ -1286,18 +1299,26 @@ fn plan_lag_shapes(
     for (&row, &description) in rows.iter().zip(descriptions) {
         let shape = input
             .main_table()
-            .array_shape(row, "LAG_DATA")
+            .array_shape_uncached(row, "LAG_DATA")
             .map_err(|source| MsTransformError::MutateMeasurementSet {
                 path: path.display().to_string(),
                 source: Box::new(source),
             })?;
-        let Some(&[stored_correlations, lags]) = shape.as_deref() else {
-            return Err(missing_column_error(path, row, "LAG_DATA"));
+        let output_correlations = dimensions[&description].output_correlations;
+        let lags = match shape.as_deref() {
+            Some(&[stored_correlations, lags]) if lags > 0 => {
+                max_bytes =
+                    max_bytes.max(stored_correlations.saturating_mul(lags).saturating_mul(8));
+                lags
+            }
+            None => 1, // An undefined cell needs no physical lag extent.
+            _ => {
+                return Err(MsTransformError::SpectralMetadata {
+                    path: path.display().to_string(),
+                    reason: format!("LAG_DATA row {row} has an invalid shape {shape:?}"),
+                });
+            }
         };
-        max_bytes = max_bytes.max(stored_correlations.saturating_mul(lags).saturating_mul(8));
-        let output_correlations = correlations
-            .and_then(|plan| plan.axes(description))
-            .map_or(stored_correlations, <[usize]>::len);
         *counts.entry([output_correlations, lags]).or_default() += 1;
     }
     let plans = counts
@@ -1427,6 +1448,7 @@ fn materialize_empty_main_table(
     row_count: usize,
     output_path: &Path,
     visibility: &VisibilityColumns,
+    grammar: RowGrammar,
 ) -> Result<Table, MsTransformError> {
     let mut table = Table::open_metadata_for_construction(TableOptions::new(input_path), row_count)
         .map_err(|source| MsTransformError::MutateMeasurementSet {
@@ -1436,7 +1458,11 @@ fn materialize_empty_main_table(
     let renamed_keywords = visibility
         .copies()
         .iter()
-        .find(|copy| copy.source != copy.output)
+        .find(|copy| {
+            copy.source != copy.output
+                && (grammar != RowGrammar::Transform
+                    || copy.source == OptionalMainColumn::CorrectedData)
+        })
         .and_then(|copy| table.column_keywords(copy.source.name()).cloned());
     let projected_columns = table
         .schema()
@@ -1480,11 +1506,25 @@ fn materialize_empty_main_table(
                     path: output_path.display().to_string(),
                     source: Box::new(source),
                 })?;
-            if copy.source != copy.output
-                && let Some(keywords) = &renamed_keywords
-            {
-                table.set_column_keywords(name, keywords.clone());
+        }
+        if copy.source != copy.output
+            && let Some(source) = &renamed_keywords
+        {
+            let mut keywords = table.column_keywords(name).cloned().unwrap_or_default();
+            for field in source.fields() {
+                if grammar != RowGrammar::Transform
+                    || matches!(field.value, Value::Scalar(ScalarValue::String(_)))
+                {
+                    keywords.upsert(field.name.clone(), field.value.clone());
+                }
             }
+            table.set_column_keywords(name, keywords);
+        } else if grammar == RowGrammar::Transform
+            && copy.output == OptionalMainColumn::ModelData
+            && visibility.copies().len() > 1
+        {
+            // CASA constructs the independent MODEL_DATA column without input keywords.
+            table.set_column_keywords(name, RecordValue::default());
         }
     }
     table

@@ -7201,11 +7201,12 @@ The native tasks preserve the selected rows and correlations of LAG_DATA
 with its independent lag axis. The frequency-channel selection applies to
 the visibility and flag columns on the spectral axis (#1614).
 
-## Transforming all columns can crash an MS with only CORRECTED_DATA
+## Transforming all columns can crash an MS with one scratch column
 
-On an MS with physical CORRECTED_DATA and no other visibility column,
-CASA 6.7.6.14 `split(datacolumn="all")` and `mstransform(datacolumn="all")`
-terminate Python with SIGSEGV in the pinned Linux build.
+On an MS with a single physical visibility column, either CORRECTED_DATA
+or MODEL_DATA, CASA 6.7.6.14 `split(datacolumn="all")` and
+`mstransform(datacolumn="all")` terminate Python with SIGSEGV in the pinned
+Linux build.
 
-The native tasks keep CORRECTED_DATA and its weights when it is the only
-physical visibility column requested by `all` (#1614).
+The native tasks keep the original visibility column and its weights in
+these sparse layouts (#1614).

@@ -68,7 +68,7 @@ impl VisibilityColumns {
             }
         }
         if columns.is_empty() {
-            return Err(missing(Data));
+            return Err(MsTransformError::NoDataColumns);
         }
         Ok(Self(columns))
     }
@@ -126,7 +126,7 @@ impl VisibilityColumns {
                     }
                 }));
             }
-        } else if !self.contains_output(OptionalMainColumn::CorrectedData.name())
+        } else if !self.preserves_both_scalars()
             && let ArrayValue::Float32(values) = sigma
         {
             *weight = ArrayValue::Float32(values.mapv(|sigma| {
@@ -136,6 +136,17 @@ impl VisibilityColumns {
                     0.0
                 }
             }));
+        }
+    }
+
+    fn preserves_both_scalars(&self) -> bool {
+        use OptionalMainColumn::{CorrectedData, Data, ModelData};
+        // Preserve the weights of sparse layouts that CASA's all mode cannot
+        // copy. A singleton mapped into DATA takes the ordinary DATA rules.
+        if let [column] = self.0.as_slice() {
+            matches!(column.output, CorrectedData | ModelData)
+        } else {
+            self.contains_output(CorrectedData.name()) && self.contains_output(Data.name())
         }
     }
 }

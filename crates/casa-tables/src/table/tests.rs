@@ -26,6 +26,44 @@ mod publish;
 mod stale_rows;
 mod structure;
 
+#[test]
+fn uncached_shape_lookup_does_not_buffer_indirect_array_cells() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("shapes");
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "lag",
+        PrimitiveType::Complex32,
+        Some(2),
+    )])
+    .unwrap();
+    let mut table = Table::with_schema(schema);
+    for lags in [8, 12] {
+        let values = Array2::from_elem((2, lags), Complex32::new(1.0, -1.0));
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "lag",
+                Value::Array(ArrayValue::Complex32(values.into_dyn())),
+            )]))
+            .unwrap();
+    }
+    table
+        .save(TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan))
+        .unwrap();
+    let reopened = Table::open(TableOptions::new(&path)).unwrap();
+    assert_eq!(
+        reopened.array_shape_uncached(0, "lag").unwrap(),
+        Some(vec![2, 8])
+    );
+    assert_eq!(
+        reopened.array_shape_uncached(1, "lag").unwrap(),
+        Some(vec![2, 12])
+    );
+    assert!(!reopened.inner.has_loaded_rows());
+    assert!(!reopened.inner.has_buffered_array_column("lag"));
+    assert_eq!(reopened.array_shape(1, "lag").unwrap(), Some(vec![2, 12]));
+    assert!(reopened.inner.has_buffered_array_column("lag"));
+}
+
 /// `schema` as `manager` stores it: IncrementalStMan stores Direct
 /// fixed-shape arrays only, so its fixed-shape arrays become Direct.
 fn schema_for_manager(schema: &TableSchema, manager: DataManagerKind) -> TableSchema {

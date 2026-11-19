@@ -2027,6 +2027,13 @@ impl TableImpl {
     }
 
     #[cfg(test)]
+    pub(crate) fn has_buffered_array_column(&self, column: &str) -> bool {
+        self.buffered_array_cells
+            .get(column)
+            .is_some_and(|cached| cached.get().is_some())
+    }
+
+    #[cfg(test)]
     pub(crate) fn has_cached_control_metadata(&self) -> bool {
         self.lazy_rows
             .as_ref()
