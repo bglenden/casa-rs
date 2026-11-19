@@ -150,6 +150,11 @@ def main():
     attach_power_curves(embedded, root / 'embedded.txt')
     results['embedded-gc'], power = compare_case(root, 'embedded-gc', embedded, 'gc', {},
                                                 native, check_apply=True)
+    unweighted = root / 'embedded-gc-without-calwt'
+    unweighted.mkdir()
+    results['embedded-gc-without-calwt'] = {'apply_nrms': apply_both(
+        unweighted, embedded, root / 'embedded-gc' / 'casa.cal', root / 'embedded-gc' / 'native.cal',
+        native, calwt=False)}
     results['embedded-gceff'], combined = compare_case(root, 'embedded-gceff', embedded, 'gceff',
                                                      {'infile': str(root / 'absent')}, native)
     np.testing.assert_array_equal(combined['FPARAM'], power['FPARAM'])

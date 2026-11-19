@@ -95,14 +95,14 @@ def generate(module, vis, table_path, stages):
         assert module.gencal(str(vis), str(table_path), kind, **options) is None
 
 
-def apply_both(root, source, casa_table, native_table, native):
+def apply_both(root, source, casa_table, native_table, native, *, calwt=True):
     common = ('DATA', 'FLAG', 'FLAG_ROW', 'WEIGHT', 'CORRECTED_DATA')
     products = {}
     for engine, module in (('casa', casa), ('native', native)):
         for writer, table_path in (('casa', casa_table), ('native', native_table)):
             dataset = root / f'apply-{engine}-{writer}.ms'
             copy_ms(source, dataset)
-            module.applycal(str(dataset), gaintable=[str(table_path)], interp=['nearest'], calwt=[True])
+            module.applycal(str(dataset), gaintable=[str(table_path)], interp=['nearest'], calwt=[calwt])
             products[engine, writer] = columns(dataset, common)
     expected = products['casa', 'casa']
     errors = []
