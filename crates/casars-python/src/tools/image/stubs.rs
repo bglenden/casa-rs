@@ -717,33 +717,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (infile), text_signature = "($self, infile)")]
-    fn newimage(&self, infile: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("newimage")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, pixels = None, csys = None, linear = None, overwrite = None, log = None, r#type = None), text_signature = "($self, outfile='', pixels=[], csys={}, linear=False, overwrite=False, log=True, type='f')")]
-    fn newimagefromarray(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        pixels: Option<&Bound<'_, PyAny>>,
-        csys: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("newimagefromarray")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (infile), text_signature = "($self, infile)")]
-    fn newimagefromfile(&self, infile: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("newimagefromfile")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, infile = None, whichrep = None, whichhdu = None, zeroblanks = None, overwrite = None), text_signature = "($self, outfile='', infile='', whichrep=0, whichhdu=0, zeroblanks=False, overwrite=False)")]
     fn newimagefromfits(
         &self,
@@ -769,21 +742,6 @@ impl PyImageTool {
         overwrite: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("newimagefromimage")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, shape = None, csys = None, linear = None, overwrite = None, log = None, r#type = None), text_signature = "($self, outfile='', shape=[0], csys={}, linear=False, overwrite=False, log=True, type='f')")]
-    fn newimagefromshape(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        shape: Option<&Bound<'_, PyAny>>,
-        csys: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("newimagefromshape")
     }
 
     /// Not yet implemented in casa-rs.
