@@ -24,6 +24,7 @@ struct Baseline {
 
 pub(super) struct Group<'a> {
     pub(super) rows: Vec<&'a ResolvedMsSelectionRow>,
+    pub(super) exposures: Vec<f64>,
     timestamp_indexes: Vec<usize>,
     timestamp_count: usize,
 }
@@ -70,8 +71,13 @@ pub(super) fn groups<'a>(
     sliding: bool,
 ) -> MsResult<Vec<Group<'a>>> {
     let rows = selection.row_indices().collect::<Vec<_>>();
-    let mut metadata = table
-        .required_scalar_columns_owned_for_rows(&["ARRAY_ID", "SCAN_NUMBER", "STATE_ID"], &rows)?;
+    let mut metadata = table.required_scalar_columns_owned_for_rows(
+        &["ARRAY_ID", "SCAN_NUMBER", "STATE_ID", "EXPOSURE"],
+        &rows,
+    )?;
+    let Some(RequiredScalarColumnValues::Float64(exposures)) = metadata.remove("EXPOSURE") else {
+        return Err(MsError::InvalidInput("EXPOSURE must be float64".into()));
+    };
     let mut take_column = |name: &str| match metadata.remove(name) {
         Some(RequiredScalarColumnValues::Int32(values)) => Ok(values),
         _ => Err(MsError::InvalidInput(format!("{name} must be int32"))),
@@ -89,7 +95,7 @@ pub(super) fn groups<'a>(
         groups
             .entry((arrays[index], row.data_desc_id))
             .or_default()
-            .push((row, key));
+            .push((row, key, exposures[index]));
     }
     let mut ordered = Vec::new();
     for rows in groups.values_mut() {
@@ -105,7 +111,9 @@ pub(super) fn groups<'a>(
             let boundary_changed = rows[index].1 != rows[start].1;
             let duration_elapsed = matches!(time_bin, StatWtTimeBin::Seconds(width)
                 if !sliding && rows[index].0.time_mjd_seconds - rows[start].0.time_mjd_seconds >= width);
-            if boundary_changed || duration_elapsed {
+            let single_timestamp_bin_elapsed = matches!(time_bin, StatWtTimeBin::Timestamps(1))
+                && rows[index].0.time_mjd_seconds != rows[start].0.time_mjd_seconds;
+            if boundary_changed || duration_elapsed || single_timestamp_bin_elapsed {
                 baseline_groups(&rows[start..index], &mut ordered);
                 start = index;
             }
@@ -117,13 +125,13 @@ pub(super) fn groups<'a>(
 }
 
 fn baseline_groups<'a>(
-    rows: &[(&'a ResolvedMsSelectionRow, Boundary)],
+    rows: &[(&'a ResolvedMsSelectionRow, Boundary, f64)],
     output: &mut Vec<Group<'a>>,
 ) {
     let mut groups = BTreeMap::<_, Group<'_>>::new();
     let mut timestamp = 0;
     let mut previous = rows[0].0.time_mjd_seconds;
-    for &(row, _) in rows {
+    for &(row, _, exposure) in rows {
         let time = row.time_mjd_seconds;
         if time != previous {
             timestamp += 1;
@@ -135,10 +143,12 @@ fn baseline_groups<'a>(
         };
         let group = groups.entry(key).or_insert_with(|| Group {
             rows: vec![],
+            exposures: vec![],
             timestamp_indexes: vec![],
             timestamp_count: 0,
         });
         group.rows.push(row);
+        group.exposures.push(exposure);
         group.timestamp_indexes.push(timestamp);
     }
     output.extend(groups.into_values().map(|mut group| {

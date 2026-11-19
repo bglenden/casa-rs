@@ -1377,7 +1377,7 @@ def statwt(
 
     CASA's ``statwt``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #1524:
-    ``chanbin``, ``statalg``, ``fitspw``, ``excludechans``.
+    ``statalg``.
     """
     return _call_casa(statwt, locals())
 

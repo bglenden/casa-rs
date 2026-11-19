@@ -34129,9 +34129,6 @@
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Statistical weight estimation has its own binning and parameter domains."
-          },
-          "unimplemented": {
-            "issue": 1524
           }
         },
         {
@@ -34463,9 +34460,6 @@
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "Statistical weight estimation has its own binning and parameter domains."
-          },
-          "unimplemented": {
-            "issue": 1524
           }
         },
         {
@@ -34504,9 +34498,6 @@
               "label": "excludechans",
               "group": "Weights"
             }
-          },
-          "unimplemented": {
-            "issue": 1524
           }
         },
         {

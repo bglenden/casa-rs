@@ -7,7 +7,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::{
-    ClassicScalarStatWt, StatWtCombine, StatWtDataColumn, StatWtTimeBin, classical_scalar_statwt,
+    StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions, StatWtTimeBin,
+    estimate_statwt,
 };
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -33,23 +34,21 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         let mut ms = MeasurementSet::open_retained_read(&path).map_err(runtime_error)?;
         #[cfg(not(unix))]
         let mut ms = MeasurementSet::open(&path).map_err(runtime_error)?;
-        require_scalar_weights(&ms)?;
         let selection = crate::session::resolve_casa_calibration_selection(&ms, &selection)
             .map_err(runtime_error)?;
-        classical_scalar_statwt(&mut ms, &selection, options, None).map_err(runtime_error)?
+        estimate_statwt(&mut ms, &selection, &options, None).map_err(runtime_error)?
     } else {
         let mut opened = super::multi_ms::OpenedMs::open(&path)?;
-        require_scalar_weights(&opened.measurement_set)?;
         let selection =
             crate::session::resolve_casa_calibration_selection(&opened.measurement_set, &selection)
                 .map_err(runtime_error)?;
         if task.flag("flagbackup")? {
             save_next_flag_backup(&opened.measurement_set, "statwt").map_err(runtime_error)?;
         }
-        let result = classical_scalar_statwt(
+        let result = estimate_statwt(
             &mut opened.measurement_set,
             &selection,
-            options,
+            &options,
             Some(&mut opened.lock),
         )
         .map_err(runtime_error)?;
@@ -64,40 +63,23 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     TaskSuccess::new(value, &result)
 }
 
-fn require_scalar_weights(ms: &MeasurementSet) -> Result<(), TaskFailure> {
-    if let Some(schema) = ms.main_table().schema()
-        && ["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"]
-            .iter()
-            .any(|name| schema.contains_column(name))
-    {
-        return Err(unavailable("chanbin"));
-    }
-    Ok(())
-}
-
-fn options(task: &TaskInvocation<'_>) -> Result<ClassicScalarStatWt, TaskFailure> {
-    for (name, expected) in [("chanbin", "spw"), ("statalg", "classic"), ("fitspw", "")] {
-        if task.text(name)?.as_deref() != Some(expected) {
-            return Err(unavailable(name));
-        }
-    }
-    if task.flag("excludechans")? {
-        return Err(unavailable("excludechans"));
-    }
-    let combined = task
-        .text("combine")?
+fn options(task: &TaskInvocation<'_>) -> Result<StatWtOptions, TaskFailure> {
+    if !task
+        .text("statalg")?
         .unwrap_or_default()
-        .to_ascii_lowercase();
-    let mut combine = StatWtCombine::default();
-    for item in combined.split(',').map(str::trim) {
-        match item {
-            "corr" => combine.correlations = true,
-            "scan" => combine.scans = true,
-            "state" => combine.states = true,
-            "field" => combine.fields = true,
-            _ => {}
-        }
+        .to_ascii_lowercase()
+        .starts_with("cl")
+    {
+        return Err(unavailable("statalg"));
     }
+    let combined = task.text("combine")?.unwrap_or_default();
+    let folded = combined.to_ascii_lowercase();
+    let combine = StatWtCombine {
+        correlations: combined.contains("corr"),
+        scans: folded.contains("scan"),
+        states: folded.contains("state"),
+        fields: folded.contains("field"),
+    };
     let minimum_samples = usize::try_from(task.integer("minsamp")?).unwrap_or(0);
     if minimum_samples < 2 {
         return Err(TaskFailure::execution("minsamp must be at least 2").at("minsamp"));
@@ -105,21 +87,26 @@ fn options(task: &TaskInvocation<'_>) -> Result<ClassicScalarStatWt, TaskFailure
     let bounds = task.numbers("wtrange")?;
     let weight_range = match bounds.as_slice() {
         [] => None,
-        &[low, high] if low >= 0.0 && high >= low => Some([low as f32, high as f32]),
+        &[left, right] if left >= 0.0 && right >= 0.0 && left != right => {
+            Some([left.min(right), left.max(right)])
+        }
         _ => {
             return Err(
-                TaskFailure::execution("wtrange requires two ordered, nonnegative bounds")
+                TaskFailure::execution("wtrange requires two distinct nonnegative bounds")
                     .at("wtrange"),
             );
         }
     };
     let data_column = parse_data_column(&task.text("datacolumn")?.unwrap_or_default())?;
-    Ok(ClassicScalarStatWt {
+    Ok(StatWtOptions {
         data_column,
         minimum_samples,
         combine,
         time_bin: time_bin(task)?,
         sliding: task.flag("slidetimebin")?,
+        channel_bin: channel_bin(task)?,
+        fit_spw: task.text("fitspw")?.unwrap_or_default(),
+        exclude_channels: task.flag("excludechans")?,
         weight_range,
     })
 }
@@ -147,21 +134,46 @@ fn time_bin(task: &TaskInvocation<'_>) -> Result<StatWtTimeBin, TaskFailure> {
     }
 }
 
-fn parse_data_column(value: &str) -> Result<StatWtDataColumn, TaskFailure> {
-    let value = value.to_ascii_lowercase();
-    if !value.is_empty() {
-        for (name, column) in [
-            ("data", StatWtDataColumn::Data),
-            ("corrected", StatWtDataColumn::Corrected),
-            ("residual", StatWtDataColumn::ResidualCorrected),
-            ("residual_data", StatWtDataColumn::ResidualData),
-        ] {
-            if name.starts_with(&value) {
-                return Ok(column);
+fn channel_bin(task: &TaskInvocation<'_>) -> Result<StatWtChannelBin, TaskFailure> {
+    let bad_value = || {
+        TaskFailure::execution("chanbin requires a positive channel count or a frequency width")
+            .at("chanbin")
+    };
+    match task.value("chanbin") {
+        Some(ParameterValue::Integer(value)) if *value > 0 => usize::try_from(*value)
+            .map(StatWtChannelBin::Channels)
+            .map_err(|_| bad_value()),
+        Some(ParameterValue::String(value)) if value == "spw" => Ok(StatWtChannelBin::Window),
+        Some(ParameterValue::String(value)) => {
+            let hertz = Unit::new("Hz").expect("hertz");
+            let quantity: Quantity = value.parse().map_err(|_| bad_value())?;
+            let width = quantity.get_value_in(&hertz).map_err(|_| bad_value())?;
+            if width > 0.0 && width.is_finite() {
+                Ok(StatWtChannelBin::Hertz(width))
+            } else {
+                Err(bad_value())
             }
         }
+        _ => Err(bad_value()),
     }
-    Err(TaskFailure::execution(format!("unknown statwt data column {value:?}")).at("datacolumn"))
+}
+
+fn parse_data_column(value: &str) -> Result<StatWtDataColumn, TaskFailure> {
+    let value = value.to_ascii_lowercase();
+    if value.starts_with('d') {
+        Ok(StatWtDataColumn::Data)
+    } else if value.starts_with('c') {
+        Ok(StatWtDataColumn::Corrected)
+    } else if value.starts_with("residual_") {
+        Ok(StatWtDataColumn::ResidualData)
+    } else if value.starts_with("residual") {
+        Ok(StatWtDataColumn::ResidualCorrected)
+    } else {
+        Err(
+            TaskFailure::execution(format!("unknown statwt data column {value:?}"))
+                .at("datacolumn"),
+        )
+    }
 }
 
 fn runtime_error(error: impl std::fmt::Display) -> TaskFailure {

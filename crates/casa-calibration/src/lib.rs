@@ -56,11 +56,12 @@ mod task_contract;
 mod timing;
 mod uvmodelfit;
 mod uvsub;
+mod weight_spectra;
 mod writer;
 
 pub use statwt::{
-    ClassicScalarStatWt, StatWtCombine, StatWtDataColumn, StatWtSummary, StatWtTimeBin,
-    classical_scalar_statwt,
+    StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtOptions, StatWtSummary, StatWtTimeBin,
+    estimate_statwt,
 };
 
 pub use uvsub::{
