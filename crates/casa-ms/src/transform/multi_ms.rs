@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Split the physical members of a CASA Multi-MS and publish a portable view.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,9 +9,10 @@ use casa_tables::{Table, TableError, TableInfo, TableOptions};
 
 use super::{
     MsTransformError, MsTransformReport, MsTransformRequest, MsTransformTaskOptions, RowGrammar,
-    copy_dir_recursive, transform_product,
+    copy_dir_recursive, scalar_f64, scalar_i32, transform_product,
 };
 use crate::SubtableId;
+use crate::selection::syntax::parse_numeric_row_id_ranges;
 
 pub(super) fn members(path: &Path) -> Result<Option<Vec<PathBuf>>, MsTransformError> {
     let Ok(info) = fs::read_to_string(path.join("table.info")) else {
@@ -29,6 +31,11 @@ pub(super) fn retain(
     options: &MsTransformTaskOptions,
     members: &[PathBuf],
 ) -> Result<Option<MsTransformReport>, MsTransformError> {
+    if let Some(span) = options.retained_scan_span
+        && partition_axis(&request.input_ms).as_deref() != Some("spw")
+    {
+        check_scan_span(members, request.selection.scan.as_deref(), span)?;
+    }
     let started = std::time::Instant::now();
     let destination = &request.output_ms;
     let relative_members = Path::new("SUBMSS");
@@ -44,7 +51,17 @@ pub(super) fn retain(
         let mut part = request.clone();
         part.input_ms = member.clone();
         part.output_ms = destination.join(&local);
-        match transform_product(&part, grammar, options, None) {
+        let mut member_options = options.clone();
+        if let Some(history) = &mut member_options.history {
+            for (parameter, value) in &mut history.parameters {
+                match parameter.as_str() {
+                    "vis" => *value = format!("\"{}\"", part.input_ms.display()),
+                    "outputvis" => *value = format!("\"{}\"", final_path.join(&local).display()),
+                    _ => {}
+                }
+            }
+        }
+        match transform_product(&part, grammar, &member_options, None) {
             Ok(result) => {
                 accumulate(&mut report, result);
                 let table = Table::open(TableOptions::new(&part.output_ms))
@@ -55,7 +72,8 @@ pub(super) fn retain(
             Err(
                 error @ (MsTransformError::EmptySelection { .. }
                 | MsTransformError::InvalidSpw { .. }
-                | MsTransformError::SelectRows { .. }),
+                | MsTransformError::SelectRows { .. }
+                | MsTransformError::MissingDataColumn { .. }),
             ) => {
                 tracing::warn!(partition = %member.display(), error = %error, "split skipped a Multi-MS partition")
             }
@@ -78,14 +96,77 @@ pub(super) fn retain(
     Ok(Some(report))
 }
 
+fn partition_axis(input: &Path) -> Option<String> {
+    fs::read_to_string(input.join("table.info"))
+        .ok()
+        .and_then(|content| {
+            TableInfo::parse(&content)
+                .readme
+                .into_iter()
+                .find_map(|line| line.strip_prefix("AxisType = ").map(str::to_string))
+        })
+}
+
+fn check_scan_span(
+    members: &[PathBuf],
+    selector: Option<&str>,
+    span: f64,
+) -> Result<(), MsTransformError> {
+    let mut scans_by_member = Vec::with_capacity(members.len());
+    for member in members {
+        let table =
+            Table::open(TableOptions::new(member)).map_err(|source| table_error(member, source))?;
+        let read = |column| {
+            table
+                .column_accessor(column)
+                .and_then(|cells| cells.scalar_cells_owned())
+                .map_err(|source| table_error(member, source))
+        };
+        let scans = read("SCAN_NUMBER")?
+            .into_iter()
+            .enumerate()
+            .map(|(row, value)| scalar_i32(value.as_ref(), "SCAN_NUMBER", row))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let times = read("TIME")?;
+        let (min, max) = times.into_iter().enumerate().try_fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(min, max), (row, value)| {
+                let time = scalar_f64(value.as_ref(), "TIME", row)?;
+                Ok::<_, MsTransformError>((min.min(time), max.max(time)))
+            },
+        )?;
+        if max - min < span {
+            return Err(MsTransformError::MultiMsScanSpan);
+        }
+        scans_by_member.push(scans);
+    }
+    let Some(first) = scans_by_member.first() else {
+        return Ok(());
+    };
+    let ranges = selector
+        .filter(|text| !text.trim().is_empty())
+        .map(|scan| parse_numeric_row_id_ranges(scan, "scan").unwrap_or_default());
+    let requested = |scan| {
+        ranges
+            .as_ref()
+            .is_none_or(|ranges| ranges.iter().any(|&(lo, hi)| (lo..=hi).contains(&scan)))
+    };
+    // CASA constructs a map iterator of selected scan IDs. Its first
+    // partition check consumes that iterator; later checks use time only.
+    if scans_by_member
+        .iter()
+        .flatten()
+        .any(|&scan| requested(scan) && !first.contains(&scan))
+    {
+        return Err(MsTransformError::MultiMsScanSpan);
+    }
+    Ok(())
+}
+
 fn container_info(input: &Path, members: &[PathBuf]) -> TableInfo {
-    let source = fs::read_to_string(input.join("table.info"))
-        .map(|content| TableInfo::parse(&content))
-        .unwrap_or_default();
-    let mut readme = source
-        .readme
+    let mut readme = partition_axis(input)
+        .map(|axis| format!("AxisType = {axis}"))
         .into_iter()
-        .filter(|line| line.starts_with("AxisType = "))
         .collect::<Vec<_>>();
     readme.extend([
         "This is a MeasurementSet Table holding measurements from a Telescope".into(),
@@ -118,12 +199,12 @@ fn install_shared_subtables(root: &Path, members: &[PathBuf]) -> Result<(), MsTr
             if !destination.exists() {
                 continue;
             }
-            if matches!(id, SubtableId::History) {
+            if matches!(id, SubtableId::History | SubtableId::Source) {
                 fs::remove_dir_all(&destination)
                     .map_err(|error| write_error(&destination, error))?;
                 copy_dir_recursive(&root.join(&first_table), &destination)
                     .map_err(|error| write_error(&destination, error))?;
-            } else if !matches!(id, SubtableId::Source) {
+            } else {
                 fs::remove_dir_all(&destination)
                     .map_err(|error| write_error(&destination, error))?;
                 link_directory(

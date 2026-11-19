@@ -121,6 +121,8 @@ pub struct MsTransformTaskOptions {
     pub flag_command_widths: Option<Vec<i64>>,
     /// The split task's decision to retain or flatten a Multi-MS input.
     pub keep_mms: Option<bool>,
+    /// The raw numeric timebin for retained split's exact combine="scan" check.
+    pub retained_scan_span: Option<f64>,
 }
 
 /// Time averaging parameters shared by the split and mstransform tasks.
@@ -168,6 +170,9 @@ pub struct MsTransformReport {
 /// Errors returned by [`mstransform`].
 #[derive(Debug, Error)]
 pub enum MsTransformError {
+    /// The retained Multi-MS cannot average across the selected scans.
+    #[error("Unable to continue with MMS processing")]
+    MultiMsScanSpan,
     /// Opening an MS failed.
     #[error("failed to open MeasurementSet {path}: {source}")]
     OpenMeasurementSet {
@@ -1955,6 +1960,7 @@ fn materialize_empty_main_table(
             source: Box::new(source),
         })?;
     if grammar == RowGrammar::Transform {
+        table.keywords_mut().remove("SORTED_TABLE");
         table.set_info(TableInfo {
             table_type: "Measurement Set".into(),
             sub_type: "UVFITS".into(),

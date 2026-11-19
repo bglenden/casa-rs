@@ -266,6 +266,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         _coerce_ms_channel_width(name, values)
         try:
             return run(name, **values).value
+        except TaskExecutionError as error:
+            if name == "split" and error.completion.message == "Unable to continue with MMS processing":
+                raise Exception(error.completion.message) from error
+            raise
         except TaskParameterError as error:
             message = error.completion.message or ""
             if error.completion.parameter == "outputvis":
