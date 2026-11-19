@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
 
 use super::spectrum::{Ordinate, median};
-use super::{BandpassPlots, DerivativeStatistics};
+use super::{BandpassPlots, DerivativeStatistics, PlatformingTime};
 
 type WindowValues<T> = BTreeMap<i32, BTreeMap<usize, BTreeMap<usize, T>>>;
 type Metrics = BTreeMap<&'static str, f64>;
@@ -15,15 +15,37 @@ type Samples = BTreeMap<&'static str, Vec<f64>>;
 pub(crate) fn derivative_record(plots: &BandpassPlots) -> CasaValue {
     let mut antennas = BTreeMap::<&str, WindowValues<Metrics>>::new();
     let mut window_samples = WindowValues::<Samples>::new();
+    let mut platforming = BTreeMap::<&str, BTreeMap<i32, BTreeMap<usize, Vec<CasaValue>>>>::new();
     for panel in &plots.panels {
         let metric = match panel.ordinate {
             Ordinate::Phase => "phase",
             _ => "amp",
         };
         for series in &panel.series {
-            let Some(DerivativeStatistics { mad, stdev }) = series.statistics else {
+            let Some(DerivativeStatistics {
+                mad,
+                stdev,
+                platforming: event,
+            }) = series.statistics
+            else {
                 continue;
             };
+            if let Some(event) = event {
+                let value = match event {
+                    PlatformingTime::Epoch(time) => CasaValue::float(time),
+                    PlatformingTime::Index(index) => CasaValue::Int {
+                        value: index as i64,
+                    },
+                };
+                platforming
+                    .entry(&series.antenna_name)
+                    .or_default()
+                    .entry(series.window)
+                    .or_default()
+                    .entry(series.receptor)
+                    .or_default()
+                    .push(value);
+            }
             let spectrum = antennas
                 .entry(&series.antenna_name)
                 .or_default()
@@ -65,9 +87,14 @@ pub(crate) fn derivative_record(plots: &BandpassPlots) -> CasaValue {
         .collect::<Vec<_>>();
     entries.push(CasaEntry {
         key: CasaKey::String("platforming".into()),
-        value: CasaValue::Dict {
-            entries: Vec::new(),
-        },
+        value: CasaValue::dict(platforming.into_iter().map(|(antenna, windows)| {
+            (
+                antenna,
+                int_dict(windows, |receptors| {
+                    int_dict(receptors, |items| CasaValue::List { items })
+                }),
+            )
+        })),
     });
     entries.push(CasaEntry {
         key: CasaKey::String("median".into()),

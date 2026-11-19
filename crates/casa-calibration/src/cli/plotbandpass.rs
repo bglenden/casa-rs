@@ -8,8 +8,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
 use crate::plotbandpass::{
-    BandpassPage, ChannelRange, DisplayOptions, Overlay, PlotRequest, Selectors, derivative_record,
-    pages, prepare_bandpass,
+    AtmosphericOptions, BandpassPage, ChannelRange, DisplayOptions, Overlay, PlotRequest,
+    Selectors, derivative_record, pages, prepare_bandpass,
 };
 
 #[derive(Serialize)]
@@ -52,6 +52,22 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let y_axis = task.text("yaxis")?.unwrap_or_default();
     let caltable2 = task.text("caltable2")?.filter(|name| !name.is_empty());
     let caltable3 = task.text("caltable3")?.filter(|name| !name.is_empty());
+    let water = selector_numeric_text(task, "pwv")?;
+    let reference_field = selector_numeric_text(task, "showatmfield")?;
+    let parent_ms = task.text("parentms")?.filter(|name| !name.is_empty());
+    let lo =
+        match task.value("lo1") {
+            Some(ParameterValue::String(value)) if value.is_empty() => None,
+            Some(ParameterValue::String(value)) => Some(value.parse::<f64>().map_err(|_| {
+                TaskFailure::validation("lo1 must be a frequency in GHz").at("lo1")
+            })?),
+            Some(ParameterValue::Float(_)) | Some(ParameterValue::Integer(_)) => {
+                return Err(TaskFailure::execution(
+                    "expected string or bytes-like object, got 'float'",
+                ));
+            }
+            _ => None,
+        };
     let request = PlotRequest {
         caltable: &caltable,
         vis: vis.as_deref().map(Path::new),
@@ -77,6 +93,18 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         derivative_sigma: numeric(task, "channeldiff")?,
         edge: unsigned(task, "edge")? as usize,
         resample: unsigned(task, "resample")?,
+        platforming_threshold: task.number("platformingThreshold")?,
+        platforming_sigma: task.number("platformingSigma")?,
+        atmosphere: AtmosphericOptions {
+            transmission: task.flag("showatm")?,
+            sky_temperature: task.flag("showtsky")?,
+            water: &water,
+            reference_field: &reference_field,
+            image_sideband: task.flag("showimage")?,
+            lo_ghz: lo,
+            parent_ms: parent_ms.as_deref().map(Path::new),
+            show_points: task.flag("showatmpoints")?,
+        },
     };
     let figfile = task.text("figfile")?.unwrap_or_default();
     let display = DisplayOptions {
@@ -149,6 +177,13 @@ fn selector(task: &TaskInvocation<'_>, name: &str) -> Result<Vec<String>, TaskFa
         Some(ParameterValue::Array(values)) => values.iter().map(convert).collect(),
         Some(value) => Ok(vec![convert(value)?]),
         None => Ok(Vec::new()),
+    }
+}
+
+fn selector_numeric_text(task: &TaskInvocation<'_>, name: &str) -> Result<String, TaskFailure> {
+    match task.value(name) {
+        Some(ParameterValue::Float(value)) => Ok(value.to_string()),
+        _ => Ok(selector(task, name)?.join("")),
     }
 }
 
@@ -244,20 +279,7 @@ fn channel_range(
 }
 
 fn check_remaining_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
-    for name in [
-        "zoom",
-        "showatm",
-        "pwv",
-        "showtsky",
-        "showfdm",
-        "showatmfield",
-        "lo1",
-        "showimage",
-        "showatmpoints",
-        "parentms",
-        "platformingThreshold",
-        "platformingSigma",
-    ] {
+    for name in ["zoom", "showfdm"] {
         if task.is_set(name) {
             return Err(
                 TaskFailure::validation("bandpass control in progress under #1526").at(name),

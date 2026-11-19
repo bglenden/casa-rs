@@ -230,6 +230,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise NameError(message) from error
             if message == "cannot access local variable 'mytime' where it is not associated with a value":
                 raise UnboundLocalError(message) from error
+            if message == "expected string or bytes-like object, got 'float'":
+                raise TypeError(message) from error
             raise
         if completion.value is not None:
             return _bandpass_statistics(completion.value)
@@ -289,6 +291,8 @@ def _bandpass_statistics(value):
 
     if isinstance(value, dict):
         return {key: _bandpass_statistics(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_bandpass_statistics(item) for item in value]
     if isinstance(value, float):
         return np.float64(value)
     return value

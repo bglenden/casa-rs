@@ -126,6 +126,39 @@ impl Curve {
     }
 }
 
+/// Detect a large inside-channel derivative after leaving the edge.
+pub(super) fn platforming(values: &[f64], threshold: f64) -> bool {
+    let length = values.len() as f64;
+    let start = length / 32.0 - 1.0;
+    let end = length * 31.0 / 32.0 + 1.0;
+    if start <= 0.0 || end >= length {
+        return false;
+    }
+    // CASA calculates real endpoints, then passes them to Python 3 range().
+    // Use the corresponding integer channel indices.
+    let middle = ((start + end) * 0.5) as usize;
+    let mut away_from_edge = false;
+    let detected = |away_from_edge: &mut bool, value: &f64| {
+        if value.abs() > threshold {
+            *away_from_edge
+        } else {
+            *away_from_edge = true;
+            false
+        }
+    };
+    if values[start as usize..=middle]
+        .iter()
+        .any(|value| detected(&mut away_from_edge, value))
+    {
+        return true;
+    }
+    away_from_edge = false;
+    values[middle + 1..=end as usize]
+        .iter()
+        .rev()
+        .any(|value| detected(&mut away_from_edge, value))
+}
+
 fn channel_differences(source: &Curve) -> Curve {
     if source.x.len() < 2 {
         return Curve {

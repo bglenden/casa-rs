@@ -10,6 +10,7 @@ use casa_ms::plot_document::{
 };
 use serde::Serialize;
 
+use super::atmosphere::AtmosphericCurve;
 use super::{BandpassPanel, BandpassPlots};
 
 pub(crate) struct DisplayOptions<'a> {
@@ -56,6 +57,7 @@ pub(crate) struct BandpassPage {
     figure: PlotFigure,
     density: u32,
     y_limits: Vec<Option<[f64; 2]>>,
+    atmosphere: Vec<Vec<AtmosphericCurve>>,
 }
 
 pub(crate) fn pages(
@@ -116,6 +118,10 @@ pub(crate) fn pages(
                 },
                 density: display.density,
                 y_limits,
+                atmosphere: source
+                    .iter()
+                    .map(|panel| panel.atmosphere.clone())
+                    .collect(),
             })
         })
         .collect()

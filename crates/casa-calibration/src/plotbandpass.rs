@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare selected calibration spectra for the shared plot renderer.
 
+mod atmosphere;
 mod companion;
 mod document;
 mod polynomial;
@@ -14,12 +15,14 @@ use std::path::{Path, PathBuf};
 
 use casa_types::quanta::format::{YMD, format_time};
 
+pub(crate) use atmosphere::AtmosphericOptions;
+use atmosphere::{AtmosphereContext, AtmosphericCurve};
 use companion::{Companion, requested_times};
 
 pub(crate) use document::{BandpassPage, ChannelRange, DisplayOptions, pages};
 use selection::{GroupKey, SelectedRow, groups};
 pub(crate) use selection::{Overlay, Selectors};
-use spectrum::{Curve, Derivative, Ordinate};
+use spectrum::{Curve, Derivative, Ordinate, platforming};
 pub(crate) use statistics::derivative_record;
 use table::{SolutionWindow, Solutions, Spectrum};
 
@@ -38,6 +41,9 @@ pub(crate) struct PlotRequest<'a> {
     pub(crate) derivative_sigma: f64,
     pub(crate) edge: usize,
     pub(crate) resample: u32,
+    pub(crate) platforming_threshold: f64,
+    pub(crate) platforming_sigma: f64,
+    pub(crate) atmosphere: AtmosphericOptions<'a>,
 }
 
 pub(crate) struct BandpassPlots {
@@ -55,6 +61,7 @@ pub(crate) struct BandpassPanel {
     pub(crate) suffix: String,
     pub(crate) x_limits: [f64; 2],
     pub(crate) frequency_channels: Vec<f64>,
+    atmosphere: Vec<AtmosphericCurve>,
 }
 
 pub(crate) struct BandpassSeries {
@@ -76,6 +83,13 @@ pub(crate) struct BandpassCurve {
 pub(crate) struct DerivativeStatistics {
     pub(crate) mad: f64,
     pub(crate) stdev: f64,
+    platforming: Option<PlatformingTime>,
+}
+
+#[derive(Clone, Copy)]
+enum PlatformingTime {
+    Epoch(f64),
+    Index(usize),
 }
 
 pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlots, String> {
@@ -119,6 +133,7 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
     let mut panels = Vec::new();
     let spectra = select_spectra(&source, &selected)?;
     let ordinates = ordinates(&source, request.y_axis)?;
+    let atmosphere = AtmosphereContext::open(&source, &request.atmosphere)?;
     for (key, rows) in selected {
         for &axis in &ordinates {
             panels.push(panel(
@@ -130,6 +145,7 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
                 request,
                 time_count,
                 &companions,
+                atmosphere.as_ref(),
             )?);
         }
     }
@@ -173,6 +189,7 @@ fn panel(
     request: &PlotRequest<'_>,
     time_count: usize,
     companions: &[Companion],
+    atmosphere: Option<&AtmosphereContext<'_>>,
 ) -> Result<BandpassPanel, String> {
     let mut series = Vec::new();
     let mut comparison_count: Option<usize> = None;
@@ -257,11 +274,23 @@ fn panel(
                     deviation,
                     rms,
                 } = raw.differentiate(ordinate == Ordinate::Amplitude, request.edge);
+                let threshold = if request.platforming_sigma > 0.0 {
+                    request.platforming_sigma * deviation
+                } else {
+                    request.platforming_threshold
+                };
+                let event = (ordinate == Ordinate::Amplitude && platforming(&curve.y, threshold))
+                    .then_some(if receptors == 1 {
+                        PlatformingTime::Index(row.time_index)
+                    } else {
+                        PlatformingTime::Epoch(address.time)
+                    });
                 (
                     curve,
                     Some(DerivativeStatistics {
                         mad: deviation,
                         stdev: rms,
+                        platforming: event,
                     }),
                 )
             } else {
@@ -289,6 +318,13 @@ fn panel(
         time_count,
     )?;
     let x_limits = metadata.x_limits();
+    let atmosphere = if let Some(atmosphere) = atmosphere {
+        let first = source.rows[selected[0].row];
+        let window = spectral_window(source, first.window)?;
+        atmosphere.curves(window, first, request.frequency_axis)?
+    } else {
+        Vec::new()
+    };
     let x_label = match comparison_count {
         Some(count) => metadata
             .label
@@ -304,6 +340,7 @@ fn panel(
         series,
         x_limits,
         frequency_channels: metadata.frequency_channels,
+        atmosphere,
     })
 }
 
