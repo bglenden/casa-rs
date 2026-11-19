@@ -2,7 +2,7 @@
   "schema_version": 1,
   "concepts": [
     {
-      "id": "getantposalma.outfile",
+      "id": "positions.output.outfile",
       "semantic_revision": 1,
       "casa_name": "outfile",
       "value_domain": {
