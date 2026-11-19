@@ -2876,7 +2876,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `3f8e6726c60d3ff270d57063befec54302d1fe07`. Status counts: Implemented: 30, Partial: 7, Not implemented: 11, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7`. Status counts: Implemented: 30, Partial: 7, Not implemented: 11, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2935,7 +2935,7 @@ Audit baseline: `3f8e6726c60d3ff270d57063befec54302d1fe07`. Status counts: Imple
 
 ##### measures-tool-default-frame: Previously agreed
 
-- Record: [The measures tool converts with a frame at MJD 0 and the geocentre](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre)
+- Record: [The measures tool converts with a frame at MJD 0 and the geocentre](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre)
 - Inputs: me.measure(me.direction('J2000','12h00m00','45d00m00'),'AZEL') in a fresh measures tool, with no doframe call.
 - CASA: The tool starts with a default frame (MJD 0 UTC, zero-vector position, J2000 pole) and converts using it without a warning, returning AZEL for 1858-11-17 at the Earth's centre.
 - casa-rs: Starts with an empty frame, so the conversion fails with 'Cannot convert due to missing frame information' until doframe sets the element.
@@ -2946,7 +2946,7 @@ Audit baseline: `3f8e6726c60d3ff270d57063befec54302d1fe07`. Status counts: Imple
 
 ##### iau2000-keeps-iau1980-sidereal: Previously agreed
 
-- Record: [IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities)
+- Record: [IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities)
 - Inputs: Conversions to HADEC, AZEL, ITRF, MECLIPTIC or TECLIPTIC with measures.iau2000.b_use set.
 - CASA: casacore still forms GAST from IAU 1982 GMST and the IAU 1980 equation of the equinoxes, and uses IAU 1980 obliquities (fundArg T^2 term -0.0059 arcsec, 0.37 mas in MECLIPTIC by 2026).
 - casa-rs: Computes all of these as casacore does (casacore_sidereal, casacore_frames).
@@ -2957,7 +2957,7 @@ Audit baseline: `3f8e6726c60d3ff270d57063befec54302d1fe07`. Status counts: Imple
 
 ##### direction-latitude-unnormalized: Previously agreed
 
-- Record: [Direction latitudes come from an unnormalized vector](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/docs/CASA%20%28C%2B%2B%29%20bugs.md#direction-latitudes-come-from-an-unnormalized-vector)
+- Record: [Direction latitudes come from an unnormalized vector](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#direction-latitudes-come-from-an-unnormalized-vector)
 - Inputs: Direction conversions that use the galactic or FK4 matrices, e.g. B1950 to GALACTIC or J2000 to B1950 near a pole.
 - CASA: The 10-digit literal matrices are orthogonal only to about 7e-11 and doConvert does not renormalize, so getLat's asin(z) is off by (|v|-1)tan(b) and becomes NaN once z exceeds 1.
 - casa-rs: Converts with the same matrices, renormalizes and reports the latitude of the unit vector.
@@ -2968,7 +2968,7 @@ Audit baseline: `3f8e6726c60d3ff270d57063befec54302d1fe07`. Status counts: Imple
 
 ##### iau2000-jmean-j2000-order: Previously agreed
 
-- Record: [IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order)
+- Record: [IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order)
 - Inputs: MECLIPTIC or TECLIPTIC to J2000 conversion under IAU 2000.
 - CASA: deapplyPrecession applies B then P giving P*B*v', not the inverse B*P*v', so JMEAN to J2000 is not the inverse of J2000 to JMEAN (0.14 mas off in 2026, growing).
 - casa-rs: Inverts exactly.
@@ -2979,7 +2979,7 @@ Audit baseline: `3f8e6726c60d3ff270d57063befec54302d1fe07`. Status counts: Imple
 
 ##### iau2000-gmst1-tt-fraction: Previously agreed
 
-- Record: [IAU 2000 GMST1 adds the TT day fraction](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-gmst1-adds-the-tt-day-fraction)
+- Record: [IAU 2000 GMST1 adds the TT day fraction](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-gmst1-adds-the-tt-day-fraction)
 - Inputs: UT1 to GMST1 (and so LMST) under IAU 2000.
 - CASA: UT1_GMST1 adds GMST00/(2pi), already a sidereal time of day, to the TT epoch, counting the TT day fraction twice: UT1 51544.5 gives GMST1 58258.280 against 58257.779, and GMST1_UT1 does not undo it.
 - casa-rs: Uses the IAU 1976 GMST1 under either model, as casacore's own GAST does.
@@ -2990,7 +2990,7 @@ Audit baseline: `3f8e6726c60d3ff270d57063befec54302d1fe07`. Status counts: Imple
 
 ##### spectral-vector-data-loss: Previously agreed
 
-- Record: [Measures spectral conversions reject or truncate valid vectors](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/docs/CASA%20%28C%2B%2B%29%20bugs.md#measures-spectral-conversions-reject-or-truncate-valid-vectors)
+- Record: [Measures spectral conversions reject or truncate valid vectors](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md#measures-spectral-conversions-reject-or-truncate-valid-vectors)
 - Inputs: Frequency/Doppler vectors passed to spectral helpers; cyclic list/dictionary arguments passed to doppler or todoppler.
 - CASA: CASA 6.7.6.14 truncates tofrequency, toradialvelocity and torestfrequency vectors, rejects a valid unframed todoppler frequency vector, and terminates with SIGSEGV on the recorded cyclic arguments.
 - casa-rs: Preserves every scalar-control result with scalar broadcasting; rejects cyclic/deep inputs with catchable ValueError and restores capture state after failure.
@@ -3108,15 +3108,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="measures-evidence-spectral-casa"></a>
 ##### spectral-casa
 
-**CASA 6.7.6.14 scalar/vector/offset comparisons and release performance — passed.** 526 CASA 6.7.6.14 cases plus 3 isolated safety regressions pass; 1588 affected Python tests and 61 Rust/provider tests pass. All 12 release benchmark cases are faster than CASA (minimum 5.1457x); vector helper comparisons explicitly use complete scalar controls where CASA truncates. Six spectral methods and their shared query/frame/offset paths; full measures acceptance remains open.
+**CASA 6.7.6.14 scalar/vector/offset comparisons and release performance — passed.** 558 CASA 6.7.6.14 cases plus 3 isolated safety regressions pass. All eight shared-code review findings have independent regressions and are repaired. The affected 920-test Python batch and 61 Rust/provider tests pass across the recorded runs; optional skips are excluded. All 12 release cases are faster than CASA, minimum 5.2370x. Six spectral methods and their shared query/frame/offset paths; full measures acceptance remains open.
 
-- [tools/simulation/measures_spectral_oracle.py](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/tools/simulation/measures_spectral_oracle.py)
-- [tools/simulation/measures_spectral_benchmark.py](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/tools/simulation/measures_spectral_benchmark.py)
-- [crates/casars-python/python/tests/data/casa_measures_spectral.json](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/crates/casars-python/python/tests/data/casa_measures_spectral.json)
-- [crates/casars-python/python/tests/test_measures_spectral.py](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/crates/casars-python/python/tests/test_measures_spectral.py)
-- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/3f8e6726c60d3ff270d57063befec54302d1fe07/docs/CASA%20%28C%2B%2B%29%20bugs.md)
-- Revision: `66f34458e3df5fbcbe6626aa6fa136eedce30787`; CASA: `casatools 6.7.6-14 / casatasks 6.7.6.14`.
-- Command: `python -m pytest -q crates/casars-python/python/tests/test_measures_spectral.py; tools/simulation/measures_spectral_benchmark.py --backend casa/casars --repeat 1000 --samples 7`.
+- [tools/simulation/measures_spectral_oracle.py](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/tools/simulation/measures_spectral_oracle.py)
+- [tools/simulation/measures_spectral_benchmark.py](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/tools/simulation/measures_spectral_benchmark.py)
+- [crates/casars-python/python/tests/data/casa_measures_spectral.json](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/crates/casars-python/python/tests/data/casa_measures_spectral.json)
+- [crates/casars-python/python/tests/test_measures_spectral.py](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/crates/casars-python/python/tests/test_measures_spectral.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/8d3b14eb5d5e64cf1ba4fa3363961c8b58d914a7/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- Revision: `cecd62488304f66d95405494bbe2eae2de115e55`; CASA: `casatools 6.7.6-14 / casatasks 6.7.6.14`.
+- Command: `target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_spectral.py; CASAPY tools/simulation/measures_spectral_benchmark.py --backend casa --repeat 1000 --samples 7; CASAPY tools/simulation/measures_spectral_benchmark.py --backend casars --repeat 1000 --samples 7`.
 - Receipt: `resources/casa-compat/evidence/me-spectral-equivalence-20261119.json`.
 
 ### quanta
