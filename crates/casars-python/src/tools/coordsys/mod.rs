@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
 
 mod construction;
+mod frame_metadata;
 mod inspect;
 mod observation;
 mod reference;
