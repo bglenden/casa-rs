@@ -140,6 +140,23 @@ impl TabularCoordinate {
         }
     }
 
+    /// Creates a linear tabular axis with no samples in its lookup table.
+    pub fn linear(
+        reference_value: f64,
+        increment: f64,
+        reference_pixel: f64,
+        name: impl Into<String>,
+        unit: impl Into<String>,
+    ) -> Self {
+        Self {
+            pixel_values: Vec::new(),
+            world_values: Vec::new(),
+            linear: Some((reference_value, increment, reference_pixel)),
+            name: name.into(),
+            unit: unit.into(),
+        }
+    }
+
     /// Returns the pixel lookup table.
     pub fn pixel_values(&self) -> &[f64] {
         &self.pixel_values
@@ -191,13 +208,13 @@ impl TabularCoordinate {
                     )))
                 }
             };
-            return Ok(Self {
-                pixel_values,
-                world_values,
-                linear: Some((read("crval")?, read("cdelt")?, read("crpix")?)),
+            return Ok(Self::linear(
+                read("crval")?,
+                read("cdelt")?,
+                read("crpix")?,
                 name,
                 unit,
-            });
+            ));
         }
         if pixel_values.len() != world_values.len() || pixel_values.len() < 2 {
             return Err(CoordinateError::InvalidRecord(

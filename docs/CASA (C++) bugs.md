@@ -3809,6 +3809,25 @@ reads the input's world values at the pixels it was cut from. CASA's
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.
 
+## A blank Stokes string can crash coordinate construction
+
+- Date noted 2026-11-19
+- Affected code is casatools `src/tools/coordsys/coordsys_cmpt.cc` in
+  `addcoordinate`.
+
+CASA 6.7.6.14 exits with SIGSEGV on
+`coordsys().addcoordinate(stokes=" ")`. In casa-rs that input adds no
+Stokes coordinate, matching the empty-string case.
+
+When `coordsys.fromrecord` receives a nonstring `parentName`, CASA reports
+a record type error after installing the decoded coordinates. casa-rs
+validates the parent-name field before replacing the existing system.
+
+CASA also terminates the process when a coordinate replacement vector has
+two dimensions, such as `worldreplace0=[[1.0]]` for a one-axis Stokes
+coordinate. Casa-rs reports a record type error and retains the former
+coordinate system.
+
 ## `tb.getcol` refuses a column of `int64`
 
 - Date noted: 2026-10-30
