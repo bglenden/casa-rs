@@ -10,14 +10,18 @@ use crate::{ClassicScalarStatWt, StatWtDataColumn, classical_scalar_statwt};
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
     let options = options(task)?;
+    let selector = |name: &str| {
+        task.text(name)
+            .map(|value| value.filter(|text| !text.is_empty()))
+    };
     let selection = MsSelection {
         selectdata: task.flag("selectdata")?,
-        field: task.text("field")?,
-        spw: task.text("spw")?,
-        intent: task.text("intent")?,
-        array: task.text("array")?,
-        observation: task.text("observation")?,
-        scan: task.text("scan")?,
+        field: selector("field")?,
+        spw: selector("spw")?,
+        intent: selector("intent")?,
+        array: selector("array")?,
+        observation: selector("observation")?,
+        scan: selector("scan")?,
         ..MsSelection::default()
     };
     let result = if task.flag("preview")? {

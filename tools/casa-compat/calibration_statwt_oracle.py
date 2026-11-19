@@ -33,6 +33,7 @@ def fixture(path):
         table.putcol("DATA", cube)
         table.putcol("FLAG", flags)
         table.putcol("FLAG_ROW", np.all(flags, axis=(0, 1)))
+        table.putcell("FLAG_ROW", 4, True)
         table.putcol("CORRECTED_DATA", cube * 2)
         table.putcol("MODEL_DATA", cube * .25)
         table.putcol("SIGMA", np.broadcast_to([[2.], [4.]], (2, rows)).astype(np.float32).copy())

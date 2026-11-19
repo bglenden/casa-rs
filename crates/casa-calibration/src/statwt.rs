@@ -257,10 +257,9 @@ struct Samples {
 
 impl Samples {
     fn has_unflagged(&self, correlation: usize, channels: &[usize]) -> bool {
-        !self.row_flagged
-            && channels
-                .iter()
-                .any(|&channel| !self.flags[[correlation, channel]])
+        channels
+            .iter()
+            .any(|&channel| !self.flags[[correlation, channel]])
     }
 }
 
@@ -354,7 +353,7 @@ fn estimate_scalar_weights(
             correlations
         }
     ];
-    for row in samples.iter().filter(|row| !row.row_flagged) {
+    for row in samples {
         for correlation in 0..correlations {
             let bin = if combine_correlations { 0 } else { correlation };
             for &channel in channels {
