@@ -38,9 +38,15 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .collect::<Vec<_>>();
     let vis = task.text("vis")?.filter(|name| !name.is_empty());
     let y_axis = task.text("yaxis")?.unwrap_or_default();
+    let caltable2 = task.text("caltable2")?.filter(|name| !name.is_empty());
+    let caltable3 = task.text("caltable3")?.filter(|name| !name.is_empty());
     let request = PlotRequest {
         caltable: &caltable,
         vis: vis.as_deref().map(Path::new),
+        companion_tables: [
+            caltable2.as_deref().map(Path::new),
+            caltable3.as_deref().map(Path::new),
+        ],
         selectors: Selectors {
             antenna: selector(task, "antenna")?,
             field: selector(task, "field")?,
@@ -201,8 +207,6 @@ fn channel_range(
 
 fn check_remaining_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
     for name in [
-        "caltable2",
-        "caltable3",
         "buildpdf",
         "zoom",
         "showatm",

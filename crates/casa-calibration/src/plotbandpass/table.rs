@@ -226,7 +226,7 @@ fn solution_rows(table: &Table, layout: &Layout) -> Result<Vec<SolutionRow>, Str
     let field = integers(table, "FIELD_ID")?;
     let window = integers(table, layout.window_column())?;
     let time = numbers(table, "TIME")?;
-    let scans = has_column(table, "SCAN_NUMBER")
+    let scans = (matches!(layout, Layout::Current) && has_column(table, "SCAN_NUMBER"))
         .then(|| integers(table, "SCAN_NUMBER"))
         .transpose()?;
     Ok((0..table.row_count())

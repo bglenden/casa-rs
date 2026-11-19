@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare selected calibration spectra for the shared plot renderer.
 
+mod companion;
 mod document;
 mod polynomial;
 mod selection;
@@ -13,6 +14,8 @@ use std::path::{Path, PathBuf};
 
 use casa_types::quanta::format::{YMD, format_time};
 
+use companion::{Companion, requested_times};
+
 pub(crate) use document::{BandpassPage, ChannelRange, DisplayOptions, pages};
 use selection::{GroupKey, SelectedRow, groups};
 pub(crate) use selection::{Overlay, Selectors};
@@ -23,6 +26,7 @@ use table::{SolutionWindow, Solutions, Spectrum};
 pub(crate) struct PlotRequest<'a> {
     pub(crate) caltable: &'a Path,
     pub(crate) vis: Option<&'a Path>,
+    pub(crate) companion_tables: [Option<&'a Path>; 2],
     pub(crate) selectors: Selectors,
     pub(crate) overlay: Overlay,
     pub(crate) frequency_axis: bool,
@@ -76,19 +80,56 @@ pub(crate) struct DerivativeStatistics {
 
 pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlots, String> {
     let source = Solutions::open(request.caltable, request.vis)?;
+    let companions = request
+        .companion_tables
+        .iter()
+        .flatten()
+        .map(|path| Companion::open(path, request.vis))
+        .collect::<Result<Vec<_>, _>>()?;
+    if invalid_overlay(&source, request, &companions) {
+        return Ok(BandpassPlots {
+            caltable: source.path,
+            measurement_set: source.measurement_set,
+            panels: Vec::new(),
+        });
+    }
     let (selected, time_count) = groups(
         &source,
         &request.selectors,
         request.overlay,
         request.threshold_seconds,
     )?;
+    if request.show_baseband_number
+        && source
+            .windows
+            .iter()
+            .all(|window| window.baseband.is_none())
+    {
+        return Ok(BandpassPlots {
+            caltable: source.path,
+            measurement_set: source.measurement_set,
+            panels: Vec::new(),
+        });
+    }
+    let requested_times =
+        requested_times(selected.values().flatten().copied(), request, time_count);
+    for companion in &companions {
+        companion.check_time_count(requested_times)?;
+    }
     let mut panels = Vec::new();
     let spectra = select_spectra(&source, &selected)?;
     let ordinates = ordinates(&source, request.y_axis)?;
     for (key, rows) in selected {
         for &axis in &ordinates {
             panels.push(panel(
-                &source, &spectra, key, &rows, axis, request, time_count,
+                &source,
+                &spectra,
+                key,
+                &rows,
+                axis,
+                request,
+                time_count,
+                &companions,
             )?);
         }
     }
@@ -97,6 +138,19 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
         measurement_set: source.measurement_set,
         panels,
     })
+}
+
+fn invalid_overlay(
+    source: &Solutions,
+    request: &PlotRequest<'_>,
+    companions: &[Companion],
+) -> bool {
+    (source.subtype == "BPOLY"
+        && (!companions.is_empty() || request.overlay.antenna || request.overlay.time))
+        || (!companions.is_empty()
+            && (!request.frequency_axis || request.overlay.antenna || request.overlay.time))
+        || (request.companion_tables[0].is_none() && request.companion_tables[1].is_some())
+        || (companions.len() == 2 && companions.iter().any(|table| !table.polynomial()))
 }
 
 fn select_spectra(
@@ -118,8 +172,10 @@ fn panel(
     ordinate: Ordinate,
     request: &PlotRequest<'_>,
     time_count: usize,
+    companions: &[Companion],
 ) -> Result<BandpassPanel, String> {
     let mut series = Vec::new();
+    let mut comparison_count: Option<usize> = None;
     let mut metadata = None;
     for row in selected {
         let address = source.rows[row.row];
@@ -146,6 +202,13 @@ fn panel(
         metadata
             .get_or_insert_with(|| PanelMetadata::new(window, samples, frequency_axis, derivative))
             .extend_domain(domain);
+        let matches = companions
+            .iter()
+            .map(|companion| {
+                companion.match_row(address, window.original_id, request.threshold_seconds)
+            })
+            .collect::<Vec<_>>();
+        let mut comparison_series = (0..matches.len()).map(|_| Vec::new()).collect::<Vec<_>>();
         let labels = polarization_labels(&source.polarization_basis, receptors);
         for receptor in select_polarizations(&labels, request.polarizations) {
             let raw = samples.curve(
@@ -159,6 +222,34 @@ fn panel(
             }
             if derivative && request.resample > 1 {
                 return Err("name 'resampleSolution' is not defined".into());
+            }
+            for (index, companion) in companions.iter().enumerate() {
+                let Some(row_index) = matches[index] else {
+                    continue;
+                };
+                let (curve, channels) =
+                    companion.curve(row_index, receptor, ordinate, &raw, request)?;
+                if !companion.polynomial() {
+                    let visible = if channels > total_channels {
+                        channels
+                    } else {
+                        0
+                    };
+                    comparison_count =
+                        Some(comparison_count.map_or(visible, |old| old.max(visible)));
+                }
+                comparison_series[index].push(BandpassSeries {
+                    antenna_name: antenna_name(source, address.antenna),
+                    window: address.window,
+                    time_index: row.time_index,
+                    receptor,
+                    label: labels[receptor].into(),
+                    curve: BandpassCurve {
+                        x: curve.x,
+                        y: curve.y,
+                    },
+                    statistics: None,
+                });
             }
             let (curve, statistics) = if derivative {
                 let Derivative {
@@ -187,6 +278,7 @@ fn panel(
                 statistics,
             });
         }
+        series.extend(comparison_series.into_iter().flatten());
     }
     let metadata = metadata.ok_or("empty bandpass panel")?;
     let (title, suffix) = captions(
@@ -197,11 +289,17 @@ fn panel(
         time_count,
     )?;
     let x_limits = metadata.x_limits();
+    let x_label = match comparison_count {
+        Some(count) => metadata
+            .label
+            .replace(" channels)", &format!(", {count} channels)")),
+        None => metadata.label,
+    };
     Ok(BandpassPanel {
         ordinate,
         title,
         suffix,
-        x_label: metadata.label,
+        x_label,
         y_label: ordinate_label(ordinate, request.derivative_sigma > 0.0, &source.subtype),
         series,
         x_limits,

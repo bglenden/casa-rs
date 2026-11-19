@@ -228,6 +228,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             message = error.completion.message
             if message == "name 'resampleSolution' is not defined":
                 raise NameError(message) from error
+            if message == "cannot access local variable 'mytime' where it is not associated with a value":
+                raise UnboundLocalError(message) from error
             raise
         return () if completion.value is None else _bandpass_statistics(completion.value)
     if name in ("split", "mstransform"):
