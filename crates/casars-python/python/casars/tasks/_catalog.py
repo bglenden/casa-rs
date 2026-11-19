@@ -1328,6 +1328,21 @@ def getantposalma(
     """
     return _call_casa(getantposalma, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma')
+def smoothcal(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
+    tablein: StrPath = '',
+    caltable: StrPath = '',
+    field: str | list[str] | tuple[str, ...] = [],
+    smoothtype: str = 'median',
+    smoothtime: float = 60.0,
+    ratesmooth: bool = False,
+) -> Any:
+    """Smooth selected calibration solutions in time.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma']
+    CASA's ``smoothcal``: its parameters, defaults and return value.
+    """
+    return _call_casa(smoothcal, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal']

@@ -1123,6 +1123,17 @@ def getantposalma(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma')
+def smoothcal(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    tablein: StrPath = ...,
+    caltable: StrPath = ...,
+    field: str | list[str] | tuple[str, ...] = ...,
+    smoothtype: str = ...,
+    smoothtime: float = ...,
+    ratesmooth: bool = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma']
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal']

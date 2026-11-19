@@ -576,6 +576,12 @@
     "verbose": "cBool",
     "overwrite": "cBool"
   },
+  "smoothcal": {
+    "caltable": "cStr",
+    "field": "cStrVec",
+    "smoothtype": "cStr",
+    "ratesmooth": "cBool"
+  },
   "split": {
     "outputvis": "cPath",
     "keepmms": "cBool",

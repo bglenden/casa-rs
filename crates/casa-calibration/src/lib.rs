@@ -46,6 +46,7 @@ mod plots;
 mod selected_data;
 mod session;
 mod simulated;
+mod smooth;
 mod solve;
 mod solve_stats;
 mod stats;

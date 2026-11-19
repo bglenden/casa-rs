@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 642
-- Surfaces: 37 (37 task, 0 session)
-- Surface bindings: 946
+- Concepts: 647
+- Surfaces: 38 (38 task, 0 session)
+- Surface bindings: 953
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -53,6 +53,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Concat](#surface-concat)<br><code>concat</code> | task | 1 | <code>concat</code> | 9 | Concatenate simulated interferometric MeasurementSets with per-input weights. |
 | [SimALMA](#surface-simalma)<br><code>simalma</code> | task | 1 | <code>simalma</code> | 31 | Simulate ALMA and ACA observations and combine their images |
 | [Get ALMA Antenna Positions](#surface-getantposalma)<br><code>getantposalma</code> | task | 1 | <code>calibration</code> | 10 | Retrieve antenna positions from the ALMA archive. |
+| [Smooth Calibration Solutions](#surface-smoothcal)<br><code>smoothcal</code> | task | 1 | <code>calibration</code> | 7 | Smooth selected calibration solutions in time. |
 
 <a id="surface-msexplore"></a>
 
@@ -1480,5 +1481,25 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>firstintegration</code> | <code>getantposalma.firstintegration@r1</code> | <code>bool</code> | <code>true</code>; optional | ALMA Service | Exclude measurements flagged as first integrations. |
 | <code>nretry</code> | <code>getantposalma.nretry@r1</code> | <code>integer</code> | <code>0</code>; optional | ALMA Service | Number of retries after the initial round of service requests. |
 | <code>rdelay</code> | <code>getantposalma.rdelay@r1</code> | <code>float</code> | <code>3.0</code>; optional | ALMA Service | Seconds between retries. |
+
+<a id="surface-smoothcal"></a>
+
+## Smooth Calibration Solutions (<code>smoothcal</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Smooth selected calibration solutions in time.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>tablein</code> | <code>smoothing.tablein@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Existing input calibration table. |
+| <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Output | Calibration table the task writes. |
+| <code>field</code> | <code>smoothing.field@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Data selection | Field selection expressions. Empty selects every field. |
+| <code>smoothtype</code> | <code>smoothing.smoothtype@r1</code> | <code>string</code> | <code>"median"</code>; optional | Smoothing | Use the median or mean smoothing filter. |
+| <code>smoothtime</code> | <code>smoothing.smoothtime@r1</code> | <code>float</code> | <code>60.0</code>; optional | Smoothing | Full width of the smoothing window in seconds. |
+| <code>ratesmooth</code> | <code>smoothing.ratesmooth@r1</code> | <code>bool</code> | <code>false</code>; optional | Smoothing | Use the fringe rate to predict phase wraps when smoothing fringe solutions. |
 
 _End of generated reference._

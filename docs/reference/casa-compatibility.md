@@ -45,6 +45,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
+| smoothcal | smoothcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 3 | 22 | 0 |
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
@@ -1382,6 +1383,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `514f31e98d393a8e68c4287583701e1b9a523aed`; CASA: `6.7.6.14`.
 - Command: `CASA_RS_SIMUTIL_GRAPHICS_RECEIPT=OUT/helper-artists.jsonl pytest -q crates/casars-python/python/tests/test_simutil_graphics.py crates/casars-python/python/tests/test_plot_document.py crates/casars-python/python/tests/test_simobserve_graphics.py crates/casars-python/python/tests/test_simutil.py crates/casars-python/python/tests/test_simutil_diagnostics.py ; CASA_RS_GRAPHICS_DEBUG_DIR=OUT/native cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture ; python tools/simulation/check_simobserve_rendering.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/rendered ; CASAPY tools/simulation/check_quick_psf_casa.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/psf-cpp.json`.
 - Receipt: `resources/casa-compat/evidence/simulation-figures-20261114.json`.
+
+### smoothcal
+
+- CASA source: `casatasks/smoothcal.py`, 7 parameters
+- Implementation: `casatasks/private/task_smoothcal.py`, `smoothcal` (line 8): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
 
 ### split
 

@@ -12756,6 +12756,108 @@
         "examples": []
       },
       "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.tablein",
+      "semantic_revision": 1,
+      "casa_name": "tablein",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "calibration_table"
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "Existing input calibration table.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.field",
+      "semantic_revision": 1,
+      "casa_name": "field",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Field selection expressions. Empty selects every field.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.smoothtype",
+      "semantic_revision": 1,
+      "casa_name": "smoothtype",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use the median or mean smoothing filter.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.smoothtime",
+      "semantic_revision": 1,
+      "casa_name": "smoothtime",
+      "value_domain": {
+        "kind": "float"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Full width of the smoothing window in seconds.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "smoothing.ratesmooth",
+      "semantic_revision": 1,
+      "casa_name": "ratesmooth",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Use the fringe rate to predict phase wraps when smoothing fringe solutions.",
+        "examples": []
+      },
+      "persistence_class": "profile"
     }
   ]
 }

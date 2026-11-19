@@ -29,6 +29,7 @@ mod model_columns;
 mod multi_ms;
 mod read;
 mod render;
+mod smoothcal;
 mod uvmodelfit;
 
 use std::path::Path;
@@ -63,6 +64,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     if task.surface() == "ft" {
         return ft::run(task);
+    }
+    if task.surface() == "smoothcal" {
+        return smoothcal::run(task);
     }
     if task.surface() == "uvmodelfit" {
         return uvmodelfit::run(task);
