@@ -7180,3 +7180,32 @@ CASA 6.7.6.14 can terminate when `coordsys.setnames` is called with
 pixel maps are `[0, -2]`. casa-rs raises `RuntimeError` before applying
 either name. Passing the one visible axis name without a coordinate type
 renames that axis and preserves the stored removed-axis name (#1626).
+
+## Transforming an MS with FLOAT_DATA can replace the requested complex DATA
+
+For an input with separately populated DATA and FLOAT_DATA, CASA 6.7.6.14
+can fill output DATA from FLOAT_DATA, with zero imaginary components, when
+the requested layout includes DATA. This occurs with `datacolumn="all"`,
+`"float_data,data"`, and `"lag_data,data"` in the physical layout oracle.
+
+The native tasks select each requested physical column and preserve its own
+values through row, channel, and correlation selection (#1614).
+
+## Transforming LAG_DATA leaves its cells undefined
+
+CASA 6.7.6.14 creates the LAG_DATA descriptor for `split` and `mstransform`
+but the visibility writer skips the column. Selecting only LAG_DATA can
+also leave FLAG cells undefined.
+
+The native tasks preserve the selected rows and correlations of LAG_DATA
+with its independent lag axis. The frequency-channel selection applies to
+the visibility and flag columns on the spectral axis (#1614).
+
+## Transforming all columns can crash an MS with only CORRECTED_DATA
+
+On an MS with physical CORRECTED_DATA and no other visibility column,
+CASA 6.7.6.14 `split(datacolumn="all")` and `mstransform(datacolumn="all")`
+terminate Python with SIGSEGV in the pinned Linux build.
+
+The native tasks keep CORRECTED_DATA and its weights when it is the only
+physical visibility column requested by `all` (#1614).

@@ -42,6 +42,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             TaskFailure::validation(error.to_string()).at("outputvis")
         }
         MsTransformError::InvalidSpw { .. } => TaskFailure::validation(error.to_string()).at("spw"),
+        MsTransformError::MissingDataColumn { path, column } => TaskFailure::execution(format!(
+            "Desired column ({column}) not found in the input MS ({path})."
+        )),
         other => TaskFailure::execution(other.to_string()),
     })?;
     ms_task_success(CasaValue::None, &report)
@@ -173,23 +176,19 @@ fn variant_selector_text(value: &ParameterValue) -> Option<String> {
     }
 }
 
-/// CASA's `datacolumn`, in any case: casa-rs copies `data` and `corrected`
-/// (also spelled `corrected_data`); CASA's other choices are #978.
+/// Resolve CASA's visibility layout, including the existing corrected_data alias.
 fn data_column(value: &str) -> Result<TransformDataColumn, TaskFailure> {
     let text = value.trim().to_ascii_lowercase();
     match text.as_str() {
         "data" => Ok(TransformDataColumn::Data),
         "corrected" | "corrected_data" => Ok(TransformDataColumn::CorrectedData),
-        "model"
-        | "data,model,corrected"
-        | "float_data"
-        | "lag_data"
-        | "float_data,data"
-        | "lag_data,data"
-        | "all" => Err(TaskFailure::validation(format!(
-            "datacolumn={value:?} is not implemented by casa-rs yet (#978)"
-        ))
-        .at("datacolumn")),
+        "model" => Ok(TransformDataColumn::ModelData),
+        "data,model,corrected" => Ok(TransformDataColumn::DataModelCorrected),
+        "float_data" => Ok(TransformDataColumn::FloatData),
+        "lag_data" => Ok(TransformDataColumn::LagData),
+        "float_data,data" => Ok(TransformDataColumn::FloatDataAndData),
+        "lag_data,data" => Ok(TransformDataColumn::LagDataAndData),
+        "all" => Ok(TransformDataColumn::All),
         _ => Err(TaskFailure::validation(format!(
             "unsupported datacolumn {value:?}; CASA takes 'corrected', 'data', 'model', \
              'data,model,corrected', 'float_data', 'lag_data', 'float_data,data', \
@@ -258,8 +257,8 @@ mod tests {
             assert_eq!(request.data_column, TransformDataColumn::CorrectedData);
             let data = request_for(surface, &["--datacolumn", "data"]).unwrap();
             assert_eq!(data.data_column, TransformDataColumn::Data);
-            let error = request_for(surface, &["--datacolumn", "model"]).unwrap_err();
-            assert!(error.message.contains("#978"), "{error:?}");
+            let model = request_for(surface, &["--datacolumn", "model"]).unwrap();
+            assert_eq!(model.data_column, TransformDataColumn::ModelData);
         }
     }
 

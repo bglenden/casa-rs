@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Physical visibility columns requested by a MeasurementSet transform.
+
+use std::path::Path;
+
+use casa_tables::{StreamedTiledShapeValueType, Table};
+use casa_types::ArrayValue;
+
+use crate::schema::main_table::OptionalMainColumn;
+
+use super::{MsTransformError, TransformDataColumn};
+
+#[derive(Clone, Copy)]
+pub(super) struct VisibilityCopy {
+    pub(super) source: OptionalMainColumn,
+    pub(super) output: OptionalMainColumn,
+}
+
+impl VisibilityCopy {
+    pub(super) fn value_type(self) -> StreamedTiledShapeValueType {
+        if self.source == OptionalMainColumn::FloatData {
+            StreamedTiledShapeValueType::Float32
+        } else {
+            StreamedTiledShapeValueType::Complex32
+        }
+    }
+}
+
+pub(super) struct VisibilityColumns(Vec<VisibilityCopy>);
+
+impl VisibilityColumns {
+    pub(super) fn resolve(
+        table: &Table,
+        selection: TransformDataColumn,
+        path: &Path,
+    ) -> Result<Self, MsTransformError> {
+        use OptionalMainColumn::{CorrectedData, Data, FloatData, LagData, ModelData};
+
+        let (sources, rename_to_data): (&[OptionalMainColumn], bool) = match selection {
+            TransformDataColumn::Data => (&[Data], false),
+            TransformDataColumn::CorrectedData => (&[CorrectedData], true),
+            TransformDataColumn::ModelData => (&[ModelData], true),
+            TransformDataColumn::DataModelCorrected => (&[Data, ModelData, CorrectedData], false),
+            TransformDataColumn::FloatData => (&[FloatData], false),
+            TransformDataColumn::FloatDataAndData => (&[FloatData, Data], false),
+            TransformDataColumn::LagData => (&[LagData], false),
+            TransformDataColumn::LagDataAndData => (&[LagData, Data], false),
+            TransformDataColumn::All => {
+                (&[Data, CorrectedData, ModelData, FloatData, LagData], false)
+            }
+        };
+        let contains = |column: OptionalMainColumn| {
+            table
+                .schema()
+                .is_some_and(|schema| schema.contains_column(column.name()))
+        };
+        let missing = |column: OptionalMainColumn| MsTransformError::MissingDataColumn {
+            path: path.display().to_string(),
+            column: column.name().to_string(),
+        };
+        let mut columns = Vec::new();
+        for &source in sources {
+            if contains(source) {
+                let output = if rename_to_data { Data } else { source };
+                columns.push(VisibilityCopy { source, output });
+            } else if selection != TransformDataColumn::All {
+                return Err(missing(source));
+            }
+        }
+        if columns.is_empty() {
+            return Err(missing(Data));
+        }
+        Ok(Self(columns))
+    }
+
+    pub(super) fn copies(&self) -> &[VisibilityCopy] {
+        &self.0
+    }
+
+    pub(super) fn contains_output(&self, name: &str) -> bool {
+        self.0.iter().any(|copy| copy.output.name() == name)
+    }
+
+    pub(super) fn regular_bytes_per_sample(&self) -> usize {
+        self.0
+            .iter()
+            .map(|column| match column.source {
+                OptionalMainColumn::LagData => 0,
+                OptionalMainColumn::FloatData => 4,
+                _ => 8,
+            })
+            .sum()
+    }
+
+    pub(super) fn source_names(&self) -> String {
+        self.0
+            .iter()
+            .map(|copy| copy.source.name())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    pub(super) fn output_names(&self) -> String {
+        self.0
+            .iter()
+            .map(|copy| copy.output.name())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn corrected_becomes_data(&self) -> bool {
+        self.0.iter().any(|copy| {
+            copy.source == OptionalMainColumn::CorrectedData
+                && copy.output == OptionalMainColumn::Data
+        })
+    }
+
+    pub(super) fn align_scalar_weights(&self, weight: &mut ArrayValue, sigma: &mut ArrayValue) {
+        if self.corrected_becomes_data() {
+            if let ArrayValue::Float32(values) = weight {
+                *sigma = ArrayValue::Float32(values.mapv(|weight| {
+                    if weight > f32::MIN_POSITIVE {
+                        1.0 / weight.sqrt()
+                    } else {
+                        -1.0
+                    }
+                }));
+            }
+        } else if !self.contains_output(OptionalMainColumn::CorrectedData.name())
+            && let ArrayValue::Float32(values) = sigma
+        {
+            *weight = ArrayValue::Float32(values.mapv(|sigma| {
+                if sigma > f32::MIN_POSITIVE {
+                    1.0 / (sigma * sigma)
+                } else {
+                    0.0
+                }
+            }));
+        }
+    }
+}

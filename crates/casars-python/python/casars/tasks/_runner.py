@@ -250,6 +250,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "plotweather":
         return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
+        _validate_ms_transform_datacolumn(arguments["datacolumn"])
         _coerce_ms_transform_selectors(name, values)
         try:
             return run(name, **values).value
@@ -257,6 +258,9 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             message = error.completion.message or ""
             if error.completion.parameter == "spw" and message.startswith("invalid spectral-window selection "):
                 raise RuntimeError(message) from error
+            if error.completion.parameter == "datacolumn" and message.startswith("unsupported datacolumn "):
+                invalid = arguments["datacolumn"]
+                raise AssertionError(str({"datacolumn": [f"unallowed value {invalid}"]})) from error
             raise
     if name == "ft":
         for selector in ("uvrange", "observation"):
@@ -505,6 +509,18 @@ def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
                 "RecordRep::get_pointer - incorrect data type String   "
                 f"used for field {name} with type {record_type:<8}"
             )
+
+
+def _validate_ms_transform_datacolumn(value: Any) -> None:
+    if value is None:
+        raise AssertionError(str({"datacolumn": ["unallowed value None", "null value not allowed"]}))
+    if not isinstance(value, str):
+        raise AssertionError(str({"datacolumn": ["must be of cStr type"]}))
+    # Retain the original casa-rs aliases and spelling for the two existing layouts.
+    if value.strip().lower() in ("data", "corrected", "corrected_data"):
+        return
+    if value != value.strip() or value not in (value.lower(), value.upper()):
+        raise AssertionError(str({"datacolumn": [f"unallowed value {value}"]}))
 
 
 def _ms_transform_selector_variant(name: str, value: Any) -> tuple[Any, str | None]:

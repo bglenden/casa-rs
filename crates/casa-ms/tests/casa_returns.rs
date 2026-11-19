@@ -434,12 +434,6 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
         (
             MSTRANSFORM,
             "mstransform",
-            json!({"outputvis": outputvis, "datacolumn": "model"}),
-            "datacolumn",
-        ),
-        (
-            MSTRANSFORM,
-            "mstransform",
             json!({"outputvis": outputvis, "regridms": true}),
             "regridms",
         ),
