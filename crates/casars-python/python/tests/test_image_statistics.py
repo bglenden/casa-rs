@@ -82,6 +82,17 @@ def test_statistics_strided_extrema_are_absolute_image_pixels(casa):
     _assert_value(result["maxpos"], np.array([3, 2, 1]))
 
 
+def test_statistics_breaks_extremum_ties_in_casa_pixel_order(casa):
+    values = np.array([[3., 1., 5.], [1., 5., 3.], [5., 3., 1.]])
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromarray(pixels=values)
+        for method in ("auto", "tiled", "framework"):
+            result = image.statistics(clmethod=method)
+            _assert_value(result["minpos"], np.array([1, 0]))
+            _assert_value(result["maxpos"], np.array([2, 0]))
+
+
 def test_statistics_independent_moments_and_flux():
     image = tools.image()
     values = np.arange(24, dtype=np.float64).reshape(4, 3, 2)

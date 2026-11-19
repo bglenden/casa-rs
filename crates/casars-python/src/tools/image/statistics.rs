@@ -11,7 +11,7 @@ use crate::convert::{DoubleList, IntList, Variant, value::CasaValue};
 use crate::tools::{LogLine, emit};
 
 use super::copy_region::Selection;
-use super::handle::{ImageHandle, raised, with_storage};
+use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::mask_expression::{MaskTarget, evaluate_mask};
 use super::pixels::{Chunk, and_mask, collapse_axes};
 use super::region_read::region_argument;

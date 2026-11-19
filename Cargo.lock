@@ -823,6 +823,7 @@ dependencies = [
  "casa-components",
  "casa-coordinates",
  "casa-images",
+ "casa-lattices",
  "casa-measures-data",
  "casa-ms",
  "casa-provider-contracts",

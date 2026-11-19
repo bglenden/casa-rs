@@ -3595,7 +3595,7 @@ fn spectral_integration(
         let f1 = coordinate.to_world(&[second as f64]).ok()?[0];
         Some(SPEED_OF_LIGHT_KM_S * (f1 - f0).abs() / rest)
     } else {
-        Some(coordinate.increment()[0] * (second - first) as f64)
+        Some(coordinate.increment()[0] * second.abs_diff(first) as f64)
     }
 }
 

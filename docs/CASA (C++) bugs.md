@@ -6999,3 +6999,13 @@ pixels, the same call can terminate the process.
 
 casa-rs averages valid pixels over the requested axes and retains all
 other axes, for every supported image pixel type (#1627).
+## Image statistics can report an extremum outside the sampled pixels
+
+In CASA 6.7.6.14, `ia.statistics(region=...)` on a box starting at
+`[1, 1, 0]` with stride `[2, 1, 1]` can report `maxpos=[2, 2, 1]`
+for the maximum at image pixel `[3, 2, 1]`. The first coordinate omits
+the region's sampling stride, so the reported position was never selected.
+casa-rs maps extrema to absolute image pixels using the original stride.
+
+On a three-axis image, `ia.statistics(axes=[0, 0])` can also terminate the
+process. casa-rs raises an error for the duplicate axis.

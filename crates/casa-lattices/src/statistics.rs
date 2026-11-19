@@ -763,14 +763,25 @@ fn accumulate_global_basic_chunk<T: StatsElement>(
     filters: &FilterState<'_>,
 ) -> Result<(), LatticeError> {
     for_each_accepted_value_in_chunk(chunk, filters, |idx, value| {
-        if partial.accum.npts == 0 || value < partial.accum.min {
+        if partial.accum.npts == 0
+            || value < partial.accum.min
+            || (value == partial.accum.min && earlier_pixel(idx, partial.min_pos.as_deref()))
+        {
             partial.min_pos = Some(idx.to_vec());
         }
-        if partial.accum.npts == 0 || value > partial.accum.max {
+        if partial.accum.npts == 0
+            || value > partial.accum.max
+            || (value == partial.accum.max && earlier_pixel(idx, partial.max_pos.as_deref()))
+        {
             partial.max_pos = Some(idx.to_vec());
         }
         partial.accum.push(value);
     })
+}
+
+fn earlier_pixel(pixel: &[usize], previous: Option<&[usize]>) -> bool {
+    // casacore visits pixels with axis zero varying fastest.
+    previous.is_none_or(|previous| pixel.iter().rev().lt(previous.iter().rev()))
 }
 
 fn accumulate_axis_basic_chunk<T: StatsElement>(
@@ -1137,10 +1148,22 @@ impl GlobalBasicPartial {
             *self = other;
             return;
         }
-        if other.accum.min < self.accum.min {
+        if other.accum.min < self.accum.min
+            || (other.accum.min == self.accum.min
+                && other
+                    .min_pos
+                    .as_deref()
+                    .is_some_and(|position| earlier_pixel(position, self.min_pos.as_deref())))
+        {
             self.min_pos = other.min_pos;
         }
-        if other.accum.max > self.accum.max {
+        if other.accum.max > self.accum.max
+            || (other.accum.max == self.accum.max
+                && other
+                    .max_pos
+                    .as_deref()
+                    .is_some_and(|position| earlier_pixel(position, self.max_pos.as_deref())))
+        {
             self.max_pos = other.max_pos;
         }
         self.accum.merge(other.accum);
