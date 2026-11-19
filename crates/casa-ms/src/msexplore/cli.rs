@@ -1035,6 +1035,7 @@ fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFail
         })
         .map_err(TaskFailure::validation)?;
     let correlation = text("correlation")?.or(text("polarization")?);
+    let transform = task.flag("transform")?;
     Ok(CliOptions {
         ms_path: task.path("vis")?,
         summary_format: MeasurementSetSummaryOutputFormat::Text,
@@ -1077,9 +1078,13 @@ fn options_from_plotms(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFail
         avgantenna: average("avgantenna")?,
         avgspw: average("avgspw")?,
         scalar: average("scalar")?,
-        freqframe: text("freqframe")?,
-        restfreq: text("restfreq")?,
-        veldef: task.required_text("veldef")?,
+        freqframe: if transform { text("freqframe")? } else { None },
+        restfreq: if transform { text("restfreq")? } else { None },
+        veldef: if transform {
+            task.required_text("veldef")?
+        } else {
+            "RADIO".into()
+        },
         iteraxis: text("iteraxis")?
             .map(|value| MsIterationAxis::parse(&value.to_ascii_lowercase()))
             .transpose()

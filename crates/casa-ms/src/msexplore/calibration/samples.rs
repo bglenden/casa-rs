@@ -36,6 +36,9 @@ pub(super) fn points(
         .map(|row| table.coordinates(row))
         .collect::<Result<Vec<_>, _>>()?;
     rows.retain(|row| selection.includes(row));
+    if rows.is_empty() {
+        return Err("calibration selection contains no rows".into());
+    }
     averaging::sort(&mut rows, request.averaging);
     let mut result = Vec::new();
     let axes = [x_component, y_component];
