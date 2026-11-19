@@ -17,8 +17,9 @@ use super::{
     MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction,
     MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
     MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset,
-    MsPlotSpec, MsPlotStyleSpec, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
-    export_msexplore_plot, preview_msexplore_flag_edit_for_request,
+    MsPlotSpec, MsPlotStyleSpec, PlotMsCalibration, apply_msexplore_flag_edit_for_request,
+    build_calibrated_plotms_payload, build_msexplore_payload, export_msexplore_plot,
+    preview_msexplore_flag_edit_for_request,
 };
 use crate::{MeasurementSet, MsSelection};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
@@ -171,28 +172,57 @@ pub fn task_front_end()
 pub fn task_front_end_with_plot_payload(
     payload: Option<PathBuf>,
 ) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
+    task_front_end_with_calibration(payload, None)
+}
+
+/// Load transient PlotMS calibration from the user's callibrary entries.
+pub type PlotMsCalibrationLoader =
+    fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
+
+/// Use the existing PlotMS front end with a caller-provided calibration engine.
+pub fn task_front_end_with_calibration(
+    payload: Option<PathBuf>,
+    load_calibration: Option<PlotMsCalibrationLoader>,
+) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     TaskFrontEnd::new_with_deferred_schema(
         "msexplore",
         msexplore_task_schema_bundle(),
         &["msexplore", "plotms"],
-        move |task| run_task(task, payload.as_deref()),
+        move |task| run_task(task, payload.as_deref(), load_calibration),
     )
     .expect("the msexplore contract carries msexplore and plotms")
 }
 
 /// Run one resolved `msexplore` or `plotms` request. `msexplore` returns its
 /// summary, as CASA's `listobs` returns its record; `plotms` returns None.
-fn run_task(task: &TaskInvocation<'_>, payload: Option<&Path>) -> Result<TaskSuccess, TaskFailure> {
+fn run_task(
+    task: &TaskInvocation<'_>,
+    payload: Option<&Path>,
+    load_calibration: Option<PlotMsCalibrationLoader>,
+) -> Result<TaskSuccess, TaskFailure> {
     if task.surface() == "plotms"
         && let Some(path) = super::calibration::input(task)?
     {
         return super::calibration::run(task, &path, payload);
     }
-    let options = if task.surface() == "plotms" {
-        options_from_plotms(task)?
+    let (options, calibration) = if task.surface() == "plotms" {
+        let library = task.texts("callib")?;
+        let calibration = if library.is_empty() {
+            None
+        } else {
+            let load = load_calibration.ok_or_else(|| {
+                TaskFailure::validation("use casars.tasks.plotms for on-the-fly calibration")
+                    .at("callib")
+            })?;
+            Some((load, library))
+        };
+        (options_from_plotms(task)?, calibration)
     } else {
-        options_from(task)?
+        (options_from(task)?, None)
     };
+    if let Some((load, library)) = calibration {
+        return run_calibrated_plot(task, options, load, &library);
+    }
     let outcome = run(options)?;
     let success = if task.surface() == "plotms" {
         TaskSuccess::new(CasaValue::None, &outcome.result)?
@@ -206,6 +236,35 @@ fn run_task(task: &TaskInvocation<'_>, payload: Option<&Path>) -> Result<TaskSuc
         Some(note) => success.with_note(note),
         None => success,
     })
+}
+
+fn run_calibrated_plot(
+    task: &TaskInvocation<'_>,
+    options: CliOptions,
+    load: PlotMsCalibrationLoader,
+    library: &[String],
+) -> Result<TaskSuccess, TaskFailure> {
+    let output = options.plot_output.as_deref();
+    super::task_contract::refuse_unwritable_outputs(
+        &[("plotfile", output)],
+        options.overwrite,
+        "set overwrite=True to replace it",
+    )
+    .map_err(TaskFailure::validation)?;
+    let ms = MeasurementSet::open(&options.ms_path).map_err(|error| {
+        TaskFailure::execution(format!(
+            "open MeasurementSet {}: {error}",
+            options.ms_path.display()
+        ))
+    })?;
+    let calibration = load(&ms, &options.selection, library)?;
+    if let Some(output) = output {
+        let spec = build_explore_spec(&options).map_err(TaskFailure::validation)?;
+        let payload = build_calibrated_plotms_payload(&ms, &spec, &calibration)
+            .map_err(TaskFailure::execution)?;
+        super::plotms_text::write_calibrated_export(task, &ms, &payload, output, library)?;
+    }
+    TaskSuccess::new(CasaValue::None, &serde_json::json!({"text_file": output}))
 }
 
 /// Run one command line. Everything a refusal can find is checked before the
