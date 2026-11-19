@@ -384,7 +384,7 @@ fn panel(
                     if request.zoom_intersect
                         && let Some(metadata) = &mut metadata
                     {
-                        metadata.intersect_domain(&curve.x);
+                        metadata.use_narrower_solution(&raw.x, &curve.x);
                     }
                     let visible = if channels > total_channels {
                         channels
@@ -586,6 +586,7 @@ struct PanelMetadata {
     domain: [f64; 2],
     frequency_channels: Vec<f64>,
     polynomial: bool,
+    comparison_domain: Option<[f64; 2]>,
 }
 
 impl PanelMetadata {
@@ -639,6 +640,7 @@ impl PanelMetadata {
                 .collect()
             },
             polynomial,
+            comparison_domain: None,
         }
     }
 
@@ -647,18 +649,27 @@ impl PanelMetadata {
         self.domain[1] = self.domain[1].max(first.max(last));
     }
 
-    fn intersect_domain(&mut self, coordinates: &[f64]) {
-        if let (Some(first), Some(last)) = (coordinates.first(), coordinates.last()) {
-            let lower = self.domain[0].max(first.min(*last));
-            let upper = self.domain[1].min(first.max(*last));
-            if lower < upper {
-                self.domain = [lower, upper];
-            }
+    fn use_narrower_solution(&mut self, primary: &[f64], companion: &[f64]) {
+        fn limits(values: &[f64]) -> Option<[f64; 2]> {
+            let first = *values.first()?;
+            let last = *values.last()?;
+            Some([first.min(last), first.max(last)])
+        }
+        if self.comparison_domain.is_none()
+            && let (Some(first), Some(second)) = (limits(primary), limits(companion))
+        {
+            // CASA uses the narrower window and prefers the companion when
+            // the widths agree, even for offset windows.
+            self.comparison_domain = Some(if first[1] - first[0] < second[1] - second[0] {
+                self.domain
+            } else {
+                second
+            });
         }
     }
 
     fn x_limits(&self) -> [f64; 2] {
-        let [lower, upper] = self.domain;
+        let [lower, upper] = self.comparison_domain.unwrap_or(self.domain);
         let range = if lower == upper { 0.001 } else { upper - lower };
         let pad = if self.polynomial { 0.0 } else { range * 0.01 };
         [lower - pad, upper + pad]

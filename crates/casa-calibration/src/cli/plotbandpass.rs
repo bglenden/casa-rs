@@ -163,18 +163,12 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
     }
     let water = selector_numeric_text(task, "pwv")?;
-    for parameter in ["antenna", "field", "spw"] {
-        if let Some(ParameterValue::Array(values)) = task.value(parameter)
-            && values.iter().any(|value| {
-                matches!(value, ParameterValue::String(text) if text.parse::<i32>().is_err())
-            })
-        {
-            return plain(
-                CasaValue::None,
-                parameter != "spw",
-                "Specify names in a comma-delimited string or pass an array of numeric indices.",
-            );
-        }
+    if let Some(parameter) = selector_with_names_in_vector(task) {
+        return plain(
+            CasaValue::None,
+            parameter != "spw",
+            "Specify names in a comma-delimited string or pass an array of numeric indices.",
+        );
     }
     let parent_ms = task.text("parentms")?.filter(|name| !name.is_empty());
     let request = PlotRequest {
@@ -361,6 +355,15 @@ fn local_oscillator(task: &TaskInvocation<'_>) -> Result<Option<Option<f64>>, Ta
         ),
         _ => Ok(Some(None)),
     }
+}
+
+fn selector_with_names_in_vector(task: &TaskInvocation<'_>) -> Option<&'static str> {
+    ["antenna", "field", "spw"].into_iter().find(|parameter| {
+        matches!(task.value(parameter), Some(ParameterValue::Array(values))
+        if values.iter().any(|value| {
+            matches!(value, ParameterValue::String(text) if text.parse::<i32>().is_err())
+        }))
+    })
 }
 
 fn selector(task: &TaskInvocation<'_>, name: &str) -> Result<Vec<String>, TaskFailure> {
