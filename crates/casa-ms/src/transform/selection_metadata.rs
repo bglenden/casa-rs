@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use casa_tables::{ColumnType, Table, TableError, TableOptions};
 use casa_types::{RecordValue, ScalarValue, Value};
 
+use crate::selection::array_expr::ArraySelection;
 use crate::selection::parser::parse_state_selector;
 use crate::selection::syntax::parse_numeric_row_id_ranges;
 use crate::selection::{ResolvedMsSelectionRow, TimeSelection};
@@ -73,6 +74,7 @@ pub(super) struct RowIdMaps {
     antenna: Option<BTreeMap<i32, i32>>,
     observation: Option<BTreeMap<i32, i32>>,
     state: Option<BTreeMap<i32, i32>>,
+    pub(super) array: Option<ArraySelection>,
 }
 
 impl RowIdMaps {
@@ -86,10 +88,11 @@ impl RowIdMaps {
     }
 }
 
-pub(super) fn reindex_observation_and_state(
+pub(super) fn reindex_selected_row_ids(
     input: &MeasurementSet,
     request: &MsTransformRequest,
     antenna: Option<BTreeMap<i32, i32>>,
+    reindex_array: bool,
 ) -> Result<RowIdMaps, MsTransformError> {
     let observation = request
         .selection
@@ -123,10 +126,19 @@ pub(super) fn reindex_observation_and_state(
             reindex_table(request, SubtableId::State, selected)
         })
         .transpose()?;
+    let array = request
+        .selection
+        .array
+        .as_deref()
+        .filter(|text| reindex_array && !text.is_empty())
+        .map(ArraySelection::parse)
+        .transpose()
+        .map_err(|source| metadata_error(request, source))?;
     Ok(RowIdMaps {
         antenna,
         observation,
         state,
+        array,
     })
 }
 

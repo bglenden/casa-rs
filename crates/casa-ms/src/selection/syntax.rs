@@ -146,20 +146,22 @@ pub fn parse_numeric_row_id_ranges(value: &str, label: &str) -> MsResult<Vec<(i3
     Ok(canonical_numeric_ranges(ranges))
 }
 
-fn trim_row_id_space(text: &str) -> &str {
+pub(super) fn trim_row_id_space(text: &str) -> &str {
     text.trim_matches([' ', '\t', '\n'])
 }
 
 /// Expand the six comparison productions in MSScanGram and MSObservationGram
 /// to intervals without constructing their auxiliary list of individual IDs.
-fn row_id_interval(term: &str) -> Option<(i64, i64)> {
-    let number = |text: &str| {
-        let digits = trim_row_id_space(text);
-        if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-            return None;
-        }
-        digits.parse::<i32>().ok().map(i64::from)
-    };
+pub(super) fn row_id_number(text: &str) -> Option<i32> {
+    let digits = trim_row_id_space(text);
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+pub(super) fn row_id_interval(term: &str) -> Option<(i64, i64)> {
+    let number = |text| row_id_number(text).map(i64::from);
     if let Some((lower, upper)) = term.split_once('&') {
         let upper = trim_row_id_space(upper);
         let (lower, upper, exclude) = if let Some(lower) = lower.strip_prefix(">=") {
