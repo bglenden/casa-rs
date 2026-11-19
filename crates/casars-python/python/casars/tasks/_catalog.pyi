@@ -1134,6 +1134,15 @@ def smoothcal(
 ) -> Any:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal')
+def rerefant(
+    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    tablein: StrPath = ...,
+    caltable: StrPath = ...,
+    refantmode: Literal['flex', 'strict'] = ...,
+    refant: str = ...,
+) -> Any:
+    ...
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal']
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant']

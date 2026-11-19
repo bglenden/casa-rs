@@ -107,6 +107,9 @@ fn wrap_phase(phase: f32) -> f32 {
     if !phase.is_finite() {
         return phase;
     }
+    if phase.abs() > 4096.0 {
+        return ((f64::from(phase) + pi).rem_euclid(tau) - pi) as f32;
+    }
     while f64::from(phase) < -pi {
         phase = (f64::from(phase) + tau) as f32;
     }

@@ -29,6 +29,7 @@ mod model_columns;
 mod multi_ms;
 mod read;
 mod render;
+mod rerefant;
 mod smoothcal;
 mod uvmodelfit;
 
@@ -64,6 +65,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     if task.surface() == "ft" {
         return ft::run(task);
+    }
+    if task.surface() == "rerefant" {
+        return rerefant::run(task);
     }
     if task.surface() == "smoothcal" {
         return smoothcal::run(task);

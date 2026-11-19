@@ -7,12 +7,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_ms::MeasurementSet;
-use casa_tables::{RequiredScalarColumnValues, Table, TableOptions, TableWriteLock};
+use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 use casa_types::{ArrayValue, Complex32, Value};
 
-use crate::CalibrationOutputMode;
-use crate::output::CalibrationOutput;
-use crate::paths::{copy_dir_recursive, normalized, overlap};
+use crate::solution_edit::{edit_calibration_table, error_text};
 
 #[derive(Clone, Copy)]
 pub(crate) enum Smoother {
@@ -34,16 +32,20 @@ pub(crate) fn smooth_calibration_table(
     }
     let ms = MeasurementSet::open(ms_path).map_err(error_text)?;
     let fields = ms.resolve_field_selector(field).map_err(error_text)?;
-    let input = normalized(input).map_err(error_text)?;
-    let destination = normalized(destination).map_err(error_text)?;
-    if input != destination && overlap(&input, &destination).map_err(error_text)? {
-        return Err("the input and output calibration tables overlap".into());
-    }
-    let source = Table::open(TableOptions::new(&input)).map_err(error_text)?;
-    if source.info().table_type != crate::constants::TABLE_INFO_TYPE {
-        return Err("input is not a calibration table".into());
-    }
-    let subtype = source.info().sub_type.trim().to_ascii_uppercase();
+    edit_calibration_table(input, destination, |table, path| {
+        smooth_table(table, path, &fields, smoother, seconds / 2.0, ratesmooth)
+    })
+}
+
+fn smooth_table(
+    table: &mut Table,
+    path: &Path,
+    fields: &[i32],
+    smoother: Smoother,
+    half_width: f64,
+    ratesmooth: bool,
+) -> Result<(), String> {
+    let subtype = table.info().sub_type.trim().to_ascii_uppercase();
     if !matches!(
         subtype.as_str(),
         "G JONES"
@@ -56,25 +58,17 @@ pub(crate) fn smooth_calibration_table(
     ) {
         return Err(format!(
             "calibration type {} does not support smoothing",
-            source.info().sub_type
+            table.info().sub_type
         ));
     }
-    let parameter_column = match source.schema() {
+    let parameter_column = match table.schema() {
         Some(schema) if schema.contains_column("CPARAM") => "CPARAM",
         Some(schema) if schema.contains_column("FPARAM") => "FPARAM",
         _ => return Err("input table has no supported calibration parameter column".into()),
     };
-    let output = CalibrationOutput::prepare(&destination, CalibrationOutputMode::Replace)
-        .map_err(error_text)?;
-    copy_dir_recursive(&input, &output.staging).map_err(error_text)?;
-    let mut lock = TableWriteLock::acquire_to_reread(&output.staging, 0).map_err(error_text)?;
-    let mut table = Table::open(TableOptions::new(&output.staging)).map_err(error_text)?;
-    let groups = solution_groups(&table, &fields)?;
+    let groups = solution_groups(table, fields)?;
     let spectrum = if subtype == "FRINGE JONES" {
-        Some(
-            Table::open(TableOptions::new(output.staging.join("SPECTRAL_WINDOW")))
-                .map_err(error_text)?,
-        )
+        Some(Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW"))).map_err(error_text)?)
     } else {
         None
     };
@@ -96,24 +90,9 @@ pub(crate) fn smooth_calibration_table(
         } else {
             None
         };
-        smooth_group(
-            &mut table,
-            parameter_column,
-            rows,
-            smoother,
-            seconds / 2.0,
-            fringe,
-        )?;
+        smooth_group(table, parameter_column, rows, smoother, half_width, fringe)?;
     }
-    lock.record_write();
-    crate::output_merge::save_sorted(&mut table, &output.staging).map_err(error_text)?;
-    drop(table);
-    lock.release().map_err(error_text)?;
-    output.commit().map_err(error_text)
-}
-
-fn error_text(error: impl std::fmt::Display) -> String {
-    error.to_string()
+    Ok(())
 }
 
 type SolutionGroups = BTreeMap<[i32; 4], Vec<(usize, f64)>>;

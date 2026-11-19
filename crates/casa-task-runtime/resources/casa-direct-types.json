@@ -471,6 +471,11 @@
     "showimage": "cBool",
     "colorizeoverlay": "cBool"
   },
+  "rerefant": {
+    "caltable": "cStr",
+    "refantmode": "cStr",
+    "refant": "cStr"
+  },
   "simalma": {
     "project": "cStr",
     "dryrun": "cBool",

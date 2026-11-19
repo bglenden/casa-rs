@@ -12758,7 +12758,7 @@
       "persistence_class": "profile"
     },
     {
-      "id": "smoothing.tablein",
+      "id": "calibration.tablein",
       "semantic_revision": 1,
       "casa_name": "tablein",
       "value_domain": {

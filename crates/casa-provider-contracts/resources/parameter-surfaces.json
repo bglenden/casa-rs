@@ -33379,7 +33379,7 @@
         {
           "name": "tablein",
           "concept": {
-            "id": "smoothing.tablein",
+            "id": "calibration.tablein",
             "semantic_revision": 1
           },
           "order": 1,
@@ -33611,6 +33611,244 @@
             "presentation": {
               "label": "ratesmooth",
               "group": "Smoothing"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
+      "id": "rerefant",
+      "contract_version": 1,
+      "display_name": "Re-reference Calibration Solutions",
+      "category": "Calibration",
+      "summary": "Change the reference antenna in a calibration table.",
+      "provider_family": "calibration",
+      "casa_task": "rerefant",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "rerefant"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "caltable",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "caltable"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": true
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "refinements": [
+            {
+              "kind": "length",
+              "min": 0,
+              "max": 1
+            }
+          ],
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "tablein",
+          "concept": {
+            "id": "calibration.tablein",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--tablein"
+              ]
+            },
+            "provider": {
+              "field": "tablein",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "tablein"
+            },
+            "presentation": {
+              "label": "tablein",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.caltable",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "caltable",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "refantmode",
+          "concept": {
+            "id": "setsolve.refantmode",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "flex"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refantmode"
+              ]
+            },
+            "provider": {
+              "field": "refantmode",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refantmode"
+            },
+            "presentation": {
+              "label": "refantmode",
+              "group": "Reference antenna"
+            }
+          }
+        },
+        {
+          "name": "refant",
+          "concept": {
+            "id": "parameter.refant",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--refant"
+              ]
+            },
+            "provider": {
+              "field": "refant",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "refant"
+            },
+            "presentation": {
+              "label": "refant",
+              "group": "Reference antenna"
             }
           }
         }
