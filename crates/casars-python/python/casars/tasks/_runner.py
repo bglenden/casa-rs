@@ -297,7 +297,7 @@ def _call_plotbandpass(values, arguments):
         raise AssertionError("{'caltable': ['null value not allowed']}")
     if not isinstance(caltable, str):
         raise AssertionError(f"the caltable parameter must be a path that exists ('{caltable}' does not exist)")
-    _validate_required_path(values, "caltable", caltable)
+    _validate_required_path(values, "caltable", caltable, search_data=True)
     normalize(values, arguments)
     try:
         completion = run("plotbandpass", **values)
