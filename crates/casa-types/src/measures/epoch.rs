@@ -424,12 +424,13 @@ impl MEpoch {
     /// The quantity is converted to days (MJD) before storing.
     pub fn from_quantity(q: &Quantity, refer: EpochRef) -> Result<Self, MeasureError> {
         let day_unit = Unit::new("d").expect("'d' is a valid unit");
-        let mjd = q
-            .get_value_in(&day_unit)
-            .map_err(|_| MeasureError::NonConformantUnit {
+        if q.unit().val().dim != day_unit.val().dim {
+            return Err(MeasureError::NonConformantUnit {
                 expected: "time",
                 got: q.unit().name().to_owned(),
-            })?;
+            });
+        }
+        let mjd = q.value() * (q.unit().val().factor / day_unit.val().factor);
         Ok(Self::from_mjd(mjd, refer))
     }
 

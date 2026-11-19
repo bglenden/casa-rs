@@ -31,7 +31,7 @@
 //! Note: C++ always serializes MPosition in spherical form (lon, lat, radius)
 //! regardless of reference type.
 
-use crate::{RecordField, RecordValue, ScalarValue, Value};
+use crate::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use super::direction::{DirectionRef, MDirection};
 use super::doppler::{DopplerRef, MDoppler};
@@ -140,20 +140,7 @@ fn read_epoch_record(rec: &RecordValue, depth: usize) -> Result<MEpoch, MeasureE
         .or_else(|| refer_str.strip_prefix("r_"));
     let refer: EpochRef = base.unwrap_or(&refer_str).parse()?;
 
-    let m0 = extract_sub_record(rec, "m0")?;
-    let value = extract_quantity_value(m0)?;
-    let epoch = if m0.get("unit").is_some() {
-        let unit = extract_string(m0, "unit")?;
-        let quantity = crate::quanta::Quantity::new(value, &unit).map_err(|error| {
-            MeasureError::InvalidRecord {
-                reason: error.to_string(),
-            }
-        })?;
-        MEpoch::from_quantity(&quantity, refer)?
-    } else {
-        MEpoch::new(MjdHighPrec::from_mjd(value), refer)
-    }
-    .with_razing(base.is_some());
+    let epoch = MEpoch::new(epoch_record_value(rec)?, refer).with_razing(base.is_some());
     match rec.get("offset") {
         Some(Value::Record(offset)) => Ok(epoch.with_offset(read_epoch_record(offset, depth + 1)?)),
         Some(_) => Err(MeasureError::InvalidRecord {
@@ -161,6 +148,46 @@ fn read_epoch_record(rec: &RecordValue, depth: usize) -> Result<MEpoch, MeasureE
         }),
         None => Ok(epoch),
     }
+}
+
+fn epoch_record_value(rec: &RecordValue) -> Result<MjdHighPrec, MeasureError> {
+    let mut length = None;
+    let mut day = 0.0;
+    let mut fraction = 0.0;
+    for key in ["m0", "m1", "m2"] {
+        let Some(Value::Record(component)) = rec.get(key) else {
+            break;
+        };
+        let (value, count) = match component.get("value") {
+            Some(Value::Array(ArrayValue::Float64(array))) => (array.first().copied(), array.len()),
+            Some(Value::Array(ArrayValue::Float32(array))) => {
+                (array.first().copied().map(f64::from), array.len())
+            }
+            _ => (Some(extract_quantity_value(component)?), 1),
+        };
+        if length.is_some_and(|previous| previous != count) {
+            return Err(MeasureError::InvalidRecord {
+                reason: format!("Illegal number of values in MeasureHolder {key}"),
+            });
+        }
+        length = Some(count);
+        let value = value.ok_or_else(|| MeasureError::InvalidRecord {
+            reason: format!("empty epoch quantity {key}"),
+        })?;
+        let unit = match component.get("unit") {
+            Some(_) => extract_string(component, "unit")?,
+            None => "d".into(),
+        };
+        let quantity = crate::quanta::Quantity::new(value, &unit).map_err(|error| {
+            MeasureError::InvalidRecord {
+                reason: error.to_string(),
+            }
+        })?;
+        let days = MEpoch::from_quantity(&quantity, EpochRef::UTC)?.value();
+        day += days.day();
+        fraction += days.frac();
+    }
+    Ok(MjdHighPrec::new(day, fraction))
 }
 
 // ---------------------------------------------------------------------------

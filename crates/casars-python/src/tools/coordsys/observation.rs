@@ -6,7 +6,7 @@ use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyFloat};
+use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyModule, PyTuple};
 
 use crate::convert::RecordArg;
 use crate::tools::measures::observation_epoch;
@@ -22,6 +22,7 @@ fn text(value: &Bound<'_, PyAny>) -> PyResult<String> {
 
 fn epoch_input<'py>(
     value: &Bound<'py, PyAny>,
+    numpy: &Bound<'py, PyModule>,
     numpy_scalar: &Bound<'py, PyAny>,
     depth: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -63,6 +64,27 @@ fn epoch_input<'py>(
                 b'f' | b'd' => None,
                 _ => Some(py.None().into_bound(py)),
             }
+        } else if value.is_instance_of::<PyComplex>() {
+            return Err(PyRuntimeError::new_err(
+                "Wrong QuantumHolder to convert asQuantumVectorDouble",
+            ));
+        } else if value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>() {
+            let integer = value.extract::<i64>()? as i32;
+            Some(integer.into_bound_py_any(py)?)
+        } else if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
+            let Ok(sequence) = numpy.call_method1("asarray", (&value,)) else {
+                continue;
+            };
+            let array = sequence.cast::<PyUntypedArray>()?;
+            match array.dtype().kind() {
+                b'i' | b'u' if !array.is_empty() => {
+                    return Err(PyRuntimeError::new_err(
+                        "Cannot convert to QuantumVectorDouble",
+                    ));
+                }
+                b'f' if !array.is_empty() => Some(sequence.call_method1("astype", ("float64",))?),
+                _ => None,
+            }
         } else if !value.is_instance_of::<PyFloat>() && value.is_instance(numpy_scalar)? {
             Some(py.None().into_bound(py))
         } else {
@@ -77,7 +99,10 @@ fn epoch_input<'py>(
     if let Some(offset) = record.get_item("offset")?
         && offset.is_instance_of::<PyDict>()
     {
-        output.set_item("offset", epoch_input(&offset, numpy_scalar, depth + 1)?)?;
+        output.set_item(
+            "offset",
+            epoch_input(&offset, numpy, numpy_scalar, depth + 1)?,
+        )?;
     }
     Ok(output)
 }
@@ -85,8 +110,9 @@ fn epoch_input<'py>(
 #[pymethods]
 impl PyCoordsys {
     fn setepoch(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let numpy_scalar = py.import("numpy")?.getattr("generic")?;
-        let value = epoch_input(value, &numpy_scalar, 0)?.extract::<RecordArg>()?;
+        let numpy = py.import("numpy")?;
+        let numpy_scalar = numpy.getattr("generic")?;
+        let value = epoch_input(value, &numpy, &numpy_scalar, 0)?.extract::<RecordArg>()?;
         let (changed, log) = py.detach(|| {
             let mut log = Vec::new();
             let epoch = observation_epoch(&value, &mut log).map_err(PyRuntimeError::new_err)?;

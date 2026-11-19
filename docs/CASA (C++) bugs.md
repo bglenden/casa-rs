@@ -4798,6 +4798,10 @@ inside the `m0.value` field of an epoch record can terminate the process
 during `coordsys.setepoch`. casa-rs returns `False` and preserves the
 current observation date (#1626).
 
+CASA can also misread a byte-swapped `float64` epoch vector. For example,
+a one-element vector containing `20.0` days can be stored as a subnormal
+value. casa-rs converts the byte order and stores `20.0` days.
+
 ## CASA discards the values of bare complex quantity arrays
 
 - Date noted: 2026-11-05

@@ -85,6 +85,7 @@ def epoch(value, reference="UTC", unit="d", offset=None):
     epoch(np.array([60000], dtype=np.longlong)),
     epoch(np.array([60000], dtype=np.ulonglong)),
     epoch(np.asarray(60000.0)),
+    epoch([True, 2.5]), epoch(5_184_000_000, unit="s"),
     {"type": "epoch", "refer": "UTC"},
 ])
 def test_setepoch_and_native_record_round_trip(casa, record):
@@ -116,6 +117,12 @@ def test_failed_setepoch_preserves_observation_date(casa):
             cs.setepoch(epoch([60000, 60001]))
         with pytest.raises(RuntimeError, match="Cannot convert to QuantumVectorDouble"):
             cs.setepoch(epoch(np.array([], dtype="l")))
+        with pytest.raises(RuntimeError, match="Cannot convert to QuantumVectorDouble"):
+            cs.setepoch(epoch([3, False]))
+        with pytest.raises(RuntimeError, match="Cannot convert to QuantumVectorDouble"):
+            cs.setepoch(epoch(0.5, offset=epoch([60000, 60001])))
+        with pytest.raises(RuntimeError, match="Wrong QuantumHolder to convert asQuantumVectorDouble"):
+            cs.setepoch(epoch(1 + 0j))
         with pytest.raises(TypeError, match="is not a dictionary"):
             cs.setepoch(None)
         _assert_value(cs.epoch(), saved)
@@ -126,6 +133,29 @@ def test_empty_epoch_vector_leaves_date_unchanged():
     assert cs.setepoch(epoch(60100.0))
     assert not cs.setepoch(epoch(np.array([], dtype=np.float64)))
     _assert_value(cs.epoch(), epoch(60100.0))
+
+
+def test_byteswapped_epoch_vector_matches_the_native_value():
+    cs = tools.coordsys()
+    value = np.array([20.0], dtype=np.dtype(np.float64).newbyteorder())
+    assert cs.setepoch(epoch(value))
+    assert cs.epoch()["m0"]["value"] == 20.0
+
+
+@pytest.mark.parametrize("raw_offset, days", [
+    ({**epoch(60000.0), "m1": {"value": 12.0, "unit": "h"}}, 60000.5),
+    (epoch(np.array([60000.0, 60001.0])), 60000.0),
+    ({"type": "epoch", "refer": "UTC"}, 0.0),
+])
+def test_restoring_a_raw_epoch_offset_uses_all_components(casa, raw_offset, days):
+    record = tools.coordsys().newcoordsys(linear=2).torecord()
+    record["obsdate"] = epoch(60000.000033, offset=raw_offset)
+    for make in (tools.coordsys, casa.coordsys):
+        restored = make()
+        assert restored.fromrecord(record)
+        result = restored.epoch()
+        assert result["m0"]["value"] == 60000.000033
+        assert result["offset"]["m0"]["value"] == days
 
 
 def test_epoch_offset_persists_in_native_image(casa, tmp_path):
