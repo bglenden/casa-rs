@@ -200,8 +200,8 @@ fn temperature_weights(
                 row_weights.push(weight);
                 row_sigmas.push(sigma);
             }
-            weights.push(lower_median(&mut row_weights));
-            sigmas.push(lower_median(&mut row_sigmas));
+            weights.push(weights::lower_median(row_weights));
+            sigmas.push(weights::lower_median(row_sigmas));
         } else {
             let weight =
                 bandwidth * (inverse_mean(left, p, channels) * inverse_mean(right, q, channels));
@@ -239,16 +239,12 @@ fn inverse_mean(solution: Option<&ComplexSolution>, receptor: usize, channels: u
         .fold((0.0_f64, 0), |(sum, count), value| {
             (sum + f64::from(value), count + 1)
         });
-    if count == 0 {
+    // A missing solution or an all-zero temperature leaves the scalar
+    // weight factor at unity. The spectrum calculation uses each channel,
+    // so a valid zero channel there has infinite inverse temperature.
+    if sum == 0.0 {
         1.0
     } else {
         (f64::from(count) / sum) as f32
     }
-}
-
-fn lower_median(samples: &mut [f32]) -> f32 {
-    let Some(last) = samples.len().checked_sub(1) else {
-        return f32::NAN;
-    };
-    *samples.select_nth_unstable_by(last / 2, f32::total_cmp).1
 }

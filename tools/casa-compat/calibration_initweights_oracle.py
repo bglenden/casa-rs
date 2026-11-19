@@ -80,7 +80,7 @@ def main_columns(path):
         return present, values
 
 
-def compare(expected, actual):
+def compare(expected, actual, *, rtol=2e-7):
     assert expected[0] == actual[0], expected[0] ^ actual[0]
     for column, reference in expected[1].items():
         value = actual[1][column]
@@ -89,9 +89,9 @@ def compare(expected, actual):
                 if left is None or right is None:
                     assert left is right, (column, index)
                 else:
-                    np.testing.assert_allclose(right, left, rtol=2e-7, atol=0, err_msg=f"{column} row {index}")
+                    np.testing.assert_allclose(right, left, rtol=rtol, atol=0, err_msg=f"{column} row {index}")
         elif column in ("WEIGHT", "SIGMA"):
-            np.testing.assert_allclose(value, reference, rtol=2e-7, atol=0, err_msg=column)
+            np.testing.assert_allclose(value, reference, rtol=rtol, atol=0, err_msg=column)
         else:
             np.testing.assert_array_equal(value, reference, err_msg=column)
 
