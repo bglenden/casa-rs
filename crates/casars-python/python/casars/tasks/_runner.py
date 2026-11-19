@@ -295,11 +295,19 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
 def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
     import numpy as np
 
+    cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
+    cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
     for parameter, expected, casa_type in (
         ("spwchan", bool, "cBool"),
         ("spwcorr", bool, "cBool"),
+        ("basecnt", bool, "cBool"),
+        ("fieldcnt", bool, "cBool"),
         ("name", str, "cStr"),
+        ("minrel", cfloat, "cFloat"),
+        ("maxrel", cfloat, "cFloat"),
+        ("minabs", cint, "cInt"),
+        ("maxabs", cint, "cInt"),
     ):
         if parameter not in values:
             continue
@@ -311,6 +319,15 @@ def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
             values[parameter] = False
         elif not isinstance(value, expected):
             errors[parameter] = [f"must be of {casa_type} type"]
+        elif casa_type == "cFloat":
+            fraction = float(value)
+            if np.isnan(fraction):
+                # CASA's comparisons ignore a NaN bound.
+                fraction = 0.0 if parameter == "minrel" else 1.0
+            values[parameter] = max(-sys.float_info.max, min(fraction, sys.float_info.max))
+        elif casa_type == "cInt":
+            # Counts from stored MeasurementSets fit in a signed 64-bit value.
+            values[parameter] = max(-(2**63), min(int(value), 2**63 - 1))
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
 
