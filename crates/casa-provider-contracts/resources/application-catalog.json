@@ -508,6 +508,18 @@
         "measurement_set"
       ],
       "include_in_suite": true
+    },
+    {
+      "id": "calstat",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "calibration_table"
+      ],
+      "include_in_suite": true
     }
   ]
 }

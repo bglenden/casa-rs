@@ -48,6 +48,7 @@ pub const CALIBRATION_SURFACES: [&str; 17] = [
     "plotweather",
     "initweights",
     "statwt",
+    "calstat",
 ];
 
 /// Build the current shared calibration protocol descriptor.
@@ -743,6 +744,7 @@ mod tests {
                 "plotweather",
                 "initweights",
                 "statwt",
+                "calstat",
             ]
         );
         assert!(

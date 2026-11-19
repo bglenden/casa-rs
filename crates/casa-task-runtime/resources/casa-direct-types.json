@@ -50,6 +50,10 @@
     "interp": "cStrVec",
     "parang": "cBool"
   },
+  "calstat": {
+    "axis": "cStr",
+    "datacolumn": "cStr"
+  },
   "clearcal": {
     "field": "cStr",
     "spw": "cStr",

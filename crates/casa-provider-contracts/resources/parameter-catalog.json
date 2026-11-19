@@ -1939,7 +1939,7 @@
         "resource_kind": "calibration_table"
       },
       "normalization": {
-        "kind": "path"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -13399,6 +13399,54 @@
       "documentation": {
         "summary": "Data column to use to compute weights. Supported values are \"data\", \"corrected\", \"residual\", and \"residual_data\" (case insensitive, minimum match supported).",
         "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "statistics.calibration_axis",
+      "semantic_revision": 1,
+      "casa_name": "axis",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Complex projection or a literal numeric column name.",
+        "details": null,
+        "examples": [
+          "amplitude",
+          "phase",
+          "FPARAM"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "statistics.calibration_datacolumn",
+      "semantic_revision": 1,
+      "casa_name": "datacolumn",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Column to summarize for amplitude, phase, real or imaginary statistics.",
+        "details": null,
+        "examples": [
+          "CPARAM",
+          "gain",
+          "corrected"
+        ]
       },
       "persistence_class": "profile"
     }

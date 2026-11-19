@@ -212,6 +212,17 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_path(values, "vis", arguments["vis"])
+    if name == "calstat":
+        _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
+        for parameter in ("axis", "datacolumn"):
+            value = arguments[parameter]
+            if not isinstance(value, str):
+                message = "null value not allowed" if value is None else "must be of cStr type"
+                raise AssertionError(str({parameter: [message]}))
+        try:
+            return run(name, **values).value
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
     if name == "applycal":
         return _call_applycal(values)
     if name == "gencal":
