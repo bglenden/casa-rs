@@ -69,6 +69,7 @@ mod bandpass;
 mod channels;
 pub(crate) mod parang;
 mod solve_priors;
+pub(crate) mod tsys_weights;
 mod weights;
 use channels::{DataChannelGrid, apply_row};
 pub(crate) use solve_priors::{PriorSolveBoundary, evaluate_solve_priors};

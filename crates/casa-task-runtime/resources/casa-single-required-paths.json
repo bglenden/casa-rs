@@ -18,6 +18,7 @@
   "imregrid": "imagename",
   "imstat": "imagename",
   "imsubimage": "imagename",
+  "initweights": "vis",
   "mstransform": "vis",
   "split": "vis",
   "uvmodelfit": "vis",

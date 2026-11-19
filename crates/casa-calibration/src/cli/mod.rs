@@ -25,6 +25,7 @@ mod casa_read;
 mod ft;
 mod getantposalma;
 mod history;
+mod initweights;
 mod model_columns;
 mod multi_ms;
 mod read;
@@ -66,6 +67,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     if task.surface() == "uvmodelfit" {
         return uvmodelfit::run(task);
+    }
+    if task.surface() == "initweights" {
+        return initweights::run(task);
     }
     if matches!(task.surface(), "clearcal" | "delmod" | "uvsub") {
         return model_columns::run(task);
