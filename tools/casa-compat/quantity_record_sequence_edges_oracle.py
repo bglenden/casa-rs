@@ -23,6 +23,10 @@ def decode(value):
             return np.array(value["array"], dtype=value["dtype"])
         if "complex" in value:
             return complex(*value["complex"])
+        if "timedelta" in value:
+            return np.timedelta64(*value["timedelta"])
+        if "int_power" in value:
+            return pow(*value["int_power"])
         return np.dtype(value["dtype"]).type(value["scalar"])
     return value
 
@@ -49,6 +53,9 @@ CASES = [
     ("boolean_numpy_float", [True, numpy_scalar("float32", 2.5)], "m", None),
     ("boolean_numpy_half", [True, numpy_scalar("float16", 2.5)], "m", None),
     ("boolean_numpy_longdouble", [True, numpy_scalar("longdouble", 2.5)], "m", None),
+    ("boolean_timedelta_ns", [True, {"timedelta": [6, "ns"]}, 2.5], "m", "discarded_value"),
+    ("boolean_timedelta_s", [True, {"timedelta": [6, "s"]}, 2.5], "m", "discarded_value"),
+    ("boolean_numpy_longlong", [True, numpy_scalar("longlong", 8), 2.5], "m", "discarded_value"),
     ("boolean_float_matrix", [[True, 2.5], [1.5, False]], "m", None),
     ("boolean_integer_matrix", [[True, 1]], "m", None),
     ("boolean_complex", [True, {"complex": [2, 3]}], "m", None),
@@ -62,6 +69,8 @@ CASES = [
     ("tuple_underflow", {"tuple": [-(2**63) - 1]}, "m", "overflow"),
     ("nested_overflow", [[2**63]], "m", "overflow"),
     ("arbitrary_precision_overflow", 10**400, "m", "overflow"),
+    ("singleton_beyond_repr_limit", [{"int_power": [10, 4500]}], "m", "overflow"),
+    ("nested_beyond_repr_limit", [[{"int_power": [10, 4500]}]], "m", "overflow"),
     ("mixed_float_overflow", [True, 2.5, 2**63], "m", "mixed_overflow"),
     ("scalar_max_control", 2**63 - 1, "m", None),
     ("list_min_control", [-(2**63)], "m", None),

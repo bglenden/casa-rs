@@ -286,71 +286,27 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         ));
     }
     if let Ok(dict) = object.cast::<PyDict>() {
-        // CASA does not accept a NumPy complex64 scalar in a quantity
-        // record. Keep that diagnostic separate from the preserved value.
-        let complex64_scalar = match dict.get_item("value")? {
-            Some(value) => is_numpy_complex64_scalar(&value)?,
-            None => false,
-        };
         let has_unit = dict.get_item("unit")?.is_some();
         let mut record = BTreeMap::new();
+        let mut scalar_kind = None;
         for (key, value) in dict.iter() {
             let key = key
                 .extract::<String>()
                 .map_err(|_| PyTypeError::new_err("a CASA record argument must have str keys"))?;
+            if key == "value" {
+                // Classify oversized integers before formatting a generic variant.
+                scalar_kind = record_value_kind(&value, has_unit)?;
+            }
             let converted = if key == "value" && has_unit {
                 match zero_dim_record_float(&value)? {
                     Some(array) => array,
-                    None => variant_from_python(&value).map_err(|error| {
-                        if value.is_instance_of::<PyInt>()
-                            && error.is_instance_of::<PyOverflowError>(value.py())
-                        {
-                            ConvertError::IntegerOverflow.into()
-                        } else {
-                            error
-                        }
-                    })?,
+                    None => variant_from_python(&value)?,
                 }
             } else {
                 variant_from_python(&value)?
             };
             record.insert(key, converted);
         }
-        let scalar_kind = if complex64_scalar {
-            Some(RecordScalarKind::NumpyUnsupported)
-        } else {
-            match dict.get_item("value")? {
-                Some(value)
-                    if value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>() =>
-                {
-                    value.extract::<i64>().map_or_else(
-                        |_| has_unit.then_some(RecordScalarKind::IntegerOverflow),
-                        |number| Some(RecordScalarKind::NativeInteger(number)),
-                    )
-                }
-                Some(value)
-                    if !value.is_instance_of::<PyFloat>()
-                        && !value.is_instance_of::<PyComplex>()
-                        && matches!(
-                            value
-                                .getattr("dtype")
-                                .and_then(|d| d.getattr("kind"))
-                                .and_then(|k| k.extract::<String>())
-                                .as_deref(),
-                            Ok("i" | "u" | "f" | "b")
-                        ) =>
-                {
-                    let scalar = value.py().import("numpy")?.getattr("generic")?;
-                    if value.is_instance(&scalar)? {
-                        Some(RecordScalarKind::NumpyUnsupported)
-                    } else {
-                        record_vector_kind(&value, has_unit)?
-                    }
-                }
-                Some(value) => record_vector_kind(&value, has_unit)?,
-                None => None,
-            }
-        };
         return Ok(Variant::Record(VariantRecord {
             fields: record,
             scalar_kind,
@@ -377,6 +333,46 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         return Ok(Variant::Number(number));
     }
     Ok(Variant::Other(object.repr()?.to_string()))
+}
+
+fn record_value_kind(
+    value: &Bound<'_, PyAny>,
+    has_unit: bool,
+) -> PyResult<Option<RecordScalarKind>> {
+    if value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>() {
+        return match value.extract::<i64>() {
+            Ok(number) => Ok(Some(RecordScalarKind::NativeInteger(number))),
+            Err(_) if has_unit => overflow_integer_kind(value).map(Some),
+            Err(_) => Ok(None),
+        };
+    }
+    if is_numpy_complex64_scalar(value)? {
+        return Ok(Some(RecordScalarKind::NumpyUnsupported));
+    }
+    if !value.is_instance_of::<PyFloat>()
+        && !value.is_instance_of::<PyComplex>()
+        && matches!(
+            value
+                .getattr("dtype")
+                .and_then(|d| d.getattr("kind"))
+                .and_then(|k| k.extract::<String>())
+                .as_deref(),
+            Ok("i" | "u" | "f" | "b")
+        )
+        && value.is_instance(&value.py().import("numpy")?.getattr("generic")?)?
+    {
+        return Ok(Some(RecordScalarKind::NumpyUnsupported));
+    }
+    record_vector_kind(value, has_unit)
+}
+
+fn overflow_integer_kind(value: &Bound<'_, PyAny>) -> PyResult<RecordScalarKind> {
+    // Keep the generic numeric value when representable. Otherwise report
+    // overflow now, before the generic sequence reader falls back to repr().
+    value
+        .extract::<f64>()
+        .map_err(|_| ConvertError::IntegerOverflow)?;
+    Ok(RecordScalarKind::IntegerOverflow)
 }
 
 /// CASA rejects NumPy's complex64 scalar in quantity records, unlike Python
@@ -511,7 +507,7 @@ fn record_vector_kind(
         let signed_integer = numpy.getattr("signedinteger")?;
         if has_unit
             && !is_array
-            && let Some(kind) = mixed_sequence_kind(shape, &values, &numpy, &signed_integer)?
+            && let Some(kind) = mixed_sequence_kind(shape, &values, &numpy)?
         {
             return Ok(Some(kind));
         }
@@ -530,18 +526,17 @@ fn record_vector_kind(
             .then(|| first.extract::<u64>().ok().map(|n| n as i32))
             .flatten()
     });
-    Ok(narrowed
-        .map(RecordScalarKind::SingletonIntegerVector)
-        .or_else(|| {
-            (has_unit && native_integer(first)).then_some(RecordScalarKind::IntegerOverflow)
-        }))
+    match narrowed {
+        Some(value) => Ok(Some(RecordScalarKind::SingletonIntegerVector(value))),
+        None if has_unit && native_integer(first) => overflow_integer_kind(first).map(Some),
+        None => Ok(None),
+    }
 }
 
 fn mixed_sequence_kind(
     shape: Option<Vec<usize>>,
     items: &[Bound<'_, PyAny>],
     numpy: &Bound<'_, PyModule>,
-    signed_integer: &Bound<'_, PyAny>,
 ) -> PyResult<Option<RecordScalarKind>> {
     let needs_numpy_type_check = |item: &&Bound<'_, PyAny>| {
         !item.is_instance_of::<PyInt>()
@@ -560,7 +555,7 @@ fn mixed_sequence_kind(
         }
     }
     if items.iter().any(|item| item.is_instance_of::<PyBool>()) {
-        return mixed_bool_numeric_kind(shape, items, numpy, signed_integer).map(Some);
+        return mixed_bool_numeric_kind(shape, items, numpy).map(Some);
     }
     Ok(None)
 }
@@ -569,14 +564,24 @@ fn mixed_bool_numeric_kind(
     shape: Option<Vec<usize>>,
     items: &[Bound<'_, PyAny>],
     numpy: &Bound<'_, PyModule>,
-    signed_integer: &Bound<'_, PyAny>,
 ) -> PyResult<RecordScalarKind> {
+    // CASA accepts the numpy.int* types here. NumPy's signedinteger class
+    // also includes timedelta64 and longlong, which CASA silently drops.
+    let signed_integers = PyTuple::new(
+        numpy.py(),
+        [
+            numpy.getattr("int8")?,
+            numpy.getattr("int16")?,
+            numpy.getattr("int32")?,
+            numpy.getattr("int64")?,
+        ],
+    )?;
     let floating = numpy.getattr("floating")?;
     let longdouble = numpy.getattr("longdouble")?;
     let mut has_float = false;
     let mut has_complex = false;
     for item in items {
-        if item.is_instance_of::<PyInt>() || item.is_instance(signed_integer)? {
+        if item.is_instance_of::<PyInt>() || item.is_instance(&signed_integers)? {
             continue;
         }
         if item.is_instance_of::<PyFloat>()
@@ -590,12 +595,12 @@ fn mixed_bool_numeric_kind(
         }
     }
     if has_float && !has_complex {
-        if items.iter().any(|item| {
+        if let Some(integer) = items.iter().find(|item| {
             item.is_instance_of::<PyInt>()
                 && !item.is_instance_of::<PyBool>()
                 && item.extract::<i64>().is_err()
         }) {
-            return Ok(RecordScalarKind::IntegerOverflow);
+            return overflow_integer_kind(integer);
         }
         let values = items
             .iter()

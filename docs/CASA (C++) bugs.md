@@ -4751,6 +4751,10 @@ CASA's existing error for a sequence containing only those scalar types.
 Callers see an error before computing on a shortened quantity. Unsigned
 NumPy arrays retain their existing integer-array behavior.
 
+When a sequence mixes Python booleans and numbers, CASA also drops
+`np.timedelta64` and `np.longlong` values. casa-rs refuses these mixed records
+as well, so a timedelta's storage unit cannot turn it into a measurement.
+
 ## CASA masks quantity-record integer overflow with a wrapper error
 
 - Date noted: 2026-11-19

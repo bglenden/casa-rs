@@ -24,6 +24,10 @@ def decode(value):
             return np.array(value["array"], dtype=value["dtype"])
         if "complex" in value:
             return complex(*value["complex"])
+        if "timedelta" in value:
+            return np.timedelta64(*value["timedelta"])
+        if "int_power" in value:
+            return pow(*value["int_power"])
         return np.dtype(value["dtype"]).type(value["scalar"])
     return value
 
