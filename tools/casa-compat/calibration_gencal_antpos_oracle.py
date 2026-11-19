@@ -95,6 +95,10 @@ def main():
     vis = root / 'positions.ms'
     copy_ms(args.source.resolve(), vis)
     with_second_window(vis)
+    tool = table()
+    assert tool.open(str(vis))
+    assert tool.getcolkeywords('TIME')['MEASINFO']['Ref'] == 'TAI'
+    tool.close()
     cases = {
         'manual': ('antpos', {'antenna': '27,1', 'parameter': [.1, .2, .3, .4, .5, .6]}),
         'cycle-triple': ('antpos', {'antenna': '27,1', 'parameter': [.1, .2, .3]}),

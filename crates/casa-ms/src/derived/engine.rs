@@ -854,7 +854,9 @@ impl MsCalEngine {
         if offset_m == [0.0; 3] {
             return Ok([0.0; 3]);
         }
-        let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, self.time_reference);
+        // KAntPosJones sets its correction frame to UTC, including for a
+        // MeasurementSet whose TIME column is labeled TAI.
+        let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
         let measures = self
             .measures
             .clone()
