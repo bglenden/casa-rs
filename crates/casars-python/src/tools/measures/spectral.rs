@@ -99,7 +99,7 @@ fn quantity_rest_hz(value: &RecordArg) -> Option<f64> {
     if q.unit().val().dim != hz.val().dim {
         return None;
     }
-    q.get_value_in(&hz).ok()
+    crate::convert::holder::frequency_hz(&q)
 }
 fn doppler(value: Measure) -> Result<MDoppler, String> {
     let MeasureValue::Doppler(v) = value.value else {

@@ -215,7 +215,9 @@ impl CaptureDepth {
         CAPTURE_DEPTH.with(|depth| {
             let current = depth.get();
             if current >= 128 {
-                return Err(PyValueError::new_err("cyclic or too deeply nested CASA value (#1252)"));
+                return Err(PyValueError::new_err(
+                    "cyclic or too deeply nested CASA value (#1252)",
+                ));
             }
             depth.set(current + 1);
             Ok(Self)
@@ -223,7 +225,9 @@ impl CaptureDepth {
     }
 }
 impl Drop for CaptureDepth {
-    fn drop(&mut self) { CAPTURE_DEPTH.with(|depth| depth.set(depth.get() - 1)); }
+    fn drop(&mut self) {
+        CAPTURE_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
 }
 
 /// Captures `object` as a [`Variant`].
@@ -595,7 +599,11 @@ type NestedItems<'py> = (Vec<usize>, Vec<Bound<'py, PyAny>>);
 /// is empty or nesting depth is inconsistent.
 fn nested_sequence_items<'py>(object: &Bound<'py, PyAny>) -> PyResult<Option<NestedItems<'py>>> {
     fn collect<'py>(seq: &Bound<'py, PyAny>, depth: usize) -> PyResult<Option<NestedItems<'py>>> {
-        if depth >= 128 { return Err(PyValueError::new_err("cyclic or too deeply nested CASA sequence (#1252)")); }
+        if depth >= 128 {
+            return Err(PyValueError::new_err(
+                "cyclic or too deeply nested CASA sequence (#1252)",
+            ));
+        }
         if !seq.is_instance_of::<PyList>() && !seq.is_instance_of::<PyTuple>() {
             return Ok(None);
         }

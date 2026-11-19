@@ -1,5 +1,7 @@
 """CASA 6.7.6.14 spectral velocity construction and conversion acceptance."""
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +35,20 @@ def compare(actual, expected):
 
 @pytest.mark.parametrize('case', CASES, ids=lambda c:c['name'])
 def test_spectral_measure_matches_casa(case, caplog):
+    if 'unit_definitions' in case:
+        # Unit registries are global. Keep the independently captured CASA
+        # redefinition case isolated from every other test.
+        code = '''
+import json,sys
+from casars.tools import measures,quanta
+case=json.load(sys.stdin)
+for name,value in case['unit_definitions']:quanta().define(name,value)
+print(json.dumps(getattr(measures(),case['method'])(*case['args'],**case['kwargs'])))
+'''
+        child=subprocess.run([sys.executable,'-c',code],input=json.dumps(case),capture_output=True,text=True,timeout=10)
+        assert child.returncode == 0,child.stderr
+        compare(json.loads(child.stdout),case['result'])
+        return
     tool = measures()
     try:
         for frame in case.get('frame', []):assert tool.doframe(frame)

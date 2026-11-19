@@ -11185,6 +11185,40 @@
         }
       ],
       "deviation": "Preserve every vector result; compare each element with a separate CASA scalar call. CASA rejects or truncates the vector."
+    },
+    {
+      "name": "rest_units_redefined_hz",
+      "method": "tofrequency",
+      "args": [
+        "LSRK",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 10000.0
+          },
+          "refer": "RADIO",
+          "type": "doppler"
+        },
+        {
+          "value": 1.0,
+          "unit": "Hz"
+        }
+      ],
+      "kwargs": {},
+      "result": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1.9999332871809605
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      },
+      "unit_definitions": [
+        [
+          "Hz",
+          "2/s"
+        ]
+      ]
     }
   ]
 }

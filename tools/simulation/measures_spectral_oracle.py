@@ -143,5 +143,10 @@ for case in cases:
         controls.append(clean(getattr(measures(),case['method'])(*values,**case['kwargs'])))
     case['scalar_controls']=controls
     case['deviation']='Preserve every vector result; compare each element with a separate CASA scalar call. CASA rejects or truncates the vector.'
+# Run this last: unit definitions are process-global in both tools.
+from casatools import quanta
+quanta().define('Hz','2/s')
+capture('rest_units_redefined_hz','tofrequency',['LSRK',doppler,{'value':1.,'unit':'Hz'}])
+cases[-1]['unit_definitions']=[['Hz','2/s']]
 args.out.write_text(json.dumps({'casatools':version_string(),'cases':cases},indent=2)+'\n')
 print(len(cases),'cases')
