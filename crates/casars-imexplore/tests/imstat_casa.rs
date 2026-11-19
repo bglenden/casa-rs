@@ -634,3 +634,106 @@ fn imstat_classic_statistics_match_casa_without_a_beam_and_with_a_box() {
         "unbeamed classic box",
     );
 }
+
+/// CASA's own imstat test suite — the scenarios upstream
+/// `test_task_imstat.py` holds that the parameter cases above did not
+/// already cover — replayed from the recorded fixture: several boxes in
+/// one `box` spec and a `box` with spaces, the channel comparisons
+/// CASA's `chans` accepts, the upstream axes quartet on a four-axis
+/// ramp, a moment map's flux, the `;` channel separator, and imstat on
+/// a linear-coordinate FITS image.
+#[test]
+fn imstat_upstream_suite_matches_casa() {
+    let expected = expected();
+    let upstream = &expected["upstream"];
+    let multi = fixture("multi.im");
+    let fourdim = fixture("fourdim.im");
+    let moment = fixture("moment.im");
+    let excl = fixture("excl.im");
+    let linear = fixture("linear_coords.fits");
+    for (case, image, call) in [
+        ("box double", &multi, json!({"box": "0,0,2,2,4,4,6,6"})),
+        ("box overlap", &multi, json!({"box": "0,0,2,2,0,0,2,2"})),
+        (
+            "box triple",
+            &multi,
+            json!({"box": "0,0,1,1,4,4,5,5,8,8,9,9"}),
+        ),
+        ("box spaces", &multi, json!({"box": "0, 0,  1 ,   1"})),
+        (
+            "box double with chans",
+            &multi,
+            json!({"box": "0,0,2,2,4,4,6,6", "chans": "0~4, 6, >8"}),
+        ),
+        ("chans gt", &multi, json!({"chans": ">8"})),
+        ("chans lt", &multi, json!({"chans": "<2"})),
+        ("chans ge", &multi, json!({"chans": ">=8"})),
+        ("chans le", &multi, json!({"chans": "<=2"})),
+        ("chans both filters", &multi, json!({"chans": ">8,<2"})),
+        ("fourdim axes minus one", &fourdim, json!({"axes": -1})),
+        ("fourdim axes 0 1 2", &fourdim, json!({"axes": [0, 1, 2]})),
+        ("fourdim axes 0 1", &fourdim, json!({"axes": [0, 1]})),
+        ("fourdim axes 3", &fourdim, json!({"axes": 3})),
+        ("moment map flux", &moment, json!({})),
+        (
+            "exclusion chans semicolon",
+            &excl,
+            json!({"axes": [0, 1], "chans": "10~20;60~90", "stokes": "IV"}),
+        ),
+        ("linear coordinates", &linear, json!({})),
+    ] {
+        let ours = run_imstat(image, call);
+        assert_record_matches(&ours, &upstream[case], case);
+    }
+    // The refusals casa-rs words as CASA does.
+    for (case, call) in [
+        ("box seven values", json!({"box": "0,0,2,2,4,4,6"})),
+        ("box inverted", json!({"box": "5,5,2,2"})),
+        ("box out of range", json!({"box": "0,0,20,20"})),
+        ("chans bad comparison", json!({"chans": ">abc"})),
+        ("chans float comparison", json!({"chans": ">2.5"})),
+    ] {
+        let message = run_imstat_failure(&multi, call);
+        assert_eq!(
+            message.trim_end().trim_end_matches('.'),
+            upstream[case]["error"]
+                .as_str()
+                .expect("the recorded refusal")
+                .trim_end()
+                .trim_end_matches('.'),
+            "{case}"
+        );
+    }
+}
+
+/// CASA's subimage of a several-box `box` spec is the bounding box with
+/// the union masked in: the cut keeps the outside pixels' values and
+/// drops their validity, as `test_multiple_region_support`'s region
+/// holds.
+#[test]
+fn imsubimage_multi_box_cuts_the_bounding_box_with_a_union_mask() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let outfile = scratch.path().join("cut.image");
+    casa_images::imsubimage(&casa_images::ImsubimageRequest {
+        imagename: fixture("multi.im"),
+        outfile: outfile.clone(),
+        box_pixels: Some("0,0,2,2,4,4,6,6".into()),
+        chans: None,
+        overwrite: false,
+    })
+    .expect("cut the multi-box region");
+    let cut = casa_images::PagedImage::<f32>::open(&outfile).expect("open the cut");
+    assert_eq!(cut.shape(), [7, 7, 10]);
+    // The gap pixel between the two boxes keeps its value and loses its
+    // validity.
+    assert_eq!(f64::from(cut.get_at(&[3, 3, 0]).expect("a pixel")), 33.0);
+    let mask = cut
+        .get_mask_slice(&[0, 0, 0], &[7, 7, 10], &[1, 1, 1])
+        .expect("the mask")
+        .expect("the region mask");
+    assert_eq!(
+        mask.iter().filter(|valid| **valid).count(),
+        18 * 10,
+        "the union holds 18 pixels per channel"
+    );
+}
