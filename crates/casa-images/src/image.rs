@@ -2490,25 +2490,46 @@ impl<T: ImagePixel> PagedImage<T> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| ImageError::Io(e.to_string()))?
                 .as_secs_f64();
+        let entries = messages
+            .iter()
+            .map(|message| ImageHistoryEntry {
+                time_mjd_seconds: time,
+                message: message.clone(),
+                location: location.to_string(),
+            })
+            .collect::<Vec<_>>();
+        Self::append_logtable_entries(path, &entries)
+    }
+
+    fn append_logtable_entries(
+        path: &Path,
+        entries: &[ImageHistoryEntry],
+    ) -> Result<(), ImageError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
         // casacore takes a reopened table's row count from the sync data in
         // `table.lock`, which this lock publishes: a save alone leaves a
         // `logtable` CASA wrote unreadable to it.
         let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
-        for message in messages {
+        for entry in entries {
             table.add_row(RecordValue::new(vec![
-                RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
+                RecordField::new(
+                    "TIME",
+                    Value::Scalar(ScalarValue::Float64(entry.time_mjd_seconds)),
+                ),
                 RecordField::new(
                     "PRIORITY",
                     Value::Scalar(ScalarValue::String("INFO".into())),
                 ),
                 RecordField::new(
                     "MESSAGE",
-                    Value::Scalar(ScalarValue::String(message.clone())),
+                    Value::Scalar(ScalarValue::String(entry.message.clone())),
                 ),
                 RecordField::new(
                     "LOCATION",
-                    Value::Scalar(ScalarValue::String(location.to_string())),
+                    Value::Scalar(ScalarValue::String(entry.location.clone())),
                 ),
                 RecordField::new(
                     "OBJECT_ID",
@@ -2650,6 +2671,19 @@ pub fn add_image_history(
         &format!("::{origin}"),
         messages,
     )
+}
+
+/// Appends full [`ImageHistoryEntry`] rows to the `logtable` of `image` in
+/// a single table write, preserving timestamps, priorities, and locations.
+///
+/// # Errors
+///
+/// When the `logtable` cannot be opened or saved.
+pub fn append_image_history_entries(
+    image: &Path,
+    entries: &[ImageHistoryEntry],
+) -> Result<(), ImageError> {
+    PagedImage::<f32>::append_logtable_entries(&image.join(LOGTABLE_NAME), entries)
 }
 
 impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {

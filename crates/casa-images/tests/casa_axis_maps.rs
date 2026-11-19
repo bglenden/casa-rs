@@ -425,8 +425,7 @@ fn a_box_subimage_of_a_transposed_image_cuts_the_direction_plane() {
         imagename: input.clone(),
         outfile: outfile.clone(),
         box_pixels: Some("1,0,2,1".into()),
-        chans: None,
-        overwrite: false,
+        ..ImsubimageRequest::default()
     })
     .unwrap();
     let cut = PagedImage::<f32>::open(&outfile).unwrap();
@@ -594,9 +593,8 @@ fn a_subimage_of_a_transposed_image_moves_each_coordinates_reference_pixel() {
     imsubimage(&ImsubimageRequest {
         imagename: input.clone(),
         outfile: outfile.clone(),
-        box_pixels: None,
         chans: Some("1~3".into()),
-        overwrite: false,
+        ..ImsubimageRequest::default()
     })
     .unwrap();
 
@@ -655,7 +653,7 @@ fn subimages_read_as_casa_reads_the_pixels_they_cut() {
             outfile: outfile.clone(),
             box_pixels,
             chans,
-            overwrite: false,
+            ..ImsubimageRequest::default()
         })
         .unwrap_or_else(|error| panic!("{name}: {error}"));
         let output = PagedImage::<f32>::open(&outfile).unwrap();

@@ -25608,11 +25608,10 @@
           "context_role": "region_reference",
           "projections": {
             "cli": {"flags": ["--region"], "metavar": "region"},
-            "provider": {"field": "region"},
+            "provider": {"field": "region", "adapter": "omit_none"},
             "python": {"name": "region"},
             "presentation": {"label": "Region", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "stokes",
@@ -25623,11 +25622,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--stokes"], "metavar": "stokes"},
-            "provider": {"field": "stokes"},
+            "provider": {"field": "stokes", "adapter": "omit_none"},
             "python": {"name": "stokes"},
             "presentation": {"label": "Stokes", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "mask",
@@ -25639,11 +25637,10 @@
           "context_role": "mask_reference",
           "projections": {
             "cli": {"flags": ["--mask"], "metavar": "mask"},
-            "provider": {"field": "mask"},
+            "provider": {"field": "mask", "adapter": "omit_none"},
             "python": {"name": "mask"},
             "presentation": {"label": "Mask", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "dropdeg",
@@ -25657,8 +25654,7 @@
             "provider": {"field": "dropdeg"},
             "python": {"name": "dropdeg"},
             "presentation": {"label": "Drop Degenerate Axes", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "verbose",
@@ -25672,8 +25668,7 @@
             "provider": {"field": "verbose"},
             "python": {"name": "verbose"},
             "presentation": {"label": "Verbose", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "stretch",
@@ -25687,10 +25682,6 @@
             "provider": {"field": "stretch"},
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
           }
         },
         {
@@ -25705,10 +25696,6 @@
             "provider": {"field": "keepaxes"},
             "python": {"name": "keepaxes"},
             "presentation": {"label": "Keep Axes", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "dropdeg", "value": {"kind": "bool", "value": true}}
           }
         }
       ]

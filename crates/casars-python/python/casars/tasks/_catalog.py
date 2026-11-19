@@ -1059,9 +1059,6 @@ def imsubimage(
     """Extract a CASA-style image section
 
     CASA's ``imsubimage``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``region``, ``stokes``, ``mask``, ``dropdeg``, ``verbose``, ``stretch``,
-    ``keepaxes``.
     """
     return _call_casa(imsubimage, locals())
 
