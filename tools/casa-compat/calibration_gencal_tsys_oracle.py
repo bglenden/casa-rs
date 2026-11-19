@@ -13,7 +13,7 @@ from casatools import table
 import numpy as np
 
 from applycal_oracle import copy_ms
-from calibration_gencal_gaincurve_oracle import protects_prior_input, refuses
+from calibration_gencal_gaincurve_oracle import protects_prior_input, refuses, retune
 from calibration_gencal_specify_oracle import apply_both, columns, compare_tables, generate
 
 
@@ -120,6 +120,14 @@ def main():
                         tool.close()
                     results['spectrum-scalar-weights'] = check_apply(
                         root / 'spectrum-scalar-weights', plain, reference, candidate,
+                        native, spectral_weights=False)
+                    shifted = root / 'shifted-spectral-window.ms'
+                    copy_ms(plain, shifted)
+                    frequencies = columns(plain / 'SPECTRAL_WINDOW', ('CHAN_FREQ',))['CHAN_FREQ'][:, 0]
+                    frequency = frequencies[len(frequencies) // 2] + np.ptp(frequencies) / 4
+                    retune(shifted, 0, frequency)
+                    results['shifted-spectral-window'] = check_apply(
+                        root / 'shifted-spectral-window', shifted, reference, candidate,
                         native, spectral_weights=False)
             else:
                 for module, engine in ((casa, 'casa'), (native, 'native')):
