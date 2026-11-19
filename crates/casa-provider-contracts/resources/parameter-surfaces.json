@@ -19157,7 +19157,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "yaxis"
+              "name": "yaxis",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "yaxis",
@@ -19198,7 +19199,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "ydatacolumn"
+              "name": "ydatacolumn",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "ydatacolumn",
@@ -19240,7 +19242,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "yframe"
+              "name": "yframe",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "yframe",
@@ -19282,7 +19285,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "yinterp"
+              "name": "yinterp",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "yinterp",
@@ -19323,7 +19327,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "yaxislocation"
+              "name": "yaxislocation",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "yaxislocation",
@@ -21005,7 +21010,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "customsymbol"
+              "name": "customsymbol",
+              "type_hint": "bool | list[bool] | tuple[bool, ...]"
             },
             "presentation": {
               "label": "customsymbol",
@@ -21046,7 +21052,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "symbolshape"
+              "name": "symbolshape",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "symbolshape",
@@ -21087,7 +21094,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "symbolsize"
+              "name": "symbolsize",
+              "type_hint": "int | list[int] | tuple[int, ...]"
             },
             "presentation": {
               "label": "symbolsize",
@@ -21128,7 +21136,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "symbolcolor"
+              "name": "symbolcolor",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "symbolcolor",
@@ -21169,7 +21178,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "symbolfill"
+              "name": "symbolfill",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "symbolfill",
@@ -21210,7 +21220,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "symboloutline"
+              "name": "symboloutline",
+              "type_hint": "bool | list[bool] | tuple[bool, ...]"
             },
             "presentation": {
               "label": "symboloutline",
@@ -21292,7 +21303,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "customflaggedsymbol"
+              "name": "customflaggedsymbol",
+              "type_hint": "bool | list[bool] | tuple[bool, ...]"
             },
             "presentation": {
               "label": "customflaggedsymbol",
@@ -21333,7 +21345,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "flaggedsymbolshape"
+              "name": "flaggedsymbolshape",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "flaggedsymbolshape",
@@ -21374,7 +21387,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "flaggedsymbolsize"
+              "name": "flaggedsymbolsize",
+              "type_hint": "int | list[int] | tuple[int, ...]"
             },
             "presentation": {
               "label": "flaggedsymbolsize",
@@ -21415,7 +21429,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "flaggedsymbolcolor"
+              "name": "flaggedsymbolcolor",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "flaggedsymbolcolor",
@@ -21456,7 +21471,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "flaggedsymbolfill"
+              "name": "flaggedsymbolfill",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
               "label": "flaggedsymbolfill",
@@ -21497,7 +21513,8 @@
               "adapter": "identity"
             },
             "python": {
-              "name": "flaggedsymboloutline"
+              "name": "flaggedsymboloutline",
+              "type_hint": "bool | list[bool] | tuple[bool, ...]"
             },
             "presentation": {
               "label": "flaggedsymboloutline",

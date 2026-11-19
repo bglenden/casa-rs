@@ -1168,7 +1168,8 @@
     "output_product",
     "presentation",
     "region_reference",
-    "spectral_window_selection"
+    "spectral_window_selection",
+    "table_selection"
    ],
    "dimension": [
     "angle",

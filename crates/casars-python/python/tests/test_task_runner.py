@@ -202,16 +202,16 @@ def test_a_profile_runs_as_the_wrappers_values(
     assert values["solint"] == "60s"
 
 
-@pytest.mark.parametrize("surface", ["msexplore", "plotms"])
 def test_a_request_carries_only_the_values_set(
-    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch, surface: str
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Astra's #974 P3: every resolved value went as if set, so msexplore
     # refused a page_spec beside datacolumn, color_by and the layout
     # controls the caller never set.
     log = fake("CASARS_MSEXPLORE_BIN")
     monkeypatch.chdir(tmp_path)
-    wrapper = getattr(tasks, surface)
+    surface = "msexplore"
+    wrapper = tasks.msexplore
 
     def sent() -> dict:
         return recorded(log)["request"]["values"]
@@ -234,6 +234,23 @@ def test_a_request_carries_only_the_values_set(
     # A value the caller sets goes, even when it is the default.
     wrapper(**loaded, datacolumn="data")
     assert sorted(sent()) == ["datacolumn", "page_spec", "vis"]
+
+
+def test_plotms_omits_casa_defaults_from_the_request(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = fake("CASARS_MSEXPLORE_BIN")
+    monkeypatch.setenv("FAKE_TASK_VALUE", '{"kind": "none"}')
+    caltable = tmp_path / "gain.cal"
+    caltable.mkdir()
+
+    assert tasks.plotms(caltable=str(caltable), xaxis="frequency", showgui=False) is None
+    invocation = recorded(log)
+    assert invocation["argv"] == ["--json-run", "-"]
+    assert invocation["request"]["surface"] == "plotms"
+    assert invocation["request"]["values"] == {
+        "caltable": str(caltable), "xaxis": "frequency", "showgui": False,
+    }
 
 
 def test_a_relative_override_names_a_file_where_the_caller_is(
