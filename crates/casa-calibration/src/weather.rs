@@ -6,7 +6,7 @@ mod opacity;
 
 use std::path::Path;
 
-use casa_ms::MeasurementSet;
+use casa_provider_contracts::CasaFloat;
 use casa_tables::{Table, TableOptions};
 use casa_types::ScalarValue;
 use casa_types::quanta::format::{YMD, format_time};
@@ -15,7 +15,7 @@ pub(crate) use figure::WeatherFigure;
 
 #[derive(serde::Serialize)]
 pub(crate) struct WeatherEstimate {
-    pub(crate) opacity: Vec<casa_provider_contracts::CasaFloat>,
+    pub(crate) opacity: Vec<CasaFloat>,
     pub(crate) windows_ghz: Vec<f64>,
     pub(crate) plot: Option<WeatherFigure>,
 }
@@ -44,22 +44,27 @@ struct WeatherRows {
 }
 
 pub(crate) fn estimate_weather(
-    ms: &MeasurementSet,
     path: &Path,
     seasonal_weight: f64,
     do_plot: bool,
     vis: &str,
     plot_name: &str,
 ) -> Result<WeatherEstimate, String> {
-    let windows = ms.spectral_window().map_err(display)?;
-    let windows_ghz = (0..windows.row_count())
-        .map(|row| windows.ref_frequency(row).map(|hz| hz * 1e-9))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(display)?;
+    // CASA reads these literal table directories. An unreadable optional
+    // WEATHER table is a seasonal fallback, even if it cannot be opened as
+    // part of a complete native MeasurementSet.
     let rows = weather_rows(path)?;
+    let windows = Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW"))).map_err(display)?;
+    let windows_ghz = numbers(&windows, "REF_FREQUENCY")?
+        .into_iter()
+        .map(|hz| hz * 1e-9)
+        .collect::<Vec<_>>();
     let first_time = match &rows {
         Some(rows) => rows.seconds[0],
-        None => first_visibility_time(ms.main_table())?,
+        None => {
+            let main = Table::open(TableOptions::new(path)).map_err(display)?;
+            first_visibility_time(&main)?
+        }
     };
     let seasonal = seasonal_water(first_time)?;
     let (station, weighted) = match &rows {
@@ -82,7 +87,7 @@ pub(crate) fn estimate_weather(
     let mean_weighted = mean(&weighted);
     let opacity = opacity::windows(&windows_ghz, mean_weighted)?
         .into_iter()
-        .map(casa_provider_contracts::CasaFloat)
+        .map(CasaFloat)
         .collect();
     let plot_data = plot_rows.map(|rows| WeatherPlotData {
         seasonal_water_mm: vec![seasonal; rows.seconds.len()],

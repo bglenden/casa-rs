@@ -52,6 +52,9 @@ def fixtures(root):
     shutil.copytree(missing, empty)
     assert tool.create(str(empty / "WEATHER"), description, nrow=0)
     tool.close()
+    broken = root / "broken.ms"
+    shutil.copytree(missing, broken)
+    (broken / "WEATHER").mkdir()
     short = root / "low.ms"
     shutil.copytree(missing, short)
     with opened(short / "SPECTRAL_WINDOW", True) as t:
@@ -121,6 +124,7 @@ def evaluate(task):
         ("nonfinite", ("station.ms", float("nan"), False), {}, None),
         ("missing", ("missing.ms", 0.0, True), {}, None),
         ("empty", ("empty.ms", 0.0, True), {}, None),
+        ("broken", ("broken.ms", 0.0, True), {}, None),
     ]
     output = {}
     for name, args, keywords, product in cases:
@@ -128,7 +132,7 @@ def evaluate(task):
         print(f"{name} {result['seconds']:.3f} s", flush=True)
         output[name] = result
     assert not any(Path(path).exists() for path in [
-        "unused.png", "missing.ms.plotweather.png", "empty.ms.plotweather.png",
+        "unused.png", "missing.ms.plotweather.png", "empty.ms.plotweather.png", "broken.ms.plotweather.png",
     ])
     errors = [
         ((), {}, AssertionError),
@@ -186,7 +190,8 @@ def compare(native, casa_results):
     np.testing.assert_allclose(native["extrapolated"]["opacity"], 1.25 * seasonal - 0.25 * station, rtol=5e-13)
     np.testing.assert_array_equal(native["missing"]["opacity"], seasonal)
     np.testing.assert_array_equal(native["empty"]["opacity"], seasonal)
-    print("8 paired opacity cases, 10 matched panels, 11 exact errors, 4 numerical laws", flush=True)
+    np.testing.assert_array_equal(native["broken"]["opacity"], seasonal)
+    print("9 paired opacity cases, 10 matched panels, 11 exact errors, 5 numerical laws", flush=True)
 
 
 def main():
