@@ -51,12 +51,16 @@ def read(path):
                 if name in table.colnames()}
 
 
-def compare_case(root, base, native, name, options, *, through_tool=False, field_rows=None):
+def compare_case(root, base, native, name, options, *, through_tool=False, field_rows=None, multi_ms=False):
     products = []
     reports = []
     for api, engine in ((casa, "casa"), (native, "native")):
         vis = root / f"{engine}-{name}.ms"
-        copy_ms(base, vis)
+        if multi_ms:
+            casa.partition(str(base), str(vis), separationaxis='scan', numsubms=2,
+                           disableparallel=True, flagbackup=False, datacolumn='all')
+        else:
+            copy_ms(base, vis)
         before = read(vis)
         if through_tool:
             if engine == 'casa':
@@ -172,10 +176,80 @@ def compare_new_selected_spectrum(root, base, native):
         np.testing.assert_allclose(products[1][column], expected, rtol=2e-7, atol=0, err_msg=column)
 
 
+def selector_fixture(path, base):
+    copy_ms(base, path)
+    for subtable, overrides in [
+        ('OBSERVATION', {}),
+        ('STATE', {'OBS_MODE': 'CALIBRATE_PHASE#ON_SOURCE'}),
+        ('SPECTRAL_WINDOW', {'NAME': 'DECIMATED'}),
+        ('DATA_DESCRIPTION', {'SPECTRAL_WINDOW_ID': 1}),
+    ]:
+        with opened(path / subtable, True) as table:
+            assert table.nrows() == 1, subtable
+            table.addrows(1)
+            for column in table.colnames():
+                if table.iscelldefined(column, 0):
+                    table.putcell(column, 1, overrides.get(column, table.getcell(column, 0)))
+    with opened(path, True) as table:
+        fields = table.getcol('FIELD_ID')
+        for column in ('OBSERVATION_ID', 'STATE_ID', 'ARRAY_ID', 'DATA_DESC_ID'):
+            table.putcol(column, fields)
+        scans = np.unique(table.getcol('SCAN_NUMBER')[fields == 1])
+        assert len(scans) == 1
+        return str(scans[0])
+
+
+def compare_undefined_spectra(root, base, native):
+    for spectrum, rows in [('weight-first-undefined', [1]), ('weight-later-undefined', [0])]:
+        source = root / f'{spectrum}.ms'
+        copy_ms(base, source)
+        with opened(source, True) as table:
+            descriptor = table.getcoldesc('DATA')
+            descriptor.update(valueType='float', dataManagerType='StandardStMan',
+                              dataManagerGroup='StandardStMan', option=0)
+            descriptor.pop('shape', None)
+            table.addcols({'WEIGHT_SPECTRUM': descriptor})
+            for row in rows:
+                table.putcell('WEIGHT_SPECTRUM', row, np.full((2, 8), 4.0, dtype=np.float32))
+        previews = []
+        for engine, api in [('casa', casa), ('native', native)]:
+            vis = root / f'{engine}-{spectrum}.ms'
+            copy_ms(source, vis)
+            if spectrum == 'weight-later-undefined':
+                try:
+                    api.statwt(str(vis), flagbackup=False, preview=True)
+                except RuntimeError as error:
+                    assert 'WEIGHT_SPECTRUM' in str(error)
+                else:
+                    raise AssertionError(f'{engine} accepted a partially initialized weight spectrum')
+            else:
+                previews.append(api.statwt(str(vis), flagbackup=False, preview=True))
+                api.statwt(str(vis), flagbackup=False)
+                with opened(vis) as table:
+                    assert not table.iscelldefined('WEIGHT_SPECTRUM', 0)
+                    np.testing.assert_array_equal(table.getcell('WEIGHT_SPECTRUM', 1), 4.0)
+        if previews:
+            np.testing.assert_allclose(list(previews[0].values()), list(previews[1].values()), rtol=2e-7)
+
+
+def compare_write_batches(root, base, native):
+    expanded = root / 'multiple-write-batches.ms'
+    copy_ms(base, expanded)
+    with opened(expanded, True) as table:
+        while table.nrows() < 70_000:
+            rows = table.nrows()
+            table.copyrows(str(expanded), startrowout=rows, nrow=rows)
+            for name in ('TIME', 'TIME_CENTROID'):
+                values = table.getcol(name, startrow=rows, nrow=rows)
+                table.putcol(name, values + np.ptp(values) + 10, startrow=rows, nrow=rows)
+    compare_case(root, expanded, native, 'spectral-write-batches', {'chanbin': 3})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--native-bin", required=True, type=Path)
+    parser.add_argument("--large", action="store_true", help="include the 122,880-row spectral write")
     args = parser.parse_args()
     root = args.work.resolve()
     root.mkdir()
@@ -204,6 +278,21 @@ def main():
     ]
     for name, options in cases:
         compare_case(root, base, native, name, options)
+    selected = root / 'observing-selectors.ms'
+    scan = selector_fixture(selected, base)
+    selectors = [('scan', scan), ('observation', '1'), ('array', '1'),
+                 ('intent', '*CALIBRATE_PHASE*'), ('spw', 'DECIMATED:1~5^2')]
+    for argument, value in selectors:
+        compare_case(root, selected, native, f'only-{argument}', {argument: value}, field_rows=1)
+    compare_case(root, selected, native, 'different-data-descriptions',
+                 {'combine': 'field,scan,state', 'timebin': '200s'})
+    auto = root / 'autocorrelations.ms'
+    copy_ms(base, auto)
+    with opened(auto, True) as table:
+        antenna1, antenna2 = table.getcol('ANTENNA1'), table.getcol('ANTENNA2')
+        antenna2[::10] = antenna1[::10]
+        table.putcol('ANTENNA2', antenna2)
+    compare_case(root, auto, native, 'autocorrelations', {'timebin': 2, 'chanbin': 3})
     gapped = root / "gapped.ms"
     copy_ms(base, gapped)
     with opened(gapped, True) as table:
@@ -267,6 +356,7 @@ def main():
                fluxdensity=[2., 0., 0., 0.], spix=-0.7, usescratch=False)
     compare_case(root, virtual, native, 'residual-virtual-model', {'datacolumn': 'residual', 'field': 'FLUX'})
     compare_new_selected_spectrum(root, base, native)
+    compare_undefined_spectra(root, base, native)
     outliers = root / 'outliers.ms'
     copy_ms(weighted, outliers)
     with opened(outliers, True) as table:
@@ -292,8 +382,19 @@ def main():
     ]
     for name, source_ms, options in tools:
         compare_case(root, source_ms, native, name, options, through_tool=True)
+    partitions = [
+        ('multi-ms-scalar', {}, False),
+        ('multi-ms-spectral', {'chanbin': 3}, False),
+        ('multi-ms-cross-scan', {'timebin': '200s', 'combine': 'field,scan,state'}, False),
+        ('multi-ms-tool', {'chanbin': 4, 'datacolumn': 'data'}, True),
+    ]
+    for name, options, through_tool in partitions:
+        compare_case(root, base, native, name, options, through_tool=through_tool, multi_ms=True)
     compare_downstream(root, base, native)
-    print(f"{len(cases) + len(timed) + len(channels) + len(robust) + len(tools) + 7} matched CASA statwt workflows")
+    if args.large:
+        compare_write_batches(root, base, native)
+    total = len(cases) + len(selectors) + len(timed) + len(channels) + len(robust) + len(tools)
+    print(f"{total + len(partitions) + 11 + args.large} matched CASA statwt workflows")
 
 
 if __name__ == "__main__":
