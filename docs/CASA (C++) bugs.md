@@ -5395,6 +5395,17 @@ CASA's raw display errors and separately records the direct conversion
 for all seven affected references. The missing-frame errors still apply
 when the required epoch or direction is absent (#1252).
 
+## Frame display can report UT1 outside the Earth-orientation table
+
+With the bundled measures snapshot and an explicit UTC epoch in 2030
+or 2100, CASA 6.7.6.14 displays a UT1 value despite missing
+Earth-orientation coverage. Casa-rs displays the raw epoch and the
+available TDB and TT values, and writes `UT1 = unavailable`. This keeps
+the frame visible after `framenow()` when the Earth-orientation table
+does not cover the current date. The fixture retains CASA's exact
+display and uses direct TDB and TT conversions as independent controls
+(#1252).
+
 ## Component spectrum changes can discard data
 
 - Date noted: 2026-11-06

@@ -58,6 +58,82 @@
       "result": "Frame: Epoch: 55564::02:57:46.5984 (TDB = 55564.1, UT1 = 55564.1, TT = 55564.1)"
     },
     {
+      "name": "future_2030",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 62502.5
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 62502::12:00:00.0000 (TDB = 62502.5, UT1 = 62502.5, TT = 62502.5)",
+      "native_result": "Frame: Epoch: 62502::12:00:00.0000 (TDB = 62502.5, UT1 = unavailable, TT = 62502.5)",
+      "epoch_controls": {
+        "TDB": {
+          "m0": {
+            "unit": "d",
+            "value": 62502.500800739974
+          },
+          "refer": "TDB",
+          "type": "epoch"
+        },
+        "TT": {
+          "m0": {
+            "unit": "d",
+            "value": 62502.50080074074
+          },
+          "refer": "TDT",
+          "type": "epoch"
+        }
+      }
+    },
+    {
+      "name": "future_2100",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 88069.5
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 88069::12:00:00.0000 (TDB = 88069.5, UT1 = 88069.5, TT = 88069.5)",
+      "native_result": "Frame: Epoch: 88069::12:00:00.0000 (TDB = 88069.5, UT1 = unavailable, TT = 88069.5)",
+      "epoch_controls": {
+        "TDB": {
+          "m0": {
+            "unit": "d",
+            "value": 88069.50080073958
+          },
+          "refer": "TDB",
+          "type": "epoch"
+        },
+        "TT": {
+          "m0": {
+            "unit": "d",
+            "value": 88069.50080074075
+          },
+          "refer": "TDT",
+          "type": "epoch"
+        }
+      }
+    },
+    {
       "name": "position",
       "setup": [
         "done",

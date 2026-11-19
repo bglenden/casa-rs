@@ -35,6 +35,8 @@ states = {
     "empty": ["done"],
     "epoch": ["done", epoch],
     "tai": ["done", tai],
+    "future_2030": ["done", m.epoch("UTC", "2030/01/01/12:00:00")],
+    "future_2100": ["done", m.epoch("UTC", "2100/01/01/12:00:00")],
     "position": ["done", position],
     "itrf": ["done", itrf],
     "direction": ["done", direction],
@@ -89,6 +91,18 @@ for name, state in states.items():
         case["result"] = tool.showframe()
     except RuntimeError as error:
         case["error"] = {"type": type(error).__name__, "message": str(error)}
+    if name.startswith("future_"):
+        # CASA's extrapolated display uses zero dUT1 beyond the snapshot.
+        # TDB and TT are independent controls for the values we can display.
+        control = {
+            reference: tool.measure(state[1], reference)
+            for reference in ("TDB", "TT")
+        }
+        tdb, tt = [format(control[reference]["m0"]["value"], ".6g")
+                   for reference in ("TDB", "TT")]
+        prefix = case["result"].split(" (TDB", 1)[0]
+        case["native_result"] = f"{prefix} (TDB = {tdb}, UT1 = unavailable, TT = {tt})"
+        case["epoch_controls"] = control
     if name == "fresh":
         case["native_result"] = "Frame: "
         case["owner_decision"] = "The native tool starts with an explicit empty frame."

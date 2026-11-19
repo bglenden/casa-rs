@@ -42,11 +42,12 @@ fn radial_error(error: MeasureError) -> String {
 fn render(state: &State, native: &MeasFrame) -> Result<String, String> {
     let mut elements = Vec::new();
     if let Some(epoch) = native.epoch() {
-        let to = |refer| {
-            epoch
-                .convert_to(refer, native)
-                .map(|value| stream_double(value.value().as_mjd()))
-                .map_err(|error| error.to_string())
+        let to = |refer| match epoch.convert_to(refer, native) {
+            Ok(value) => Ok(stream_double(value.value().as_mjd())),
+            Err(MeasureError::MissingFrameData { what }) if what.starts_with("dUT1") => {
+                Ok("unavailable".to_owned())
+            }
+            Err(error) => Err(error.to_string()),
         };
         let (tdb, ut1, tt) = (to(EpochRef::TDB)?, to(EpochRef::UT1)?, to(EpochRef::TT)?);
         elements.push(format!(
