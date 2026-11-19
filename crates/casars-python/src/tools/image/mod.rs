@@ -42,6 +42,15 @@ struct ImageState {
 }
 
 impl PyImageTool {
+    fn attached(image: AttachedImage) -> Self {
+        Self {
+            state: Mutex::new(ImageState {
+                image: Some(image),
+                history: true,
+            }),
+        }
+    }
+
     fn state(&self) -> MutexGuard<'_, ImageState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
