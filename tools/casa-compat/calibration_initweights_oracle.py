@@ -59,9 +59,15 @@ def add_spectra(path, contents):
         return
     with opened(path, write=True) as main:
         for index, column in enumerate(SPECTRA):
-            assert main.addcols({column: {"valueType": "float", "ndim": 2}})
+            descriptor = {column: {"valueType": "float", "ndim": 2}}
+            if contents == "tiled-partial":
+                manager = {"TYPE": "TiledShapeStMan", "NAME": "Partial" + column,
+                           "SPEC": {"DEFAULTTILESHAPE": [2, 8, 100]}, "COLUMNS": [column]}
+                assert main.addcols(descriptor, manager)
+            else:
+                assert main.addcols(descriptor)
             cell = np.arange(16, dtype=np.float32).reshape(2, 8) + 1 + index * 100
-            for row in range(0, main.nrows(), 2 if contents == "partial" else 1):
+            for row in range(0, main.nrows(), 2 if contents.endswith("partial") else 1):
                 main.putcell(column, row, cell)
 
 
@@ -153,6 +159,26 @@ def compare_mms(root, base, native):
             compare(expected, actual)
 
 
+def compare_across_batches(root, base, native):
+    paths = [root / f"{name}-multiple-batches.ms" for name in ("casa", "native")]
+    for engine, vis in zip((casa, native), paths, strict=True):
+        copy_ms(base, vis)
+        with opened(vis, write=True) as main:
+            while main.nrows() <= 65_536:
+                rows = main.nrows()
+                main.copyrows(str(vis), startrowout=rows, nrow=rows)
+                assert main.nrows() == 2 * rows
+        assert engine.initweights(str(vis), dowtsp=True) is None
+    with opened(paths[0]) as expected, opened(paths[1]) as actual:
+        # A full casacore column read requires every variable-shape row to
+        # exist. Assert this at the old write boundary before bulk readback.
+        assert all(actual.iscelldefined("WEIGHT_SPECTRUM", row)
+                   for row in (0, 65_535, 65_536, actual.nrows() - 1))
+        for column in ("WEIGHT", "SIGMA", "WEIGHT_SPECTRUM", *UNCHANGED):
+            np.testing.assert_allclose(actual.getcol(column), expected.getcol(column), rtol=2e-7, atol=0,
+                                       err_msg=column)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -177,8 +203,10 @@ def main():
              for contents in ("", "partial", "full")]
     for case in cases:
         compare_case(args.work, base, native, *case)
+    compare_case(args.work, base, native, "nyq", False, "tiled-partial")
     compare_mms(args.work, base, native)
-    print(f"{len(cases) + 2} matched CASA initweights cases")
+    compare_across_batches(args.work, base, native)
+    print(f"{len(cases) + 4} matched CASA initweights cases")
 
 
 if __name__ == "__main__":

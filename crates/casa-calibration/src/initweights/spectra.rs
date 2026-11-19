@@ -55,7 +55,12 @@ impl NewSpectra {
         let staging = tempfile::Builder::new()
             .prefix(".initweights-")
             .tempdir_in(path)
-            .map_err(TableError::from)?;
+            .map_err(|error| {
+                TableError::Storage(format!(
+                    "stage weight spectrum for {}: {error}",
+                    path.display()
+                ))
+            })?;
         let big_endian = main
             .stored_endian_format()?
             .unwrap_or_default()
