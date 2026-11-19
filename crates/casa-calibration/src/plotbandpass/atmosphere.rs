@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Atmospheric transmission and sky temperature over the selected bandpass.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -14,7 +15,8 @@ use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, PositionRef};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Serialize;
 
-use super::table::{SolutionRow, SolutionWindow, Solutions, array};
+use super::spectrum::median;
+use super::table::{SolutionRow, SolutionWindow, Solutions, array, integers, numbers};
 
 pub(crate) struct AtmosphericOptions<'a> {
     pub(crate) transmission: bool,
@@ -45,6 +47,8 @@ pub(super) struct AtmosphereContext<'a> {
     fields: Table,
     antennas: Table,
     weather: Option<Table>,
+    pointing: Option<Table>,
+    scan_times: BTreeMap<i32, Vec<ScanTimes>>,
 }
 
 impl<'a> AtmosphereContext<'a> {
@@ -73,7 +77,9 @@ impl<'a> AtmosphereContext<'a> {
             ),
             fields: open(measurement_set, "FIELD")?,
             antennas: open(measurement_set, "ANTENNA")?,
-            weather: open(measurement_set, "WEATHER").ok(),
+            weather: open_optional(measurement_set, "WEATHER"),
+            pointing: open_optional(measurement_set, "POINTING"),
+            scan_times: scan_times(measurement_set)?,
         }))
     }
 
@@ -93,12 +99,20 @@ impl<'a> AtmosphereContext<'a> {
             .convert_to(PositionRef::WGS84)
             .map_err(|error| error.to_string())?
             .values()[2];
-        let airmass = self.airmass(row, &position)?;
+        let field = self.reference_field(row.field);
+        let scan = self.scan_times.get(&field).and_then(|scans| {
+            scans.iter().min_by(|a, b| {
+                (a.mean - row.time)
+                    .abs()
+                    .total_cmp(&(b.mean - row.time).abs())
+            })
+        });
+        let airmass = self.airmass(row, field, scan, &position)?;
         let water_mm = self.water(row.time);
         let weather = self
             .weather
             .as_ref()
-            .map(|table| conditions(table, row.time))
+            .map(|table| conditions(table, scan.map_or([row.time; 2], |scan| scan.bounds)))
             .unwrap_or_default();
         let parameters = ProfileParameters {
             altitude_m,
@@ -208,8 +222,11 @@ impl<'a> AtmosphereContext<'a> {
                 .map(|channel| channel as f64)
                 .collect::<Vec<_>>()
         };
-        if !frequency_axis && image {
+        if image {
             x.reverse();
+            if frequency_axis {
+                y.reverse();
+            }
         }
         Ok(AtmosphericCurve {
             x,
@@ -221,26 +238,40 @@ impl<'a> AtmosphereContext<'a> {
         })
     }
 
-    fn airmass(&self, row: SolutionRow, antenna: &MPosition) -> Result<f64, String> {
-        let field_id = if self.options.reference_field.is_empty() {
-            row.field
-        } else {
-            self.options
-                .reference_field
-                .parse::<i32>()
-                .ok()
-                .or_else(|| {
-                    (0..self.fields.row_count())
-                        .find(|&id| {
-                            text_cell(&self.fields, id, "NAME")
-                                == Some(self.options.reference_field)
-                        })
-                        .and_then(|id| i32::try_from(id).ok())
-                })
-                .unwrap_or(row.field)
-        };
+    fn reference_field(&self, default: i32) -> i32 {
+        if self.options.reference_field.is_empty() {
+            return default;
+        }
+        self.options
+            .reference_field
+            .parse::<i32>()
+            .ok()
+            .or_else(|| {
+                (0..self.fields.row_count())
+                    .find(|&id| {
+                        text_cell(&self.fields, id, "NAME") == Some(self.options.reference_field)
+                    })
+                    .and_then(|id| i32::try_from(id).ok())
+            })
+            .unwrap_or(default)
+    }
+
+    fn airmass(
+        &self,
+        row: SolutionRow,
+        field_id: i32,
+        scan: Option<&ScanTimes>,
+        antenna: &MPosition,
+    ) -> Result<f64, String> {
+        if !self.site_name.contains("VLA")
+            && !self.site_name.contains("NRO")
+            && let (Some(pointing), Some(scan)) = (&self.pointing, scan)
+            && let Some(elevation) = pointing_elevation(pointing, row.antenna, scan.bounds)
+        {
+            return Ok(airmass_for_elevation(elevation));
+        }
         let field = usize::try_from(field_id).map_err(|error| error.to_string())?;
-        let reference = array(&self.fields, field, "REFERENCE_DIR")?;
+        let reference = array(&self.fields, field, "DELAY_DIR")?;
         let ArrayValue::Float64(reference) = reference else {
             return Err("invalid FIELD reference direction".into());
         };
@@ -251,17 +282,15 @@ impl<'a> AtmosphereContext<'a> {
             .unwrap_or_else(|| antenna.clone());
         let frame = MeasFrame::new()
             .with_measures(self.measures.clone())
-            .with_epoch(MEpoch::from_mjd_seconds(row.time, EpochRef::UTC))
+            .with_epoch(MEpoch::from_mjd_seconds(
+                scan.map_or(row.time, |scan| scan.mean),
+                EpochRef::UTC,
+            ))
             .with_position(position);
         let direction = MDirection::from_angles(ra, dec, DirectionRef::J2000)
             .convert_to(DirectionRef::AZEL, &frame)
             .map_err(|error| error.to_string())?;
-        let elevation = direction.latitude_rad();
-        Ok(if elevation <= 3.0_f64.to_radians() {
-            std::f64::consts::SQRT_2
-        } else {
-            elevation.sin().recip()
-        })
+        Ok(airmass_for_elevation(direction.latitude_rad()))
     }
 
     fn water(&self, time: f64) -> f64 {
@@ -279,7 +308,7 @@ impl<'a> AtmosphereContext<'a> {
         ["ASDM_CALWVR", "ASDM_CALATMOSPHERE"]
             .iter()
             .find_map(|name| {
-                let table = open(self.measurement_set, name).ok()?;
+                let table = open_optional(self.measurement_set, name)?;
                 let index = nearest_time(&table, "startValidTime", time)?;
                 match table.cell_accessor(index, "water").ok()?.value().ok()?? {
                     Value::Scalar(ScalarValue::Float64(value)) if *value >= 1e-8 => {
@@ -305,7 +334,7 @@ impl<'a> AtmosphereContext<'a> {
             .into_iter()
             .flatten()
             .find_map(|ms| {
-                let table = open(ms, "ASDM_RECEIVER").ok()?;
+                let table = open_optional(ms, "ASDM_RECEIVER")?;
                 let key = format!("SpectralWindow_{window}");
                 let row = (0..table.row_count())
                     .find(|&row| text_cell(&table, row, "spectralWindowId") == Some(&key))?;
@@ -333,12 +362,28 @@ impl Default for Conditions {
     }
 }
 
-fn conditions(weather: &Table, time: f64) -> Conditions {
+fn conditions(weather: &Table, [start, stop]: [f64; 2]) -> Conditions {
     let default = Conditions::default();
-    let Some(row) = nearest_time(weather, "TIME", time) else {
-        return default;
+    let mut rows = (0..weather.row_count())
+        .filter(|&row| {
+            scalar_number(weather, row, "TIME").is_some_and(|time| start <= time && time <= stop)
+        })
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        let Some(row) = nearest_time(weather, "TIME", start) else {
+            return default;
+        };
+        rows.push(row);
+    }
+    let reported = |column| {
+        median(
+            &rows
+                .iter()
+                .filter_map(|&row| scalar_number(weather, row, column))
+                .collect::<Vec<_>>(),
+        )
     };
-    let pressure = scalar_number(weather, row, "PRESSURE").unwrap_or(default.pressure_hpa);
+    let pressure = reported("PRESSURE");
     let unit = weather
         .column_keywords("PRESSURE")
         .and_then(|record| record.get("QuantumUnits"))
@@ -351,11 +396,13 @@ fn conditions(weather: &Table, time: f64) -> Conditions {
     } else {
         pressure
     };
-    let temperature = scalar_number(weather, row, "TEMPERATURE").unwrap_or(default.temperature_k);
-    let humidity = scalar_number(weather, row, "REL_HUMIDITY").unwrap_or(default.humidity_percent);
+    let temperature = reported("TEMPERATURE");
+    let humidity = reported("REL_HUMIDITY");
     Conditions {
         pressure_hpa: if hpa > 0.0 { hpa } else { default.pressure_hpa },
-        temperature_k: if temperature > 100.0 {
+        temperature_k: if !temperature.is_finite() {
+            default.temperature_k
+        } else if temperature > 100.0 {
             temperature
         } else {
             temperature + 273.15
@@ -365,6 +412,86 @@ fn conditions(weather: &Table, time: f64) -> Conditions {
         } else {
             default.humidity_percent
         },
+    }
+}
+
+struct ScanTimes {
+    bounds: [f64; 2],
+    mean: f64,
+}
+
+fn scan_times(ms: &Path) -> Result<BTreeMap<i32, Vec<ScanTimes>>, String> {
+    let table = Table::open(TableOptions::new(ms)).map_err(|error| error.to_string())?;
+    let fields = integers(&table, "FIELD_ID")?;
+    let scans = integers(&table, "SCAN_NUMBER")?;
+    let times = numbers(&table, "TIME")?;
+    let mut keyed = BTreeMap::<(i32, i32), Vec<f64>>::new();
+    for ((field, scan), time) in fields.into_iter().zip(scans).zip(times) {
+        if time.is_finite() {
+            keyed.entry((field, scan)).or_default().push(time);
+        }
+    }
+    let mut result = BTreeMap::<i32, Vec<ScanTimes>>::new();
+    for ((field, _), mut times) in keyed {
+        times.sort_unstable_by(f64::total_cmp);
+        times.dedup();
+        result.entry(field).or_default().push(ScanTimes {
+            bounds: [times[0], times[times.len() - 1]],
+            mean: times.iter().sum::<f64>() / times.len() as f64,
+        });
+    }
+    Ok(result)
+}
+
+fn pointing_elevation(table: &Table, antenna: i32, [start, stop]: [f64; 2]) -> Option<f64> {
+    let rows = (0..table.row_count())
+        .filter_map(|row| {
+            let ScalarValue::Int32(id) =
+                table.cell_accessor(row, "ANTENNA_ID").ok()?.scalar().ok()?
+            else {
+                return None;
+            };
+            if *id != antenna {
+                return None;
+            }
+            let time = scalar_number(table, row, "TIME")?;
+            let ArrayValue::Float64(direction) = array(table, row, "DIRECTION").ok()? else {
+                return None;
+            };
+            let elevation = direction.iter().nth(1).copied()?;
+            Some((time, elevation))
+        })
+        .collect::<Vec<_>>();
+    let first = rows.iter().position(|&(time, _)| time > start);
+    let last = rows.iter().rposition(|&(time, _)| time < stop);
+    if let (Some(first), Some(last)) = (first, last)
+        && first <= last
+    {
+        return Some(median(
+            &rows[first..=last]
+                .iter()
+                .map(|&(_, elevation)| elevation)
+                .collect::<Vec<_>>(),
+        ));
+    }
+    if let Some(first) = first {
+        return Some(rows[first].1);
+    }
+    (!rows.is_empty()).then(|| {
+        median(
+            &rows
+                .iter()
+                .map(|&(_, elevation)| elevation)
+                .collect::<Vec<_>>(),
+        )
+    })
+}
+
+fn airmass_for_elevation(elevation: f64) -> f64 {
+    if elevation <= 3.0_f64.to_radians() {
+        std::f64::consts::SQRT_2
+    } else {
+        elevation.sin().recip()
     }
 }
 
@@ -400,6 +527,13 @@ fn text_cell<'a>(table: &'a Table, row: usize, name: &str) -> Option<&'a str> {
         ScalarValue::String(value) => Some(value),
         _ => None,
     }
+}
+
+fn open_optional(root: &Path, subtable: &str) -> Option<Table> {
+    root.join(subtable)
+        .is_dir()
+        .then(|| open(root, subtable).ok())
+        .flatten()
 }
 
 fn open(root: &Path, subtable: &str) -> Result<Table, String> {

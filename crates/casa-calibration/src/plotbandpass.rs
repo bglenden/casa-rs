@@ -13,7 +13,9 @@ mod table;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use casa_tables::{Table, TableOptions};
 use casa_types::quanta::format::{YMD, format_time};
+use serde::Serialize;
 
 pub(crate) use atmosphere::AtmosphericOptions;
 use atmosphere::{AtmosphereContext, AtmosphericCurve};
@@ -44,6 +46,8 @@ pub(crate) struct PlotRequest<'a> {
     pub(crate) platforming_threshold: f64,
     pub(crate) platforming_sigma: f64,
     pub(crate) atmosphere: AtmosphericOptions<'a>,
+    pub(crate) show_fdm: bool,
+    pub(crate) zoom_intersect: bool,
 }
 
 pub(crate) struct BandpassPlots {
@@ -62,6 +66,13 @@ pub(crate) struct BandpassPanel {
     pub(crate) x_limits: [f64; 2],
     pub(crate) frequency_channels: Vec<f64>,
     atmosphere: Vec<AtmosphericCurve>,
+    fdm: Option<Vec<FdmWindow>>,
+}
+
+#[derive(Clone, Serialize)]
+struct FdmWindow {
+    label: String,
+    frequencies: [f64; 2],
 }
 
 pub(crate) struct BandpassSeries {
@@ -134,6 +145,7 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
     let spectra = select_spectra(&source, &selected)?;
     let ordinates = ordinates(&source, request.y_axis)?;
     let atmosphere = AtmosphereContext::open(&source, &request.atmosphere)?;
+    let fdm_windows = fdm_windows(&source, request.show_fdm && request.frequency_axis);
     for (key, rows) in selected {
         for &axis in &ordinates {
             panels.push(panel(
@@ -146,6 +158,7 @@ pub(crate) fn prepare_bandpass(request: &PlotRequest<'_>) -> Result<BandpassPlot
                 time_count,
                 &companions,
                 atmosphere.as_ref(),
+                fdm_windows.as_deref(),
             )?);
         }
     }
@@ -190,6 +203,7 @@ fn panel(
     time_count: usize,
     companions: &[Companion],
     atmosphere: Option<&AtmosphereContext<'_>>,
+    fdm_windows: Option<&[SolutionWindow]>,
 ) -> Result<BandpassPanel, String> {
     let mut series = Vec::new();
     let mut comparison_count: Option<usize> = None;
@@ -247,6 +261,11 @@ fn panel(
                 let (curve, channels) =
                     companion.curve(row_index, receptor, ordinate, &raw, request)?;
                 if !companion.polynomial() {
+                    if request.zoom_intersect
+                        && let Some(metadata) = &mut metadata
+                    {
+                        metadata.intersect_domain(&curve.x);
+                    }
                     let visible = if channels > total_channels {
                         channels
                     } else {
@@ -341,7 +360,60 @@ fn panel(
         x_limits,
         frequency_channels: metadata.frequency_channels,
         atmosphere,
+        fdm: fdm_windows.and_then(|windows| {
+            fdm_for_panel(source, &source.rows[selected[0].row], windows, request)
+        }),
     })
+}
+
+fn fdm_windows(source: &Solutions, requested: bool) -> Option<Vec<SolutionWindow>> {
+    if !requested {
+        return None;
+    }
+    let ms = source.measurement_set.as_ref()?;
+    let table = Table::open(TableOptions::new(ms.join("SPECTRAL_WINDOW"))).ok()?;
+    table::windows(&table).ok()
+}
+
+fn fdm_for_panel(
+    source: &Solutions,
+    row: &table::SolutionRow,
+    windows: &[SolutionWindow],
+    request: &PlotRequest<'_>,
+) -> Option<Vec<FdmWindow>> {
+    let selected = spectral_window(source, row.window).ok()?;
+    if selected.sky_frequencies_hz.len() > 256 {
+        return None;
+    }
+    let baseband = selected.baseband?;
+    Some(
+        windows
+            .iter()
+            .filter_map(|window| {
+                let channels = window.sky_frequencies_hz.len();
+                if channels < 15 || [256, 128, 64, 32, 16, 248, 124, 62].contains(&channels) {
+                    return None;
+                }
+                if !request.show_baseband_number && window.baseband != Some(baseband) {
+                    return None;
+                }
+                let mut label = format!("spw{}", window.original_id);
+                if request.show_baseband_number {
+                    if let Some(baseband) = window.baseband {
+                        label.push_str(&format!("(bb{baseband})"));
+                    } else {
+                        label.push_str("(bb?)");
+                    }
+                }
+                let first = window.sky_frequencies_hz.first()?;
+                let last = window.sky_frequencies_hz.last()?;
+                Some(FdmWindow {
+                    label,
+                    frequencies: [first.min(*last) * 1e-9, first.max(*last) * 1e-9],
+                })
+            })
+            .collect(),
+    )
 }
 
 struct PanelMetadata {
@@ -408,6 +480,16 @@ impl PanelMetadata {
     fn extend_domain(&mut self, [first, last]: [f64; 2]) {
         self.domain[0] = self.domain[0].min(first.min(last));
         self.domain[1] = self.domain[1].max(first.max(last));
+    }
+
+    fn intersect_domain(&mut self, coordinates: &[f64]) {
+        if let (Some(first), Some(last)) = (coordinates.first(), coordinates.last()) {
+            let lower = self.domain[0].max(first.min(*last));
+            let upper = self.domain[1].min(first.max(*last));
+            if lower < upper {
+                self.domain = [lower, upper];
+            }
+        }
     }
 
     fn x_limits(&self) -> [f64; 2] {

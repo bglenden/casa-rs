@@ -31,7 +31,6 @@ struct PdfOutput {
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let caltable = task.input_path("caltable")?;
-    check_remaining_controls(task)?;
     let axis = task.text("xaxis")?.unwrap_or_default();
     let frequency_axis = match axis.as_str() {
         "chan" | "channel" => false,
@@ -105,6 +104,8 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             parent_ms: parent_ms.as_deref().map(Path::new),
             show_points: task.flag("showatmpoints")?,
         },
+        show_fdm: task.flag("showfdm")?,
+        zoom_intersect: task.text("zoom")?.as_deref() == Some("intersect"),
     };
     let figfile = task.text("figfile")?.unwrap_or_default();
     let display = DisplayOptions {
@@ -276,15 +277,4 @@ fn channel_range(
         }
         _ => Err(error()),
     }
-}
-
-fn check_remaining_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
-    for name in ["zoom", "showfdm"] {
-        if task.is_set(name) {
-            return Err(
-                TaskFailure::validation("bandpass control in progress under #1526").at(name),
-            );
-        }
-    }
-    Ok(())
 }

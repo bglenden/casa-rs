@@ -11,7 +11,7 @@ use casa_ms::plot_document::{
 use serde::Serialize;
 
 use super::atmosphere::AtmosphericCurve;
-use super::{BandpassPanel, BandpassPlots};
+use super::{BandpassPanel, BandpassPlots, FdmWindow};
 
 pub(crate) struct DisplayOptions<'a> {
     pub(crate) layout: [u32; 2],
@@ -58,6 +58,7 @@ pub(crate) struct BandpassPage {
     density: u32,
     y_limits: Vec<Option<[f64; 2]>>,
     atmosphere: Vec<Vec<AtmosphericCurve>>,
+    fdm: Vec<Option<Vec<FdmWindow>>>,
 }
 
 pub(crate) fn pages(
@@ -162,9 +163,7 @@ fn document_panel(
     let phase = bandpass.y_label.to_ascii_lowercase().starts_with("phase");
     let points = display.show_points.unwrap_or(phase);
     let lines = display.show_lines.unwrap_or(!phase);
-    let palette = [
-        "black", "red", "blue", "green", "#7f3f98", "#a57a24", "#228a84",
-    ];
+    let palette = ["b", "g", "r", "c", "#7f3f98", "#a57a24", "#228a84"];
     let mut annotations = Vec::new();
     let mut labels = std::collections::BTreeSet::new();
     let layers = bandpass

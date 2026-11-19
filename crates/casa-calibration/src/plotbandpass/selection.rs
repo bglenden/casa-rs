@@ -70,7 +70,7 @@ pub(super) fn groups(
         let key = GroupKey {
             antenna: (!overlay.antenna).then_some(row.antenna),
             window: (!overlay.window && !overlay.baseband).then_some(row.window),
-            baseband: baseband.filter(|_| overlay.baseband),
+            baseband: baseband.filter(|_| overlay.window && !overlay.baseband),
             time_index: (!overlay.time).then_some(time_index),
         };
         // Rows in one scan group can have duplicate solutions.

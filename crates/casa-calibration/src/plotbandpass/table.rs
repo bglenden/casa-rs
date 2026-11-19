@@ -240,7 +240,7 @@ fn solution_rows(table: &Table, layout: &Layout) -> Result<Vec<SolutionRow>, Str
         .collect())
 }
 
-fn windows(table: &Table) -> Result<Vec<SolutionWindow>, String> {
+pub(super) fn windows(table: &Table) -> Result<Vec<SolutionWindow>, String> {
     (0..table.row_count())
         .map(|row| window(table, i32::try_from(row).map_err(message)?))
         .collect()
@@ -302,7 +302,7 @@ fn names(table: &Table) -> Result<Vec<String>, String> {
     })
 }
 
-fn numbers(table: &Table, name: &str) -> Result<Vec<f64>, String> {
+pub(super) fn numbers(table: &Table, name: &str) -> Result<Vec<f64>, String> {
     scalars(table, name, |value| match value {
         ScalarValue::Float64(number) => Some(number),
         ScalarValue::Float32(number) => Some(f64::from(number)),
@@ -310,7 +310,7 @@ fn numbers(table: &Table, name: &str) -> Result<Vec<f64>, String> {
     })
 }
 
-fn integers(table: &Table, name: &str) -> Result<Vec<i32>, String> {
+pub(super) fn integers(table: &Table, name: &str) -> Result<Vec<i32>, String> {
     scalars(table, name, |value| match value {
         ScalarValue::Int32(number) => Some(number),
         _ => None,
