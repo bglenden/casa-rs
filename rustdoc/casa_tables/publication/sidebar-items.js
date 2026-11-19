@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["exchange_directories","rename_without_replacing"]};

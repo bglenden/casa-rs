@@ -568,6 +568,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#create-and-edit-a-native-casa-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create and edit a native CASA image
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#access-an-existing-image-through-the-data-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access an existing image through the Data API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#v1-write-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -771,6 +793,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#create-and-edit-a-native-casa-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create and edit a native CASA image
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#access-an-existing-image-through-the-data-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access an existing image through the Data API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#v1-write-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -835,6 +879,27 @@ Rust:</p>
   and the <code>casars.tools</code> classes</li>
 </ul>
 <h2 id="images">Images<a class="headerlink" href="#images" title="Permanent link">&para;</a></h2>
+<h3 id="create-and-edit-a-native-casa-image">Create and edit a native CASA image<a class="headerlink" href="#create-and-edit-a-native-casa-image" title="Permanent link">&para;</a></h3>
+<p>Use <code>casars.tools.image</code> to create a native image and edit its pixels and
+coordinates through the CASA Python interface:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">casars.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">image</span>
+
+<span class="n">ia</span> <span class="o">=</span> <span class="n">image</span><span class="p">()</span>
+<span class="n">ia</span><span class="o">.</span><span class="n">fromshape</span><span class="p">(</span><span class="s2">"example.im"</span><span class="p">,</span> <span class="p">[</span><span class="mi">4</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+<span class="n">ia</span><span class="o">.</span><span class="n">putchunk</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">3.0</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">]]),</span> <span class="n">blc</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
+<span class="n">cs</span> <span class="o">=</span> <span class="n">ia</span><span class="o">.</span><span class="n">coordsys</span><span class="p">()</span>
+<span class="n">cs</span><span class="o">.</span><span class="n">setreferencepixel</span><span class="p">([</span><span class="mf">1.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">])</span>
+<span class="n">ia</span><span class="o">.</span><span class="n">setcoordsys</span><span class="p">(</span><span class="n">cs</span><span class="o">.</span><span class="n">torecord</span><span class="p">())</span>
+<span class="n">ia</span><span class="o">.</span><span class="n">setbrightnessunit</span><span class="p">(</span><span class="s2">"Jy/pixel"</span><span class="p">)</span>
+<span class="n">ia</span><span class="o">.</span><span class="n">done</span><span class="p">()</span>
+</code></pre></div>
+
+<p>Use <code>image.open("example.im")</code> on an image tool to reopen the product. Use
+<code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. The
+remaining CASA image and coordinate operations are tracked in
+<a href="https://github.com/bglenden/casa-rs/issues/1027">#1027</a>.</p>
+<h3 id="access-an-existing-image-through-the-data-api">Access an existing image through the Data API<a class="headerlink" href="#access-an-existing-image-through-the-data-api" title="Permanent link">&para;</a></h3>
 <p>Use <code>Image.open(path, writable=False)</code> to open an existing CASA-compatible image. The v1 surface is intentionally narrow:</p>
 <ul>
 <li>metadata access through <code>shape</code>, <code>pixel_type</code>, <code>units</code>, <code>image_info</code>, <code>misc_info</code>, <code>mask_names</code>, and <code>default_mask_name</code></li>
