@@ -45,7 +45,7 @@ impl StatisticsGrid {
     }
 
     fn coordinates(&self) -> impl Iterator<Item = Coordinates> + '_ {
-        self.windows.iter().flat_map(|&window| {
+        self.windows.iter().flat_map(move |&window| {
             self.times
                 .iter()
                 .flat_map(move |&time| (0..self.receptors).map(move |pol| (window, time, pol)))
