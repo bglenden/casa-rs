@@ -48,6 +48,8 @@ mod output_merge;
 mod paths;
 mod plan;
 mod plotbandpass;
+#[doc(hidden)]
+pub mod plotms;
 mod plots;
 mod rerefant;
 mod selected_data;

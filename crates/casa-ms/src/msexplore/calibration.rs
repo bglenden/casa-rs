@@ -9,7 +9,7 @@ mod iteration;
 mod samples;
 mod selection;
 mod table_data;
-mod text;
+pub(super) mod text;
 
 use std::ffi::OsStr;
 use std::io::{BufWriter, Write};

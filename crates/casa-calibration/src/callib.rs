@@ -122,18 +122,25 @@ pub fn load_apply_specs_from_callib(
         path: path.display().to_string(),
         source,
     })?;
-    // Calibrater::parsecallibfile preserves relative table names; Table
-    // resolves them against the process working directory, not the file's.
+    parse_apply_specs(&path.display().to_string(), &contents)
+}
+
+pub(crate) fn parse_apply_specs(
+    source_name: &str,
+    contents: &str,
+) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
+    // CASA resolves relative table names against the process working
+    // directory for both text and file callibraries.
     let base_dir = std::env::current_dir().map_err(|source| CallibError::ReadFile {
-        path: path.display().to_string(),
+        path: source_name.to_owned(),
         source,
     })?;
     let mut specs = Vec::new();
     let mut calwt_by_table = BTreeMap::<String, bool>::new();
 
     let entries =
-        parser::parse(&contents).map_err(|(line_number, reason)| CallibError::ParseLine {
-            path: path.display().to_string(),
+        parser::parse(contents).map_err(|(line_number, reason)| CallibError::ParseLine {
+            path: source_name.to_owned(),
             line_number,
             line: contents
                 .lines()
@@ -146,7 +153,7 @@ pub fn load_apply_specs_from_callib(
         let line_number = entry.line;
         let mut spec = parse_callib_entry(entry.values, &base_dir).map_err(|reason| {
             CallibError::ParseLine {
-                path: path.display().to_string(),
+                path: source_name.to_owned(),
                 line_number,
                 line: contents
                     .lines()
@@ -174,7 +181,7 @@ pub fn load_apply_specs_from_callib(
 
     if specs.is_empty() {
         return Err(CallibError::ParseLine {
-            path: path.display().to_string(),
+            path: source_name.to_owned(),
             line_number: 0,
             line: String::new(),
             reason: "callibrary file did not contain any supported entries".to_string(),

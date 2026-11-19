@@ -851,8 +851,10 @@ def _execute_task(
     *, bandpass_completed_pages: int | None = None,
 ) -> TaskCompletion:
     invocation = resolved.provider_invocation()
-    executable = _task_executable(task)
-    command = (executable, *invocation.args)
+    if task == "plotms" and resolved.get("callib"):
+        command = (_task_executable("calibrate"), "plotms", *invocation.args)
+    else:
+        command = (_task_executable(task), *invocation.args)
     environment = dict(os.environ)
     if task == "listcal":
         # A later listing error takes effect only when the reader reaches it.
