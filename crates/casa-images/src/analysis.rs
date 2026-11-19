@@ -29,6 +29,7 @@ mod axes;
 mod custom_values;
 mod extrema;
 mod imhead_fits;
+mod immath;
 mod list_log;
 mod planes;
 mod projection_header;
@@ -209,50 +210,9 @@ pub fn imsubimage(request: &ImsubimageRequest) -> Result<ImageSubimageSummary, I
     }
 }
 
-/// Evaluate a tutorial-scoped CASA `immath(..., mode="evalexpr")` expression.
+/// Evaluate CASA `immath` across `evalexpr`, `spix`, `pola`, `poli`, `lpoli`, and `tpoli` modes.
 pub fn immath(request: &ImmathRequest) -> Result<ImageMathSummary, ImageError> {
-    let op = parse_tutorial_immath_expr(&request.expr)?;
-    match request.imagename.len() {
-        1 => {
-            let lhs = AnyPagedImage::open(&request.imagename[0])?;
-            match (&lhs, op) {
-                (AnyPagedImage::Float32(lhs), TutorialMathOp::Scale(factor)) => {
-                    immath_unary_typed(lhs, request, factor)
-                }
-                (AnyPagedImage::Float64(lhs), TutorialMathOp::Scale(factor)) => {
-                    immath_unary_typed(lhs, request, factor)
-                }
-                (_, TutorialMathOp::Multiply | TutorialMathOp::Divide) => {
-                    Err(ImageError::InvalidMetadata(
-                        "binary immath expressions require two input images".to_string(),
-                    ))
-                }
-                _ => Err(ImageError::InvalidMetadata(
-                    "immath tutorial support currently requires real-valued pixel types"
-                        .to_string(),
-                )),
-            }
-        }
-        2 => {
-            let lhs = AnyPagedImage::open(&request.imagename[0])?;
-            let rhs = AnyPagedImage::open(&request.imagename[1])?;
-            match (&lhs, &rhs, op) {
-                (AnyPagedImage::Float32(lhs), AnyPagedImage::Float32(rhs), op) => {
-                    immath_typed(lhs, rhs, request, op)
-                }
-                (AnyPagedImage::Float64(lhs), AnyPagedImage::Float64(rhs), op) => {
-                    immath_typed(lhs, rhs, request, op)
-                }
-                _ => Err(ImageError::InvalidMetadata(
-                    "immath tutorial support currently requires matching real-valued pixel types"
-                        .to_string(),
-                )),
-            }
-        }
-        count => Err(ImageError::InvalidMetadata(format!(
-            "immath tutorial support currently requires one or two input images, got {count}"
-        ))),
-    }
+    immath::run(request)
 }
 
 /// Apply CASA `impbcor`-style primary-beam correction.
@@ -2529,7 +2489,7 @@ fn extend_mask_to_shape(
 }
 
 /// The quoted image names a LEL expression carries.
-fn quoted_expression_names(expr: &str) -> Vec<String> {
+pub fn quoted_expression_names(expr: &str) -> Vec<String> {
     let mut names = Vec::new();
     let characters: Vec<char> = expr.chars().collect();
     let mut index = 0;
@@ -2551,7 +2511,7 @@ fn quoted_expression_names(expr: &str) -> Vec<String> {
 }
 
 /// The parser's own wording, as CASA reports a refused mask expression.
-fn mask_error_wording(error: ExprParseError) -> String {
+pub(super) fn mask_error_wording(error: ExprParseError) -> String {
     if error.message.starts_with("unknown image") {
         // The resolver's miss: CASA's ImageExprParse wording.
         error
@@ -2663,7 +2623,7 @@ fn offset_pos(start: &[usize], pos: Vec<usize>) -> Vec<usize> {
 }
 
 #[derive(Debug, Clone)]
-struct Selection {
+pub(super) struct Selection {
     full_shape: Vec<usize>,
     start: Vec<usize>,
     shape: Vec<usize>,
@@ -2772,7 +2732,7 @@ impl Selection {
 
 /// Parse CASA's `stokes` selection: comma-separated Stokes plane names,
 /// concatenated as in `QU` or `IQUV`. Numeric forms are not names.
-fn parse_stokes_selection<T: ImagePixel>(
+pub(super) fn parse_stokes_selection<T: ImagePixel>(
     image: &impl ImageInterface<T>,
     text: &str,
 ) -> Result<Vec<usize>, ImageError> {
@@ -2867,7 +2827,7 @@ fn parse_axes(axes: Option<&[i64]>, n_dim: usize) -> Result<AxisSelection, Strin
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum PixelRegion {
+pub(super) enum PixelRegion {
     Box([usize; 4]),
     Polygon(Vec<[usize; 2]>),
 }
@@ -2895,7 +2855,7 @@ impl PixelRegion {
     }
 }
 
-fn region_pixels<T: ImagePixel>(
+pub(super) fn region_pixels<T: ImagePixel>(
     image: &impl ImageInterface<T>,
     region: Option<&str>,
 ) -> Result<Option<PixelRegion>, ImageError> {
@@ -2948,7 +2908,7 @@ fn region_pixels<T: ImagePixel>(
     )))
 }
 
-fn region_pixel_mask(
+pub(super) fn region_pixel_mask(
     region: &PixelRegion,
     selection: &Selection,
 ) -> Result<ArrayD<bool>, ImageError> {
@@ -3022,10 +2982,9 @@ fn crtf_polygon_pixels<T: ImagePixel>(
 
 fn crtf_polygon_parts(text: &str) -> Result<Option<Vec<[String; 2]>>, ImageError> {
     let normalized = text.trim();
-    let Some(start) = normalized.find("poly [") else {
+    let Some(after) = find_crtf_body(normalized, "poly", "[") else {
         return Ok(None);
     };
-    let after = &normalized[start + "poly ".len()..];
     let end = after.rfind(']').ok_or_else(|| {
         ImageError::InvalidMetadata(format!(
             "invalid CASA CRTF polygon region {text:?}: missing closing ]"
@@ -3121,10 +3080,10 @@ fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
 
 fn crtf_box_parts(text: &str) -> Result<Option<[String; 4]>, ImageError> {
     let normalized = text.trim();
-    let Some(start) = normalized.find("box[[") else {
+    let Some(after) = find_crtf_body(normalized, "box", "[[").and_then(|s| s.strip_prefix("[["))
+    else {
         return Ok(None);
     };
-    let after = &normalized[start + "box[[".len()..];
     let end = after.find("]]").ok_or_else(|| {
         ImageError::InvalidMetadata(format!(
             "invalid CASA CRTF box region {text:?}: missing closing ]]"
@@ -3151,6 +3110,27 @@ fn crtf_box_parts(text: &str) -> Result<Option<[String; 4]>, ImageError> {
         parts[2].clone(),
         parts[3].clone(),
     ]))
+}
+
+fn find_crtf_body<'a>(text: &'a str, keyword: &str, open: &str) -> Option<&'a str> {
+    let mut offset = 0usize;
+    while let Some(rel) = text[offset..].find(keyword) {
+        let pos = offset + rel;
+        let boundary = pos == 0
+            || text[..pos]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_');
+        let rest = &text[pos + keyword.len()..];
+        if boundary {
+            let trimmed = rest.trim_start();
+            if trimmed.starts_with(open) {
+                return Some(trimmed);
+            }
+        }
+        offset = pos + keyword.len();
+    }
+    None
 }
 
 fn parse_crtf_pixel_quantity(text: &str) -> Result<Option<usize>, ImageError> {
@@ -3725,7 +3705,7 @@ where
     })
 }
 
-fn patch_saved_coords_keyword(
+pub(super) fn patch_saved_coords_keyword(
     path: &Path,
     coords: casa_types::RecordValue,
 ) -> Result<(), ImageError> {
@@ -3733,106 +3713,6 @@ fn patch_saved_coords_keyword(
     table.keywords_mut().upsert("coords", Value::Record(coords));
     table.save_metadata_only(TableOptions::new(path))?;
     Ok(())
-}
-
-fn immath_typed<T>(
-    lhs: &PagedImage<T>,
-    rhs: &PagedImage<T>,
-    request: &ImmathRequest,
-    op: TutorialMathOp,
-) -> Result<ImageMathSummary, ImageError>
-where
-    T: ImagePixel + Into<f64> + From<f32> + Copy,
-{
-    if lhs.shape() != rhs.shape() {
-        return Err(ImageError::ShapeMismatch {
-            expected: lhs.shape().to_vec(),
-            got: rhs.shape().to_vec(),
-        });
-    }
-    if request.outfile.exists() {
-        if request.overwrite {
-            fs::remove_dir_all(&request.outfile)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-        } else {
-            return Err(ImageError::Io(format!(
-                "immath output already exists: {}",
-                request.outfile.display()
-            )));
-        }
-    }
-    let shape = lhs.shape().to_vec();
-    let origin = vec![0; lhs.ndim()];
-    let left = lhs.get_slice(&origin, &shape)?;
-    let right = rhs.get_slice(&origin, &shape)?;
-    let lhs_mask = lhs.get_mask_slice(&origin, &shape, &vec![1; lhs.ndim()])?;
-    let rhs_mask = rhs.get_mask_slice(&origin, &shape, &vec![1; rhs.ndim()])?;
-    let mut data = ArrayD::from_elem(IxDyn(&shape), T::from(0.0));
-    let mut valid = ndarray::ArrayD::from_elem(IxDyn(&shape), true);
-    Zip::from(&mut data)
-        .and(&mut valid)
-        .and(&left)
-        .and(&right)
-        .for_each(|out, valid, lhs, rhs| {
-            let lhs = (*lhs).into();
-            let rhs = (*rhs).into();
-            let value = match op {
-                TutorialMathOp::Multiply => lhs * rhs,
-                TutorialMathOp::Divide => {
-                    if rhs == 0.0 {
-                        f64::NAN
-                    } else {
-                        lhs / rhs
-                    }
-                }
-                TutorialMathOp::Scale(_) => unreachable!("scale expressions use unary immath"),
-            };
-            *valid = value.is_finite();
-            *out = T::from(value as f32);
-        });
-    if let Some(mask) = lhs_mask {
-        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
-            *valid = *valid && *mask;
-        });
-    }
-    if let Some(mask) = rhs_mask {
-        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
-            *valid = *valid && *mask;
-        });
-    }
-    let mut output = TempImage::<T>::new(
-        shape.clone(),
-        lhs.coordinates().clone(),
-        casa_lattices::TempStoragePolicy::Auto {
-            memory_budget_bytes: 64 * 1024 * 1024,
-            scratch: casa_lattices::ScratchSpace::SystemTemp,
-        },
-    )?;
-    let legacy_coordinates = lhs.table().keywords().get("coords").cloned();
-    output.set_units(lhs.units())?;
-    output.set_image_info(&lhs.image_info()?)?;
-    output.set_misc_info(lhs.misc_info())?;
-    output.put_slice(&data, &vec![0; output.ndim()])?;
-    if valid.iter().any(|pixel| !*pixel) {
-        output.put_mask("mask0", &valid)?;
-        output.set_default_mask("mask0")?;
-    }
-    output.save_as(&request.outfile)?;
-    if let Some(Value::Record(coords)) = legacy_coordinates {
-        patch_saved_coords_keyword(&request.outfile, coords)?;
-    }
-    Ok(ImageMathSummary {
-        imagename: request
-            .imagename
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect(),
-        outfile: request.outfile.display().to_string(),
-        expr: request.expr.clone(),
-        shape,
-        units: lhs.units().to_string(),
-        valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
-    })
 }
 
 fn impbcor_typed<T>(
@@ -3933,193 +3813,6 @@ where
         units: image.units().to_string(),
         valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
     })
-}
-
-fn immath_unary_typed<T>(
-    image: &PagedImage<T>,
-    request: &ImmathRequest,
-    factor: f64,
-) -> Result<ImageMathSummary, ImageError>
-where
-    T: ImagePixel + Into<f64> + From<f32> + Copy,
-{
-    if request.outfile.exists() {
-        if request.overwrite {
-            fs::remove_dir_all(&request.outfile)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-        } else {
-            return Err(ImageError::Io(format!(
-                "immath output already exists: {}",
-                request.outfile.display()
-            )));
-        }
-    }
-    let shape = image.shape().to_vec();
-    let origin = vec![0; image.ndim()];
-    let input = image.get_slice(&origin, &shape)?;
-    let input_mask = image.get_mask_slice(&origin, &shape, &vec![1; image.ndim()])?;
-    let mut data = ArrayD::from_elem(IxDyn(&shape), T::from(0.0));
-    let mut valid = ndarray::ArrayD::from_elem(IxDyn(&shape), true);
-    Zip::from(&mut data)
-        .and(&mut valid)
-        .and(&input)
-        .for_each(|out, valid, input| {
-            let value = (*input).into() * factor;
-            *valid = value.is_finite();
-            *out = T::from(value as f32);
-        });
-    if let Some(mask) = input_mask {
-        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
-            *valid = *valid && *mask;
-        });
-    }
-    let mut output = TempImage::<T>::new(
-        shape.clone(),
-        image.coordinates().clone(),
-        casa_lattices::TempStoragePolicy::Auto {
-            memory_budget_bytes: 64 * 1024 * 1024,
-            scratch: casa_lattices::ScratchSpace::SystemTemp,
-        },
-    )?;
-    let legacy_coordinates = image.table().keywords().get("coords").cloned();
-    output.set_units(image.units())?;
-    output.set_image_info(&image.image_info()?)?;
-    output.set_misc_info(image.misc_info())?;
-    output.put_slice(&data, &vec![0; output.ndim()])?;
-    if valid.iter().any(|pixel| !*pixel) {
-        output.put_mask("mask0", &valid)?;
-        output.set_default_mask("mask0")?;
-    }
-    output.save_as(&request.outfile)?;
-    if let Some(Value::Record(coords)) = legacy_coordinates {
-        patch_saved_coords_keyword(&request.outfile, coords)?;
-    }
-    Ok(ImageMathSummary {
-        imagename: request
-            .imagename
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect(),
-        outfile: request.outfile.display().to_string(),
-        expr: request.expr.clone(),
-        shape,
-        units: image.units().to_string(),
-        valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
-    })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum TutorialMathOp {
-    Multiply,
-    Divide,
-    Scale(f64),
-}
-
-fn parse_tutorial_immath_expr(expr: &str) -> Result<TutorialMathOp, ImageError> {
-    let normalized = expr
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .collect::<String>()
-        .to_ascii_uppercase();
-    match normalized.as_str() {
-        "IM0*IM1" => Ok(TutorialMathOp::Multiply),
-        "IM0/IM1" => Ok(TutorialMathOp::Divide),
-        _ if normalized.contains("IM0") && !normalized.contains("IM1") => {
-            let factor_expr = normalized.replace("IM0", "1");
-            parse_scalar_factor_expr(&factor_expr).map(TutorialMathOp::Scale)
-        }
-        _ => Err(ImageError::InvalidMetadata(format!(
-            "unsupported tutorial immath expression {expr:?}; supported forms are IM0 * IM1, IM0 / IM1, and scalar multiples of IM0"
-        ))),
-    }
-}
-
-fn parse_scalar_factor_expr(expr: &str) -> Result<f64, ImageError> {
-    let mut parser = ScalarFactorParser { text: expr, pos: 0 };
-    let value = parser.parse_expr()?;
-    if parser.pos != parser.text.len() {
-        return Err(ImageError::InvalidMetadata(format!(
-            "unsupported scalar immath expression {expr:?}"
-        )));
-    }
-    Ok(value)
-}
-
-struct ScalarFactorParser<'a> {
-    text: &'a str,
-    pos: usize,
-}
-
-impl ScalarFactorParser<'_> {
-    fn parse_expr(&mut self) -> Result<f64, ImageError> {
-        let mut value = self.parse_power()?;
-        while let Some(op) = self.peek_char().filter(|ch| *ch == '*' || *ch == '/') {
-            self.pos += 1;
-            let rhs = self.parse_power()?;
-            if op == '*' {
-                value *= rhs;
-            } else {
-                value /= rhs;
-            }
-        }
-        Ok(value)
-    }
-
-    fn parse_power(&mut self) -> Result<f64, ImageError> {
-        let mut value = self.parse_primary()?;
-        if self.peek_char() == Some('^') {
-            self.pos += 1;
-            value = value.powf(self.parse_power()?);
-        }
-        Ok(value)
-    }
-
-    fn parse_primary(&mut self) -> Result<f64, ImageError> {
-        if self.peek_char() == Some('(') {
-            self.pos += 1;
-            let value = self.parse_expr()?;
-            if self.peek_char() != Some(')') {
-                return Err(ImageError::InvalidMetadata(
-                    "unterminated scalar immath expression".to_string(),
-                ));
-            }
-            self.pos += 1;
-            return Ok(value);
-        }
-        self.parse_number()
-    }
-
-    fn parse_number(&mut self) -> Result<f64, ImageError> {
-        let start = self.pos;
-        if self.peek_char().is_some_and(|ch| ch == '+' || ch == '-') {
-            self.pos += 1;
-        }
-        while self
-            .peek_char()
-            .is_some_and(|ch| ch.is_ascii_digit() || ch == '.')
-        {
-            self.pos += 1;
-        }
-        if self.peek_char().is_some_and(|ch| ch == 'E') {
-            self.pos += 1;
-            if self.peek_char().is_some_and(|ch| ch == '+' || ch == '-') {
-                self.pos += 1;
-            }
-            while self.peek_char().is_some_and(|ch| ch.is_ascii_digit()) {
-                self.pos += 1;
-            }
-        }
-        self.text[start..self.pos].parse::<f64>().map_err(|error| {
-            ImageError::InvalidMetadata(format!(
-                "parse scalar immath number {:?}: {error}",
-                &self.text[start..self.pos]
-            ))
-        })
-    }
-
-    fn peek_char(&self) -> Option<char> {
-        self.text[self.pos..].chars().next()
-    }
 }
 
 fn imregrid_typed<T>(
@@ -5475,6 +5168,7 @@ mod tests {
                 outfile: product_path.clone(),
                 expr: "IM0 * IM1".to_string(),
                 overwrite: false,
+                ..ImmathRequest::default()
             }))
             .unwrap();
         let ImageAnalysisTaskResult::Immath(math) = math_result else {
@@ -5492,6 +5186,7 @@ mod tests {
                 outfile: scaled_path.clone(),
                 expr: "1.222e6*IM0/1.579^2/(29.30*29.03)".to_string(),
                 overwrite: false,
+                ..ImmathRequest::default()
             }))
             .unwrap();
         let ImageAnalysisTaskResult::Immath(scaled) = scaled_result else {
@@ -5794,6 +5489,30 @@ mod tests {
         assert_eq!(from_file.trc, vec![2, 2]);
         assert_eq!(from_file.npts, 3.0);
         assert_eq!(from_file.sum, 14.0);
+    }
+
+    #[test]
+    fn crtf_parsers_allow_optional_keyword_whitespace_with_word_boundary() {
+        assert_eq!(
+            crtf_polygon_parts("poly[[0pix,0pix],[2pix,0pix],[2pix,2pix],[0pix,2pix]]").unwrap(),
+            Some(vec![
+                ["0pix".to_string(), "0pix".to_string()],
+                ["2pix".to_string(), "0pix".to_string()],
+                ["2pix".to_string(), "2pix".to_string()],
+                ["0pix".to_string(), "2pix".to_string()],
+            ])
+        );
+        assert_eq!(
+            crtf_box_parts("box [[1pix, 2pix], [3pix, 4pix]]").unwrap(),
+            Some([
+                "1pix".to_string(),
+                "2pix".to_string(),
+                "3pix".to_string(),
+                "4pix".to_string(),
+            ])
+        );
+        assert_eq!(crtf_polygon_parts("my_poly[0].crtf").unwrap(), None);
+        assert_eq!(crtf_box_parts("my_box[[0]].crtf").unwrap(), None);
     }
 
     #[test]

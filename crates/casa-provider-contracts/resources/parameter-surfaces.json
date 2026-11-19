@@ -25721,7 +25721,7 @@
       "contract_version": 5,
       "display_name": "Image Math",
       "category": "Images",
-      "summary": "Evaluate tutorial image arithmetic expressions",
+      "summary": "Evaluate mathematical expressions and spectral or polarization operations on images",
       "provider_family": "image_analysis",
       "casa_task": "immath",
       "execution": {
@@ -25762,7 +25762,7 @@
             }
           },
           "required_when": {
-            "kind": "always"
+            "kind": "never"
           },
           "active_when": {
             "kind": "always"
@@ -25813,8 +25813,7 @@
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "immath's mode chooses the image computation, distinct from other tasks' operation modes."
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "varnames",
@@ -25828,10 +25827,6 @@
             "provider": {"field": "varnames"},
             "python": {"name": "varnames"},
             "presentation": {"label": "Variable Names", "group": "Math", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [{"kind": "array", "value": []}]
           }
         },
         {
@@ -25846,14 +25841,6 @@
             "provider": {"field": "sigma"},
             "python": {"name": "sigma"},
             "presentation": {"label": "Noise Sigma", "group": "Polarization", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "any", "predicates": [
-              {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "poli"}},
-              {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "lpoli"}},
-              {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tpoli"}}
-            ]}
           }
         },
         {
@@ -25865,13 +25852,9 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--polithresh"], "metavar": "quantity"},
-            "provider": {"field": "polithresh"},
+            "provider": {"field": "polithresh", "adapter": "omit_none"},
             "python": {"name": "polithresh"},
             "presentation": {"label": "Polarization Threshold", "group": "Polarization", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "pola"}}
           }
         },
         {
@@ -25884,11 +25867,10 @@
           "context_role": "mask_reference",
           "projections": {
             "cli": {"flags": ["--mask"], "metavar": "mask"},
-            "provider": {"field": "mask"},
+            "provider": {"field": "mask", "adapter": "omit_none"},
             "python": {"name": "mask"},
             "presentation": {"label": "Mask", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "region",
@@ -25900,11 +25882,10 @@
           "context_role": "region_reference",
           "projections": {
             "cli": {"flags": ["--region"], "metavar": "region"},
-            "provider": {"field": "region"},
+            "provider": {"field": "region", "adapter": "omit_none"},
             "python": {"name": "region"},
             "presentation": {"label": "Region", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "box",
@@ -25915,11 +25896,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--box"], "metavar": "x0,y0,x1,y1"},
-            "provider": {"field": "box"},
+            "provider": {"field": "box", "adapter": "omit_none"},
             "python": {"name": "box"},
             "presentation": {"label": "Box", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "chans",
@@ -25930,11 +25910,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--chans"], "metavar": "range"},
-            "provider": {"field": "chans"},
+            "provider": {"field": "chans", "adapter": "omit_none"},
             "python": {"name": "chans"},
             "presentation": {"label": "Channels", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "stokes",
@@ -25945,11 +25924,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--stokes"], "metavar": "stokes"},
-            "provider": {"field": "stokes"},
+            "provider": {"field": "stokes", "adapter": "omit_none"},
             "python": {"name": "stokes"},
             "presentation": {"label": "Stokes", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "stretch",
@@ -25963,10 +25941,6 @@
             "provider": {"field": "stretch"},
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
           }
         },
         {
@@ -25978,11 +25952,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--imagemd"], "metavar": "path"},
-            "provider": {"field": "imagemd"},
+            "provider": {"field": "imagemd", "adapter": "omit_none"},
             "python": {"name": "imagemd"},
             "presentation": {"label": "Metadata Image", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "prec",
@@ -25996,8 +25969,7 @@
             "provider": {"field": "prec"},
             "python": {"name": "prec"},
             "presentation": {"label": "Precision", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "expr",

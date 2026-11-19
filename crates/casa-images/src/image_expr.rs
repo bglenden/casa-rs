@@ -64,15 +64,20 @@ use std::thread;
 
 use casa_coordinates::CoordinateSystem;
 use casa_lattices::LatticeError;
-use casa_types::ArrayD;
-use ndarray::{IxDyn, Zip};
+use casa_types::{ArrayD, RecordValue, Value};
+use ndarray::Zip;
 
 use crate::error::ImageError;
-use crate::image::{ImageInterface, ImagePixel};
+use crate::image::{ImageInterface, ImagePixel, PagedImage};
+use crate::image_expr_lel::{
+    broadcast_shapes, can_broadcast_to, choose_rhs_meta, combine_optional_masks, rebin_coordinates,
+    rebin_mask_slice, rebin_shape, replace_stokes_with_pangle, spectral_frequencies_hz,
+};
 use crate::image_info::ImageInfo;
 
 #[path = "image_expr_compiled.rs"]
 mod compiled;
+pub(crate) use compiled::MemorySnapshotImage;
 pub use compiled::{ImageExpression, MaskExpression};
 
 type UnaryExprFn<T> = Arc<dyn Fn(T) -> T + Send + Sync>;
@@ -664,7 +669,7 @@ pub enum MaskLogicalOp {
 /// Reduction operations for collapsing an entire image to a scalar.
 ///
 /// Corresponds to the C++ `LELFunctionEnums` reduction family:
-/// `SUM`, `MIN1D`, `MAX1D`, `MEAN1D`, `MEDIAN1D`.
+/// `SUM`, `MIN1D`, `MAX1D`, `MEAN1D`, `MEDIAN1D`, `VARIANCE1D`, `STDDEV1D`, `AVDEV1D`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReductionOp {
     /// Sum of all elements.
@@ -677,6 +682,12 @@ pub enum ReductionOp {
     Mean,
     /// Median of all elements (real types only).
     Median,
+    /// Sample variance (`n - 1` denominator) of valid elements.
+    Variance,
+    /// Sample standard deviation (`sqrt(variance)`) of valid elements.
+    Stddev,
+    /// Mean absolute deviation (`mean(|x - mean|)`) of valid elements.
+    Avdev,
 }
 
 #[derive(Clone)]
@@ -687,10 +698,28 @@ struct ImageExprMeta {
     misc_info: casa_types::RecordValue,
     image_info: ImageInfo,
     name: Option<PathBuf>,
+    legacy_coords: Option<RecordValue>,
 }
 
 impl ImageExprMeta {
     fn from_image<T: ImageExprValue>(image: &dyn ImageInterface<T>) -> Result<Self, ImageError> {
+        let legacy_coords = image.as_any().and_then(|any| {
+            if let Some(paged) = any.downcast_ref::<PagedImage<T>>() {
+                paged
+                    .table()
+                    .keywords()
+                    .get("coords")
+                    .cloned()
+                    .and_then(|v| match v {
+                        Value::Record(r) => Some(r),
+                        _ => None,
+                    })
+            } else if let Some(mem) = any.downcast_ref::<MemorySnapshotImage<T>>() {
+                mem.legacy_coords.clone()
+            } else {
+                None
+            }
+        });
         Ok(Self {
             shape: image.shape().to_vec(),
             coords: image.coordinates().clone(),
@@ -698,6 +727,7 @@ impl ImageExprMeta {
             misc_info: image.misc_info(),
             image_info: image.image_info()?,
             name: image.name().map(Path::to_path_buf),
+            legacy_coords,
         })
     }
 }
@@ -777,15 +807,69 @@ enum NumericExprNode<'a, T: ImageExprValue> {
     TypeBridge {
         eval_fn: SliceEvalFn<'a, T>,
     },
+    /// Strip mask: `value(expr)` keeps values and clears pixel masks.
+    StripMask {
+        child: Box<NumericExprNode<'a, T>>,
+    },
+    /// Spectral index: `ln(lhs / rhs) / ln(f1 / f2)`.
+    SpectralIndex {
+        lhs: Box<NumericExprNode<'a, T>>,
+        rhs: Box<NumericExprNode<'a, T>>,
+        spec_axis_a: usize,
+        freqs_a: Vec<f64>,
+        spec_axis_b: usize,
+        freqs_b: Vec<f64>,
+    },
+    /// Linear polarization angle in degrees: `0.5 * atan2(u, q) * 180 / pi`.
+    Pa {
+        u: Box<NumericExprNode<'a, T>>,
+        q: Box<NumericExprNode<'a, T>>,
+    },
+    /// Block-averaged rebinning along leading or all axes.
+    Rebin {
+        child: Box<NumericExprNode<'a, T>>,
+        in_shape: Vec<usize>,
+        factors: Vec<usize>,
+        out_shape: Vec<usize>,
+    },
 }
 
 impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
+    fn contains_conditional(&self) -> bool {
+        match self {
+            Self::Source(_)
+            | Self::Scalar(_)
+            | Self::StripMask { .. }
+            | Self::TypeBridge { .. } => false,
+            Self::Conditional { .. } => true,
+            Self::UnaryOp { child, .. }
+            | Self::CustomUnary { child, .. }
+            | Self::Reduction { child, .. }
+            | Self::Fractile { child, .. }
+            | Self::FractileRange { child, .. }
+            | Self::Rebin { child, .. } => child.contains_conditional(),
+            Self::BinaryOp { lhs, rhs, .. }
+            | Self::CustomBinary { lhs, rhs, .. }
+            | Self::SpectralIndex { lhs, rhs, .. }
+            | Self::Pa { u: lhs, q: rhs } => {
+                lhs.contains_conditional() || rhs.contains_conditional()
+            }
+            Self::Replace { primary, .. } => primary.contains_conditional(),
+            Self::MaskCount { mask, .. } => mask.contains_conditional(),
+        }
+    }
+
     fn try_shape(&self) -> Option<Vec<usize>> {
         match self {
             Self::Source(image) => Some(image.shape().to_vec()),
             Self::Scalar(_) => Some(vec![]),
-            Self::UnaryOp { child, .. } | Self::CustomUnary { child, .. } => child.try_shape(),
-            Self::BinaryOp { lhs, rhs, .. } | Self::CustomBinary { lhs, rhs, .. } => {
+            Self::UnaryOp { child, .. }
+            | Self::CustomUnary { child, .. }
+            | Self::StripMask { child } => child.try_shape(),
+            Self::BinaryOp { lhs, rhs, .. }
+            | Self::CustomBinary { lhs, rhs, .. }
+            | Self::SpectralIndex { lhs, rhs, .. }
+            | Self::Pa { u: lhs, q: rhs } => {
                 let lhs_shape = lhs.try_shape()?;
                 let rhs_shape = rhs.try_shape()?;
                 broadcast_shapes(&lhs_shape, &rhs_shape).ok()
@@ -806,6 +890,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 broadcast_shapes(&condition_shape, &value_shape).ok()
             }
             Self::Replace { primary, .. } => primary.try_shape(),
+            Self::Rebin { out_shape, .. } => Some(out_shape.clone()),
             Self::TypeBridge { .. } => None,
         }
     }
@@ -813,11 +898,14 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
     fn propagated_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
         match self {
             Self::Source(image) => image.default_mask(),
-            Self::Scalar(_) => Ok(None),
+            Self::Scalar(_) | Self::StripMask { .. } => Ok(None),
             Self::UnaryOp { child, .. } | Self::CustomUnary { child, .. } => {
                 child.propagated_mask()
             }
-            Self::BinaryOp { lhs, rhs, .. } | Self::CustomBinary { lhs, rhs, .. } => {
+            Self::BinaryOp { lhs, rhs, .. }
+            | Self::CustomBinary { lhs, rhs, .. }
+            | Self::SpectralIndex { lhs, rhs, .. }
+            | Self::Pa { u: lhs, q: rhs } => {
                 let lhs_shape = lhs.try_shape();
                 let rhs_shape = rhs.try_shape();
                 match (lhs_shape, rhs_shape) {
@@ -830,12 +918,24 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                     _ => Ok(None),
                 }
             }
+            Self::Replace { primary, .. } => primary.propagated_mask(),
+            Self::Rebin {
+                child,
+                factors,
+                out_shape,
+                ..
+            } => {
+                let Some(mask) = child.propagated_mask()? else {
+                    return Ok(None);
+                };
+                let stride = vec![1; out_shape.len()];
+                Ok(Some(rebin_mask_slice(&mask, factors, out_shape, &stride)))
+            }
             Self::Conditional { .. }
             | Self::Reduction { .. }
             | Self::Fractile { .. }
             | Self::FractileRange { .. }
             | Self::MaskCount { .. }
-            | Self::Replace { .. }
             | Self::TypeBridge { .. } => Ok(None),
         }
     }
@@ -855,6 +955,10 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
             Self::MaskCount { .. } => "mask-count",
             Self::Replace { .. } => "replace",
             Self::TypeBridge { .. } => "type-bridge",
+            Self::StripMask { .. } => "value",
+            Self::SpectralIndex { .. } => "spectralindex",
+            Self::Pa { .. } => "pa",
+            Self::Rebin { .. } => "rebin",
         }
     }
 }
@@ -899,9 +1003,32 @@ enum MaskExprNode<'a, T: ImageExprValue> {
         child: Box<MaskExprNode<'a, T>>,
         child_shape: Vec<usize>,
     },
+    /// Axis coordinate index membership test: `indexin(axis, [i0, ...])`.
+    IndexIn {
+        axis: i64,
+        indices: Vec<i64>,
+    },
 }
 
 impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
+    fn contains_conditional(&self) -> bool {
+        match self {
+            Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => {
+                expr.contains_conditional()
+            }
+            Self::CompareExpr { lhs, rhs, .. } => {
+                lhs.contains_conditional() || rhs.contains_conditional()
+            }
+            Self::Logical { lhs, rhs, .. } => {
+                lhs.contains_conditional() || rhs.contains_conditional()
+            }
+            Self::Not { child } | Self::AllReduce { child, .. } | Self::AnyReduce { child, .. } => {
+                child.contains_conditional()
+            }
+            Self::ConstantMask { .. } | Self::IndexIn { .. } => false,
+        }
+    }
+
     fn try_shape(&self) -> Option<Vec<usize>> {
         match self {
             Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => expr.try_shape(),
@@ -917,7 +1044,33 @@ impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
             }
             Self::Not { child } => child.try_shape(),
             Self::ConstantMask { mask } => Some(mask.shape().to_vec()),
-            Self::AllReduce { .. } | Self::AnyReduce { .. } => Some(vec![]),
+            Self::AllReduce { .. } | Self::AnyReduce { .. } | Self::IndexIn { .. } => Some(vec![]),
+        }
+    }
+
+    #[cfg(test)]
+    fn propagated_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
+        match self {
+            Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => {
+                expr.propagated_mask()
+            }
+            Self::CompareExpr { lhs, rhs, .. } => {
+                let (Some(ls), Some(rs)) = (lhs.try_shape(), rhs.try_shape()) else {
+                    return Ok(None);
+                };
+                combine_optional_masks(lhs.propagated_mask()?, &ls, rhs.propagated_mask()?, &rs)
+            }
+            Self::Logical { lhs, rhs, .. } => {
+                let (Some(ls), Some(rs)) = (lhs.try_shape(), rhs.try_shape()) else {
+                    return Ok(None);
+                };
+                combine_optional_masks(lhs.propagated_mask()?, &ls, rhs.propagated_mask()?, &rs)
+            }
+            Self::Not { child } => child.propagated_mask(),
+            Self::ConstantMask { .. }
+            | Self::AllReduce { .. }
+            | Self::AnyReduce { .. }
+            | Self::IndexIn { .. } => Ok(None),
         }
     }
 }
@@ -979,72 +1132,6 @@ fn validate_same_shape(lhs: &[usize], rhs: &[usize]) -> Result<(), ImageError> {
             expected: lhs.to_vec(),
             got: rhs.to_vec(),
         })
-    }
-}
-
-/// Returns the output shape when combining two operands.
-///
-/// C++ LEL allows scalar (0-D) operands to broadcast to the shape of the other
-/// operand.  Both non-empty shapes must match exactly.
-fn broadcast_shapes(lhs: &[usize], rhs: &[usize]) -> Result<Vec<usize>, ImageError> {
-    if lhs.is_empty() || lhs == rhs {
-        Ok(rhs.to_vec())
-    } else if rhs.is_empty() {
-        Ok(lhs.to_vec())
-    } else {
-        Err(ImageError::ShapeMismatch {
-            expected: lhs.to_vec(),
-            got: rhs.to_vec(),
-        })
-    }
-}
-
-fn broadcast_mask(
-    mask: ArrayD<bool>,
-    source_shape: &[usize],
-    out_shape: &[usize],
-) -> Result<ArrayD<bool>, ImageError> {
-    if source_shape == out_shape {
-        return Ok(mask);
-    }
-    let broadcast_shape = broadcast_shapes(source_shape, out_shape)?;
-    if broadcast_shape != out_shape {
-        return Err(ImageError::ShapeMismatch {
-            expected: out_shape.to_vec(),
-            got: source_shape.to_vec(),
-        });
-    }
-    if source_shape.is_empty() {
-        return Ok(ArrayD::from_elem(IxDyn(out_shape), mask[IxDyn(&[])]));
-    }
-    mask.broadcast(IxDyn(out_shape))
-        .map(|view| view.to_owned())
-        .ok_or_else(|| ImageError::ShapeMismatch {
-            expected: out_shape.to_vec(),
-            got: source_shape.to_vec(),
-        })
-}
-
-fn combine_optional_masks(
-    lhs_mask: Option<ArrayD<bool>>,
-    lhs_shape: &[usize],
-    rhs_mask: Option<ArrayD<bool>>,
-    rhs_shape: &[usize],
-) -> Result<Option<ArrayD<bool>>, ImageError> {
-    let out_shape = broadcast_shapes(lhs_shape, rhs_shape)?;
-    match (lhs_mask, rhs_mask) {
-        (None, None) => Ok(None),
-        (Some(mask), None) => broadcast_mask(mask, lhs_shape, &out_shape).map(Some),
-        (None, Some(mask)) => broadcast_mask(mask, rhs_shape, &out_shape).map(Some),
-        (Some(lhs), Some(rhs)) => {
-            let lhs = broadcast_mask(lhs, lhs_shape, &out_shape)?;
-            let rhs = broadcast_mask(rhs, rhs_shape, &out_shape)?;
-            Ok(Some(
-                Zip::from(&lhs)
-                    .and(&rhs)
-                    .map_collect(|&lhs, &rhs| lhs && rhs),
-            ))
-        }
     }
 }
 
@@ -1176,6 +1263,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 misc_info: casa_types::RecordValue::default(),
                 image_info: ImageInfo::default(),
                 name: None,
+                legacy_coords: None,
             },
             expr_string: None,
         }
@@ -1204,19 +1292,6 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 name,
                 child: Box::new(self.node),
                 func: Arc::new(func),
-            },
-            meta: self.meta,
-            expr_string: None,
-        }
-    }
-
-    fn custom_binary(self, rhs: Self, name: &'static str, func: BinaryExprFn<T>) -> Self {
-        Self {
-            node: NumericExprNode::CustomBinary {
-                name,
-                lhs: Box::new(self.node),
-                rhs: Box::new(rhs.node),
-                func,
             },
             meta: self.meta,
             expr_string: None,
@@ -1366,7 +1441,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// matching C++ LEL semantics where reductions produce scalars.
     pub fn binary_expr(self, rhs: Self, op: ImageExprBinaryOp) -> Result<Self, ImageError> {
         let out_shape = broadcast_shapes(&self.meta.shape, &rhs.meta.shape)?;
-        let mut meta = if self.meta.shape.is_empty() {
+        let mut meta = if choose_rhs_meta(&self.meta.shape, &rhs.meta.shape, &out_shape) {
             rhs.meta
         } else {
             self.meta
@@ -1390,9 +1465,22 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         func: BinaryExprFn<T>,
     ) -> Result<Self, ImageError> {
         let out_shape = broadcast_shapes(&self.meta.shape, &rhs.meta.shape)?;
-        let mut result = self.custom_binary(rhs, name, func);
-        result.meta.shape = out_shape;
-        Ok(result)
+        let mut meta = if choose_rhs_meta(&self.meta.shape, &rhs.meta.shape, &out_shape) {
+            rhs.meta.clone()
+        } else {
+            self.meta.clone()
+        };
+        meta.shape = out_shape;
+        Ok(Self {
+            node: NumericExprNode::CustomBinary {
+                name,
+                lhs: Box::new(self.node),
+                rhs: Box::new(rhs.node),
+                func,
+            },
+            meta,
+            expr_string: None,
+        })
     }
 
     /// Combines this expression with another source image using a built-in binary operator.
@@ -1703,6 +1791,10 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// Opaque typed closures and some non-elementwise nodes still return
     /// `None`, which callers treat as an all-true fallback.
     pub fn source_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
+        if self.node.contains_conditional() {
+            let compiled = self.compile()?;
+            return compiled.get_mask_slice(&vec![0; self.ndim_value()], self.shape());
+        }
         self.node.propagated_mask()
     }
 
@@ -1764,6 +1856,27 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// Corresponds to C++ LEL `median1d(expr)`.
     pub fn median_reduce(self) -> Self {
         self.make_reduction(ReductionOp::Median)
+    }
+
+    /// Reduces the entire expression to its sample variance (`n - 1` denominator).
+    ///
+    /// Corresponds to C++ LEL `variance1d(expr)`.
+    pub fn variance_reduce(self) -> Self {
+        self.make_reduction(ReductionOp::Variance)
+    }
+
+    /// Reduces the entire expression to its sample standard deviation.
+    ///
+    /// Corresponds to C++ LEL `stddev1d(expr)`.
+    pub fn stddev_reduce(self) -> Self {
+        self.make_reduction(ReductionOp::Stddev)
+    }
+
+    /// Reduces the entire expression to its mean absolute deviation.
+    ///
+    /// Corresponds to C++ LEL `avdev1d(expr)`.
+    pub fn avdev_reduce(self) -> Self {
+        self.make_reduction(ReductionOp::Avdev)
     }
 
     fn make_reduction(self, op: ReductionOp) -> Self {
@@ -1837,9 +1950,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         let out_shape = broadcast_shapes(&condition.shape, &if_true.meta.shape)?;
         let out_shape = broadcast_shapes(&out_shape, &if_false.meta.shape)?;
         let cond_node = condition.node;
-        let mut meta = if !if_true.meta.shape.is_empty() {
-            if_true.meta.clone()
-        } else if !if_false.meta.shape.is_empty() {
+        let mut meta = if choose_rhs_meta(&if_true.meta.shape, &if_false.meta.shape, &out_shape) {
             if_false.meta.clone()
         } else {
             if_true.meta.clone()
@@ -1895,6 +2006,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 misc_info: casa_types::RecordValue::default(),
                 image_info: ImageInfo::default(),
                 name: None,
+                legacy_coords: None,
             },
             expr_string: None,
         }
@@ -1907,8 +2019,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// `replacement` may be same-shaped or scalar; scalar replacements
     /// broadcast across the primary expression.
     pub fn replace(self, replacement: Self, mask: ArrayD<bool>) -> Result<Self, ImageError> {
-        let out_shape = broadcast_shapes(&self.meta.shape, &replacement.meta.shape)?;
-        if out_shape != self.meta.shape {
+        if !can_broadcast_to(&replacement.meta.shape, &self.meta.shape) {
             return Err(ImageError::ShapeMismatch {
                 expected: self.meta.shape.clone(),
                 got: replacement.meta.shape.clone(),
@@ -1921,6 +2032,94 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 mask,
             },
             meta: self.meta,
+            expr_string: None,
+        })
+    }
+
+    /// Strips any pixel mask while leaving pixel values unchanged.
+    ///
+    /// Corresponds to C++ LEL `value(expr)`.
+    pub fn strip_mask(self) -> Self {
+        Self {
+            node: NumericExprNode::StripMask {
+                child: Box::new(self.node),
+            },
+            meta: self.meta,
+            expr_string: None,
+        }
+    }
+
+    /// Computes two-point spectral index `ln(self / rhs) / ln(f1 / f2)` lazily.
+    ///
+    /// Corresponds to C++ LEL `spectralindex(expr1, expr2)`. Clears output units.
+    pub fn spectral_index(self, rhs: Self) -> Result<Self, ImageError> {
+        let out_shape = broadcast_shapes(&self.meta.shape, &rhs.meta.shape)?;
+        let (spec_axis_a, freqs_a) = spectral_frequencies_hz(&self.meta.coords, &self.meta.shape)?;
+        let (spec_axis_b, freqs_b) = spectral_frequencies_hz(&rhs.meta.coords, &rhs.meta.shape)?;
+        let mut meta = if choose_rhs_meta(&self.meta.shape, &rhs.meta.shape, &out_shape) {
+            rhs.meta
+        } else {
+            self.meta
+        };
+        meta.shape = out_shape;
+        meta.units.clear();
+        Ok(Self {
+            node: NumericExprNode::SpectralIndex {
+                lhs: Box::new(self.node),
+                rhs: Box::new(rhs.node),
+                spec_axis_a,
+                freqs_a,
+                spec_axis_b,
+                freqs_b,
+            },
+            meta,
+            expr_string: None,
+        })
+    }
+
+    /// Computes linear polarization angle `0.5 * atan2(u, q) * 180 / pi` in degrees.
+    ///
+    /// Corresponds to C++ LEL `pa(u, q)`. Sets unit to `"deg"` and replaces any
+    /// Stokes coordinate with `[StokesType::Pangle]`.
+    pub fn pa(u: Self, q: Self) -> Result<Self, ImageError> {
+        let out_shape = broadcast_shapes(&u.meta.shape, &q.meta.shape)?;
+        let mut meta = if choose_rhs_meta(&u.meta.shape, &q.meta.shape, &out_shape) {
+            q.meta
+        } else {
+            u.meta
+        };
+        meta.shape = out_shape;
+        meta.units = "deg".to_string();
+        replace_stokes_with_pangle(&mut meta.coords);
+        meta.legacy_coords = None;
+        Ok(Self {
+            node: NumericExprNode::Pa {
+                u: Box::new(u.node),
+                q: Box::new(q.node),
+            },
+            meta,
+            expr_string: None,
+        })
+    }
+
+    /// Block-averages pixel values by integer binning `factors`.
+    ///
+    /// Corresponds to C++ LEL `rebin(expr, factors)`.
+    pub fn rebin(self, factors: Vec<usize>) -> Result<Self, ImageError> {
+        let (out_shape, padded_factors) = rebin_shape(&self.meta.shape, &factors)?;
+        let mut meta = self.meta;
+        rebin_coordinates(&mut meta.coords, &padded_factors)?;
+        meta.legacy_coords = None;
+        let in_shape = meta.shape;
+        meta.shape = out_shape.clone();
+        Ok(Self {
+            node: NumericExprNode::Rebin {
+                child: Box::new(self.node),
+                in_shape,
+                factors: padded_factors,
+                out_shape,
+            },
+            meta,
             expr_string: None,
         })
     }
@@ -1993,6 +2192,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
                 misc_info: meta.misc_info,
                 image_info: meta.image_info,
                 name: meta.name,
+                legacy_coords: meta.legacy_coords,
             },
             expr_string: None,
         }
@@ -2022,6 +2222,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
                 misc_info: meta.misc_info,
                 image_info: meta.image_info,
                 name: meta.name,
+                legacy_coords: meta.legacy_coords,
             },
             expr_string: None,
         }
@@ -2051,6 +2252,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
                 misc_info: meta.misc_info,
                 image_info: meta.image_info,
                 name: meta.name,
+                legacy_coords: meta.legacy_coords,
             },
             expr_string: None,
         }
@@ -2080,6 +2282,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
                 misc_info: meta.misc_info,
                 image_info: meta.image_info,
                 name: meta.name,
+                legacy_coords: meta.legacy_coords,
             },
             expr_string: None,
         }
@@ -2107,6 +2310,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
                 misc_info: meta.misc_info,
                 image_info: meta.image_info,
                 name: meta.name,
+                legacy_coords: meta.legacy_coords,
             },
             expr_string: None,
         }
@@ -2134,6 +2338,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
                 misc_info: meta.misc_info,
                 image_info: meta.image_info,
                 name: meta.name,
+                legacy_coords: meta.legacy_coords,
             },
             expr_string: None,
         }
@@ -2177,6 +2382,7 @@ impl<'a> ImageExprBuilder<'a, f32> {
                 misc_info: meta.misc_info,
                 image_info: meta.image_info,
                 name: meta.name,
+                legacy_coords: meta.legacy_coords,
             },
             expr_string: None,
         })
@@ -2218,6 +2424,7 @@ impl<'a> ImageExprBuilder<'a, f64> {
                 misc_info: meta.misc_info,
                 image_info: meta.image_info,
                 name: meta.name,
+                legacy_coords: meta.legacy_coords,
             },
             expr_string: None,
         })
@@ -2324,6 +2531,21 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
             },
             shape: vec![],
         }
+    }
+
+    /// Creates a shape-polymorphic `indexin(axis, indices)` mask expression.
+    ///
+    /// Evaluates to `true` where the 0-based coordinate on `axis` appears in `indices`.
+    pub fn index_in(axis: i64, indices: Vec<i64>) -> Self {
+        Self {
+            node: MaskExprNode::IndexIn { axis, indices },
+            shape: vec![],
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn source_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
+        self.node.propagated_mask()
     }
 }
 

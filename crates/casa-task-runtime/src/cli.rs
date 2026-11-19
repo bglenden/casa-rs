@@ -236,6 +236,16 @@ fn validated_cli_value(
         && (matches!(concept.value_domain, ParameterType::String) || one_selector)
         && matches!(&binding.default,
             DefaultSpec::Literal { value: ParameterValue::String(value) } if value.is_empty());
+    if bundle.surface.id() == "immath"
+        && binding.name == "outfile"
+        && text.is_empty()
+        && let DefaultSpec::Literal {
+            value: ParameterValue::String(default),
+        } = &binding.default
+        && !default.is_empty()
+    {
+        return checked_value(bundle, binding, &ParameterValue::String(default.clone()));
+    }
     // FIELD spaces are a token that can match an empty NAME or CODE.
     let exact_field_text = one_selector
         && binding.context_role == Some(ContextRole::FieldSelection)
@@ -571,5 +581,17 @@ mod tests {
         assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
         let refused = checked_value(&imager, imsize, &ParameterValue::Bool(true)).unwrap_err();
         assert!(refused.starts_with("parameter \"imsize\": "), "{refused}");
+
+        let immath = casa_provider_contracts::builtin_surface_bundle("immath").unwrap();
+        let outfile = ensure_parameter_binding(&immath, "outfile").unwrap();
+        assert_eq!(
+            validated_cli_value(&immath, outfile, "").unwrap(),
+            ParameterValue::String("immath_results.im".to_string())
+        );
+        assert!(
+            validated_cli_value(&immath, outfile, "  ")
+                .unwrap_err()
+                .contains("no typed value")
+        );
     }
 }
