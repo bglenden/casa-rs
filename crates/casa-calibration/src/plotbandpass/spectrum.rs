@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Numerical preparation of selected bandpass spectra and channel derivatives.
+
+use casa_types::{ArrayValue, Complex32, Complex64};
+
+use super::table::Spectrum;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Ordinate {
+    Amplitude,
+    Decibels,
+    Phase,
+    Delay,
+}
+
+pub(super) struct Curve {
+    pub(super) x: Vec<f64>,
+    pub(super) y: Vec<f64>,
+}
+
+pub(super) struct Derivative {
+    pub(super) curve: Curve,
+    pub(super) median: f64,
+    pub(super) deviation: f64,
+    pub(super) rms: f64,
+}
+
+impl Spectrum {
+    pub(super) fn curve(
+        &self,
+        receptor: usize,
+        frequencies_ghz: Option<&[f64]>,
+        ordinate: Ordinate,
+        show_flagged: bool,
+    ) -> Result<Curve, String> {
+        let shape = self.parameters.shape();
+        let [receptors, channels, ..] = shape else {
+            return Err(format!("unsupported calibration spectrum shape {shape:?}"));
+        };
+        if receptor >= *receptors {
+            return Err(format!("spectrum has no receptor {receptor}"));
+        }
+        if let Some(frequencies) = frequencies_ghz
+            && frequencies.len() != *channels
+        {
+            return Err(format!(
+                "calibration spectrum has {channels} channels, with {} channel frequencies",
+                frequencies.len()
+            ));
+        }
+        let ArrayValue::Bool(flags) = &self.flags else {
+            return Err("calibration spectrum flags must be Boolean".into());
+        };
+        let mut index = vec![0; shape.len()];
+        index[0] = receptor;
+        let mut curve = Curve {
+            x: Vec::with_capacity(*channels),
+            y: Vec::with_capacity(*channels),
+        };
+        for channel in 0..*channels {
+            index[1] = channel;
+            if flags[index.as_slice()] && !show_flagged {
+                continue;
+            }
+            let x = frequencies_ghz.map_or(channel as f64, |values| values[channel]);
+            let y = amplitude_phase(&self.parameters, &index, ordinate)?;
+            curve.x.push(x);
+            curve.y.push(y);
+        }
+        Ok(curve)
+    }
+}
+
+fn amplitude_phase(array: &ArrayValue, index: &[usize], ordinate: Ordinate) -> Result<f64, String> {
+    let (amplitude, phase) = match array {
+        ArrayValue::Complex32(data) => complex32(data[index]),
+        ArrayValue::Complex64(data) => complex64(data[index]),
+        ArrayValue::Float32(data) => (f64::from(data[index]), 0.0),
+        ArrayValue::Float64(data) => (data[index], 0.0),
+        _ => return Err("bandpass solutions need a real or complex array".into()),
+    };
+    Ok(match ordinate {
+        Ordinate::Amplitude => amplitude,
+        Ordinate::Decibels => 10.0 * amplitude.log10(),
+        Ordinate::Phase => phase,
+        Ordinate::Delay => amplitude * 1e9,
+    })
+}
+
+fn complex32(value: Complex32) -> (f64, f64) {
+    (f64::from(value.norm()), f64::from(value.arg().to_degrees()))
+}
+
+fn complex64(value: Complex64) -> (f64, f64) {
+    (value.norm(), value.arg().to_degrees())
+}
+
+impl Curve {
+    pub(super) fn differentiate(&self, normalize: bool, edge: usize) -> Derivative {
+        let typical = median(&self.y);
+        let mut curve = channel_differences(self);
+        if normalize {
+            for sample in &mut curve.y {
+                *sample *= 100.0 / typical;
+            }
+        }
+        let edge = edge.min(curve.y.len().saturating_sub(1) / 2);
+        let central = &curve.y[edge..curve.y.len() - edge];
+        let center = median(central);
+        let differences = central.iter().map(|value| (value - center).abs());
+        let deviation = median(&differences.collect::<Vec<_>>()) / 0.6745;
+        let mean = central.iter().sum::<f64>() / central.len() as f64;
+        let variance = central
+            .iter()
+            .map(|value| (value - mean).powi(2))
+            .sum::<f64>()
+            / central.len() as f64;
+        Derivative {
+            curve,
+            median: typical,
+            deviation,
+            rms: variance.sqrt(),
+        }
+    }
+}
+
+fn channel_differences(source: &Curve) -> Curve {
+    if source.x.len() < 2 {
+        return Curve {
+            x: source.x.clone(),
+            y: source.y.clone(),
+        };
+    }
+    let channel_width = source.x[1] - source.x[0];
+    let pairs = source.x.windows(2).zip(source.y.windows(2));
+    let (x, y) = pairs
+        .map(|(x, y)| {
+            let midpoint = (x[0] + x[1]) / 2.0;
+            let difference = (y[1] - y[0]) / (x[1] - x[0]) * channel_width;
+            (midpoint, difference)
+        })
+        .unzip();
+    Curve { x, y }
+}
+
+fn median(values: &[f64]) -> f64 {
+    if values.is_empty() || values.iter().any(|value| value.is_nan()) {
+        return f64::NAN;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable_by(f64::total_cmp);
+    let middle = sorted.len() / 2;
+    if sorted.len().is_multiple_of(2) {
+        (sorted[middle - 1] + sorted[middle]) / 2.0
+    } else {
+        sorted[middle]
+    }
+}
