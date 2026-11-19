@@ -33842,8 +33842,8 @@
         {
           "name": "caltable",
           "concept": {
-            "id": "calibration.caltable",
-            "semantic_revision": 2
+            "id": "parameter.caltable",
+            "semantic_revision": 1
           },
           "order": 0,
           "default": {

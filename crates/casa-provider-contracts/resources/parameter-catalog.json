@@ -12893,9 +12893,9 @@
       },
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "output_data",
+      "semantic_role": "presentation",
       "documentation": {
-        "summary": "The name of the plot file to produce.",
+        "summary": "Base name used to derive each saved plot and PDF name.",
         "details": null,
         "examples": []
       },
