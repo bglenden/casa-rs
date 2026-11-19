@@ -4,7 +4,7 @@
 use super::*;
 use crate::lookup::{TimePlan, TimeQuery};
 
-pub(super) fn load(
+pub(crate) fn load(
     plan: &ApplyCalibrationTablePlan,
     engine: Option<&Arc<MsCalEngine>>,
     ms: &MeasurementSet,
