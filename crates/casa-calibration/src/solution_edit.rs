@@ -10,12 +10,24 @@ use casa_types::{ScalarValue, Value};
 use crate::CalibrationOutputMode;
 use crate::constants::{COL_SPECTRAL_WINDOW_ID, STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE};
 use crate::output::CalibrationOutput;
-use crate::paths::{copy_editable_table_tree, normalized, overlap};
+use crate::paths::{copy_editable_table_tree, normalized, overlap, subtable_owner};
 
 pub(crate) fn edit_calibration_table(
     input: &Path,
     destination: &Path,
     edit: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
+) -> Result<(), String> {
+    stage_calibration_table_edit(input, destination, |table, path| {
+        edit(table, path)?;
+        update_spectral_window_flags(table, path)?;
+        crate::output_merge::save_sorted(table, path).map_err(error_text)
+    })
+}
+
+pub(crate) fn stage_calibration_table_edit(
+    input: &Path,
+    destination: &Path,
+    edit_and_save: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
 ) -> Result<(), String> {
     let input = normalized(input).map_err(error_text)?;
     let destination = normalized(destination).map_err(error_text)?;
@@ -45,9 +57,7 @@ pub(crate) fn edit_calibration_table(
     let mut table = Table::open(TableOptions::new(&output.staging)).map_err(error_text)?;
     lock.record_write();
     stage_subtables(&source, &input, &output.staging, reference, &mut table)?;
-    edit(&mut table, &output.staging)?;
-    update_spectral_window_flags(&table, &output.staging)?;
-    crate::output_merge::save_sorted(&mut table, &output.staging).map_err(error_text)?;
+    edit_and_save(&mut table, &output.staging)?;
     drop(table);
     lock.release().map_err(error_text)?;
     output.commit().map_err(error_text)
@@ -74,19 +84,12 @@ fn stage_subtables(
     reference: bool,
     staged: &mut Table,
 ) -> Result<(), String> {
-    let bases = if reference {
-        source.cache_plain_table_paths().map_err(error_text)?
-    } else {
-        vec![input.to_path_buf()]
-    };
-    let base = bases
-        .first()
-        .ok_or("calibration table has no underlying subtable directory")?;
+    let owner = subtable_owner(source, input).map_err(error_text)?;
     for &name in STANDARD_SUBTABLE_KEYWORDS {
         let Some(link) = source.keywords().get(name).and_then(Value::as_table_ref) else {
             continue;
         };
-        let origin = normalized(&base.join(link)).map_err(error_text)?;
+        let origin = normalized(&casa_tables::add_directory(link, &owner)).map_err(error_text)?;
         let target = staging.join(name);
         let copied = !reference && origin == input.join(name) && target.is_dir();
         if !copied {
@@ -105,7 +108,7 @@ fn stage_subtables(
     Ok(())
 }
 
-fn update_spectral_window_flags(table: &Table, staging: &Path) -> Result<(), String> {
+pub(crate) fn update_spectral_window_flags(table: &Table, staging: &Path) -> Result<(), String> {
     let path = staging.join("SPECTRAL_WINDOW");
     let mut spectrum = Table::open(TableOptions::new(&path)).map_err(error_text)?;
     let rows = (0..table.row_count()).collect::<Vec<_>>();

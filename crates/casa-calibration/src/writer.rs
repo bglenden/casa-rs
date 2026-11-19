@@ -5,13 +5,18 @@ use std::path::Path;
 
 use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
-use casa_tables::{Table, TableError, TableInfo, TableOptions, TableSchema, strip_directory};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_tables::{
+    ColumnSchema, Table, TableError, TableInfo, TableOptions, TableSchema, strip_directory,
+};
+use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use ndarray::{ArrayD, IxDyn};
 use thiserror::Error;
 
 use crate::constants::{
-    COL_INTERVAL, COL_TIME, KEY_CASA_VERSION, KEY_MS_NAME, KEY_PAR_TYPE, KEY_POL_BASIS,
-    KEY_VIS_CAL, STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE,
+    COL_ANTENNA1, COL_ANTENNA2, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM, COL_INTERVAL,
+    COL_OBSERVATION_ID, COL_PARAMERR, COL_SCAN_NUMBER, COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME,
+    COL_WEIGHT, KEY_CASA_VERSION, KEY_MS_NAME, KEY_PAR_TYPE, KEY_POL_BASIS, KEY_VIS_CAL,
+    STANDARD_SUBTABLE_KEYWORDS, TABLE_INFO_TYPE,
 };
 use crate::output::CalibrationOutput;
 use crate::{CalibrationOutputMode, output_merge};
@@ -264,6 +269,99 @@ pub(crate) fn set_measinfo_keyword(
     }
     keywords.upsert("MEASINFO", Value::Record(RecordValue::new(fields)));
     table.set_column_keywords(column, keywords);
+}
+
+pub(crate) enum SingleChannelFrequency {
+    MiddleChannel,
+    Mean,
+}
+
+/// Reduce every spectral window of the SPECTRAL_WINDOW subtable at `path`
+/// to one channel, as CASA's `NewCalTable::makeSpwSingleChan` does for a
+/// term that does not depend on frequency: the middle channel's frequency
+/// (`CHAN_FREQ[n/2]`), and CHAN_WIDTH, EFFECTIVE_BW and RESOLUTION the
+/// window's TOTAL_BANDWIDTH. CASA's `applycal` refuses a table whose
+/// windows keep the MeasurementSet's channels.
+pub(crate) fn make_windows_single_channel(
+    path: &Path,
+    frequency: SingleChannelFrequency,
+) -> Result<(), CalibrationTableWriteError> {
+    let failed = |source: TableError| CalibrationTableWriteError::Save {
+        path: path.display().to_string(),
+        source: Box::new(source),
+    };
+    let mut table = Table::open(TableOptions::new(path)).map_err(failed)?;
+    for row in 0..table.row_count() {
+        let value = |column: &str| -> Result<Value, TableError> {
+            Ok(table
+                .cell_accessor(row, column)?
+                .value()?
+                .cloned()
+                .unwrap_or_else(|| Value::Scalar(ScalarValue::Int32(0))))
+        };
+        let frequencies = match value("CHAN_FREQ").map_err(failed)? {
+            Value::Array(ArrayValue::Float64(frequencies)) => frequencies,
+            _ => continue,
+        };
+        let channels = frequencies.len();
+        if channels <= 1 {
+            continue;
+        }
+        let bandwidth = match value("TOTAL_BANDWIDTH").map_err(failed)? {
+            Value::Scalar(ScalarValue::Float64(bandwidth)) => bandwidth,
+            _ => continue,
+        };
+        let one = |value: f64| {
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(IxDyn(&[1]), vec![value]).expect("one channel"),
+            ))
+        };
+        let frequency = match frequency {
+            SingleChannelFrequency::MiddleChannel => frequencies
+                .iter()
+                .nth(channels / 2)
+                .copied()
+                .unwrap_or_default(),
+            SingleChannelFrequency::Mean => frequencies.iter().sum::<f64>() / channels as f64,
+        };
+        for (column, cell) in [
+            ("NUM_CHAN", Value::Scalar(ScalarValue::Int32(1))),
+            ("CHAN_FREQ", one(frequency)),
+            ("CHAN_WIDTH", one(bandwidth)),
+            ("EFFECTIVE_BW", one(bandwidth)),
+            ("RESOLUTION", one(bandwidth)),
+        ] {
+            table
+                .cell_accessor_mut(row, column)
+                .and_then(|mut accessor| accessor.set(cell))
+                .map_err(failed)?;
+        }
+    }
+    table.flush().map_err(failed)
+}
+
+pub(crate) fn new_calibration_table_schema(complex: bool) -> TableSchema {
+    let (column, parameter) = if complex {
+        (COL_CPARAM, PrimitiveType::Complex32)
+    } else {
+        (COL_FPARAM, PrimitiveType::Float32)
+    };
+    TableSchema::new(vec![
+        ColumnSchema::scalar(COL_TIME, PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_FIELD_ID, PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_SPECTRAL_WINDOW_ID, PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA1, PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_ANTENNA2, PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_INTERVAL, PrimitiveType::Float64),
+        ColumnSchema::scalar(COL_SCAN_NUMBER, PrimitiveType::Int32),
+        ColumnSchema::scalar(COL_OBSERVATION_ID, PrimitiveType::Int32),
+        ColumnSchema::array_variable(column, parameter, None),
+        ColumnSchema::array_variable(COL_PARAMERR, PrimitiveType::Float32, None),
+        ColumnSchema::array_variable(COL_FLAG, PrimitiveType::Bool, None),
+        ColumnSchema::array_variable(COL_SNR, PrimitiveType::Float32, None),
+        ColumnSchema::array_variable(COL_WEIGHT, PrimitiveType::Float32, None),
+    ])
+    .expect("valid simulated calibration schema")
 }
 
 #[cfg(test)]

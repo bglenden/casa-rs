@@ -1904,6 +1904,27 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Appends a group of history messages with a casacore `LOCATION` value.
+    ///
+    /// # Errors
+    /// Returns an error if the log table cannot be created, written or locked.
+    pub fn append_history_at(
+        &mut self,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        if messages.is_empty() {
+            return Ok(());
+        }
+        if let Some(path) = self.path.clone() {
+            self.ensure_logtable()?;
+            Self::append_logtable_rows(&Self::logtable_path(&path), location, messages)
+        } else {
+            self.temp_history.extend_from_slice(messages);
+            Ok(())
+        }
+    }
+
     /// Clears the history log.
     pub fn clear_history(&mut self) -> Result<(), ImageError> {
         match self.path.clone() {

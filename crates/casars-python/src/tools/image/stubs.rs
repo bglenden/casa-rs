@@ -687,12 +687,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn miscinfo(&self) -> PyResult<Py<PyAny>> {
-        stub("miscinfo")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (model, region = None, mask = None, subtract = None, list = None, stretch = None), text_signature = "($self, model, region={}, mask='', subtract=True, list=True, stretch=False)")]
     fn modify(
         &self,
@@ -1027,22 +1021,6 @@ impl PyImageTool {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("set")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (origin = None, history = None), text_signature = "($self, origin='', history=[])")]
-    fn sethistory(
-        &self,
-        origin: Option<&Bound<'_, PyAny>>,
-        history: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("sethistory")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (info), text_signature = "($self, info)")]
-    fn setmiscinfo(&self, info: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setmiscinfo")
     }
 
     /// Not yet implemented in casa-rs.

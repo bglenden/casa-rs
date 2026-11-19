@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "oracle": "CASA calibrater, casacore table reader, analytic Jones products",
+  "casa_version": "6.7.6.14",
+  "revision": "1db0439477a3074015c060da568a65bb3a4acf64",
+  "execution_date": "2026-11-19",
+  "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_table_tools_oracle.py --work <empty-directory> --native-driver <table_maintenance_oracle> --native-bin <calibrate>",
+  "result": "passed",
+  "creation_and_repair": {
+    "case_groups": 13,
+    "scope": "Complex and real schemas, single and multiple channels, exact parameter-type strings, nominal ephemeris directions, pre-4.1 observation metadata, existing products and overlapping paths."
+  },
+  "accumulation": {
+    "case_groups": 32,
+    "downstream_application_combinations": 4,
+    "visibility_iterator": "CASA old iterator, with a separate rejection check for the default iterator",
+    "scope": "Cumulative G and T tables, new time grids, independent source snapshots, interpolation and field transfer, unequal phase-delay labels and native data frequencies, interleaved fields and spectral-window maps. Includes analytic expectations for the per-cell B Jones product and selected coincident fields.",
+    "complex_relative_tolerance": 5e-7,
+    "phase_delay_relative_tolerance": 2e-6,
+    "complex_absolute_tolerance": 2e-7
+  },
+  "public_python_binding": "Pending the shared calibrater lifecycle in #1520 and #1528."
+}

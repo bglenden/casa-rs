@@ -64,7 +64,7 @@ pub struct TempImage<T: ImagePixel> {
     image_info: ImageInfo,
     masks: BTreeMap<String, ArrayD<bool>>,
     default_mask: Option<String>,
-    history: Vec<String>,
+    history: Vec<(String, String)>,
 }
 
 // ---- Constructors -----------------------------------------------------------
@@ -352,12 +352,33 @@ impl<T: ImagePixel> TempImage<T> {
 impl<T: ImagePixel> TempImage<T> {
     /// Returns the history entries.
     pub fn history(&self) -> Result<Vec<String>, ImageError> {
-        Ok(self.history.clone())
+        Ok(self
+            .history
+            .iter()
+            .map(|(_, message)| message.clone())
+            .collect())
     }
 
     /// Appends a history message.
     pub fn add_history(&mut self, msg: impl Into<String>) -> Result<(), ImageError> {
-        self.history.push(msg.into());
+        self.history.push(("casa-images".into(), msg.into()));
+        Ok(())
+    }
+
+    /// Appends history messages with a location retained by future saves.
+    ///
+    /// # Errors
+    /// Currently this operation stores the entries in memory and succeeds.
+    pub fn append_history_at(
+        &mut self,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        self.history.extend(
+            messages
+                .iter()
+                .map(|message| (location.to_owned(), message.clone())),
+        );
         Ok(())
     }
 
@@ -403,8 +424,8 @@ impl<T: ImagePixel> TempImage<T> {
         if let Some(ref default) = self.default_mask {
             paged.set_default_mask(default)?;
         }
-        for entry in &self.history {
-            paged.add_history(entry.clone())?;
+        for (location, message) in &self.history {
+            paged.append_history_at(location, std::slice::from_ref(message))?;
         }
         paged.save()?;
         Ok(paged)

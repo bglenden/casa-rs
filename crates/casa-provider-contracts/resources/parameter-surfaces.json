@@ -12935,7 +12935,7 @@
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
@@ -13145,7 +13145,7 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 3},
           "order": 12,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13155,8 +13155,7 @@
             "provider": {"field": "intent"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "array",
@@ -13190,7 +13189,7 @@
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 4},
           "order": 15,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13198,10 +13197,9 @@
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "SELECTOR"},
             "provider": {"field": "observation"},
-            "python": {"name": "observation"},
+            "python": {"name": "observation", "type_hint": "str | int"},
             "presentation": {"label": "Observation", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "feed",
@@ -13799,7 +13797,7 @@
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
@@ -13964,7 +13962,7 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 3},
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13974,8 +13972,7 @@
             "provider": {"field": "intent"},
             "python": {"name": "intent"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "array",
@@ -14009,7 +14006,7 @@
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 4},
           "order": 12,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -14017,10 +14014,9 @@
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "SELECTOR"},
             "provider": {"field": "observation"},
-            "python": {"name": "observation"},
+            "python": {"name": "observation", "type_hint": "str | int"},
             "presentation": {"label": "Observation", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "feed",
