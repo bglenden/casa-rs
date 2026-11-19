@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 642
-- Surfaces: 37 (37 task, 0 session)
-- Surface bindings: 946
+- Concepts: 648
+- Surfaces: 38 (38 task, 0 session)
+- Surface bindings: 953
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -53,6 +53,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Concat](#surface-concat)<br><code>concat</code> | task | 1 | <code>concat</code> | 9 | Concatenate simulated interferometric MeasurementSets with per-input weights. |
 | [SimALMA](#surface-simalma)<br><code>simalma</code> | task | 1 | <code>simalma</code> | 31 | Simulate ALMA and ACA observations and combine their images |
 | [Get ALMA Antenna Positions](#surface-getantposalma)<br><code>getantposalma</code> | task | 1 | <code>calibration</code> | 10 | Retrieve antenna positions from the ALMA archive. |
+| [Initialize Visibility Weights](#surface-initweights)<br><code>initweights</code> | task | 1 | <code>calibration</code> | 7 | Initialize MeasurementSet weights and their channel spectra. |
 
 <a id="surface-msexplore"></a>
 
@@ -1480,5 +1481,25 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>firstintegration</code> | <code>getantposalma.firstintegration@r1</code> | <code>bool</code> | <code>true</code>; optional | ALMA Service | Exclude measurements flagged as first integrations. |
 | <code>nretry</code> | <code>getantposalma.nretry@r1</code> | <code>integer</code> | <code>0</code>; optional | ALMA Service | Number of retries after the initial round of service requests. |
 | <code>rdelay</code> | <code>getantposalma.rdelay@r1</code> | <code>float</code> | <code>3.0</code>; optional | ALMA Service | Seconds between retries. |
+
+<a id="surface-initweights"></a>
+
+## Initialize Visibility Weights (<code>initweights</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Initialize MeasurementSet weights and their channel spectra.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
+| <code>wtmode</code> | <code>weightinit.wtmode@r1</code> | <code>choice (8 values)</code> | <code>"nyq"</code>; optional | Weights | Method used to initialize the visibility weights. |
+| <code>tsystable</code> | <code>weightinit.tsystable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Weights | Tsys calibration table used by the Tsys weight modes. |
+| <code>gainfield</code> | <code>weightinit.gainfield@r1</code> | <code>string</code> | <code>""</code>; optional | Weights | Select solutions from this field in the Tsys table. |
+| <code>interp</code> | <code>weightinit.interp@r1</code> | <code>string</code> | <code>""</code>; optional | Weights | Interpolate the Tsys solutions in time and frequency. |
+| <code>spwmap</code> | <code>weightinit.spwmap@r1</code> | <code>array&lt;integer&gt;</code> | <code>[]</code>; optional | Weights | Map data spectral windows to Tsys solution windows. |
+| <code>dowtsp</code> | <code>weightinit.dowtsp@r1</code> | <code>bool</code> | <code>false</code>; optional | Weights | Create WEIGHT_SPECTRUM when it is absent. |
 
 _End of generated reference._

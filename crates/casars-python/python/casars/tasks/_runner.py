@@ -210,7 +210,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         if not _is_default(value, defaults.get(name, _MISSING))
     }
     name = wrapper.__name__
-    if name in ("applycal", "clearcal", "delmod", "ft", "uvmodelfit", "uvsub"):
+    if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "uvmodelfit", "uvsub"):
         _validate_required_vis(values, arguments["vis"])
     if name == "applycal":
         return _call_applycal(values)
@@ -218,6 +218,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_gencal(values)
     if name == "getantposalma":
         return _call_getantposalma(values)
+    if name == "initweights":
+        return _call_initweights(values)
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):
@@ -246,6 +248,38 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_initweights(values: dict[str, Any]) -> Any:
+    import numpy as np
+
+    if "spwmap" in values:
+        mapping = values["spwmap"]
+        try:
+            items = list(mapping)
+        except TypeError:
+            items = [mapping] if isinstance(mapping, (int, np.int32)) else None
+        if mapping is None:
+            raise AssertionError("{'spwmap': ['null value not allowed']}")
+        if items is None or not all(isinstance(item, (int, np.int32, np.int64)) for item in items):
+            raise AssertionError("{'spwmap': ['must be of cIntVec type']}")
+        values["spwmap"] = [int(item) for item in items]
+    if isinstance(values.get("dowtsp"), np.bool_):
+        raise TypeError("in method 'calibrater_initweights', argument 3 of type 'bool'")
+    mode = values.get("wtmode", "nyq")
+    allowed = ("delwtsp", "nyq", "ones", "tsys", "weight", "tinttsys", "sigma", "delsigsp")
+    if isinstance(mode, str) and mode not in allowed:
+        raise AssertionError(str({"wtmode": [f"unallowed value {mode}"]}))
+    if mode is None:
+        raise AssertionError("{'wtmode': ['unallowed value None', 'null value not allowed']}")
+    try:
+        return run("initweights", **values).value
+    except TaskParameterError as error:
+        if error.completion.parameter == "wtmode" and mode in ("tsys", "tinttsys"):
+            raise
+        raise AssertionError(str(error)) from error
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
 
 
 def _call_gencal(values: dict[str, Any]) -> Any:

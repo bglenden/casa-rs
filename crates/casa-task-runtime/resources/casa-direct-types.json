@@ -345,6 +345,14 @@
     "stretch": "cBool",
     "keepaxes": "cIntVec"
   },
+  "initweights": {
+    "wtmode": "cStr",
+    "tsystable": "cPath",
+    "gainfield": "cStr",
+    "interp": "cStr",
+    "spwmap": "cIntVec",
+    "dowtsp": "cBool"
+  },
   "mstransform": {
     "outputvis": "cStr",
     "createmms": "cBool",
