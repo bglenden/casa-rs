@@ -753,7 +753,12 @@ const METHODS: &[Method] = &[
         R::Any,
         Yes,
     ),
-    method("newimage", &[param("infile", K::Any, Required)], R::Any, No),
+    method(
+        "newimage",
+        &[param("infile", K::Any, Required)],
+        R::Any,
+        Yes,
+    ),
     method(
         "newimagefromarray",
         &[
@@ -766,13 +771,13 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("f")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "newimagefromfile",
         &[param("infile", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "newimagefromfits",
@@ -812,7 +817,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("f")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "open",

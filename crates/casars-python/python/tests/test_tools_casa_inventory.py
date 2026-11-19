@@ -36,6 +36,7 @@ IMPLEMENTED["coordsys"] = {"done", "referencepixel", "setreferencepixel", "torec
 IMPLEMENTED["image"] = {
     "brightnessunit", "close", "coordsys", "dohistory", "done", "fromarray", "fromshape",
     "getchunk", "history", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk",
+    "newimage", "newimagefromarray", "newimagefromfile", "newimagefromshape",
     "makearray", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "shape", "type",
 }
 IMPLEMENTED["table"] = {
