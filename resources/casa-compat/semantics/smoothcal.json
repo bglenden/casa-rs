@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "smoothcal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
+  "audit_revision": "16e213dafe7d3b43d85e6c1392052289bfe487ca",
   "parameters": {
     "vis": {
       "scope": "MeasurementSet supplying field names and IDs.",
@@ -80,7 +80,7 @@
       "id": "table-operation",
       "title": "Calibration table operation",
       "status": "Implemented",
-      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection.",
+      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot.",
       "gap": "The documented CASA behavior differences are recorded below.",
       "evidence": [
         "paired"
@@ -105,10 +105,10 @@
     "paired": {
       "kind": "Same-input Python task and casacore interchange",
       "state": "passed",
-      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection.",
-      "result": "28 paired case groups and four downstream applications passed.",
+      "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot.",
+      "result": "29 paired case groups and four downstream applications passed.",
       "casa_version": "6.7.6.14",
-      "revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
+      "revision": "16e213dafe7d3b43d85e6c1392052289bfe487ca",
       "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>",
       "receipt": "resources/casa-compat/evidence/calibration-table-maintenance-20261119.json",
       "links": [

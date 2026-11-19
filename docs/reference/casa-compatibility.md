@@ -959,7 +959,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c`. Status counts: Default only: 0, Implemented: 5, Not implemented: 0, Partial: 0, Unassessed: 0.
+Audit baseline: `16e213dafe7d3b43d85e6c1392052289bfe487ca`. Status counts: Default only: 0, Implemented: 5, Not implemented: 0, Partial: 0, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -976,7 +976,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 <a id="rerefant-behavior-table-operation"></a>
 ##### Calibration table operation
 
-**Implemented** — Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables.
+**Implemented** — Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.
 
 The documented CASA behavior differences are recorded below.
 
@@ -1001,10 +1001,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="rerefant-evidence-paired"></a>
 ##### paired
 
-**Same-input Python task and casacore interchange — passed.** 23 paired case groups and four downstream applications passed. Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables.
+**Same-input Python task and casacore interchange — passed.** 24 paired case groups and four downstream applications passed. Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.
 
-- [tools/casa-compat/calibration_rerefant_oracle.py](https://github.com/bglenden/casa-rs/blob/bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c/tools/casa-compat/calibration_rerefant_oracle.py)
-- Revision: `bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c`; CASA: `6.7.6.14`.
+- [tools/casa-compat/calibration_rerefant_oracle.py](https://github.com/bglenden/casa-rs/blob/16e213dafe7d3b43d85e6c1392052289bfe487ca/tools/casa-compat/calibration_rerefant_oracle.py)
+- Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
 
@@ -1559,7 +1559,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+Audit baseline: `16e213dafe7d3b43d85e6c1392052289bfe487ca`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1578,7 +1578,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 <a id="smoothcal-behavior-table-operation"></a>
 ##### Calibration table operation
 
-**Implemented** — Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection.
+**Implemented** — Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot.
 
 The documented CASA behavior differences are recorded below.
 
@@ -1603,10 +1603,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="smoothcal-evidence-paired"></a>
 ##### paired
 
-**Same-input Python task and casacore interchange — passed.** 28 paired case groups and four downstream applications passed. Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection.
+**Same-input Python task and casacore interchange — passed.** 29 paired case groups and four downstream applications passed. Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot.
 
-- [tools/casa-compat/calibration_smoothcal_oracle.py](https://github.com/bglenden/casa-rs/blob/bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c/tools/casa-compat/calibration_smoothcal_oracle.py)
-- Revision: `bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c`; CASA: `6.7.6.14`.
+- [tools/casa-compat/calibration_smoothcal_oracle.py](https://github.com/bglenden/casa-rs/blob/16e213dafe7d3b43d85e6c1392052289bfe487ca/tools/casa-compat/calibration_smoothcal_oracle.py)
+- Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
 - Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
 

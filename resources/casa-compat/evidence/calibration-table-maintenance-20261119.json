@@ -2,20 +2,20 @@
   "schema_version": 1,
   "oracle": "CASA task and casacore table reader",
   "casa_version": "6.7.6.14",
-  "revision": "bdb3bdb09bb703df6a2908ab48b84f5a53bbc21c",
+  "revision": "16e213dafe7d3b43d85e6c1392052289bfe487ca",
   "execution_date": "2026-11-19",
   "smoothcal": {
     "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>",
-    "case_groups": 28,
+    "case_groups": 29,
     "downstream_application_combinations": 4,
     "result": "passed",
-    "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection."
+    "scope": "Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot."
   },
   "rerefant": {
     "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>",
-    "case_groups": 23,
+    "case_groups": 24,
     "downstream_application_combinations": 4,
     "result": "passed",
-    "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables."
+    "scope": "Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot."
   }
 }
