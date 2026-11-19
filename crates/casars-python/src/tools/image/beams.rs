@@ -11,18 +11,25 @@ use crate::convert::value::CasaValue;
 use super::PyImageTool;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 
-fn subrecord<'a>(record: &'a RecordValue, field: &str) -> Option<&'a RecordValue> {
+pub(super) fn subrecord<'a>(record: &'a RecordValue, field: &str) -> Option<&'a RecordValue> {
     match record.get(field) {
         Some(Value::Record(value)) => Some(value),
         _ => None,
     }
 }
 
-fn image_info(image: &ImageHandle) -> Result<ImageInfo, ImageError> {
+pub(super) fn image_info(image: &ImageHandle) -> Result<ImageInfo, ImageError> {
     with_pixels!(image, storage => with_storage!(storage, image => image.image_info()))
 }
 
-fn stored_beam_record(
+pub(super) fn image_info_record(image: &ImageHandle) -> Option<&RecordValue> {
+    with_pixels!(image, storage => match storage {
+        Storage::Paged(image) => subrecord(image.table().keywords(), "imageinfo"),
+        Storage::Temp { image, .. } => image.image_info_record(),
+    })
+}
+
+pub(super) fn stored_beam_record(
     info: Option<&RecordValue>,
     beams: &ImageBeamSet,
     channel: usize,
@@ -98,10 +105,7 @@ fn restoring_beam(
     if beams.is_empty() {
         return Ok(CasaValue::empty_record());
     }
-    let info = with_pixels!(image, storage => match storage {
-        Storage::Paged(image) => subrecord(image.table().keywords(), "imageinfo"),
-        Storage::Temp { .. } => None,
-    });
+    let info = image_info_record(image);
     let beam = |channel, polarization| {
         CasaValue::from_record(&stored_beam_record(info, &beams, channel, polarization))
     };
@@ -175,6 +179,27 @@ fn restoring_beam(
     Ok(CasaValue::record(result))
 }
 
+pub(super) fn plane_axes(record: &RecordValue) -> PyResult<(Option<usize>, Option<usize>)> {
+    let axes = CoordinateSystem::record_coordinates(record).map_err(raised)?;
+    let axis = |kind: &str| {
+        axes.iter()
+            .find(|axis| axis.field.starts_with(kind))
+            .and_then(|axis| axis.pixel_axes.first().copied().flatten())
+    };
+    Ok((axis("spectral"), axis("stokes")))
+}
+
+pub(super) fn axis_length(image: &ImageHandle, axis: Option<usize>) -> PyResult<usize> {
+    match axis {
+        Some(axis) => image
+            .shape()
+            .get(axis)
+            .copied()
+            .ok_or_else(|| raised("Image coordinate axis is outside the image shape")),
+        None => Ok(1),
+    }
+}
+
 fn beam_area(image: &ImageHandle, channel: i64, polarization: i64) -> PyResult<CasaValue> {
     let beams = image_info(image).map_err(raised)?.beam_set;
     if beams.is_empty() {
@@ -202,26 +227,9 @@ fn beam_area(image: &ImageHandle, channel: i64, polarization: i64) -> PyResult<C
     if let Some(beam) = beams.single_beam() {
         return Ok(single(beam.area()));
     }
-    let axes = CoordinateSystem::record_coordinates(&coord_record).map_err(raised)?;
-    let axis = |kind: &str| {
-        axes.iter()
-            .find(|axis| axis.field.starts_with(kind))
-            .and_then(|axis| axis.pixel_axes.first().copied().flatten())
-    };
-    let spectral = axis("spectral");
-    let stokes = axis("stokes");
-    let axis_length = |axis| -> PyResult<i64> {
-        match axis {
-            Some(axis) => image
-                .shape()
-                .get(axis)
-                .map(|length| *length as i64)
-                .ok_or_else(|| raised("Image coordinate axis is outside the image shape")),
-            None => Ok(1),
-        }
-    };
-    let channels = axis_length(spectral)?;
-    let polarizations = axis_length(stokes)?;
+    let (spectral, stokes) = plane_axes(&coord_record)?;
+    let channels = axis_length(image, spectral)? as i64;
+    let polarizations = axis_length(image, stokes)? as i64;
     if channel >= channels {
         return Err(raised(format!(
             "Exception: This image only has {channels} channels, so a channel value less than {channels} must be specified."
@@ -267,10 +275,7 @@ fn common_beam(image: &ImageHandle) -> PyResult<CasaValue> {
         return Err(raised("Exception: This image has no beam(s)."));
     }
     let common = beams.common_beam().map_err(raised)?;
-    let info = with_pixels!(image, storage => match storage {
-        Storage::Paged(image) => subrecord(image.table().keywords(), "imageinfo"),
-        Storage::Temp { .. } => None,
-    });
+    let info = image_info_record(image);
     let matching_plane = (0..beams.n_stokes()).find_map(|polarization| {
         (0..beams.n_channels())
             .find(|&channel| *beams.beam(channel, polarization) == common)

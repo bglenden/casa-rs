@@ -19,6 +19,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
 [non-frequency component frequency units](#a-non-frequency-component-unit-corrupts-casas-spectrum),
 [nonconforming component flux conversion](#component-flux-conversion-can-relabel-incompatible-units-or-crash),
@@ -7074,3 +7075,15 @@ casa-rs validates the antenna blocks before publishing a listing. The
 same input raises a recoverable error and leaves the destination absent.
 Complete integrations retain their original order, even when two have
 the same time and field (#1526).
+
+## Beam removal can delete metadata before rejecting a record
+
+In CASA 6.7.6.14, `ia.setrestoringbeam(remove=True, beam={'junk': 2})`
+on a native image with a restoring beam raises `RuntimeError` because the
+record has no `major` field. Reopening the image shows the beam was already
+removed. The call validates the record while preparing history after deleting
+the beam, even when history is disabled.
+
+casa-rs validates the supplied record before it saves any changes, so a
+rejected call preserves the restoring beam and history. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
