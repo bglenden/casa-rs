@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare selected calibration spectra for the shared plot renderer.
 
+mod document;
 mod selection;
 mod spectrum;
 mod table;
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use casa_types::quanta::format::{YMD, format_time};
 
+pub(crate) use document::{BandpassPage, DisplayOptions, pages};
 use selection::{GroupKey, SelectedRow, groups};
 pub(crate) use selection::{Overlay, Selectors};
 use spectrum::{Curve, Derivative, Ordinate};

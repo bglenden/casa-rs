@@ -27,6 +27,7 @@
     "imsubimage",
     "initweights",
     "mstransform",
+    "plotbandpass",
     "plotms",
     "rerefant",
     "simalma",

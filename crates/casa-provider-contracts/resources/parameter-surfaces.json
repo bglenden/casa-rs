@@ -33840,6 +33840,1976 @@
     },
     {
       "kind": "task",
+      "id": "plotbandpass",
+      "contract_version": 1,
+      "display_name": "Plot Bandpass",
+      "category": "Calibration",
+      "summary": "Plot calibration spectra and channel derivatives.",
+      "provider_family": "calibration",
+      "casa_task": "plotbandpass",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "plotbandpass"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "calibration.tablein",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "caltable",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "antenna",
+          "concept": {
+            "id": "plotbandpass.antenna",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--antenna"
+              ]
+            },
+            "provider": {
+              "field": "antenna",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "antenna",
+              "type_hint": "str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...]"
+            },
+            "presentation": {
+              "label": "antenna",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "field",
+          "concept": {
+            "id": "plotbandpass.field",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--field"
+              ]
+            },
+            "provider": {
+              "field": "field",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "field",
+              "type_hint": "str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...]"
+            },
+            "presentation": {
+              "label": "field",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "spw",
+          "concept": {
+            "id": "plotbandpass.spw",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--spw"
+              ]
+            },
+            "provider": {
+              "field": "spw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "spw",
+              "type_hint": "str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...]"
+            },
+            "presentation": {
+              "label": "spw",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "yaxis",
+          "concept": {
+            "id": "plotbandpass.yaxis",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "amp"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--yaxis"
+              ]
+            },
+            "provider": {
+              "field": "yaxis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "yaxis"
+            },
+            "presentation": {
+              "label": "yaxis",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "xaxis",
+          "concept": {
+            "id": "plotbandpass.xaxis",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "chan"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--xaxis"
+              ]
+            },
+            "provider": {
+              "field": "xaxis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "xaxis"
+            },
+            "presentation": {
+              "label": "xaxis",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "figfile",
+          "concept": {
+            "id": "plotbandpass.figfile",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--figfile"
+              ]
+            },
+            "provider": {
+              "field": "figfile",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "figfile"
+            },
+            "presentation": {
+              "label": "figfile",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "plotrange",
+          "concept": {
+            "id": "plotbandpass.plotrange",
+            "semantic_revision": 1
+          },
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": [
+                {
+                  "kind": "float",
+                  "value": 0.0
+                },
+                {
+                  "kind": "float",
+                  "value": 0.0
+                },
+                {
+                  "kind": "float",
+                  "value": 0.0
+                },
+                {
+                  "kind": "float",
+                  "value": 0.0
+                }
+              ]
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--plotrange"
+              ]
+            },
+            "provider": {
+              "field": "plotrange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "plotrange",
+              "type_hint": "float | list[float] | tuple[float, ...]"
+            },
+            "presentation": {
+              "label": "plotrange",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "caltable2",
+          "concept": {
+            "id": "plotbandpass.caltable2",
+            "semantic_revision": 1
+          },
+          "order": 8,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable2"
+              ]
+            },
+            "provider": {
+              "field": "caltable2",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable2"
+            },
+            "presentation": {
+              "label": "caltable2",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "overlay",
+          "concept": {
+            "id": "plotbandpass.overlay",
+            "semantic_revision": 1
+          },
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overlay"
+              ]
+            },
+            "provider": {
+              "field": "overlay",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overlay"
+            },
+            "presentation": {
+              "label": "overlay",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showflagged",
+          "concept": {
+            "id": "plotbandpass.showflagged",
+            "semantic_revision": 1
+          },
+          "order": 10,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showflagged"
+              ]
+            },
+            "provider": {
+              "field": "showflagged",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showflagged"
+            },
+            "presentation": {
+              "label": "showflagged",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "timeranges",
+          "concept": {
+            "id": "plotbandpass.timeranges",
+            "semantic_revision": 1
+          },
+          "order": 11,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timeranges"
+              ]
+            },
+            "provider": {
+              "field": "timeranges",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timeranges"
+            },
+            "presentation": {
+              "label": "timeranges",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "buildpdf",
+          "concept": {
+            "id": "plotbandpass.buildpdf",
+            "semantic_revision": 1
+          },
+          "order": 12,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--buildpdf"
+              ]
+            },
+            "provider": {
+              "field": "buildpdf",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "buildpdf"
+            },
+            "presentation": {
+              "label": "buildpdf",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "caltable3",
+          "concept": {
+            "id": "plotbandpass.caltable3",
+            "semantic_revision": 1
+          },
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable3"
+              ]
+            },
+            "provider": {
+              "field": "caltable3",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable3"
+            },
+            "presentation": {
+              "label": "caltable3",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "markersize",
+          "concept": {
+            "id": "plotbandpass.markersize",
+            "semantic_revision": 1
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 3
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--markersize"
+              ]
+            },
+            "provider": {
+              "field": "markersize",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "markersize"
+            },
+            "presentation": {
+              "label": "markersize",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "density",
+          "concept": {
+            "id": "plotbandpass.density",
+            "semantic_revision": 1
+          },
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 108
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--density"
+              ]
+            },
+            "provider": {
+              "field": "density",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "density"
+            },
+            "presentation": {
+              "label": "density",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "interactive",
+          "concept": {
+            "id": "plotbandpass.interactive",
+            "semantic_revision": 1
+          },
+          "order": 16,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interactive"
+              ]
+            },
+            "provider": {
+              "field": "interactive",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "interactive"
+            },
+            "presentation": {
+              "label": "interactive",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showpoints",
+          "concept": {
+            "id": "plotbandpass.showpoints",
+            "semantic_revision": 1
+          },
+          "order": 17,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "auto"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showpoints"
+              ]
+            },
+            "provider": {
+              "field": "showpoints",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showpoints",
+              "type_hint": "str | bool"
+            },
+            "presentation": {
+              "label": "showpoints",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showlines",
+          "concept": {
+            "id": "plotbandpass.showlines",
+            "semantic_revision": 1
+          },
+          "order": 18,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "auto"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showlines"
+              ]
+            },
+            "provider": {
+              "field": "showlines",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showlines",
+              "type_hint": "str | bool"
+            },
+            "presentation": {
+              "label": "showlines",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "subplot",
+          "concept": {
+            "id": "plotbandpass.subplot",
+            "semantic_revision": 1
+          },
+          "order": 19,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "22"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--subplot"
+              ]
+            },
+            "provider": {
+              "field": "subplot",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "subplot",
+              "type_hint": "str | int"
+            },
+            "presentation": {
+              "label": "subplot",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "zoom",
+          "concept": {
+            "id": "plotbandpass.zoom",
+            "semantic_revision": 1
+          },
+          "order": 20,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--zoom"
+              ]
+            },
+            "provider": {
+              "field": "zoom",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "zoom"
+            },
+            "presentation": {
+              "label": "zoom",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "poln",
+          "concept": {
+            "id": "plotbandpass.poln",
+            "semantic_revision": 1
+          },
+          "order": 21,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--poln"
+              ]
+            },
+            "provider": {
+              "field": "poln",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "poln",
+              "type_hint": "list[str] | tuple[str, ...] | str"
+            },
+            "presentation": {
+              "label": "poln",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showatm",
+          "concept": {
+            "id": "plotbandpass.showatm",
+            "semantic_revision": 1
+          },
+          "order": 22,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showatm"
+              ]
+            },
+            "provider": {
+              "field": "showatm",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showatm"
+            },
+            "presentation": {
+              "label": "showatm",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "pwv",
+          "concept": {
+            "id": "plotbandpass.pwv",
+            "semantic_revision": 1
+          },
+          "order": 23,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "auto"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pwv"
+              ]
+            },
+            "provider": {
+              "field": "pwv",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pwv",
+              "type_hint": "float | str"
+            },
+            "presentation": {
+              "label": "pwv",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "gs",
+          "concept": {
+            "id": "plotbandpass.gs",
+            "semantic_revision": 1
+          },
+          "order": 24,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "gs"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--gs"
+              ]
+            },
+            "provider": {
+              "field": "gs",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "gs"
+            },
+            "presentation": {
+              "label": "gs",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "convert",
+          "concept": {
+            "id": "plotbandpass.convert",
+            "semantic_revision": 1
+          },
+          "order": 25,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "convert"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--convert"
+              ]
+            },
+            "provider": {
+              "field": "convert",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "convert"
+            },
+            "presentation": {
+              "label": "convert",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "chanrange",
+          "concept": {
+            "id": "plotbandpass.chanrange",
+            "semantic_revision": 1
+          },
+          "order": 26,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--chanrange"
+              ]
+            },
+            "provider": {
+              "field": "chanrange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "chanrange",
+              "type_hint": "str | list[int] | tuple[int, ...]"
+            },
+            "presentation": {
+              "label": "chanrange",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "solutionTimeThresholdSeconds",
+          "concept": {
+            "id": "plotbandpass.solution_time_threshold_seconds",
+            "semantic_revision": 1
+          },
+          "order": 27,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 30.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--solution-time-threshold-seconds"
+              ]
+            },
+            "provider": {
+              "field": "solutionTimeThresholdSeconds",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "solutionTimeThresholdSeconds",
+              "type_hint": "float"
+            },
+            "presentation": {
+              "label": "solutionTimeThresholdSeconds",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "debug",
+          "concept": {
+            "id": "plotbandpass.debug",
+            "semantic_revision": 1
+          },
+          "order": 28,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--debug"
+              ]
+            },
+            "provider": {
+              "field": "debug",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "debug"
+            },
+            "presentation": {
+              "label": "debug",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "phase",
+          "concept": {
+            "id": "plotbandpass.phase",
+            "semantic_revision": 1
+          },
+          "order": 29,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--phase"
+              ]
+            },
+            "provider": {
+              "field": "phase",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "phase",
+              "type_hint": "list[int] | tuple[int, ...] | str"
+            },
+            "presentation": {
+              "label": "phase",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 30,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis"
+              ]
+            },
+            "provider": {
+              "field": "vis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "vis",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "vis",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "showtsky",
+          "concept": {
+            "id": "plotbandpass.showtsky",
+            "semantic_revision": 1
+          },
+          "order": 31,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showtsky"
+              ]
+            },
+            "provider": {
+              "field": "showtsky",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showtsky"
+            },
+            "presentation": {
+              "label": "showtsky",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showfdm",
+          "concept": {
+            "id": "plotbandpass.showfdm",
+            "semantic_revision": 1
+          },
+          "order": 32,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showfdm"
+              ]
+            },
+            "provider": {
+              "field": "showfdm",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showfdm"
+            },
+            "presentation": {
+              "label": "showfdm",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showatmfield",
+          "concept": {
+            "id": "plotbandpass.showatmfield",
+            "semantic_revision": 1
+          },
+          "order": 33,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showatmfield"
+              ]
+            },
+            "provider": {
+              "field": "showatmfield",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showatmfield",
+              "type_hint": "int | str"
+            },
+            "presentation": {
+              "label": "showatmfield",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "lo1",
+          "concept": {
+            "id": "plotbandpass.lo1",
+            "semantic_revision": 1
+          },
+          "order": 34,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--lo1"
+              ]
+            },
+            "provider": {
+              "field": "lo1",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "lo1",
+              "type_hint": "str | float"
+            },
+            "presentation": {
+              "label": "lo1",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showimage",
+          "concept": {
+            "id": "plotbandpass.showimage",
+            "semantic_revision": 1
+          },
+          "order": 35,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showimage"
+              ]
+            },
+            "provider": {
+              "field": "showimage",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showimage"
+            },
+            "presentation": {
+              "label": "showimage",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showatmpoints",
+          "concept": {
+            "id": "plotbandpass.showatmpoints",
+            "semantic_revision": 1
+          },
+          "order": 36,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showatmpoints"
+              ]
+            },
+            "provider": {
+              "field": "showatmpoints",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showatmpoints"
+            },
+            "presentation": {
+              "label": "showatmpoints",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "parentms",
+          "concept": {
+            "id": "plotbandpass.parentms",
+            "semantic_revision": 1
+          },
+          "order": 37,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--parentms"
+              ]
+            },
+            "provider": {
+              "field": "parentms",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "parentms"
+            },
+            "presentation": {
+              "label": "parentms",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "pdftk",
+          "concept": {
+            "id": "plotbandpass.pdftk",
+            "semantic_revision": 1
+          },
+          "order": 38,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "pdftk"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pdftk"
+              ]
+            },
+            "provider": {
+              "field": "pdftk",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "pdftk"
+            },
+            "presentation": {
+              "label": "pdftk",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "channeldiff",
+          "concept": {
+            "id": "plotbandpass.channeldiff",
+            "semantic_revision": 1
+          },
+          "order": 39,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--channeldiff"
+              ]
+            },
+            "provider": {
+              "field": "channeldiff",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "channeldiff",
+              "type_hint": "bool | float"
+            },
+            "presentation": {
+              "label": "channeldiff",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "edge",
+          "concept": {
+            "id": "plotbandpass.edge",
+            "semantic_revision": 1
+          },
+          "order": 40,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 8
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--edge"
+              ]
+            },
+            "provider": {
+              "field": "edge",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "edge"
+            },
+            "presentation": {
+              "label": "edge",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "resample",
+          "concept": {
+            "id": "plotbandpass.resample",
+            "semantic_revision": 1
+          },
+          "order": 41,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--resample"
+              ]
+            },
+            "provider": {
+              "field": "resample",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "resample"
+            },
+            "presentation": {
+              "label": "resample",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "platformingThreshold",
+          "concept": {
+            "id": "plotbandpass.platforming_threshold",
+            "semantic_revision": 1
+          },
+          "order": 42,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 10.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--platforming-threshold"
+              ]
+            },
+            "provider": {
+              "field": "platformingThreshold",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "platformingThreshold",
+              "type_hint": "float"
+            },
+            "presentation": {
+              "label": "platformingThreshold",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "platformingSigma",
+          "concept": {
+            "id": "plotbandpass.platforming_sigma",
+            "semantic_revision": 1
+          },
+          "order": 43,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 10.0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--platforming-sigma"
+              ]
+            },
+            "provider": {
+              "field": "platformingSigma",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "platformingSigma",
+              "type_hint": "float"
+            },
+            "presentation": {
+              "label": "platformingSigma",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "basebands",
+          "concept": {
+            "id": "plotbandpass.basebands",
+            "semantic_revision": 1
+          },
+          "order": 44,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--basebands"
+              ]
+            },
+            "provider": {
+              "field": "basebands",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "basebands",
+              "type_hint": "int | str | list[int] | tuple[int, ...]"
+            },
+            "presentation": {
+              "label": "basebands",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "showBasebandNumber",
+          "concept": {
+            "id": "plotbandpass.show_baseband_number",
+            "semantic_revision": 1
+          },
+          "order": 45,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--show-baseband-number"
+              ]
+            },
+            "provider": {
+              "field": "showBasebandNumber",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showBasebandNumber"
+            },
+            "presentation": {
+              "label": "showBasebandNumber",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "scans",
+          "concept": {
+            "id": "plotbandpass.scans",
+            "semantic_revision": 1
+          },
+          "order": 46,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--scans"
+              ]
+            },
+            "provider": {
+              "field": "scans",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "scans",
+              "type_hint": "int | str | list[int] | tuple[int, ...]"
+            },
+            "presentation": {
+              "label": "scans",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "figfileSequential",
+          "concept": {
+            "id": "plotbandpass.figfile_sequential",
+            "semantic_revision": 1
+          },
+          "order": 47,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--figfile-sequential"
+              ]
+            },
+            "provider": {
+              "field": "figfileSequential",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "figfileSequential"
+            },
+            "presentation": {
+              "label": "figfileSequential",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "chanrangeSetXrange",
+          "concept": {
+            "id": "plotbandpass.chanrange_set_xrange",
+            "semantic_revision": 1
+          },
+          "order": 48,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--chanrange-set-xrange"
+              ]
+            },
+            "provider": {
+              "field": "chanrangeSetXrange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "chanrangeSetXrange"
+            },
+            "presentation": {
+              "label": "chanrangeSetXrange",
+              "group": "Plot"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "initweights",
       "contract_version": 1,
       "display_name": "Initialize Visibility Weights",

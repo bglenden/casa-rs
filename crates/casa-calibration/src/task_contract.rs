@@ -30,7 +30,7 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 16] = [
+pub const CALIBRATION_SURFACES: [&str; 17] = [
     "calibrate",
     "applycal",
     "gaincal",
@@ -45,6 +45,7 @@ pub const CALIBRATION_SURFACES: [&str; 16] = [
     "uvmodelfit",
     "smoothcal",
     "rerefant",
+    "plotbandpass",
     "initweights",
     "statwt",
 ];
@@ -739,6 +740,7 @@ mod tests {
                 "uvmodelfit",
                 "smoothcal",
                 "rerefant",
+                "plotbandpass",
                 "initweights",
                 "statwt",
             ]

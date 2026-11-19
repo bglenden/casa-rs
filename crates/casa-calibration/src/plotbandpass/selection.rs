@@ -7,20 +7,20 @@ use super::table::{SolutionRow, Solutions};
 
 #[derive(Debug, Default)]
 pub(crate) struct Selectors {
-    pub(super) antenna: Vec<String>,
-    pub(super) field: Vec<String>,
-    pub(super) spw: Vec<String>,
-    pub(super) time: Vec<String>,
-    pub(super) scan: Vec<String>,
-    pub(super) baseband: Vec<String>,
+    pub(crate) antenna: Vec<String>,
+    pub(crate) field: Vec<String>,
+    pub(crate) spw: Vec<String>,
+    pub(crate) time: Vec<String>,
+    pub(crate) scan: Vec<String>,
+    pub(crate) baseband: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Overlay {
-    pub(super) antenna: bool,
-    pub(super) time: bool,
-    pub(super) window: bool,
-    pub(super) baseband: bool,
+    pub(crate) antenna: bool,
+    pub(crate) time: bool,
+    pub(crate) window: bool,
+    pub(crate) baseband: bool,
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -28,6 +28,7 @@ mod history;
 mod initweights;
 mod model_columns;
 mod multi_ms;
+mod plotbandpass;
 mod read;
 mod render;
 mod rerefant;
@@ -73,6 +74,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     if task.surface() == "smoothcal" {
         return smoothcal::run(task);
+    }
+    if task.surface() == "plotbandpass" {
+        return plotbandpass::run(task);
     }
     if task.surface() == "uvmodelfit" {
         return uvmodelfit::run(task);

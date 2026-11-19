@@ -220,6 +220,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_getantposalma(values)
     if name == "initweights":
         return _call_initweights(values)
+    if name == "plotbandpass":
+        _validate_required_path(values, "caltable", arguments["caltable"])
+        completion = run(name, **values)
+        return () if completion.value is None else completion.value
     if name in ("split", "mstransform"):
         _coerce_ms_transform_selectors(values)
         try:
@@ -597,6 +601,11 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         raise TaskParameterError(completion)
     if not completion.successful:
         raise TaskExecutionError(completion)
+    if task == "plotbandpass":
+        from json import loads
+        from ._bandpass_plot import render_bandpass
+
+        render_bandpass(loads(stdout)["result"]["pages"], workspace)
     return completion
 
 
