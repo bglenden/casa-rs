@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use casa_ms::{MeasurementSet, MeasurementSetBuilder, schema::SubtableId};
-use casa_tables::{ColumnSchema, Table, TableOptions};
+use casa_tables::{ColumnSchema, Table, TableOptions, TableWriteLock};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
@@ -57,6 +57,11 @@ pub fn create_calibration_table(
         CalibrationOutputMode::Replace,
     )
     .map_err(error_text)?;
+    let _destination_lock = if destination.exists() {
+        Some(TableWriteLock::acquire_to_reread(destination, 1).map_err(error_text)?)
+    } else {
+        None
+    };
     let mut template =
         MeasurementSet::create_memory(MeasurementSetBuilder::new()).map_err(error_text)?;
     for id in [
@@ -165,6 +170,11 @@ fn write_generic_observation(path: &Path) -> Result<(), String> {
         .expect("required OBSERVATION subtable");
     let mut row = RecordValue::new(vec![
         RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+        RecordField::new("RELEASE_DATE", Value::Scalar(ScalarValue::Float64(0.0))),
+        RecordField::new(
+            "SCHEDULE_TYPE",
+            Value::Scalar(ScalarValue::String(String::new())),
+        ),
         RecordField::new(
             "TIME_RANGE",
             Value::Array(ArrayValue::Float64(
