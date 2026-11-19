@@ -475,7 +475,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromimage",
@@ -790,7 +790,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "newimagefromimage",

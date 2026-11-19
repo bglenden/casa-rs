@@ -188,75 +188,83 @@ impl Create {
                 Some(pixels)
             }
         };
-        if self.outfile.is_empty() {
-            return self
-                .build(pixels, None, history)
-                .map(AttachedImage::temporary);
+        publish_image(&self.outfile, self.overwrite, |path| {
+            self.build(pixels, path, history)
+        })
+    }
+}
+
+pub(super) fn publish_image(
+    outfile: &str,
+    overwrite: bool,
+    build: impl FnOnce(Option<&Path>) -> PyResult<ImageHandle>,
+) -> PyResult<AttachedImage> {
+    if outfile.is_empty() {
+        return build(None).map(AttachedImage::temporary);
+    }
+    let path = std::path::absolute(outfile).map_err(raised)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| raised("Invalid output image path"))?;
+    let stage = tempfile::tempdir_in(parent).map_err(raised)?;
+    let product = stage.path().join("image");
+    drop(build(Some(&product))?);
+    let mut registry = attachment::registry();
+    let existed = match path.symlink_metadata() {
+        Ok(_) if !overwrite => {
+            return Err(raised(format!(
+                "Exception: File {} exists, and the user does not want to remove it..",
+                outfile
+            )));
         }
-        let path = std::path::absolute(&self.outfile).map_err(raised)?;
-        let parent = path
-            .parent()
-            .ok_or_else(|| raised("Invalid output image path"))?;
-        let stage = tempfile::tempdir_in(parent).map_err(raised)?;
-        let product = stage.path().join("image");
-        drop(self.build(pixels, Some(&product), history)?);
-        let mut registry = attachment::registry();
-        let existed = match path.symlink_metadata() {
-            Ok(_) if !self.overwrite => {
+        Ok(_) => {
+            if registry
+                .get(&attachment::key(&path)?)
+                .is_some_and(|image| image.strong_count() > 0)
+            {
                 return Err(raised(format!(
-                    "Exception: File {} exists, and the user does not want to remove it..",
-                    self.outfile
+                    "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
+                    path.display()
                 )));
             }
-            Ok(_) => {
-                if registry
-                    .get(&attachment::key(&path)?)
-                    .is_some_and(|image| image.strong_count() > 0)
-                {
-                    return Err(raised(format!(
-                        "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
-                        path.display()
-                    )));
-                }
-                let empty = path
-                    .read_dir()
-                    .is_ok_and(|mut entries| entries.next().is_none());
-                if !empty
-                    && casa_tables::Table::open_metadata_only(casa_tables::TableOptions::new(&path))
-                        .is_err()
-                {
-                    return Err(raised(format!(
-                        "Table {} already exists (and is not a true table directory)",
-                        path.display()
-                    )));
-                }
-                true
+            let empty = path
+                .read_dir()
+                .is_ok_and(|mut entries| entries.next().is_none());
+            if !empty
+                && casa_tables::Table::open_metadata_only(casa_tables::TableOptions::new(&path))
+                    .is_err()
+            {
+                return Err(raised(format!(
+                    "Table {} already exists (and is not a true table directory)",
+                    path.display()
+                )));
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(error) => return Err(raised(error)),
-        };
-        if existed {
-            exchange_directories(&product, &path).map_err(raised)?;
-        } else {
-            rename_without_replacing(&product, &path).map_err(raised)?;
+            true
         }
-        match AttachedImage::open(&mut registry, &path) {
-            Ok(image) => Ok(image),
-            Err(error) => {
-                let restore = if existed {
-                    exchange_directories(&product, &path)
-                } else {
-                    rename_without_replacing(&path, &product)
-                };
-                if let Err(restore) = restore {
-                    let backup_dir = stage.keep();
-                    return Err(raised(format!(
-                        "{error}. Image publication could not be rolled back; inspect {}: {restore}",
-                        backup_dir.display()
-                    )));
-                }
-                Err(error)
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(raised(error)),
+    };
+    if existed {
+        exchange_directories(&product, &path).map_err(raised)?;
+    } else {
+        rename_without_replacing(&product, &path).map_err(raised)?;
+    }
+    match AttachedImage::open(&mut registry, &path) {
+        Ok(image) => Ok(image),
+        Err(error) => {
+            let restore = if existed {
+                exchange_directories(&product, &path)
+            } else {
+                rename_without_replacing(&path, &product)
+            };
+            if let Err(restore) = restore {
+                let backup_dir = stage.keep();
+                return Err(raised(format!(
+                    "{error}. Image publication could not be rolled back; inspect {}: {restore}",
+                    backup_dir.display()
+                )));
             }
+            Err(error)
         }
     }
 }

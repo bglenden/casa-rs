@@ -40,7 +40,9 @@ use casa_lattices::{
 use casa_types::{ArrayD, RecordValue};
 
 use crate::error::ImageError;
-use crate::image::{ImageInterface, ImagePixel, MutableImageInterface, PagedImage};
+use crate::image::{
+    ImageHistoryEntry, ImageInterface, ImagePixel, MutableImageInterface, PagedImage,
+};
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
@@ -64,7 +66,7 @@ pub struct TempImage<T: ImagePixel> {
     image_info_record: Option<RecordValue>,
     masks: Vec<(String, ArrayD<bool>)>,
     default_mask: Option<String>,
-    history: Vec<(String, String)>,
+    history: Vec<ImageHistoryEntry>,
 }
 
 // ---- Constructors -----------------------------------------------------------
@@ -406,30 +408,40 @@ impl<T: ImagePixel> TempImage<T> {
         Ok(self
             .history
             .iter()
-            .map(|(_, message)| message.clone())
+            .map(|entry| entry.message.clone())
             .collect())
     }
 
     /// Appends a history message.
     pub fn add_history(&mut self, msg: impl Into<String>) -> Result<(), ImageError> {
-        self.history.push(("casa-images".into(), msg.into()));
-        Ok(())
+        self.append_history_at("casa-images", &[msg.into()])
     }
 
     /// Appends history messages with a location retained by future saves.
     ///
     /// # Errors
-    /// Currently this operation stores the entries in memory and succeeds.
+    /// Returns an error if the system clock is earlier than the UNIX epoch.
     pub fn append_history_at(
         &mut self,
         location: &str,
         messages: &[String],
     ) -> Result<(), ImageError> {
-        self.history.extend(
-            messages
-                .iter()
-                .map(|message| (location.to_owned(), message.clone())),
-        );
+        let time = ImageHistoryEntry::current_time()?;
+        self.history
+            .extend(messages.iter().map(|message| ImageHistoryEntry {
+                time_mjd_seconds: time,
+                location: location.into(),
+                message: message.clone(),
+            }));
+        Ok(())
+    }
+
+    /// Append the original FITS or CASA log entries for future saves.
+    pub fn append_history_entries(
+        &mut self,
+        entries: &[ImageHistoryEntry],
+    ) -> Result<(), ImageError> {
+        self.history.extend_from_slice(entries);
         Ok(())
     }
 
@@ -479,9 +491,7 @@ impl<T: ImagePixel> TempImage<T> {
         if let Some(ref default) = self.default_mask {
             paged.set_default_mask(default)?;
         }
-        for (location, message) in &self.history {
-            paged.append_history_at(location, std::slice::from_ref(message))?;
-        }
+        paged.append_history_entries(&self.history)?;
         paged.save()?;
         Ok(paged)
     }

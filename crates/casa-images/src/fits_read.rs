@@ -14,7 +14,9 @@ use crate::{GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType};
 
 mod beams;
 mod history;
+mod tool_import;
 pub(crate) use history::{history_entries, read_cards};
+pub use tool_import::FitsToolImport;
 
 /// A FITS image read into memory ([`read_fits_image`]).
 #[derive(Debug, Clone)]
@@ -151,7 +153,7 @@ impl PrimaryHdu {
         count: usize,
     ) -> Result<(Vec<f32>, Vec<bool>), ImageError> {
         self.fits
-            .primary_hdu()
+            .hdu(self.hdu.number)
             .map_err(|error| ImageError::Io(error.to_string()))?;
         let start = i64::try_from(start)
             .ok()
@@ -163,7 +165,7 @@ impl PrimaryHdu {
         let mut nulls = vec![0 as std::ffi::c_char; count];
         let mut any_null = 0;
         let mut status = 0;
-        // SAFETY: the file is open on the primary HDU and the buffers are
+        // SAFETY: the file is open on the selected image HDU and the buffers are
         // writable for `count` elements of the types requested from CFITSIO.
         unsafe {
             fitsio::sys::ffgpf(

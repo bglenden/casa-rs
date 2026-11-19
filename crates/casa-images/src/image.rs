@@ -57,6 +57,14 @@ pub struct ImageHistoryEntry {
 }
 
 impl ImageHistoryEntry {
+    pub(crate) fn current_time() -> Result<f64, ImageError> {
+        const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
+        let duration = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        Ok(UNIX_EPOCH_MJD_SECONDS + duration.as_secs_f64())
+    }
+
     /// Origin used when casacore replays this entry through `ImageHistory`.
     ///
     /// An empty location becomes `ImageHistory::get`. Otherwise casacore
@@ -1946,6 +1954,36 @@ impl<T: ImagePixel> PagedImage<T> {
             Self::append_logtable_rows(&Self::logtable_path(&path), location, messages)
         } else {
             self.temp_history.extend_from_slice(messages);
+            Ok(())
+        }
+    }
+
+    /// Append imported history with its original location and MJD time.
+    ///
+    /// # Errors
+    /// Returns an error if the image log cannot be created, written or locked.
+    pub fn append_history_entries(
+        &mut self,
+        entries: &[ImageHistoryEntry],
+    ) -> Result<(), ImageError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        if let Some(path) = self.path.clone() {
+            self.ensure_logtable()?;
+            Self::append_logtable_entries(
+                &Self::logtable_path(&path),
+                entries.iter().map(|entry| {
+                    (
+                        entry.time_mjd_seconds,
+                        entry.location.as_str(),
+                        &entry.message,
+                    )
+                }),
+            )
+        } else {
+            self.temp_history
+                .extend(entries.iter().map(|entry| entry.message.clone()));
             Ok(())
         }
     }
