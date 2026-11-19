@@ -309,15 +309,23 @@ pub fn column_statistics(
             }
         };
         let mismatch_error = if standard {
-            Some(
-                "Table DataManager error: Internal error: StManIndArray::get/put shapes not conforming",
-            )
+            Some("Table DataManager error: Internal error: StManIndArray::get/put shapes not conforming".to_owned())
         } else if rows.is_some() || table.is_reference_table()? {
-            Some("Table DataManager error: getArrayColumnCells shape mismatch in column")
+            Some(format!(
+                "Table DataManager error: getArrayColumnCells shape mismatch in column {column}"
+            ))
         } else {
             None
         };
-        array_samples(&access, column, rows, nrows, mode, indexed, mismatch_error)?
+        array_samples(
+            &access,
+            column,
+            rows,
+            nrows,
+            mode,
+            indexed,
+            mismatch_error.as_deref(),
+        )?
     } else {
         let cells = match rows {
             Some(rows) => access.scalar_cells_owned_for_rows(rows),
@@ -385,12 +393,7 @@ fn array_samples(
             if *target != next_shape
                 && let Some(message) = mismatch_error
             {
-                let error = if message.ends_with(" in column") {
-                    format!("{message} {column}")
-                } else {
-                    message.to_owned()
-                };
-                return Err(ColumnStatisticsError::Invalid(error));
+                return Err(ColumnStatisticsError::Invalid(message.to_owned()));
             }
             let values = pad_cell(values, &next_shape, target)?;
             if indexed {
