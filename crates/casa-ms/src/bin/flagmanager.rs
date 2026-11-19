@@ -5,10 +5,10 @@
 use std::process::ExitCode;
 
 use casa_ms::{
-    FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, MeasurementSet,
-    delete_flag_version, flagmanager_list_record, flagmanager_task_schema_bundle,
-    list_flag_versions, ms_task_success, rename_flag_version, restore_flag_version,
-    save_flag_version, task_flag_merge,
+    FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, FlaggingError,
+    MeasurementSet, delete_flag_version, flagmanager_list_record, flagmanager_task_schema_bundle,
+    list_flag_versions, ms_task_success, rename_flag_version, rename_flag_version_for_task,
+    restore_flag_version, save_flag_version, task_flag_merge,
 };
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
@@ -95,10 +95,21 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
             mutation("delete", Some(name), None)
         }
         "rename" => {
-            let old = required("oldname", request.oldname.clone())?;
-            let name = required("versionname", request.versionname.clone())?;
+            let name = request.versionname.ok_or_else(|| {
+                TaskFailure::validation("Illegal versionname: ''").at("versionname")
+            })?;
+            let old = request
+                .oldname
+                .ok_or_else(|| TaskFailure::validation("Illegal oldname: ''").at("oldname"))?;
             let comment = request.comment.as_deref().unwrap_or("");
-            rename_flag_version(&ms, &old, &name, comment).map_err(failed)?;
+            rename_flag_version_for_task(&ms, &old, &name, comment).map_err(
+                |error| match error {
+                    FlaggingError::FlagVersionRenameArgument { parameter, message } => {
+                        TaskFailure::validation(message).at(parameter)
+                    }
+                    error => failed(error),
+                },
+            )?;
             mutation("rename", Some(name), Some(old))
         }
         other => Err(TaskFailure::validation(format!(

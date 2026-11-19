@@ -290,6 +290,14 @@ pub enum FlaggingError {
         /// Error context.
         reason: String,
     },
+    /// A public flagmanager rename cannot proceed with these names.
+    #[error("{message}")]
+    FlagVersionRenameArgument {
+        /// Which name the caller needs to change.
+        parameter: &'static str,
+        /// CASA's explanation of the invalid name.
+        message: String,
+    },
     /// A flag version cannot be deleted or renamed while its table is
     /// open, in this process or another, as casacore's `Table::deleteTable`
     /// and `Table::rename` refuse (`TableUtil::canDeleteTable`,
@@ -2858,6 +2866,34 @@ pub fn rename_flag_version(
         reason: format!("rename flag version {oldname:?}: {source}"),
     })?;
     rename_flag_version_entry(path, oldname, versionname, comment)
+}
+
+/// Rename a saved version through the CASA flagmanager task.
+///
+/// The task requires a saved source and a free destination, including when
+/// the source and destination names are equal.
+pub fn rename_flag_version_for_task(
+    ms: &MeasurementSet,
+    oldname: &str,
+    versionname: &str,
+    comment: &str,
+) -> Result<(), FlaggingError> {
+    validate_version_name(ms, oldname)?;
+    validate_version_name(ms, versionname)?;
+    let path = ms_path(ms)?;
+    if !flag_version_table_path(path, oldname).is_dir() {
+        return Err(FlaggingError::FlagVersionRenameArgument {
+            parameter: "oldname",
+            message: format!("No such flagversions: {oldname}"),
+        });
+    }
+    if flag_version_table_path(path, versionname).exists() {
+        return Err(FlaggingError::FlagVersionRenameArgument {
+            parameter: "versionname",
+            message: format!("Flagversions {versionname} already exists!"),
+        });
+    }
+    rename_flag_version(ms, oldname, versionname, comment)
 }
 
 fn flag_version_schema() -> Result<TableSchema, casa_tables::SchemaError> {
