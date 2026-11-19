@@ -14,7 +14,7 @@ use crate::tools::surface::{
 use CasaDefault::{Bool, Empty, EmptyRecord, Required, Text};
 use Kind as K;
 use Returns as R;
-use Status::{Implemented as Yes, NotYetImplemented as No};
+use Status::Implemented as Yes;
 
 const OFF: Parameter = param("off", K::Record, EmptyRecord);
 const V: [Parameter; 1] = [param("v", K::Record, Required)];
@@ -137,8 +137,8 @@ const METHODS: &[Method] = &[
     method("posangle", &PAIR, R::Record, Yes),
     method("position", &POSITION, R::Record, Yes),
     method("radialvelocity", &RADIALVELOCITY, R::Record, Yes),
-    method("rise", &RISE, R::Record, No),
-    method("riseset", &RISE, R::Record, No),
+    method("rise", &RISE, R::Record, Yes),
+    method("riseset", &RISE, R::Record, Yes),
     method("separation", &PAIR, R::Record, Yes),
     method(
         "shift",

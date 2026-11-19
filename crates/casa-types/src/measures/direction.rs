@@ -592,6 +592,22 @@ impl MDirection {
         target: DirectionRef,
         frame: &MeasFrame,
     ) -> Result<MDirection, MeasureError> {
+        self.convert_with_parallax(target, frame, 0.0)
+    }
+
+    /// Converts a direction with a known geocentric distance in metres.
+    ///
+    /// Casacore applies the observer displacement when the conversion
+    /// crosses between geocentric apparent and topocentric coordinates.
+    /// A distance of zero denotes a direction at infinity, as for
+    /// [Self::convert_to]. Supply the distance of an already evaluated
+    /// ephemeris direction, such as one in JNAT or APP.
+    pub fn convert_with_parallax(
+        &self,
+        target: DirectionRef,
+        frame: &MeasFrame,
+        distance_m: f64,
+    ) -> Result<MDirection, MeasureError> {
         if self.refer == target {
             return Ok(self.clone());
         }
@@ -604,12 +620,16 @@ impl MDirection {
         if target.casacore_code() >= 32 {
             // MCDirection routes a dynamical output through J2000 and keeps
             // the requested label; it does not resolve that output body.
-            let mut converted = self.convert_to(DirectionRef::J2000, frame)?;
+            let mut converted =
+                self.convert_with_parallax(DirectionRef::J2000, frame, distance_m)?;
             converted.refer = target;
             return Ok(converted);
         }
         let path = find_path(self.refer, target)?;
-        let ctx = ConvCtx::new();
+        let ctx = ConvCtx {
+            distance_m,
+            ..ConvCtx::new()
+        };
         let mut cosines = self.cosines;
         let mut current_ref = self.refer;
 
@@ -1756,6 +1776,7 @@ fn bfs_find_dir_path(source: DirectionRef, target: DirectionRef) -> Option<Vec<D
 /// Caches expensive epoch-derived values (TT JD pair, UT1 JD pair, GAST)
 /// so they are computed at most once per `convert_to` call.
 struct ConvCtx {
+    distance_m: f64,
     tt_jd: RefCell<Option<(f64, f64)>>,
     ut1_jd: RefCell<Option<(f64, f64)>>,
     gast: RefCell<Option<f64>>,
@@ -1767,6 +1788,7 @@ struct ConvCtx {
 impl ConvCtx {
     fn new() -> Self {
         Self {
+            distance_m: 0.0,
             tt_jd: RefCell::new(None),
             ut1_jd: RefCell::new(None),
             gast: RefCell::new(None),
@@ -1958,7 +1980,8 @@ fn apply_hop(
 
         // APP ↔ TOPO: casacore's `applyAPPtoTOPO` shifts only a direction
         // with a distance (a planet's), so a sky direction is unchanged.
-        (APP, TOPO) | (TOPO, APP) => Ok(cosines),
+        (APP, TOPO) => apparent_parallax(cosines, -ctx.distance_m, frame, ctx),
+        (TOPO, APP) => apparent_parallax(cosines, ctx.distance_m, frame, ctx),
 
         // TOPO → HADEC (diurnal aberration + polar motion + sidereal time)
         (TOPO, HADEC) => topocentric_to_hadec(cosines, frame, ctx),
@@ -2124,6 +2147,23 @@ fn remove_annual_aberration(
     Ok(pnat)
 }
 
+/// Observer displacement along the local geocentric zenith, in APP axes.
+fn apparent_parallax(
+    cosines: [f64; 3],
+    signed_distance_m: f64,
+    frame: &MeasFrame,
+    ctx: &ConvCtx,
+) -> Result<[f64; 3], MeasureError> {
+    if signed_distance_m == 0.0 {
+        return Ok(cosines);
+    }
+    let last = get_gast(frame, ctx)? + get_longitude(frame)?;
+    let zenith = sofars::vm::s2c(last, get_geocentric_latitude(frame)?);
+    let scale = get_geocentric_radius(frame)? / signed_distance_m;
+    let shifted = std::array::from_fn(|i| cosines[i] + scale * zenith[i]);
+    Ok(sofars::vm::pn(&shifted).1)
+}
+
 /// TOPO → HADEC hop (diurnal aberration + polar motion + sidereal time),
 /// casacore's `MeasMath::applyTOPOtoHADEC`. The steps are:
 ///   1. Diurnal aberration: add v/c in zenith direction, renormalize
@@ -2196,6 +2236,22 @@ fn hadec_to_topocentric(
 // ---------------------------------------------------------------------------
 
 impl MDirection {
+    /// Evaluate geocentric apparent place for the horizon-crossing calculation.
+    ///
+    /// Casacore uses its direct FK4 precession, nutation, and aberration
+    /// for a B1950 input. Other references use the normal APP conversion.
+    pub fn to_apparent(&self, frame: &MeasFrame) -> Result<Self, MeasureError> {
+        if self.refer != DirectionRef::B1950 {
+            return self.convert_to(DirectionRef::APP, frame);
+        }
+        let cosines =
+            vector_rotation::fk4_apparent_direction(self.cosines, DirectionRef::APP, frame)?;
+        Ok(Self {
+            refer: DirectionRef::APP,
+            cosines,
+        })
+    }
+
     /// Returns this direction converted to J2000 cosines.
     ///
     /// This is used internally by frequency conversions to compute the
@@ -2565,6 +2621,28 @@ mod tests {
         })
         .join()
         .unwrap();
+    }
+
+    #[test]
+    fn a_dynamical_output_preserves_topocentric_parallax() {
+        let direction = MDirection::from_angles(1.0, 0.5, DirectionRef::TOPO);
+        let frame = wsrt_frame();
+        let distance_m = 384.4e6;
+        let j2000 = direction
+            .convert_with_parallax(DirectionRef::J2000, &frame, distance_m)
+            .unwrap();
+        let moon = direction
+            .convert_with_parallax(DirectionRef::MOON, &frame, distance_m)
+            .unwrap();
+        assert_eq!(moon.refer(), DirectionRef::MOON);
+        assert_eq!(moon.cosines(), j2000.cosines());
+        assert_ne!(
+            j2000.cosines(),
+            direction
+                .convert_to(DirectionRef::J2000, &frame)
+                .unwrap()
+                .cosines(),
+        );
     }
 
     #[test]

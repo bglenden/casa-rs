@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Scalar/vector measure records, retaining reference offsets separately.
 use super::State;
-use crate::convert::holder::{HolderError, Measure, MeasureValue};
+use crate::convert::holder::{CasaMeasure, HolderError, Measure, MeasureValue};
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{MeasFrame, MeasureError};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
@@ -18,6 +20,36 @@ impl Measures {
     pub(super) fn read(record: &RecordArg) -> Result<Self, HolderError> {
         Self::read_fields(&record.0, 0)
     }
+
+    pub(super) fn read_variant(
+        record: &crate::convert::VariantRecord,
+    ) -> Result<Self, HolderError> {
+        Self::read_fields(record, 0)
+    }
+
+    /// Decode the scalar direction and its reference offsets before the
+    /// observing frame is attached to CASA's rise/set conversion.
+    pub(super) fn direction_without_frame(
+        &self,
+        target: DirectionRef,
+    ) -> Result<MDirection, String> {
+        let mut value = self.values[0];
+        if let Some(offset) = &self.offset {
+            let refer = value
+                .refer
+                .parse()
+                .map_err(|error: MeasureError| error.to_string())?;
+            let origin = offset.direction_without_frame(refer)?;
+            value = add(value, Measure::from_casa(&CasaMeasure::Direction(origin)))?;
+        }
+        let CasaMeasure::Direction(direction) = value.to_casa()? else {
+            return Err("Non-direction source".into());
+        };
+        direction
+            .convert_to(target, &MeasFrame::new())
+            .map_err(|error| error.to_string())
+    }
+
     fn read_fields(fields: &BTreeMap<String, Variant>, depth: usize) -> Result<Self, HolderError> {
         if depth > 128 {
             return Err(HolderError::Invalid(

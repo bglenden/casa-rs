@@ -245,7 +245,6 @@ pub(super) fn convert_direction(
     target: DirectionRef,
     frame: &MeasFrame,
 ) -> Result<MDirection, casa_types::measures::MeasureError> {
-    use casa_measures_data::PlanetaryTable;
     use casa_types::measures::MeasureError;
 
     let refer = direction.refer();
@@ -254,8 +253,24 @@ pub(super) fn convert_direction(
             route: format!("COMET → {target} (casa-rs #1252)"),
         });
     }
-    if refer == target || refer.casacore_code() < 32 || refer == DirectionRef::COMET {
+    if refer == target {
         return direction.convert_to(target, frame);
+    }
+    let (resolved, distance_m) = resolve_direction(state, direction, frame)?;
+    resolved.convert_with_parallax(target, frame, distance_m)
+}
+
+pub(super) fn resolve_direction(
+    state: &mut State,
+    direction: &MDirection,
+    frame: &MeasFrame,
+) -> Result<(MDirection, f64), casa_types::measures::MeasureError> {
+    use casa_measures_data::PlanetaryTable;
+    use casa_types::measures::MeasureError;
+
+    let refer = direction.refer();
+    if refer.casacore_code() < 32 || refer == DirectionRef::COMET {
+        return Ok((direction.clone(), 0.0));
     }
     if frame.epoch().is_none() {
         return Err(MeasureError::MissingFrameData { what: "epoch" });
@@ -272,8 +287,7 @@ pub(super) fn convert_direction(
         .as_ref()
         .expect("the planetary table has been opened")
         .geocentric_direction(direction, frame)
-        .map_err(model_error)?
-        .convert_to(target, frame)
+        .map_err(model_error)
 }
 
 /// Build the explicit native frame once for a conversion or vector plan.

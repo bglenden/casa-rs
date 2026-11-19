@@ -313,7 +313,7 @@ fn fk4_apparent_rotation(to: DirectionRef, frame: &MeasFrame) -> Result<Matrix, 
     })
 }
 
-fn fk4_apparent_direction(
+pub(super) fn fk4_apparent_direction(
     source: [f64; 3],
     to: DirectionRef,
     frame: &MeasFrame,
