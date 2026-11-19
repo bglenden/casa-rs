@@ -86,3 +86,99 @@ def test_beam_queries_on_an_image_without_a_beam():
         with pytest.raises(RuntimeError, match=r"This image has no beam\(s\)"):
             query()
     assert image.done()
+
+
+@pytest.mark.parametrize("writer", ["casa", "casars"])
+def test_write_native_beams_and_copy_to_another_image(tmp_path, casa, writer):
+    source_module, reader_module = (casa, tools) if writer == "casa" else (tools, casa)
+    path = str(tmp_path / "written.im")
+    copied = str(tmp_path / "copied.im")
+    tool = source_module.image()
+    assert tool.fromshape(path, [2, 2, 2, 3])
+    assert tool.setrestoringbeam("0.1arcmin", "2arcsec", "2rad", channel=0, log=False)
+    assert tool.setrestoringbeam("7arcsec", "3arcsec", "17deg", polarization=0, log=False)
+    with pytest.raises(RuntimeError, match="Failed AlwaysAssert"):
+        tool.setrestoringbeam(7, 3, 17, polarization=0, log=False)
+    assert tool.setrestoringbeam(0.15, 4, 1, channel=2, polarization=1, log=False)
+    assert tool.setrestoringbeam(
+        beam={
+            "major": {"value": 9, "unit": "arcsec"},
+            "minor": {"value": 4, "unit": "arcsec"},
+            "positionangle": {"value": 190, "unit": "deg"},
+        },
+        channel=1, polarization=1, log=False,
+    )
+    wanted = tool.restoringbeam()
+    assert wanted["beams"]["*0"]["*1"]["major"] == {"unit": "arcmin", "value": 0.1}
+    assert wanted["beams"]["*0"]["*0"]["major"] == {"unit": "arcsec", "value": 7.0}
+    assert wanted["beams"]["*1"]["*1"]["positionangle"]["value"] == pytest.approx(10.0)
+    assert wanted["beams"]["*2"]["*1"]["major"] == {"unit": "arcmin", "value": 0.15}
+    assert tool.history()[-2] == "Ran ia.setrestoringbeam"
+    assert tool.done()
+
+    reader = reader_module.image()
+    assert reader.open(path)
+    _assert_value(reader.restoringbeam(), wanted)
+    assert "'value': 190" in reader.history()[-1]
+    assert reader.done()
+    assert reader.fromshape(copied, [2, 2, 2, 3], type="cd")
+    assert reader.setrestoringbeam(imagename=path, log=False)
+    _assert_value(reader.restoringbeam(), wanted)
+    assert reader.done()
+
+    assert tool.open(copied)
+    _assert_value(tool.restoringbeam(), wanted)
+    prior_history = tool.history()
+    assert tool.dohistory(False)
+    assert tool.setrestoringbeam(remove=True, log=False)
+    assert tool.history() == prior_history
+    assert tool.restoringbeam() == {}
+    assert tool.done()
+    assert reader.open(copied)
+    assert reader.restoringbeam() == {}
+    assert reader.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_beam_update_failures_preserve_temporary_state(tmp_path, backend):
+    if backend == "casa":
+        module = pytest.importorskip("casatools")
+    else:
+        module = tools
+    tool = module.image()
+    assert tool.setrestoringbeam(remove=True) is False
+    assert tool.fromshape(shape=[2, 2])
+    with pytest.raises(RuntimeError, match="major must be specified"):
+        tool.setrestoringbeam()
+    assert tool.setrestoringbeam(major={"value": 0.1, "unit": "arcmin"}, minor=3, pa="2rad", log=False)
+    original = tool.restoringbeam()
+    original_history = tool.history()
+    with pytest.raises(RuntimeError, match="greater or equal"):
+        tool.setrestoringbeam("2arcsec", "3arcsec", "0deg", log=False)
+    with pytest.raises(RuntimeError, match="global restoring beam"):
+        tool.setrestoringbeam(5, 2, 0, channel=0, log=False)
+    with pytest.raises(RuntimeError, match="positionangle missing"):
+        tool.setrestoringbeam(beam={"major": original["major"], "minor": original["minor"], "pa": original["positionangle"]})
+    with pytest.raises(RuntimeError, match="does not exist"):
+        tool.setrestoringbeam(imagename=str(tmp_path / "missing.im"))
+    _assert_value(tool.restoringbeam(), original)
+    assert tool.history() == original_history
+    assert tool.setrestoringbeam(2.5, 1.1, 0, log=False)
+    assert tool.commonbeam()["major"] == {"unit": "arcmin", "value": 2.5}
+    assert tool.done()
+
+
+def test_invalid_beam_removal_preserves_native_metadata(tmp_path):
+    path = str(tmp_path / "invalid-removal.im")
+    tool = tools.image()
+    assert tool.fromshape(path, [2, 2])
+    assert tool.setrestoringbeam(3, 2, 12, log=False)
+    beam = tool.restoringbeam()
+    history = tool.history()
+    with pytest.raises(RuntimeError, match="field major is unknown"):
+        tool.setrestoringbeam(remove=True, beam={"junk": 2}, log=False)
+    assert tool.done()
+    assert tool.open(path)
+    _assert_value(tool.restoringbeam(), beam)
+    assert tool.history() == history
+    assert tool.done()

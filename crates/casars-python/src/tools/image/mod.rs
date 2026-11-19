@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
 
 mod attachment;
+mod beam_edit;
 mod beams;
 mod create;
 mod default_record;
