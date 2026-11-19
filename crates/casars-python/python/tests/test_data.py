@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from shutil import copytree
@@ -14,17 +13,18 @@ import numpy as np
 import pytest
 
 from casars import data
-from casars.data import Image, protocol_info, schema_bundle
+from casars._native_image import NativeImageView
+from casars.data import protocol_info, schema_bundle
 from casars.tools import image as image_tool, table as table_tool
 
 
 def test_top_level_lazy_data_surface_imports() -> None:
     import casars
 
-    assert hasattr(casars, "Image")
+    assert not hasattr(casars, "Image")
     assert not hasattr(casars, "Table")
     assert casars.data is not None
-    assert casars.Image is casars.data.Image
+    assert not hasattr(casars.data, "Image")
     assert not hasattr(casars.data, "Table")
     assert not hasattr(casars._core, "Image")
 
@@ -35,7 +35,7 @@ def test_data_image_reads_through_the_gil_releasing_tool(tmp_path: Path) -> None
     shape = (1536, 1536)
     assert tool.fromshape(str(path), list(shape))
     assert tool.done()
-    image = Image.open(path)
+    image = NativeImageView.open(path)
     assert isinstance(image._inner, image_tool)
     assert image.get_slice((0, 0), (1, 1)).item() == 0.0
     ready, done = threading.Event(), threading.Event()
@@ -71,8 +71,8 @@ def test_compatibility_image_keeps_native_pixel_precision(tmp_path: Path, kind: 
     tool = image_tool()
     assert tool.fromshape(str(path), [3, 4], type=kind)
     assert tool.done()
-    readonly = Image.open(path)
-    writable = Image.open(path, writable=True)
+    readonly = NativeImageView.open(path)
+    writable = NativeImageView.open(path, writable=True)
     pixels = np.arange(12).reshape(3, 4).astype(dtype)
     with pytest.raises(ValueError, match="opened read-only"):
         readonly.put_slice(pixels, (0, 0))
@@ -95,17 +95,17 @@ def test_open_data_writer_sees_units_committed_after_reader_opened(tmp_path: Pat
     tool = image_tool()
     assert tool.fromshape(str(path), [2, 3])
     assert tool.done()
-    reader = Image.open(path)
+    reader = NativeImageView.open(path)
     assert reader.units == ""
     table = table_tool()
     assert table.open(str(path), nomodify=False)
     table.putkeyword("units", "Jy/beam")
     assert table.done()
-    writer = Image.open(path, writable=True)
+    writer = NativeImageView.open(path, writable=True)
     assert writer.units == "Jy/beam"
     writer.put_slice(np.ones((1, 1), dtype=np.float32), (0, 0))
     del writer, reader
-    reloaded = Image.open(path)
+    reloaded = NativeImageView.open(path)
     assert reloaded.units == "Jy/beam"
     assert reloaded.get_slice((0, 0), (1, 1)).item() == 1.0
 
@@ -122,18 +122,18 @@ def test_data_writer_uses_resolved_image_even_after_alias_retarget(tmp_path: Pat
     assert tool.done()
     alias.symlink_to(source, target_is_directory=True)
     if alias_reader == "data":
-        reader = Image.open(alias)
+        reader = NativeImageView.open(alias)
         assert reader.shape == (2, 3)
     else:
         assert tool.open(str(alias))
     alias.unlink()
     alias.symlink_to(separate, target_is_directory=True)
-    writer = Image.open(source, writable=True)
+    writer = NativeImageView.open(source, writable=True)
     writer.put_slice(np.ones((1, 1), dtype=np.float32), (0, 0))
     del writer
     assert tool.done()
-    assert Image.open(source).get_slice((0, 0), (1, 1)).item() == 1.0
-    other = Image.open(separate)
+    assert NativeImageView.open(source).get_slice((0, 0), (1, 1)).item() == 1.0
+    other = NativeImageView.open(separate)
     assert other.get_slice((0, 0), (1, 1)).item() == 0.0
     assert other.units == "Jy/beam"
 
@@ -149,7 +149,7 @@ def test_readonly_image_opens_without_a_table_lock_file(tmp_path: Path) -> None:
     path.chmod(0o555)
     try:
         can_create_lock = os.access(path, os.W_OK)
-        reader = Image.open(path)
+        reader = NativeImageView.open(path)
         np.testing.assert_array_equal(reader.get_slice((0, 0), (2, 3)), np.zeros((2, 3)))
         if not can_create_lock:
             assert not lock.exists()
@@ -163,14 +163,14 @@ def test_data_write_refuses_a_replaced_directory(tmp_path: Path) -> None:
     tool = image_tool()
     assert tool.fromshape(str(path), [2, 3])
     assert tool.done()
-    writer = Image.open(path, writable=True)
+    writer = NativeImageView.open(path, writable=True)
     path.rename(moved)
     assert tool.fromshape(str(path), [3, 4])
     assert tool.done()
     with pytest.raises(RuntimeError, match="image at .* has changed"):
         writer.put_slice(np.ones((1, 1), dtype=np.float32), (0, 0))
-    assert Image.open(path).get_slice((0, 0), (1, 1)).item() == 0.0
-    assert Image.open(moved).get_slice((0, 0), (1, 1)).item() == 0.0
+    assert NativeImageView.open(path).get_slice((0, 0), (1, 1)).item() == 0.0
+    assert NativeImageView.open(moved).get_slice((0, 0), (1, 1)).item() == 0.0
 
 
 def test_data_schema_bundle_reports_object_surface() -> None:
@@ -191,27 +191,11 @@ def test_data_schema_bundle_reports_object_surface() -> None:
     objects = {entry["name"]: entry for entry in bundle["semantic"]["objects"]}
     # The CASA tools of casars.tools share the bundle (test_tools_*.py).
     assert set(objects) == {
-        "Image", "simulator", "measures", "quanta", "componentlist",
+        "simulator", "measures", "quanta", "componentlist",
         "image", "coordsys", "table", "msmetadata", "ms",
     }
-    assert {prop["name"] for prop in objects["Image"]["properties"]} == {
-        "shape",
-        "pixel_type",
-        "units",
-        "image_info",
-        "misc_info",
-        "mask_names",
-        "default_mask_name",
-    }
-    assert {method["name"] for method in objects["Image"]["methods"]} == {
-        "get_slice",
-        "put_slice",
-        "get_plane",
-        "get_mask_slice",
-    }
-    image_methods = {entry["name"]: entry for entry in objects["Image"]["methods"]}
-    mask_result = image_methods["get_mask_slice"]["result_schema"]
-    assert "null" in json.dumps(mask_result)
+    assert "Image" not in bundle["annotations"]["python"]["objects"]
+    assert all(obj["name"] != "Image" for obj in bundle["projections"]["python"]["objects"])
 
 
 def test_measurement_set_plot_releases_the_gil(tmp_path: Path) -> None:
@@ -259,7 +243,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 
 def test_image_reads_and_writes(tmp_path: Path) -> None:
     fixture_root = _create_fixtures(tmp_path)
-    image = Image.open(fixture_root / "python_fixture.image", writable=True)
+    image = NativeImageView.open(fixture_root / "python_fixture.image", writable=True)
 
     assert image.shape == (4, 3, 2)
     assert image.pixel_type == "float32"
@@ -306,8 +290,8 @@ def test_linearmosaic_writes_flux_and_coverage(tmp_path: Path) -> None:
     pointing_path = fixture_root / "direction_fixture.image"
     beam_path = tmp_path / "pointing.pb"
     copytree(pointing_path, beam_path)
-    pointing = Image.open(pointing_path)
-    beam = Image.open(beam_path, writable=True)
+    pointing = NativeImageView.open(pointing_path)
+    beam = NativeImageView.open(beam_path, writable=True)
     start = (0,) * len(pointing.shape)
     beam.put_slice(np.full(pointing.shape, 0.5, dtype=np.float32), start)
     output = tmp_path / "mosaic.image"
@@ -316,9 +300,9 @@ def test_linearmosaic_writes_flux_and_coverage(tmp_path: Path) -> None:
     data.linearmosaic([(pointing_path, beam_path)], template=pointing_path,
                       output=output, output_weight=weight)
 
-    np.testing.assert_array_equal(Image.open(output).get_slice(start, pointing.shape),
+    np.testing.assert_array_equal(NativeImageView.open(output).get_slice(start, pointing.shape),
                                   2.0 * pointing.get_slice(start, pointing.shape))
-    np.testing.assert_array_equal(Image.open(weight).get_slice(start, pointing.shape),
+    np.testing.assert_array_equal(NativeImageView.open(weight).get_slice(start, pointing.shape),
                                   np.full(pointing.shape, 0.25, dtype=np.float32))
 
 

@@ -92,8 +92,8 @@ unset sentinel instead of copying catalog defaults into Python.
 
 Python binds Rust through PyO3 alone, in one native module, `casars._core`.
 It carries task parameters, task results, MeasurementSet plot documents, the
-classes in `casars.tools`, and `casars.simutil`. The NumPy slice API in
-`casars.data.Image` uses the native image tool.
+classes in `casars.tools`, and `casars.simutil`. Use `casars.tools.image`
+for NumPy pixel access and native image editing.
 
 ## Plotting and image inspection
 

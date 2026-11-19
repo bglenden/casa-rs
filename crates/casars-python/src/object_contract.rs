@@ -6,11 +6,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use casa_provider_contracts::{
-    ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectPropertyDescriptor,
     ObjectSemanticContract, ObjectTypeContract, ProviderComponentSchemas,
     ProviderProjectionMetadata, ProviderSurfaceKind, merged_components,
 };
-use schemars::schema::RootSchema;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -45,15 +43,6 @@ impl DataObjectProtocolInfo {
             binding_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum ImagePixelTypeDescriptor {
-    Float32,
-    Float64,
-    Complex64,
-    Complex128,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -116,33 +105,6 @@ enum LogicalOutputScalarValue {
     String(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-struct OpenObjectRequest {
-    /// Existing persistent image/table path.
-    path: PathBuf,
-    /// Whether the opened object permits writes.
-    #[serde(default)]
-    writable: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-struct ArrayRegionRequest {
-    /// Inclusive starting coordinate in CASA/Rust axis order.
-    start: Vec<usize>,
-    /// Requested region shape in CASA/Rust axis order.
-    shape: Vec<usize>,
-    /// Optional positive per-axis stride.
-    stride: Option<Vec<usize>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-struct ImagePlaneRequest {
-    /// Axis orthogonal to the returned plane.
-    axis: usize,
-    /// Plane index along `axis`.
-    index: usize,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct LogicalNdArray {
     /// Logical dtype name such as `float32`, `complex128`, or `bool`.
@@ -179,14 +141,6 @@ enum LogicalOutputValue {
     TableRef(PathBuf),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-struct ImagePutSliceRequest {
-    /// Logical array payload written into the image.
-    data: LogicalNdArray,
-    /// Inclusive starting coordinate in CASA/Rust axis order.
-    start: Vec<usize>,
-}
-
 /// Canonical schema bundle for the `casars.data` object surface.
 #[derive(Debug, Clone, Serialize)]
 pub struct DataObjectSchemaBundle {
@@ -205,23 +159,12 @@ pub struct DataObjectSchemaBundle {
 impl DataObjectSchemaBundle {
     /// Build the current object-surface schema bundle.
     pub fn current() -> Self {
-        let open_schema = schema_for!(OpenObjectRequest);
-        let array_region_schema = schema_for!(ArrayRegionRequest);
-        let plane_request_schema = schema_for!(ImagePlaneRequest);
-        let logical_array_schema = schema_for!(LogicalNdArray);
-        let optional_logical_array_schema = schema_for!(Option<LogicalNdArray>);
-        let image_put_slice_schema = schema_for!(ImagePutSliceRequest);
-        let pixel_type_schema = schema_for!(ImagePixelTypeDescriptor);
         let input_scalar_schema = schema_for!(LogicalInputScalarValue);
         let output_scalar_schema = schema_for!(LogicalOutputScalarValue);
         let input_value_schema = schema_for!(LogicalInputValue);
         let output_value_schema = schema_for!(LogicalOutputValue);
         let input_record_schema = schema_for!(BTreeMap<String, LogicalInputValue>);
         let output_record_schema = schema_for!(BTreeMap<String, LogicalOutputValue>);
-        let string_list_schema = schema_for!(Vec<String>);
-        let optional_string_schema = schema_for!(Option<String>);
-        let shape_schema = schema_for!(Vec<usize>);
-        let units_schema = schema_for!(String);
         let tools = Self::tool_contracts();
 
         let mut components = ProviderComponentSchemas::new();
@@ -229,89 +172,17 @@ impl DataObjectSchemaBundle {
             components.extend(Self::object_components(tool));
         }
         components.extend(merged_components([
-            &open_schema,
-            &array_region_schema,
-            &plane_request_schema,
-            &logical_array_schema,
-            &optional_logical_array_schema,
-            &image_put_slice_schema,
-            &pixel_type_schema,
             &input_scalar_schema,
             &output_scalar_schema,
             &input_value_schema,
             &output_value_schema,
             &input_record_schema,
             &output_record_schema,
-            &string_list_schema,
-            &optional_string_schema,
-            &shape_schema,
-            &units_schema,
         ]));
-
-        let mut objects = vec![ObjectTypeContract {
-            name: "Image".to_string(),
-            constructors: vec![ObjectConstructorDescriptor {
-                name: "open".to_string(),
-                parameters_schema: open_schema.clone(),
-            }],
-            properties: vec![
-                ObjectPropertyDescriptor {
-                    name: "shape".to_string(),
-                    value_schema: shape_schema.clone(),
-                    readable: true,
-                    writable: false,
-                },
-                ObjectPropertyDescriptor {
-                    name: "pixel_type".to_string(),
-                    value_schema: pixel_type_schema.clone(),
-                    readable: true,
-                    writable: false,
-                },
-                ObjectPropertyDescriptor {
-                    name: "units".to_string(),
-                    value_schema: units_schema.clone(),
-                    readable: true,
-                    writable: false,
-                },
-                ObjectPropertyDescriptor {
-                    name: "image_info".to_string(),
-                    value_schema: output_record_schema.clone(),
-                    readable: true,
-                    writable: false,
-                },
-                ObjectPropertyDescriptor {
-                    name: "misc_info".to_string(),
-                    value_schema: output_record_schema.clone(),
-                    readable: true,
-                    writable: false,
-                },
-                ObjectPropertyDescriptor {
-                    name: "mask_names".to_string(),
-                    value_schema: string_list_schema.clone(),
-                    readable: true,
-                    writable: false,
-                },
-                ObjectPropertyDescriptor {
-                    name: "default_mask_name".to_string(),
-                    value_schema: optional_string_schema.clone(),
-                    readable: true,
-                    writable: false,
-                },
-            ],
-            methods: Self::image_methods(
-                &array_region_schema,
-                &image_put_slice_schema,
-                &plane_request_schema,
-                &logical_array_schema,
-                optional_logical_array_schema,
-            ),
-            lifecycle_operations: Vec::new(),
-        }];
-        objects.extend(tools);
 
         Self {
             protocol: DataObjectProtocolInfo::current(),
-            semantic: ObjectSemanticContract { objects },
+            semantic: ObjectSemanticContract { objects: tools },
             components,
             annotations: Self::python_annotations(),
             projections: Self::python_projections(),
@@ -338,43 +209,6 @@ impl DataObjectSchemaBundle {
         merged_components(constructors.chain(methods))
     }
 
-    /// Method descriptors of the `Image` object: the slice, plane and mask
-    /// reads and the mutating slice write.
-    fn image_methods(
-        array_region_schema: &RootSchema,
-        image_put_slice_schema: &RootSchema,
-        plane_request_schema: &RootSchema,
-        logical_array_schema: &RootSchema,
-        optional_logical_array_schema: RootSchema,
-    ) -> Vec<ObjectMethodDescriptor> {
-        vec![
-            ObjectMethodDescriptor {
-                name: "get_slice".to_string(),
-                parameters_schema: array_region_schema.clone(),
-                result_schema: Some(logical_array_schema.clone()),
-                mutating: false,
-            },
-            ObjectMethodDescriptor {
-                name: "put_slice".to_string(),
-                parameters_schema: image_put_slice_schema.clone(),
-                result_schema: None,
-                mutating: true,
-            },
-            ObjectMethodDescriptor {
-                name: "get_plane".to_string(),
-                parameters_schema: plane_request_schema.clone(),
-                result_schema: Some(logical_array_schema.clone()),
-                mutating: false,
-            },
-            ObjectMethodDescriptor {
-                name: "get_mask_slice".to_string(),
-                parameters_schema: array_region_schema.clone(),
-                result_schema: Some(optional_logical_array_schema),
-                mutating: false,
-            },
-        ]
-    }
-
     /// Python presentation annotations: the value-model notes and the Python
     /// class and return types of each object.
     fn python_annotations() -> JsonValue {
@@ -386,16 +220,7 @@ impl DataObjectSchemaBundle {
                     "records": "Record and keyword schemas map to nested dict[str, Any] values in Python.",
                     "logical_values": "LogicalInputValue and LogicalOutputValue capture the recursive CASA scalar/array/record value model used by the Python binding, including complex numbers and non-JSON array payloads."
                 },
-                "objects": {
-                    "Image": {
-                        "python_class": "casars.data.Image",
-                        "return_types": {
-                            "get_slice": "numpy.ndarray",
-                            "get_plane": "numpy.ndarray",
-                            "get_mask_slice": "numpy.ndarray | None"
-                        }
-                    }
-                }
+                "objects": {}
             }
         });
         for tool in TOOLS {
@@ -405,11 +230,12 @@ impl DataObjectSchemaBundle {
     }
 
     /// Projection metadata mapping each object to its Python class: the
-    /// `casars.data` classes, and the CASA tools, which name their own module
-    /// and carry their parameter order.
+    /// CASA tools name their module and carry their parameter order.
     fn python_projections() -> ProviderProjectionMetadata {
-        let mut objects = vec![json!({ "name": "Image", "class_name": "Image" })];
-        objects.extend(TOOLS.iter().map(|tool| tool.python_projection()));
+        let objects = TOOLS
+            .iter()
+            .map(|tool| tool.python_projection())
+            .collect::<Vec<_>>();
         ProviderProjectionMetadata {
             cli: None,
             python: Some(json!({
@@ -452,7 +278,6 @@ mod tests {
         assert_eq!(
             names,
             [
-                "Image",
                 "simulator",
                 "measures",
                 "quanta",
@@ -490,26 +315,6 @@ mod tests {
         assert!(bundle.components.contains_key("LogicalInputValue"));
         assert!(bundle.components.contains_key("LogicalOutputValue"));
         assert!(bundle.components.contains_key("LogicalComplex128"));
-
-        let image = bundle
-            .semantic
-            .objects
-            .iter()
-            .find(|object| object.name == "Image")
-            .expect("image object");
-        let get_mask_slice = image
-            .methods
-            .iter()
-            .find(|method| method.name == "get_mask_slice")
-            .expect("get_mask_slice method");
-        let result_schema = serde_json::to_value(
-            get_mask_slice
-                .result_schema
-                .as_ref()
-                .expect("result schema"),
-        )
-        .expect("serialize get_mask_slice schema");
-        assert!(result_schema.to_string().contains("\"null\""));
     }
 
     #[test]
