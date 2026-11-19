@@ -50,7 +50,7 @@ mod visibility_columns;
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
-use time_projection::{TIME_OUTPUT_SCALARS, TimeProjection};
+use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
 
 /// Visibility column layout requested by the transform.
@@ -483,39 +483,17 @@ fn mstransform_staged(
     }
     if !request.keep_flags {
         let stage_started_at = Instant::now();
-        let flag_row_values = input
-            .main_table()
-            .column_accessor("FLAG_ROW")
-            .and_then(|column| column.scalar_cells_owned_for_rows(&selected_rows))
-            .map_err(|source| MsTransformError::MutateMeasurementSet {
-                path: request.input_ms.display().to_string(),
-                source: Box::new(source),
-            })?;
-        let flag_values = input
-            .main_table()
-            .column_accessor("FLAG")
-            .and_then(|column| column.array_cells_owned(&selected_rows))
-            .map_err(|source| MsTransformError::MutateMeasurementSet {
-                path: request.input_ms.display().to_string(),
-                source: Box::new(source),
-            })?;
-        let mut kept_rows = Vec::with_capacity(selected_rows.len());
-        let mut kept_ddids = Vec::with_capacity(selected_ddids.len());
-        for (((row_index, ddid), flag_row), flags) in selected_rows
-            .into_iter()
-            .zip(selected_ddids)
-            .zip(flag_row_values)
-            .zip(flag_values)
-        {
-            let is_flag_row = scalar_bool(flag_row.as_ref(), "FLAG_ROW", row_index)?;
-            let is_fully_flagged = bool_array_all_true(flags.as_ref(), "FLAG", row_index)?;
-            if !is_flag_row && !is_fully_flagged {
-                kept_rows.push(row_index);
-                kept_ddids.push(ddid);
-            }
-        }
-        selected_rows = kept_rows;
-        selected_ddids = kept_ddids;
+        let dimensions = transform_array_dimensions(
+            &input,
+            &selected_ddids,
+            &ddid_to_spw,
+            &channel_bins,
+            correlations.as_ref(),
+        )?;
+        let flag_rows = flag_filter_read_plan(selected_rows.len(), budget, dimensions.values())
+            .map_err(selection_error)?;
+        (selected_rows, selected_ddids) =
+            keep_unflagged_rows(&input, &selected_rows, &selected_ddids, flag_rows)?;
         if options.time_averaging.is_some() {
             let kept = selected_rows.iter().copied().collect::<BTreeSet<_>>();
             time_rows.retain(|row| kept.contains(&row.row_index));
@@ -722,33 +700,33 @@ fn mstransform_staged(
     for batch_start in (0..row_count).step_by(batch_rows.max(1)) {
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &selected_rows[batch_start..batch_end];
-        let mut group_times = Vec::new();
-        let input_block =
-            if let (Some(projection), Some(groups)) = (&mut time_projection, &time_groups) {
-                let mut block = MainArrayBlock::for_capacity(
-                    input_rows.len(),
-                    visibility.copies().len(),
-                    STANDARD_SPECTRA.len(),
-                );
-                group_times.reserve(input_rows.len());
-                for group in &groups[batch_start..batch_end] {
+        let (input_block, group_times) = if let (Some(projection), Some(groups)) =
+            (&mut time_projection, &time_groups)
+        {
+            let plans = groups[batch_start..batch_end]
+                .iter()
+                .map(|group| {
                     let description = group.first.description;
                     let spw = ddid_to_spw[&description];
-                    let axes = correlations
-                        .as_ref()
-                        .and_then(|plan| plan.axes(description));
-                    projection
-                        .average_group(group, &channel_selection[&spw].channels, axes)?
-                        .materialize(&mut block, &mut group_times);
-                }
-                block
-            } else {
+                    TimeGroupRead {
+                        group,
+                        channels: &channel_selection[&spw].channels,
+                        axes: correlations
+                            .as_ref()
+                            .and_then(|plan| plan.axes(description)),
+                    }
+                })
+                .collect::<Vec<_>>();
+            projection.average_groups(&plans)?
+        } else {
+            let block =
                 MainArrayBlock::read(input.main_table(), input_rows, &visibility, &spectra.source)
                     .map_err(|source| MsTransformError::MutateMeasurementSet {
-                    path: request.input_ms.display().to_string(),
-                    source: Box::new(source),
-                })?
-            };
+                        path: request.input_ms.display().to_string(),
+                        source: Box::new(source),
+                    })?;
+            (block, Vec::new())
+        };
         let mut data_values = visibility
             .copies()
             .iter()
@@ -1305,25 +1283,41 @@ fn transform_array_write_plan(
             }
         })
         .collect::<Vec<_>>();
+    let metadata_budget = MsSelectionIoBudget {
+        available_bytes: resources.available_bytes,
+        maximum_live_blocks: resources.maximum_live_batches,
+        requested_bytes_per_row: std::mem::size_of::<Option<Vec<usize>>>()
+            + 5 * std::mem::size_of::<usize>(),
+        storage_alignment_rows: None,
+    };
     let (flag_category_shapes, largest_input_category) = plan_flag_category_shapes(
         input,
         selected_rows,
         selected_ddids,
         &dimensions,
         correlations.is_some(),
-        groups,
+        (groups, metadata_budget),
     )?;
     let io_error = |error: MsSelectionError| MsTransformError::WriteMeasurementSet {
         path: input_path.display().to_string(),
         reason: error.to_string(),
     };
     let (lag_shapes, maximum_lag_bytes) = if visibility.contains_output("LAG_DATA") {
-        plan_lag_shapes(input, selected_rows, selected_ddids, &dimensions, groups)?
+        plan_lag_shapes(
+            input,
+            selected_rows,
+            selected_ddids,
+            &dimensions,
+            (groups, metadata_budget),
+        )?
     } else {
         (Vec::new(), 0)
     };
+    let raw_row_count = groups.map_or(selected_rows.len(), |groups| {
+        groups.iter().map(|group| group.rows.len()).sum()
+    });
     let input_batch_rows = transform_input_batch_rows(
-        selected_rows.len(),
+        raw_row_count,
         resources,
         dimensions.values(),
         spectra.source.len(),
@@ -1458,7 +1452,16 @@ impl SpectrumProjection {
             Vec::new()
         };
         let mut source = Vec::new();
-        if (channel_average || time_average || fill_standard) && exists("WEIGHT_SPECTRUM") {
+        let needs_weight = if time_average {
+            let copies = visibility.copies();
+            copies
+                .iter()
+                .any(|column| column.source == OptionalMainColumn::CorrectedData)
+                || (copies.len() == 1 && copies[0].source == OptionalMainColumn::LagData)
+        } else {
+            channel_average || fill_standard
+        };
+        if needs_weight && exists("WEIGHT_SPECTRUM") {
             source.push("WEIGHT_SPECTRUM");
         }
         let needs_sigma = if channel_average || time_average {
@@ -1479,6 +1482,66 @@ impl SpectrumProjection {
             fill_standard,
         })
     }
+}
+
+fn flag_filter_read_plan<'a>(
+    rows: usize,
+    mut budget: MsSelectionIoBudget,
+    dimensions: impl Iterator<Item = &'a TransformArrayDimensions>,
+) -> Result<usize, MsSelectionError> {
+    // FLAG is read at its original shape, even when only a few selected
+    // channels or correlations will appear in the product.
+    let flag_bytes = dimensions
+        .map(|shape| {
+            shape
+                .input_correlations
+                .saturating_mul(shape.input_channels)
+        })
+        .max()
+        .unwrap_or(0);
+    budget.requested_bytes_per_row = flag_bytes.saturating_add(
+        std::mem::size_of::<Option<ArrayValue>>() + std::mem::size_of::<Option<ScalarValue>>() + 32,
+    );
+    Ok(MsReadPlan::new(rows, budget)?.rows_per_block)
+}
+
+fn keep_unflagged_rows(
+    input: &MeasurementSet,
+    rows: &[usize],
+    descriptions: &[i32],
+    rows_per_block: usize,
+) -> Result<(Vec<usize>, Vec<i32>), MsTransformError> {
+    let error = |source| MsTransformError::MutateMeasurementSet {
+        path: input
+            .path()
+            .unwrap_or_else(|| Path::new("<memory>"))
+            .display()
+            .to_string(),
+        source: Box::new(source),
+    };
+    let table = input.main_table();
+    let flag_row = table.column_accessor("FLAG_ROW").map_err(error)?;
+    let flag = table.column_accessor("FLAG").map_err(error)?;
+    let mut kept_rows = Vec::with_capacity(rows.len());
+    let mut kept_descriptions = Vec::with_capacity(rows.len());
+    for (rows, descriptions) in rows
+        .chunks(rows_per_block)
+        .zip(descriptions.chunks(rows_per_block))
+    {
+        let flag_rows = flag_row.scalar_cells_owned_for_rows(rows).map_err(error)?;
+        let flags = flag.array_cells_owned_uncached(rows).map_err(error)?;
+        for (((&row, &ddid), flag_row), flags) in
+            rows.iter().zip(descriptions).zip(flag_rows).zip(flags)
+        {
+            let flagged_row = scalar_bool(flag_row.as_ref(), "FLAG_ROW", row)?;
+            let flagged_samples = bool_array_all_true(flags.as_ref(), "FLAG", row)?;
+            if !flagged_row && !flagged_samples {
+                kept_rows.push(row);
+                kept_descriptions.push(ddid);
+            }
+        }
+    }
+    Ok((kept_rows, kept_descriptions))
 }
 
 fn transform_input_batch_rows<'a>(
@@ -1524,7 +1587,7 @@ fn plan_flag_category_shapes(
     selected_ddids: &[i32],
     dimensions: &BTreeMap<i32, TransformArrayDimensions>,
     correlation_subset: bool,
-    groups: Option<&[time_average::TimeGroup]>,
+    (groups, budget): (Option<&[time_average::TimeGroup]>, MsSelectionIoBudget),
 ) -> Result<(Vec<MeasurementSetArrayShapePlan>, usize), MsTransformError> {
     let main = input.main_table();
     let default_categories = match main
@@ -1536,13 +1599,8 @@ fn plan_flag_category_shapes(
     };
     let mut counts = BTreeMap::new();
     let mut largest_input = 0;
-    for (index, (&row, ddid)) in selected_rows.iter().zip(selected_ddids).enumerate() {
-        let original = optional_array_shape(
-            input,
-            row,
-            groups.map(|groups| &groups[index]),
-            "FLAG_CATEGORY",
-        )?;
+    let shapes = optional_array_shapes(input, selected_rows, groups, "FLAG_CATEGORY", budget)?;
+    for (original, ddid) in shapes.into_iter().zip(selected_ddids) {
         let shape = &dimensions[ddid];
         let cell = match original.as_deref() {
             Some(&[corr, chan, categories]) if corr > 0 && chan > 0 && categories > 0 => {
@@ -1586,14 +1644,13 @@ fn plan_lag_shapes(
     rows: &[usize],
     descriptions: &[i32],
     dimensions: &BTreeMap<i32, TransformArrayDimensions>,
-    groups: Option<&[time_average::TimeGroup]>,
+    (groups, budget): (Option<&[time_average::TimeGroup]>, MsSelectionIoBudget),
 ) -> Result<(Vec<MeasurementSetArrayShapePlan>, usize), MsTransformError> {
     let path = input.path().unwrap_or_else(|| Path::new("<memory>"));
     let mut counts = BTreeMap::new();
     let mut max_bytes = 0;
-    for (index, (&row, &description)) in rows.iter().zip(descriptions).enumerate() {
-        let shape =
-            optional_array_shape(input, row, groups.map(|groups| &groups[index]), "LAG_DATA")?;
+    let shapes = optional_array_shapes(input, rows, groups, "LAG_DATA", budget)?;
+    for ((&row, &description), shape) in rows.iter().zip(descriptions).zip(shapes) {
         let output_correlations = dimensions[&description].output_correlations;
         let lags = match shape.as_deref() {
             Some(&[stored_correlations, lags]) if lags > 0 => {
@@ -1624,44 +1681,76 @@ fn plan_lag_shapes(
     Ok((plans, max_bytes))
 }
 
-fn optional_array_shape(
+fn optional_array_shapes(
     input: &MeasurementSet,
-    row: usize,
-    group: Option<&time_average::TimeGroup>,
+    rows: &[usize],
+    groups: Option<&[time_average::TimeGroup]>,
     column: &str,
-) -> Result<Option<Vec<usize>>, MsTransformError> {
+    budget: MsSelectionIoBudget,
+) -> Result<Vec<Option<Vec<usize>>>, MsTransformError> {
     let path = input.path().unwrap_or_else(|| Path::new("<memory>"));
-    let read = |row| {
-        input
-            .main_table()
-            .array_shape_uncached(row, column)
-            .map_err(|source| MsTransformError::MutateMeasurementSet {
-                path: path.display().to_string(),
-                source: Box::new(source),
-            })
+    let table_error = |source| MsTransformError::MutateMeasurementSet {
+        path: path.display().to_string(),
+        source: Box::new(source),
     };
-    let Some(group) = group else {
-        return read(row);
+    let mut members: Box<dyn Iterator<Item = (usize, usize)>> = match groups {
+        Some(groups) => Box::new(groups.iter().enumerate().flat_map(|(index, group)| {
+            group
+                .rows
+                .iter()
+                .map(move |sample| (index, sample.physical))
+        })),
+        None => Box::new(rows.iter().copied().enumerate()),
     };
-    let mut shape = None;
-    for sample in &group.rows {
-        let Some(found) = read(sample.physical)?.filter(|shape| !shape.contains(&0)) else {
-            continue;
-        };
-        if let Some(previous) = &shape
-            && previous != &found
-        {
-            return Err(MsTransformError::SpectralMetadata {
-                path: path.display().to_string(),
-                reason: format!(
-                    "{column} row {} shape {found:?} differs from its time bin's shape {previous:?}",
-                    sample.physical
-                ),
-            });
+    let raw_rows = groups.map_or(rows.len(), |groups| {
+        groups.iter().map(|group| group.rows.len()).sum()
+    });
+    let plan = MsReadPlan::new(raw_rows, budget).map_err(|error| {
+        MsTransformError::WriteMeasurementSet {
+            path: path.display().to_string(),
+            reason: error.to_string(),
         }
-        shape = Some(found);
+    })?;
+    let accessor = input
+        .main_table()
+        .column_accessor(column)
+        .map_err(table_error)?;
+    let mut shapes: Vec<Option<Vec<usize>>> = vec![None; rows.len()];
+    loop {
+        let block = members
+            .by_ref()
+            .take(plan.rows_per_block)
+            .collect::<Vec<_>>();
+        if block.is_empty() {
+            return Ok(shapes);
+        }
+        let indices = block.iter().map(|&(_, row)| row).collect::<Vec<_>>();
+        let projected = accessor
+            .array_shapes_uncached(&indices)
+            .or_else(|_| {
+                indices
+                    .iter()
+                    .map(|&row| input.main_table().array_shape_uncached(row, column))
+                    .collect()
+            })
+            .map_err(table_error)?;
+        for ((index, row), found) in block.into_iter().zip(projected) {
+            let Some(found) = found.filter(|shape| groups.is_none() || !shape.contains(&0)) else {
+                continue;
+            };
+            if let Some(previous) = &shapes[index]
+                && previous != &found
+            {
+                return Err(MsTransformError::SpectralMetadata {
+                    path: path.display().to_string(),
+                    reason: format!(
+                        "{column} row {row} shape {found:?} differs from its time bin's shape {previous:?}"
+                    ),
+                });
+            }
+            shapes[index] = Some(found);
+        }
     }
-    Ok(shape)
 }
 
 fn push_complex32_array_row(
@@ -3320,6 +3409,24 @@ mod tests {
 #[cfg(test)]
 mod array_budget_tests {
     use super::*;
+
+    #[test]
+    fn keepflags_batches_full_flags_even_for_a_small_selection() {
+        let dimensions = [TransformArrayDimensions {
+            input_correlations: 4,
+            input_channels: 4096,
+            output_correlations: 1,
+            output_channels: 1,
+        }];
+        let budget = MsSelectionIoBudget {
+            available_bytes: 128 * 1024,
+            maximum_live_blocks: 2,
+            requested_bytes_per_row: 1,
+            storage_alignment_rows: None,
+        };
+        let rows = flag_filter_read_plan(100_000, budget, dimensions.iter()).unwrap();
+        assert_eq!(rows, 3);
+    }
 
     #[test]
     fn transform_batch_budget_counts_unsliced_input_arrays() {

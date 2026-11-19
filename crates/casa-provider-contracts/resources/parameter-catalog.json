@@ -10004,12 +10004,24 @@
       "id": "mstransform.timespan",
       "semantic_revision": 1,
       "casa_name": "timespan",
-      "value_domain": {"kind": "string"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Let time averages span 'scan', 'state' or both.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.combine",
+      "semantic_revision": 2,
+      "casa_name": "combine",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Let time averages span scan, field or state boundaries.", "details": null, "examples": ["''", "'scan,field'"]},
       "persistence_class": "profile"
     },
     {

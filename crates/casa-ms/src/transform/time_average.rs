@@ -568,10 +568,10 @@ impl TimeVisibilityAverage {
                 column.sum.map(|mut value| {
                     match &mut value {
                         ArrayValue::Complex32(array) => {
-                            finish_visibility(array, &self.sum_weights, column.weight);
+                            finish_visibility(array, &self.sum_weights, column.weight, false);
                         }
                         ArrayValue::Float32(array) => {
-                            finish_visibility(array, &self.sum_weights, column.weight)
+                            finish_visibility(array, &self.sum_weights, column.weight, true)
                         }
                         _ => {}
                     }
@@ -643,13 +643,17 @@ where
     Ok(())
 }
 
-fn finish_visibility<T>(sum: &mut ArrayD<T>, weights: &Array2<[f32; 3]>, role: TimeWeight)
-where
+fn finish_visibility<T>(
+    sum: &mut ArrayD<T>,
+    weights: &Array2<[f32; 3]>,
+    role: TimeWeight,
+    divide_by_zero: bool,
+) where
     T: Copy + Div<f32, Output = T>,
 {
     for (value, weights) in sum.iter_mut().zip(weights) {
         let normalization = weights[role as usize];
-        if normalization > 0.0 {
+        if normalization > 0.0 || divide_by_zero {
             *value = *value / normalization;
         }
     }

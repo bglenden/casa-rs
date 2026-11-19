@@ -187,7 +187,7 @@ def run(
         if task in ("split", "mstransform"):
             if "correlation" in values:
                 try:
-                    values["correlation"] = _ms_transform_correlation(values["correlation"])
+                    values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
                 except AssertionError as error:
                     raise ValueError(str(error)) from error
             for selector in ("array", "uvrange", "feed"):
@@ -261,11 +261,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
         _validate_ms_transform_datacolumn(arguments["datacolumn"])
-        for parameter in ("timebin", "combine" if name == "split" else "timespan"):
-            value = arguments[parameter]
-            if not isinstance(value, str):
-                message = "null value not allowed" if value is None else "must be of cStr type"
-                raise AssertionError(str({parameter: [message]}))
+        _coerce_ms_time_options(name, arguments, values)
         _coerce_ms_transform_selectors(name, values)
         _coerce_ms_channel_width(name, values)
         try:
@@ -650,7 +646,7 @@ def _call_initweights(values: dict[str, Any]) -> Any:
 
 def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
     if "correlation" in values:
-        values["correlation"] = _ms_transform_correlation(values["correlation"])
+        values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
     for name in ("observation", "intent", "array", "uvrange", "feed"):
         if name not in values:
             continue
@@ -746,13 +742,39 @@ def _ms_transform_selector_variant(name: str, value: Any) -> tuple[Any, str | No
     raise AssertionError(str({name: [f"must be of {kind} type" for kind in types]}))
 
 
-def _ms_transform_correlation(value: Any) -> Any:
+def _coerce_ms_time_options(
+    task: str, arguments: Mapping[str, Any], values: dict[str, Any]
+) -> None:
+    import numpy as np
+
+    def check(name: str, types: tuple[type, ...], casa_type: str) -> Any:
+        value = arguments[name]
+        if not isinstance(value, types):
+            message = "null value not allowed" if value is None else f"must be of {casa_type} type"
+            raise AssertionError(str({name: [message]}))
+        return value
+
+    check("timebin", (str,), "cStr")
+    span = "combine" if task == "split" else "timespan"
+    if span in values:
+        values[span] = _ms_transform_string_or_vector(span, values[span])
+    if task == "mstransform":
+        active = check("timeaverage", (bool, np.bool_), "cBool")
+        distance = check("maxuvwdistance", (float, int, np.float32, np.float64, np.int32, np.int64),
+                         "cFloat")
+        if "timeaverage" in values:
+            values["timeaverage"] = bool(active)
+        if "maxuvwdistance" in values:
+            values["maxuvwdistance"] = float(distance)
+
+
+def _ms_transform_string_or_vector(name: str, value: Any) -> Any:
     if isinstance(value, str):
         return value
     import numpy as np
 
     if value is None:
-        raise AssertionError(str({"correlation": ["null value not allowed"] * 3}))
+        raise AssertionError(str({name: ["null value not allowed"] * 3}))
     if isinstance(value, np.ndarray):
         if value.ndim == 0 and value.dtype.type is np.str_:
             return value
@@ -760,7 +782,7 @@ def _ms_transform_correlation(value: Any) -> Any:
             value = value.tolist()
     if isinstance(value, (list, tuple)) and all(isinstance(label, str) for label in value):
         return value
-    raise AssertionError(str({"correlation": ["must be of cStr type", "must be of cStrVec type"]}))
+    raise AssertionError(str({name: ["must be of cStr type", "must be of cStrVec type"]}))
 
 
 def _call_gencal(values: dict[str, Any]) -> Any:

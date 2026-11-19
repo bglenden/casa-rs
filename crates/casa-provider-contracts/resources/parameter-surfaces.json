@@ -14060,7 +14060,7 @@
         },
         {
           "name": "combine",
-          "concept": {"id": "parameter.combine", "semantic_revision": 1},
+          "concept": {"id": "parameter.combine", "semantic_revision": 2},
           "order": 18,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},

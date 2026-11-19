@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Read and average the selected MAIN arrays for one output baseline row.
+//! Read and average the selected MAIN arrays in bounded blocks across output baseline rows.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use casa_tables::{Table, TableError};
@@ -17,7 +17,7 @@ use super::time_average::{
 };
 use super::visibility_columns::VisibilityColumns;
 use super::{
-    MsTransformError, missing_column_error, scalar_f64, select_channels,
+    MsTransformError, STANDARD_SPECTRA, missing_column_error, scalar_f64, select_channels,
     transform_flag_category_channels,
 };
 use crate::schema::main_table::OptionalMainColumn;
@@ -35,10 +35,24 @@ pub(super) struct TimeProjection<'a> {
     rows_per_block: usize,
 }
 
-pub(super) struct AveragedMainRow {
-    pub(super) data: AveragedTimeVisibilities,
-    pub(super) coordinates: TimeCoordinates,
-    pub(super) categories: Option<ArrayValue>,
+pub(super) struct TimeGroupRead<'a> {
+    pub(super) group: &'a TimeGroup,
+    pub(super) channels: &'a [usize],
+    pub(super) axes: Option<&'a [usize]>,
+}
+
+#[derive(Default)]
+struct TimeGroupAccumulator {
+    visibility: Option<TimeVisibilityAverage>,
+    coordinates: Option<TimeCoordinatesAverage>,
+    categories: Option<ArrayValue>,
+    category_bins: Option<Vec<Vec<usize>>>,
+}
+
+struct AveragedMainRow {
+    data: AveragedTimeVisibilities,
+    coordinates: TimeCoordinates,
+    categories: Option<ArrayValue>,
 }
 
 impl<'a> TimeProjection<'a> {
@@ -59,147 +73,231 @@ impl<'a> TimeProjection<'a> {
         }
     }
 
-    pub(super) fn average_group(
+    pub(super) fn average_groups(
         &mut self,
-        group: &TimeGroup,
-        channels: &[usize],
-        axes: Option<&[usize]>,
-    ) -> Result<AveragedMainRow, MsTransformError> {
-        let mut visibilities = None;
-        let mut coordinates = None;
-        let mut category = None;
-        let mut category_bins = None;
-        for time_rows in group.rows.chunks(self.rows_per_block.max(1)) {
-            let rows = time_rows.iter().map(|row| row.physical).collect::<Vec<_>>();
+        plans: &[TimeGroupRead<'_>],
+    ) -> Result<(MainArrayBlock, Vec<TimeCoordinates>), MsTransformError> {
+        let mut output = MainArrayBlock::for_capacity(
+            plans.len(),
+            self.visibility.copies().len(),
+            STANDARD_SPECTRA.len(),
+        );
+        let mut coordinates = Vec::with_capacity(plans.len());
+        let mut members = plans
+            .iter()
+            .enumerate()
+            .flat_map(|(index, plan)| plan.group.rows.iter().copied().map(move |row| (index, row)));
+        let mut active_group = 0;
+        let mut accumulator = TimeGroupAccumulator::default();
+        loop {
+            let block = members
+                .by_ref()
+                .take(self.rows_per_block.max(1))
+                .collect::<Vec<_>>();
+            if block.is_empty() {
+                break;
+            }
+            let rows = block
+                .iter()
+                .map(|(_, row)| row.physical)
+                .collect::<Vec<_>>();
             let mut raw = MainArrayBlock::read(self.table, &rows, self.visibility, self.spectra)
                 .map_err(|source| self.table_error(source))?;
+            self.cache_spectrum_availability(&block, &raw)?;
             let scalars = TIME_INPUT_SCALARS.map(|name| {
                 self.table
                     .column_accessor(name)?
                     .scalar_cells_owned_for_rows(&rows)
             });
             let [times, centroids, intervals, exposures] = scalars;
-            let times = times.map_err(|source| self.table_error(source))?;
-            let centroids = centroids.map_err(|source| self.table_error(source))?;
-            let intervals = intervals.map_err(|source| self.table_error(source))?;
-            let exposures = exposures.map_err(|source| self.table_error(source))?;
-            for (i, &row) in time_rows.iter().enumerate() {
-                let require = |value: Option<ArrayValue>, column| {
-                    value.ok_or_else(|| missing_column_error(self.input_path, row.physical, column))
-                };
-                let select = |value, name, on_channels| {
-                    select_projection(value, name, channels, axes, on_channels)
-                        .map_err(|source| self.table_error(source))
-                };
-                let flags = select(require(raw.flags[i].take(), "FLAG")?, "FLAG", true)?;
-                let weight = select(require(raw.weights[i].take(), "WEIGHT")?, "WEIGHT", false)?;
-                let sigma = select(require(raw.sigmas[i].take(), "SIGMA")?, "SIGMA", false)?;
-                let values = self
-                    .visibility
-                    .copies()
-                    .iter()
-                    .zip(&mut raw.visibility)
-                    .map(|(copy, cells)| {
-                        cells[i]
-                            .take()
-                            .map(|value| {
-                                select(
-                                    value,
-                                    copy.source.name(),
-                                    copy.source != OptionalMainColumn::LagData,
-                                )
-                            })
-                            .transpose()
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let weight_spectrum =
-                    self.select_spectrum(&mut raw, row, i, "WEIGHT_SPECTRUM", channels, axes)?;
-                let sigma_spectrum =
-                    self.select_spectrum(&mut raw, row, i, "SIGMA_SPECTRUM", channels, axes)?;
-                let &[correlations, channel_count] = flags.shape() else {
-                    return Err(self.table_error(TableError::Schema(
-                        "FLAG must have correlation and channel axes".to_string(),
-                    )));
-                };
-                let average = visibilities.get_or_insert_with(|| {
-                    TimeVisibilityAverage::new(self.visibility, (correlations, channel_count))
-                });
-                let (flag_row, row_weight) = average
-                    .add(TimeVisibilityRow {
-                        values: &values,
-                        flags: &flags,
-                        weight: &weight,
-                        sigma: &sigma,
-                        spectra: SpectrumCells {
-                            weight: weight_spectrum.as_ref(),
-                            sigma: sigma_spectrum.as_ref(),
-                        },
-                    })
+            let scalars = [
+                times.map_err(|source| self.table_error(source))?,
+                centroids.map_err(|source| self.table_error(source))?,
+                intervals.map_err(|source| self.table_error(source))?,
+                exposures.map_err(|source| self.table_error(source))?,
+            ];
+            for (offset, (group, row)) in block.into_iter().enumerate() {
+                if group != active_group {
+                    std::mem::take(&mut accumulator)
+                        .finish()
+                        .materialize(&mut output, &mut coordinates);
+                    active_group = group;
+                }
+                self.add_row(
+                    &mut accumulator,
+                    &plans[group],
+                    row,
+                    offset,
+                    &mut raw,
+                    &scalars,
+                )?;
+            }
+        }
+        if !plans.is_empty() {
+            accumulator
+                .finish()
+                .materialize(&mut output, &mut coordinates);
+        }
+        Ok((output, coordinates))
+    }
+
+    fn cache_spectrum_availability(
+        &mut self,
+        block: &[(usize, TimeInputRow)],
+        raw: &MainArrayBlock,
+    ) -> Result<(), MsTransformError> {
+        if self.spectra.is_empty() {
+            return Ok(());
+        }
+        let offsets = block
+            .iter()
+            .enumerate()
+            .map(|(offset, (_, row))| (row.physical, offset))
+            .collect::<BTreeMap<_, _>>();
+        for (name, cells) in self.spectra.iter().copied().zip(&raw.spectra) {
+            let mut missing = BTreeSet::new();
+            for (_, row) in block {
+                let first = row.buffer_first;
+                if let Some(&offset) = offsets.get(&first) {
+                    self.available
+                        .insert((first, name), cells[offset].is_some());
+                } else if !self.available.contains_key(&(first, name)) {
+                    missing.insert(first);
+                }
+            }
+            if missing.is_empty() {
+                continue;
+            }
+            let missing = missing.into_iter().collect::<Vec<_>>();
+            let accessor = self
+                .table
+                .column_accessor(name)
+                .map_err(|source| self.table_error(source))?;
+            if let Ok(shapes) = accessor.array_shapes_uncached(&missing) {
+                for (first, shape) in missing.into_iter().zip(shapes) {
+                    self.available.insert((first, name), shape.is_some());
+                }
+            } else {
+                let cells = accessor
+                    .array_cells_owned_uncached(&missing)
                     .map_err(|source| self.table_error(source))?;
-                let uvw = uvw_coordinates(raw.uvw[i].as_ref())
-                    .ok_or_else(|| missing_column_error(self.input_path, row.physical, "UVW"))?;
-                let position = TimeCoordinates {
-                    time: scalar_f64(times[i].as_ref(), "TIME", row.physical)?,
-                    centroid: scalar_f64(centroids[i].as_ref(), "TIME_CENTROID", row.physical)?,
-                    interval: scalar_f64(intervals[i].as_ref(), "INTERVAL", row.physical)?,
-                    exposure: scalar_f64(exposures[i].as_ref(), "EXPOSURE", row.physical)?,
-                    flag_row,
-                    uvw,
-                };
-                coordinates
-                    .get_or_insert_with(|| TimeCoordinatesAverage::new(position))
-                    .add(position, row_weight);
-                if let Some(cells) = raw.categories[i].take().filter(|value| !value.is_empty()) {
-                    let bins = category_bins.get_or_insert_with(|| {
-                        channels
-                            .iter()
-                            .map(|&channel| vec![channel])
-                            .collect::<Vec<_>>()
-                    });
-                    let selected = select_visibility_axes(cells, axes, "FLAG_CATEGORY")
-                        .and_then(|cells| transform_flag_category_channels(cells, bins))
-                        .map_err(|source| self.table_error(source))?;
-                    include_categories(&mut category, selected)
-                        .map_err(|source| self.table_error(source))?;
+                for (first, value) in missing.into_iter().zip(cells) {
+                    self.available.insert((first, name), value.is_some());
                 }
             }
         }
-        Ok(AveragedMainRow {
-            data: visibilities
-                .expect("a time bin contains a baseline row")
-                .finish(),
-            coordinates: coordinates
-                .expect("a time bin contains row coordinates")
-                .finish(),
-            categories: category,
-        })
+        Ok(())
+    }
+
+    fn add_row(
+        &self,
+        accumulator: &mut TimeGroupAccumulator,
+        plan: &TimeGroupRead<'_>,
+        row: TimeInputRow,
+        offset: usize,
+        raw: &mut MainArrayBlock,
+        scalars: &[Vec<Option<ScalarValue>>; 4],
+    ) -> Result<(), MsTransformError> {
+        let TimeGroupRead { channels, axes, .. } = *plan;
+        let require = |value: Option<ArrayValue>, column| {
+            value.ok_or_else(|| missing_column_error(self.input_path, row.physical, column))
+        };
+        let select = |value, name, on_channels| {
+            select_projection(value, name, channels, axes, on_channels)
+                .map_err(|source| self.table_error(source))
+        };
+        let flags = select(require(raw.flags[offset].take(), "FLAG")?, "FLAG", true)?;
+        let weight = select(
+            require(raw.weights[offset].take(), "WEIGHT")?,
+            "WEIGHT",
+            false,
+        )?;
+        let sigma = select(require(raw.sigmas[offset].take(), "SIGMA")?, "SIGMA", false)?;
+        let values = self
+            .visibility
+            .copies()
+            .iter()
+            .zip(&mut raw.visibility)
+            .map(|(copy, cells)| {
+                cells[offset]
+                    .take()
+                    .map(|value| {
+                        select(
+                            value,
+                            copy.source.name(),
+                            copy.source != OptionalMainColumn::LagData,
+                        )
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let weight_spectrum = self.select_spectrum(raw, row, offset, "WEIGHT_SPECTRUM", plan)?;
+        let sigma_spectrum = self.select_spectrum(raw, row, offset, "SIGMA_SPECTRUM", plan)?;
+        let &[correlations, channel_count] = flags.shape() else {
+            return Err(self.table_error(TableError::Schema(
+                "FLAG must have correlation and channel axes".to_string(),
+            )));
+        };
+        let average = accumulator.visibility.get_or_insert_with(|| {
+            TimeVisibilityAverage::new(self.visibility, (correlations, channel_count))
+        });
+        let (flag_row, row_weight) = average
+            .add(TimeVisibilityRow {
+                values: &values,
+                flags: &flags,
+                weight: &weight,
+                sigma: &sigma,
+                spectra: SpectrumCells {
+                    weight: weight_spectrum.as_ref(),
+                    sigma: sigma_spectrum.as_ref(),
+                },
+            })
+            .map_err(|source| self.table_error(source))?;
+        let uvw = uvw_coordinates(raw.uvw[offset].as_ref())
+            .ok_or_else(|| missing_column_error(self.input_path, row.physical, "UVW"))?;
+        let position = TimeCoordinates {
+            time: scalar_f64(scalars[0][offset].as_ref(), "TIME", row.physical)?,
+            centroid: scalar_f64(scalars[1][offset].as_ref(), "TIME_CENTROID", row.physical)?,
+            interval: scalar_f64(scalars[2][offset].as_ref(), "INTERVAL", row.physical)?,
+            exposure: scalar_f64(scalars[3][offset].as_ref(), "EXPOSURE", row.physical)?,
+            flag_row,
+            uvw,
+        };
+        accumulator
+            .coordinates
+            .get_or_insert_with(|| TimeCoordinatesAverage::new(position))
+            .add(position, row_weight);
+        if let Some(cells) = raw.categories[offset]
+            .take()
+            .filter(|value| !value.is_empty())
+        {
+            let bins = accumulator.category_bins.get_or_insert_with(|| {
+                channels
+                    .iter()
+                    .map(|&channel| vec![channel])
+                    .collect::<Vec<_>>()
+            });
+            let selected = select_visibility_axes(cells, axes, "FLAG_CATEGORY")
+                .and_then(|cells| transform_flag_category_channels(cells, bins))
+                .map_err(|source| self.table_error(source))?;
+            include_categories(&mut accumulator.categories, selected)
+                .map_err(|source| self.table_error(source))?;
+        }
+        Ok(())
     }
 
     fn select_spectrum(
-        &mut self,
+        &self,
         raw: &mut MainArrayBlock,
         row: TimeInputRow,
         offset: usize,
         name: &'static str,
-        channels: &[usize],
-        axes: Option<&[usize]>,
+        plan: &TimeGroupRead<'_>,
     ) -> Result<Option<ArrayValue>, MsTransformError> {
         let Some(index) = self.spectra.iter().position(|&input| input == name) else {
             return Ok(None);
         };
-        let key = (row.buffer_first, name);
-        let available = if let Some(&available) = self.available.get(&key) {
-            available
-        } else {
-            let available = self
-                .table
-                .array_shape_uncached(row.buffer_first, name)
-                .map_err(|source| self.table_error(source))?
-                .is_some();
-            self.available.insert(key, available);
-            available
-        };
-        if !available {
+        if !self.available[&(row.buffer_first, name)] {
             return Ok(None);
         }
         let value = raw.spectra[index][offset].take().ok_or_else(|| {
@@ -209,7 +307,7 @@ impl<'a> TimeProjection<'a> {
                 column: name,
             }
         })?;
-        select_projection(value, name, channels, axes, true)
+        select_projection(value, name, plan.channels, plan.axes, true)
             .map(Some)
             .map_err(|source| self.table_error(source))
     }
@@ -222,12 +320,24 @@ impl<'a> TimeProjection<'a> {
     }
 }
 
+impl TimeGroupAccumulator {
+    fn finish(self) -> AveragedMainRow {
+        AveragedMainRow {
+            data: self
+                .visibility
+                .expect("a time bin contains a baseline row")
+                .finish(),
+            coordinates: self
+                .coordinates
+                .expect("a time bin contains row coordinates")
+                .finish(),
+            categories: self.categories,
+        }
+    }
+}
+
 impl AveragedMainRow {
-    pub(super) fn materialize(
-        self,
-        output: &mut MainArrayBlock,
-        coordinates: &mut Vec<TimeCoordinates>,
-    ) {
+    fn materialize(self, output: &mut MainArrayBlock, coordinates: &mut Vec<TimeCoordinates>) {
         for (column, value) in output.visibility.iter_mut().zip(self.data.values) {
             column.push(value);
         }

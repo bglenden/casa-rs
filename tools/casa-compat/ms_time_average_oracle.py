@@ -10,7 +10,9 @@ from casacore.tables import table
 import numpy as np
 
 from casars import tasks
-from ms_channel_average_oracle import COMPLEX, SPECTRA, add_statistics, channel_parameters, compare_array
+from ms_channel_average_oracle import (
+    COMPLEX, SPECTRA, add_statistics, channel_parameters, compare_array, sparse_spectra,
+)
 from ms_data_columns_oracle import add_float_and_lag, clone
 from ms_selection_tasks_oracle import MAIN, add_observation_and_intent, add_second_window, casa_table, make_input
 
@@ -19,7 +21,8 @@ SCALARS = ("TIME_CENTROID", "INTERVAL", "EXPOSURE")
 
 
 def compare(root, case, source, task, selector, timebin, width=1, combine="", *,
-            spw="", correlation="", keepflags=True, force_spectra=False, max_motion=0):
+            spw="", correlation="", keepflags=True, force_spectra=False, max_motion=0,
+            timeaverage=True):
     targets = [root / f"{task}-{case}-{side}.ms" for side in ("casa", "native")]
     args = channel_parameters(task, width, average=width > 1)
     args.update(timebin=timebin, datacolumn=selector, spw=spw, correlation=correlation,
@@ -27,7 +30,7 @@ def compare(root, case, source, task, selector, timebin, width=1, combine="", *,
     if task == "split":
         args["combine"] = combine
     else:
-        args.update(timeaverage=True, timespan=combine, usewtspectrum=force_spectra,
+        args.update(timeaverage=timeaverage, timespan=combine, usewtspectrum=force_spectra,
                     maxuvwdistance=max_motion)
     for module, output in zip((casatasks, tasks), targets):
         result = getattr(module, task)(vis=str(source), outputvis=str(output), **args)
@@ -62,17 +65,19 @@ def compare(root, case, source, task, selector, timebin, width=1, combine="", *,
                                                   err_msg=f"{task} {case} {name} {column} row {row}")
 
 
-def reject_timebin(root, source, task, value, kind, diagnostic):
+def reject_options(root, source, task, kind, diagnostic, **options):
     for module in (casatasks, tasks):
-        output = root / f"{task}-bad-time-{value}-{module.__name__}.ms"
-        extra = {"timeaverage": True} if task == "mstransform" else {}
+        output = root / f"{task}-bad-time-{module.__name__}.ms"
+        args = {"timebin": "25s"}
+        if task == "mstransform":
+            args["timeaverage"] = True
+        args.update(options)
         try:
-            getattr(module, task)(vis=str(source), outputvis=str(output), datacolumn="data",
-                                  timebin=value, **extra)
+            getattr(module, task)(vis=str(source), outputvis=str(output), datacolumn="data", **args)
         except kind as error:
-            assert diagnostic in str(error), str(error)
+            assert diagnostic in str(error), (task, module.__name__, options, str(error))
         else:
-            raise AssertionError((module.__name__, value))
+            raise AssertionError((task, module.__name__, options))
         assert not output.exists(), output
 
 
@@ -181,6 +186,14 @@ def main():
         lags = root / "lag-only.ms"
         clone(extra, floats, (*COMPLEX, "LAG_DATA"))
         clone(extra, lags, (*COMPLEX, "FLOAT_DATA"))
+        zero_sigma = root / "zero-sigma.ms"
+        clone(floats, zero_sigma)
+        with table(str(zero_sigma), readonly=False, ack=False) as ms:
+            sigma = ms.getcol("SIGMA_SPECTRUM")
+            sigma[:, :, 0] = 0
+            ms.putcol("SIGMA_SPECTRUM", sigma)
+        missing_weight = root / "missing-weight.ms"
+        sparse_spectra(source, missing_weight, 1, ("WEIGHT_SPECTRUM",))
         scalars = root / "scalar-statistics.ms"
         clone(source, scalars, SPECTRA)
         windows = root / "windows.ms"
@@ -202,7 +215,11 @@ def main():
                 compare(root, f"float-{width}", floats, task, "float_data", "25s", width)
                 verify_time_lags(root, lags, task, width)
                 verify_mixed_visibilities(root, extra, task, width)
-                count += 3
+                compare(root, f"zero-sigma-{width}", zero_sigma, task, "float_data", "25s", width)
+                for selector in ("data", "model"):
+                    compare(root, f"sparse-weight-{selector}-{width}", missing_weight, task,
+                            selector, "25s", width)
+                count += 6
             for name, duration in (("exact", "20s"), ("off-boundary", "21s"),
                                    ("minutes", "1min"), ("subintegrations", "500ms"),
                                    ("bare-value", "20"), ("sidereal-angle", "1:00:00"),
@@ -219,17 +236,45 @@ def main():
         compare(root, "forced-spectra", scalars, "mstransform", "corrected", "25s", force_spectra=True)
         compare(root, "baseline-motion", source, "mstransform", "data", "35s", max_motion=0.02)
         compare(root, "negative-inactive", source, "split", "data", "-1s")
-        count += 3
-        for duration in ("0s", "-1s"):
-            reject_timebin(root, source, "mstransform", duration, ValueError, "Parameter timebin must be > '0s'")
+        compare(root, "bool-distance", source, "mstransform", "data", "35s", max_motion=True)
+        compare(root, "numpy-distance", source, "mstransform", "data", "35s",
+                max_motion=np.float32(0.02), timeaverage=np.bool_(True))
         for task in ("split", "mstransform"):
-            reject_timebin(root, source, task, "bogus", RuntimeError, "Illegal input units or format")
-            reject_timebin(root, source, task, None, AssertionError, "null value not allowed")
-            reject_timebin(root, source, task, 20, AssertionError, "must be of cStr type")
+            compare(root, "inactive-span-vector", source, task, "data", "0s", combine=["scan"],
+                    timeaverage=False)
+        count += 7
+        rejected = 0
+        for duration in ("0s", "-1s"):
+            reject_options(root, source, "mstransform", ValueError, "Parameter timebin must be > '0s'",
+                           timebin=duration)
+            rejected += 1
+        for parameter, value, diagnostic in (
+            ("timeaverage", 1, "must be of cBool type"),
+            ("timeaverage", None, "null value not allowed"),
+            ("timeaverage", np.array(True), "must be of cBool type"),
+            ("maxuvwdistance", "0.1", "must be of cFloat type"),
+            ("maxuvwdistance", np.float16(0.1), "must be of cFloat type"),
+            ("maxuvwdistance", np.bool_(True), "must be of cFloat type"),
+            ("maxuvwdistance", None, "null value not allowed"),
+        ):
+            reject_options(root, source, "mstransform", AssertionError, diagnostic, **{parameter: value})
+            rejected += 1
+        for task in ("split", "mstransform"):
+            reject_options(root, source, task, RuntimeError, "Illegal input units or format", timebin="bogus")
+            reject_options(root, source, task, AssertionError, "null value not allowed", timebin=None)
+            reject_options(root, source, task, AssertionError, "must be of cStr type", timebin=20)
+            name = "combine" if task == "split" else "timespan"
+            reject_options(root, source, task, AssertionError, "must be of cStrVec type", **{name: [1]})
+            reject_options(root, source, task, AssertionError, "null value not allowed", **{name: None})
+            reject_options(root, source, task, RuntimeError, "used for field timespan",
+                           **{name: ["scan"]})
+            reject_options(root, source, task, RuntimeError, "used for field timespan",
+                           **{name: np.array("scan")})
+            rejected += 7
         with table(str(source), ack=False) as ms:
             np.testing.assert_array_equal(ms.getcol("FLAG"), source_flags)
             np.testing.assert_array_equal(ms.getcol("DATA"), source_data)
-        print(f"{count} time-averaged products and eight time-bin rejections compared with CASA 6.7.6.14")
+        print(f"{count} products and {rejected} time-option rejections compared with CASA 6.7.6.14")
 
 
 if __name__ == "__main__":

@@ -113,9 +113,14 @@ fn time_average_options(
             )
         };
     }
-    let span = task
-        .text(if split { "combine" } else { "timespan" })?
-        .unwrap_or_default();
+    let parameter = if split { "combine" } else { "timespan" };
+    let span = match task.value(parameter) {
+        None => "",
+        Some(ParameterValue::String(span)) => span,
+        Some(_) => return Err(TaskFailure::execution(
+            "RecordRep::get_pointer - incorrect data type String   used for field timespan with type unknown",
+        ).at(parameter)),
+    };
     Ok(Some(TimeAverageOptions {
         interval_seconds,
         span_scans: span.contains("scan"),
