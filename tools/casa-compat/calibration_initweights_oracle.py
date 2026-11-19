@@ -14,6 +14,7 @@ import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_gencal_specify_oracle import with_second_window
+from calibration_scratch_oracle import referenced_tables
 from record_casa_returns import make_cal_ms
 
 
@@ -132,6 +133,25 @@ def compare_case(root, base, native, mode, spectrum, contents):
             assert result["WEIGHT"][0, 1] == np.finfo(np.float32).eps
 
 
+def compare_mms(root, base, native):
+    for spectrum in (False, True):
+        outputs = []
+        for name, api in (("casa", casa), ("native", native)):
+            mms = root / f"{name}-partition-{spectrum}.mms"
+            casa.partition(str(base), str(mms), separationaxis="scan", numsubms=2,
+                           disableparallel=True, flagbackup=False, datacolumn="all")
+            parts = referenced_tables(mms)
+            assert len(parts) == 2
+            before = [main_columns(path)[1]["HISTORY"] for path in (mms, *parts)]
+            assert api.initweights(str(mms), "ones", dowtsp=spectrum) is None
+            after = [main_columns(path) for path in (mms, *parts)]
+            for history, (_, columns) in zip(before, after, strict=True):
+                np.testing.assert_array_equal(columns.pop("HISTORY"), history)
+            outputs.append(after)
+        for expected, actual in zip(*outputs, strict=True):
+            compare(expected, actual)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -156,7 +176,8 @@ def main():
              for contents in ("", "partial", "full")]
     for case in cases:
         compare_case(args.work, base, native, *case)
-    print(f"{len(cases)} matched CASA initweights cases")
+    compare_mms(args.work, base, native)
+    print(f"{len(cases) + 2} matched CASA initweights cases")
 
 
 if __name__ == "__main__":

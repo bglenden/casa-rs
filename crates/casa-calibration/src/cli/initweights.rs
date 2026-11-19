@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read the CASA weight initialization task surface.
 
-use casa_ms::MeasurementSet;
 use casa_provider_contracts::CasaValue;
-use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use std::path::Path;
 
 use crate::ApplyCalibrationTableSpec;
 use crate::initweights::{Mode, initialize, initialize_tsys};
+
+use super::multi_ms::{OpenedMs, partition_paths};
 
 enum Weights {
     Ordinary(Mode),
@@ -27,21 +28,32 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         _ => return Err(TaskFailure::validation("unknown initialization mode").at("wtmode")),
     };
     let spectrum = task.flag("dowtsp")?;
-    let mut lock = TableWriteLock::acquire_to_reread(&path, 0)
-        .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
-    let mut ms = MeasurementSet::open(&path)
-        .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
-    match mode {
-        Weights::Ordinary(mode) => initialize(&mut ms, mode, spectrum, &mut lock),
-        Weights::Tsys(spec, by_exposure) => {
-            initialize_tsys(&mut ms, spec, by_exposure, spectrum, &mut lock)
+    if let Some(parts) = partition_paths(&path)? {
+        for part in parts {
+            run_one(&part, &mode, spectrum)?;
         }
+    } else {
+        run_one(&path, &mode, spectrum)?;
+    }
+    TaskSuccess::new(CasaValue::None, &())
+}
+
+fn run_one(path: &Path, mode: &Weights, spectrum: bool) -> Result<(), TaskFailure> {
+    let mut state = OpenedMs::open(path).map_err(|error| error.at("vis"))?;
+    match mode {
+        Weights::Ordinary(mode) => {
+            initialize(&mut state.measurement_set, *mode, spectrum, &mut state.lock)
+        }
+        Weights::Tsys(spec, by_exposure) => initialize_tsys(
+            &mut state.measurement_set,
+            spec.clone(),
+            *by_exposure,
+            spectrum,
+            &mut state.lock,
+        ),
     }
     .map_err(|error| TaskFailure::execution(error.to_string()))?;
-    drop(ms);
-    lock.release()
-        .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
-    TaskSuccess::new(CasaValue::None, &())
+    state.release().map_err(|error| error.at("vis"))
 }
 
 fn read_tsys(task: &TaskInvocation<'_>) -> Result<ApplyCalibrationTableSpec, TaskFailure> {

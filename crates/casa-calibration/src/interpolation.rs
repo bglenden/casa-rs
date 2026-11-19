@@ -100,7 +100,7 @@ pub(crate) fn sample_polar(
     Some((amplitude, phase))
 }
 
-/// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
+/// Tridiagonal solution for CASA frequency splines with zero endpoint curvature.
 pub(crate) fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
     let mut second = vec![[0.0; 2]; points.len()];
     if points.len() < 3 {
@@ -125,7 +125,9 @@ pub(crate) fn spline_derivatives(points: &[(f64, f32, f32)]) -> Vec<[f64; 2]> {
             *value = (6.0 * slope - left * previous[axis]) / diagonal;
         }
     }
-    for index in (1..points.len() - 1).rev() {
+    // casacore's InterpolateArray1D leaves the first interior derivative
+    // at its forward-elimination value. The first two intervals depend on it.
+    for index in (2..points.len() - 1).rev() {
         let next = second[index + 1];
         for (value, next) in second[index].iter_mut().zip(next) {
             *value -= upper[index] * next;
