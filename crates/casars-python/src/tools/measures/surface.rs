@@ -148,7 +148,7 @@ const METHODS: &[Method] = &[
             param("pa", K::Quantity, Empty),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "show",
