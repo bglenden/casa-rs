@@ -158,7 +158,14 @@ pub fn parse_imstat_algorithm(request: &ImstatRequest) -> Result<StatisticsAlgor
 /// statistics over the whole selection, or one per display plane when
 /// the request collapses only some axes.
 pub fn imstat(request: &ImstatRequest) -> Result<ImstatOutcome, ImageError> {
-    let image = AnyPagedImage::open(&request.imagename)?;
+    // CASA's image tool opens FITS images directly, so imstat accepts a
+    // FITS file as its image: converted here, then run as any image.
+    let imported = import_fits_for_reading(&request.imagename)?;
+    let open_path = imported.as_ref().map_or_else(
+        || request.imagename.as_path(),
+        |(_, converted)| converted.as_path(),
+    );
+    let image = AnyPagedImage::open(open_path)?;
     let path = request.imagename.as_path();
     match &image {
         AnyPagedImage::Float32(image) => imstat_typed(path, image, request),
@@ -167,6 +174,31 @@ pub fn imstat(request: &ImstatRequest) -> Result<ImstatOutcome, ImageError> {
             ImageError::InvalidMetadata("imstat currently supports real-valued images".to_string()),
         ),
     }
+}
+
+/// A FITS image converted to a CASA image for reading, in a directory
+/// that lives until the caller drops the returned pair. CASA's image
+/// tool converts FITS images the same way when it opens them.
+fn import_fits_for_reading(
+    path: &Path,
+) -> Result<Option<(tempfile::TempDir, std::path::PathBuf)>, ImageError> {
+    if !path.exists() || !is_fits_file(path)? {
+        return Ok(None);
+    }
+    let temp = tempfile::tempdir().map_err(|error| ImageError::Io(error.to_string()))?;
+    let converted = temp.path().join("converted.image");
+    import_fits(path, &converted, false)?;
+    Ok(Some((temp, converted)))
+}
+
+/// Whether a file begins FITS's required first card, which is how
+/// casacore's image opener tells a FITS image from a CASA one.
+fn is_fits_file(path: &Path) -> Result<bool, ImageError> {
+    use std::io::Read;
+    let mut file = fs::File::open(path).map_err(|error| ImageError::Io(error.to_string()))?;
+    let mut magic = [0u8; 9];
+    let read = file.read(&mut magic).unwrap_or(0);
+    Ok(read == magic.len() && &magic == b"SIMPLE  =")
 }
 
 /// Generate a CASA `immoments`-style moment map.
@@ -1964,7 +1996,11 @@ where
         .as_deref()
         .filter(|text| !text.trim().is_empty())
     {
-        Some(box_text) => Some(PixelRegion::Box(parse_box(box_text)?)),
+        Some(box_text) => Some(parse_box_region(
+            box_text,
+            image.shape(),
+            direction_plane_axes(image),
+        )?),
         None => None,
     };
     let effective_region = explicit_box.as_ref().or(region_selection.as_ref());
@@ -2052,7 +2088,9 @@ where
     // The statistics the algorithm reports, with the extremum positions
     // relative to the original image.
     let computed = match algorithm {
-        StatisticsAlgorithm::Classic if !selection.stokes_has_gaps() => {
+        StatisticsAlgorithm::Classic
+            if !selection.stokes_has_gaps() && !selection.channels_have_gaps() =>
+        {
             // The classical moments stream through the lattice
             // statistics; a gapped Stokes set needs the sample route.
             let sub = image.sub_image(selection.start.clone(), selection.shape.clone())?;
@@ -2088,6 +2126,8 @@ where
                 &pixels,
                 pixel_mask,
                 request.includepix,
+                selection.channel_axis,
+                selection.channel_indices.as_deref(),
                 selection.stokes_axis,
                 selection.stokes_indices.as_deref(),
                 &selection.start,
@@ -2565,13 +2605,15 @@ fn mask_error_wording(error: ExprParseError) -> String {
 
 /// The selection's pixel values as a robust-algorithm sample, with each
 /// value's Fortran-linear position inside the selection, filtered by
-/// the pixel mask, an inclusive pixel-value range, and a named Stokes
-/// set.
+/// the pixel mask, an inclusive pixel-value range, and the named
+/// channel and Stokes sets.
 #[allow(clippy::too_many_arguments)]
 fn sample_points<T>(
     pixels: &ndarray::ArrayD<T>,
     pixel_mask: Option<&ndarray::ArrayD<bool>>,
     includepix: Option<[f64; 2]>,
+    channel_axis: Option<usize>,
+    channel_indices: Option<&[usize]>,
     stokes_axis: Option<usize>,
     stokes_indices: Option<&[usize]>,
     start: &[usize],
@@ -2600,11 +2642,17 @@ where
         {
             continue;
         }
-        if let (Some(axis), Some(indices)) = (stokes_axis, stokes_indices) {
-            let absolute = index[axis] + start[axis];
-            if !indices.contains(&absolute) {
-                continue;
+        let in_named_set = |axis: Option<usize>, indices: Option<&[usize]>| match (axis, indices) {
+            (Some(axis), Some(indices)) => {
+                let absolute = index[axis] + start[axis];
+                indices.contains(&absolute)
             }
+            _ => true,
+        };
+        if !in_named_set(channel_axis, channel_indices)
+            || !in_named_set(stokes_axis, stokes_indices)
+        {
+            continue;
         }
         let mut linear = 0u64;
         for (axis, &axis_stride) in strides.iter().enumerate() {
@@ -2761,7 +2809,19 @@ impl Selection {
     /// Whether the named Stokes set is not a contiguous span, which the
     /// streaming classical path cannot express.
     fn stokes_has_gaps(&self) -> bool {
-        match (self.stokes_axis, &self.stokes_indices) {
+        Self::named_set_has_gaps(self.stokes_axis, &self.stokes_indices)
+    }
+
+    /// Whether the named channel set is not a contiguous span, which the
+    /// streaming classical path cannot express.
+    fn channels_have_gaps(&self) -> bool {
+        Self::named_set_has_gaps(self.channel_axis, &self.channel_indices)
+    }
+
+    /// Whether a named selection set skips indices between its first and
+    /// last.
+    fn named_set_has_gaps(axis: Option<usize>, indices: &Option<Vec<usize>>) -> bool {
+        match (axis, indices) {
             (Some(_), Some(indices)) => {
                 indices.len() > 1 && indices[indices.len() - 1] - indices[0] + 1 != indices.len()
             }
@@ -2868,14 +2928,22 @@ fn parse_axes(axes: Option<&[i64]>, n_dim: usize) -> Result<AxisSelection, Strin
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PixelRegion {
-    Box([usize; 4]),
+    /// One or more rectangular boxes: CASA's task `box` parameter takes
+    /// comma-separated quadruplets, and CRTF strings name one box.
+    Boxes(Vec<[usize; 4]>),
     Polygon(Vec<[usize; 2]>),
 }
 
 impl PixelRegion {
     fn bounding_box(&self) -> [usize; 4] {
         match self {
-            Self::Box(bounds) => *bounds,
+            Self::Boxes(boxes) => {
+                let min_x = boxes.iter().map(|b| b[0]).min().unwrap_or(0);
+                let min_y = boxes.iter().map(|b| b[1]).min().unwrap_or(0);
+                let max_x = boxes.iter().map(|b| b[2]).max().unwrap_or(min_x);
+                let max_y = boxes.iter().map(|b| b[3]).max().unwrap_or(min_y);
+                [min_x, min_y, max_x, max_y]
+            }
             Self::Polygon(vertices) => {
                 let min_x = vertices.iter().map(|vertex| vertex[0]).min().unwrap_or(0);
                 let min_y = vertices.iter().map(|vertex| vertex[1]).min().unwrap_or(0);
@@ -2903,25 +2971,25 @@ fn region_pixels<T: ImagePixel>(
         return Ok(None);
     };
     if let Some(parsed) = crtf_box_pixels(image, region)? {
-        return Ok(Some(PixelRegion::Box(parse_box(&parsed)?)));
+        return Ok(Some(PixelRegion::Boxes(vec![parse_box(&parsed)?])));
     }
     if let Some(parsed) = crtf_polygon_pixels(image, region)? {
         return Ok(Some(PixelRegion::Polygon(parsed)));
     }
     if let Some(box_text) = region.strip_prefix("box:") {
         let parsed = parse_box(box_text.trim())?;
-        return Ok(Some(PixelRegion::Box(parsed)));
+        return Ok(Some(PixelRegion::Boxes(vec![parsed])));
     }
     if let Some(contents) = region
         .strip_prefix("pixelbox(")
         .and_then(|text| text.strip_suffix(')'))
     {
         let parsed = parse_box(contents.trim())?;
-        return Ok(Some(PixelRegion::Box(parsed)));
+        return Ok(Some(PixelRegion::Boxes(vec![parsed])));
     }
     if looks_like_box(region) {
         let parsed = parse_box(region)?;
-        return Ok(Some(PixelRegion::Box(parsed)));
+        return Ok(Some(PixelRegion::Boxes(vec![parsed])));
     }
 
     let region_path = Path::new(region);
@@ -2932,7 +3000,7 @@ fn region_pixels<T: ImagePixel>(
         ))
     })?;
     if let Some(box_pixels) = crtf_box_pixels(image, &contents)? {
-        return Ok(Some(PixelRegion::Box(parse_box(&box_pixels)?)));
+        return Ok(Some(PixelRegion::Boxes(vec![parse_box(&box_pixels)?])));
     }
     if let Some(polygon) = crtf_polygon_pixels(image, &contents)? {
         return Ok(Some(PixelRegion::Polygon(polygon)));
@@ -2953,7 +3021,23 @@ fn region_pixel_mask(
     selection: &Selection,
 ) -> Result<ArrayD<bool>, ImageError> {
     let mask = match region {
-        PixelRegion::Box(_) => ArrayD::from_elem(IxDyn(&selection.shape).f(), true),
+        PixelRegion::Boxes(boxes) => {
+            if boxes.len() < 2 {
+                // One box is the selection itself; every pixel is in it.
+                ArrayD::from_elem(IxDyn(&selection.shape).f(), true)
+            } else {
+                // Several boxes: the selection is their bounding box, and
+                // a pixel is in the region when some box holds it.
+                let [x_axis, y_axis] = selection.plane;
+                ArrayD::from_shape_fn(IxDyn(&selection.shape).f(), |idx| {
+                    let x = selection.start[x_axis] + idx[x_axis];
+                    let y = selection.start[y_axis] + idx[y_axis];
+                    boxes
+                        .iter()
+                        .any(|b| b[0] <= x && x <= b[2] && b[1] <= y && y <= b[3])
+                })
+            }
+        }
         PixelRegion::Polygon(vertices) => {
             if vertices.len() < 3 {
                 return Err(ImageError::InvalidMetadata(
@@ -3302,6 +3386,66 @@ fn parse_box(text: &str) -> Result<[usize; 4], ImageError> {
     Ok([values[0], values[1], values[2], values[3]])
 }
 
+/// Parse CASA's task `box` parameter: comma-separated quadruplets of
+/// inclusive pixel corners, one box per quadruplet. CASA's
+/// `CasacRegionManager` refuses any other count with the same wording.
+fn parse_boxes(text: &str) -> Result<Vec<[usize; 4]>, ImageError> {
+    let values = text
+        .split(',')
+        .map(|part| {
+            part.trim().parse::<usize>().map_err(|error| {
+                ImageError::InvalidMetadata(format!("invalid box {text:?}: {error}"))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.is_empty() || values.len() % 4 != 0 {
+        return Err(ImageError::CasaSelection(
+            "box not specified correctly.".to_string(),
+        ));
+    }
+    Ok(values
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| [b[0], b[1], b[2], b[3]])
+        .collect())
+}
+
+/// A task `box` parameter as a pixel region, validated as CASA's
+/// `CasacRegionManager::fromBCS` validates it: each quadruplet's trc
+/// inside the direction plane, and each box's blc no greater than its
+/// trc, with CASA's own refusals. A box's x and y run along the
+/// direction plane's axes wherever they are.
+fn parse_box_region(
+    text: &str,
+    image_shape: &[usize],
+    plane: [usize; 2],
+) -> Result<PixelRegion, ImageError> {
+    let boxes = parse_boxes(text)?;
+    let [x, y] = plane;
+    for [x0, y0, x1, y1] in &boxes {
+        if image_shape.len() < 2 || *x1 >= image_shape[x] || *y1 >= image_shape[y] {
+            return Err(ImageError::CasaSelection(
+                "trc in box spec is greater than or equal to number of direction \
+                 coordinate pixels in the image"
+                    .to_string(),
+            ));
+        }
+        if x1 < x0 || y1 < y0 {
+            let mut blc = vec![0; image_shape.len()];
+            blc[x] = *x0;
+            blc[y] = *y0;
+            let mut trc: Vec<usize> = image_shape.iter().map(|axis| axis - 1).collect();
+            trc[x] = *x1;
+            trc[y] = *y1;
+            return Err(ImageError::CasaSelection(format!(
+                "LCBox::LCBox - blc {blc:?} must be <= trc {trc:?}"
+            )));
+        }
+    }
+    Ok(PixelRegion::Boxes(boxes))
+}
+
 /// Parse a CASA image-channel selector and resolve it against one spectral axis.
 pub fn parse_image_channel_selection(
     text: &str,
@@ -3348,9 +3492,25 @@ pub fn parse_image_channel_selection(
                     "channel stride requires a range: {segment:?}"
                 )));
             }
-            indices.push(range.parse::<usize>().map_err(|error| {
-                ImageError::InvalidMetadata(format!("invalid channel {segment:?}: {error}"))
-            })?);
+            // CASA's channel specification also accepts comparisons:
+            // the channels past, at least, before, or at most a bound.
+            if let Some((op, number)) = channel_comparison(range) {
+                let limit = number.parse::<usize>().map_err(|_| {
+                    ImageError::CasaSelection(format!(
+                        "In channel specification, {number} is not an integer in {segment}."
+                    ))
+                })?;
+                indices.extend((0..axis_len).filter(|&channel| match op {
+                    ">" => channel > limit,
+                    ">=" => channel >= limit,
+                    "<" => channel < limit,
+                    _ => channel <= limit,
+                }));
+            } else {
+                indices.push(range.parse::<usize>().map_err(|error| {
+                    ImageError::InvalidMetadata(format!("invalid channel {segment:?}: {error}"))
+                })?);
+            }
         }
     }
     if indices.is_empty() || indices.iter().any(|index| *index >= axis_len) {
@@ -3362,6 +3522,17 @@ pub fn parse_image_channel_selection(
     indices.sort_unstable();
     indices.dedup();
     Ok(indices)
+}
+
+/// A channel-specification comparison segment: `>`, `>=`, `<` or `<=`
+/// followed by its bound, as CASA's `ParameterParser` reads them.
+fn channel_comparison(segment: &str) -> Option<(&'static str, &str)> {
+    for op in [">=", "<=", ">", "<"] {
+        if let Some(number) = segment.strip_prefix(op) {
+            return Some((op, number.trim()));
+        }
+    }
+    None
 }
 
 /// CASA imstat's `flux` over the selection, as casacore's
@@ -3681,12 +3852,37 @@ where
         .as_deref()
         .filter(|text| !text.trim().is_empty())
     {
-        Some(box_text) => Some(PixelRegion::Box(parse_box(box_text)?)),
+        Some(box_text) => Some(parse_box_region(
+            box_text,
+            image.shape(),
+            direction_plane_axes(image),
+        )?),
         None => None,
     };
     let selection = Selection::new(image, box_region.as_ref(), request.chans.as_deref(), None)?;
     let data = image.get_slice(&selection.start, &selection.shape)?;
-    let mask = image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
+    // Several boxes cover their bounding box: the region mask marks which
+    // pixels are in the union, as CASA's region-composed subimage does; the
+    // pixels outside keep their values and lose their validity.
+    let union_mask = match &box_region {
+        Some(region @ PixelRegion::Boxes(boxes)) if boxes.len() > 1 => {
+            Some(region_pixel_mask(region, &selection)?)
+        }
+        _ => None,
+    };
+    let mask = match (
+        image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?,
+        union_mask,
+    ) {
+        (Some(mut mask), Some(union)) => {
+            Zip::from(&mut mask)
+                .and(&union)
+                .for_each(|existing, in_region| *existing = *existing && *in_region);
+            Some(mask)
+        }
+        (None, Some(union)) => Some(union),
+        (mask, None) => mask,
+    };
     let output_coordinates =
         subimage_coordinates(image.coordinates(), &selection.start, &selection.shape)?;
     let legacy_coordinates = legacy_subimage_coordinates(image, &selection.start, &selection.shape);
@@ -5612,7 +5808,8 @@ mod tests {
 
         assert!(matches!(
             imstat(&imstat_request(&real_path, Some("0,0,4,4"), None)),
-            Err(ImageError::ShapeMismatch { .. })
+            Err(ImageError::CasaSelection(message))
+                if message.contains("trc in box spec")
         ));
         assert!(matches!(
             imstat(&ImstatRequest {

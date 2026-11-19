@@ -90,6 +90,74 @@ def make_mask_image(path: Path, shape) -> None:
     ia.done()
 
 
+def make_ramp_image(path: Path, shape) -> None:
+    """An image of a Fortran ramp with CASA's default coordinates."""
+    data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape, order="F")
+    ia = image()
+    ia.fromshape(str(path), list(shape), overwrite=True)
+    ia.putchunk(data)
+    ia.done()
+
+
+def make_moment_image(path: Path) -> None:
+    """A 2-D ramp in Jy/beam with a beam: a moment map, whose statistics
+    carry the flux."""
+    shape = [8, 8]
+    data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape, order="F")
+    ia = image()
+    ia.fromshape(str(path), shape, overwrite=True)
+    ia.putchunk(data)
+    ia.setbrightnessunit("Jy/beam")
+    ia.setrestoringbeam(major="3arcsec", minor="2arcsec", pa="10deg")
+    ia.done()
+
+
+def fits_card(key: str, value, comment: str = "") -> bytes:
+    """One 80-byte FITS header card."""
+    if isinstance(value, bool):
+        text = f"{key:<8}= {'T' if value else 'F':>20}"
+    elif isinstance(value, int):
+        text = f"{key:<8}= {value:>20d}"
+    elif isinstance(value, float):
+        text = f"{key:<8}= {value:>20.12G}"
+    else:
+        text = f"{key:<8}= '{value:<8}'"
+    if comment:
+        text += f" / {comment}"
+    return text.ljust(80).encode("ascii")
+
+
+def make_linear_fits(path: Path) -> None:
+    """A FITS image with linear, non-direction coordinates: the CAS-2195
+    scenario, read by imstat directly as the FITS file."""
+    nx, ny = 5, 4
+    header = b"".join([
+        fits_card("SIMPLE", True, "conforms to FITS standard"),
+        fits_card("BITPIX", -32, "float32"),
+        fits_card("NAXIS", 2),
+        fits_card("NAXIS1", nx),
+        fits_card("NAXIS2", ny),
+        fits_card("CTYPE1", "POSITION", "linear"),
+        fits_card("CTYPE2", "POSITION", "linear"),
+        fits_card("CUNIT1", "m"),
+        fits_card("CUNIT2", "m"),
+        fits_card("CRVAL1", 5.0),
+        fits_card("CRVAL2", 7.0),
+        fits_card("CRPIX1", 2.0),
+        fits_card("CRPIX2", 2.0),
+        fits_card("CDELT1", 3.0),
+        fits_card("CDELT2", 2.0),
+        fits_card("BUNIT", "Jy"),
+        b"END".ljust(80),
+    ])
+    header += b" " * ((2880 - len(header) % 2880) % 2880)
+    # FITS numbers are big-endian.
+    data = np.arange(nx * ny, dtype=">f4").reshape(ny, nx)
+    payload = data.tobytes()
+    payload += b"\x00" * ((2880 - len(payload) % 2880) % 2880)
+    path.write_bytes(header + payload)
+
+
 def plain(value):
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -319,6 +387,63 @@ def main() -> None:
         imagename=str(values),
         stokes="Q",
     )
+
+    # CASA's own imstat test suite (`casatasks/tests/tasks/
+    # test_task_imstat.py`), as recorded cases on small fixtures: the
+    # scenarios the parameter cases above did not already cover.
+    multi = root / "multi.im"
+    make_ramp_image(multi, [10, 10, 10])
+    fourdim = root / "fourdim.im"
+    make_ramp_image(fourdim, [2, 3, 4, 5])
+    excl = root / "excl.im"
+    make_ramp_image(excl, [10, 10, 110, 4])
+    moment = root / "moment.im"
+    make_moment_image(moment)
+    linear = root / "linear_coords.fits"
+    make_linear_fits(linear)
+    result["upstream"] = {}
+    for name, imagename, call in (
+        # test_multiple_region_support: several boxes in one spec, with a
+        # channel comparison in the same call.
+        ("box double", str(multi), {"box": "0,0,2,2,4,4,6,6"}),
+        ("box overlap", str(multi), {"box": "0,0,2,2,0,0,2,2"}),
+        ("box triple", str(multi), {"box": "0,0,1,1,4,4,5,5,8,8,9,9"}),
+        # test_box_param_can_have_spaces (CAS-2050).
+        ("box spaces", str(multi), {"box": "0, 0,  1 ,   1"}),
+        ("box double with chans", str(multi), {
+            "box": "0,0,2,2,4,4,6,6",
+            "chans": "0~4, 6, >8",
+        }),
+        ("box seven values", str(multi), {"box": "0,0,2,2,4,4,6"}),
+        ("box inverted", str(multi), {"box": "5,5,2,2"}),
+        ("box out of range", str(multi), {"box": "0,0,20,20"}),
+        # The channel comparisons CASA's chans specification accepts.
+        ("chans gt", str(multi), {"chans": ">8"}),
+        ("chans lt", str(multi), {"chans": "<2"}),
+        ("chans ge", str(multi), {"chans": ">=8"}),
+        ("chans le", str(multi), {"chans": "<=2"}),
+        ("chans both filters", str(multi), {"chans": ">8,<2"}),
+        ("chans bad comparison", str(multi), {"chans": ">abc"}),
+        ("chans float comparison", str(multi), {"chans": ">2.5"}),
+        # test_specifying_axes_param's quartet, on a four-axis ramp.
+        ("fourdim axes minus one", str(fourdim), {"axes": -1}),
+        ("fourdim axes 0 1 2", str(fourdim), {"axes": [0, 1, 2]}),
+        ("fourdim axes 0 1", str(fourdim), {"axes": [0, 1]}),
+        ("fourdim axes 3", str(fourdim), {"axes": 3}),
+        # test_moment_map_flux: a beamed 2-D moment map carries flux.
+        ("moment map flux", str(moment), {}),
+        # test_internal_region_exclusion: the ';' channel separator with
+        # axes and a Stokes pair, as the upstream call holds them.
+        (
+            "exclusion chans semicolon",
+            str(excl),
+            {"axes": [0, 1], "chans": "10~20;60~90", "stokes": "IV"},
+        ),
+        # test_CAS_2195: imstat on a FITS image whose coordinates are
+        # linear, not a direction plane.
+        ("linear coordinates", str(linear), {}),
+    ):
+        record_case(result["upstream"], name, imagename=imagename, **call)
 
     (root / "expected.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     for lock in root.rglob("table.lock"):
