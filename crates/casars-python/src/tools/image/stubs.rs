@@ -87,12 +87,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn brightnessunit(&self) -> PyResult<Py<PyAny>> {
-        stub("brightnessunit")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (pixels, verbose = None), text_signature = "($self, pixels, verbose=True)")]
     fn calc(
         &self,
@@ -111,12 +105,6 @@ impl PyImageTool {
         asdefault: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("calcmask")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn close(&self) -> PyResult<Py<PyAny>> {
-        stub("close")
     }
 
     /// Not yet implemented in casa-rs.
@@ -221,12 +209,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (axes = None), text_signature = "($self, axes=[-1])")]
-    fn coordsys(&self, axes: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("coordsys")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, axes = None, overwrite = None, region = None, r#box = None, chans = None, stokes = None, mask = None, stretch = None, wantreturn = None), text_signature = "($self, outfile='', axes=[], overwrite=False, region={}, box='', chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
     fn crop(
         &self,
@@ -322,22 +304,6 @@ impl PyImageTool {
         maxiter: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("deviation")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (enable = None), text_signature = "($self, enable=True)")]
-    fn dohistory(&self, enable: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("dohistory")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (remove = None, verbose = None), text_signature = "($self, remove=False, verbose=True)")]
-    fn done(
-        &self,
-        remove: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("done")
     }
 
     /// Not yet implemented in casa-rs.
@@ -471,21 +437,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, pixels = None, csys = None, linear = None, overwrite = None, log = None, r#type = None), text_signature = "($self, outfile='', pixels=[], csys={}, linear=False, overwrite=False, log=True, type='f')")]
-    fn fromarray(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        pixels: Option<&Bound<'_, PyAny>>,
-        csys: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fromarray")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, shape = None, cl = None, csys = None, overwrite = None, log = None, cache = None), text_signature = "($self, outfile='', shape=[], cl='', csys={}, overwrite=False, log=True, cache=True)")]
     fn fromcomplist(
         &self,
@@ -536,36 +487,6 @@ impl PyImageTool {
         outfile: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("fromrecord")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, shape = None, csys = None, linear = None, overwrite = None, log = None, r#type = None), text_signature = "($self, outfile='', shape=[0], csys={}, linear=False, overwrite=False, log=True, type='f')")]
-    fn fromshape(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        shape: Option<&Bound<'_, PyAny>>,
-        csys: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fromshape")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (blc = None, trc = None, inc = None, axes = None, list = None, dropdeg = None, getmask = None), text_signature = "($self, blc=[-1], trc=[-1], inc=[1], axes=[-1], list=False, dropdeg=False, getmask=False)")]
-    fn getchunk(
-        &self,
-        blc: Option<&Bound<'_, PyAny>>,
-        trc: Option<&Bound<'_, PyAny>>,
-        inc: Option<&Bound<'_, PyAny>>,
-        axes: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        getmask: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getchunk")
     }
 
     /// Not yet implemented in casa-rs.
@@ -654,12 +575,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (list = None), text_signature = "($self, list=True)")]
-    fn history(&self, list: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("history")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, pixels = None, overwrite = None, imagemd = None, prec = None), text_signature = "($self, outfile='', pixels='', overwrite=False, imagemd='', prec='float')")]
     fn imagecalc(
         &self,
@@ -704,18 +619,6 @@ impl PyImageTool {
     #[pyo3(signature = (other), text_signature = "($self, other)")]
     fn isconform(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("isconform")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn isopen(&self) -> PyResult<Py<PyAny>> {
-        stub("isopen")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn ispersistent(&self) -> PyResult<Py<PyAny>> {
-        stub("ispersistent")
     }
 
     /// Not yet implemented in casa-rs.
@@ -830,12 +733,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (strippath = None), text_signature = "($self, strippath=False)")]
-    fn name(&self, strippath: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("name")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (infile), text_signature = "($self, infile)")]
     fn newimage(&self, infile: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("newimage")
@@ -906,16 +803,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (infile, cache = None), text_signature = "($self, infile, cache=True)")]
-    fn open(
-        &self,
-        infile: &Bound<'_, PyAny>,
-        cache: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("open")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, npixels = None, value = None, padmask = None, overwrite = None, region = None, r#box = None, chans = None, stokes = None, mask = None, stretch = None, wantreturn = None), text_signature = "($self, outfile='', npixels=1, value=0.0, padmask=False, overwrite=False, region={}, box='', chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
     fn pad(
         &self,
@@ -955,29 +842,9 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn pixeltype(&self) -> PyResult<Py<PyAny>> {
-        stub("pixeltype")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (pixel = None), text_signature = "($self, pixel=[-1])")]
     fn pixelvalue(&self, pixel: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("pixelvalue")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels = None, blc = None, inc = None, list = None, locking = None, replicate = None), text_signature = "($self, pixels=[], blc=[-1], inc=[1], list=False, locking=True, replicate=False)")]
-    fn putchunk(
-        &self,
-        pixels: Option<&Bound<'_, PyAny>>,
-        blc: Option<&Bound<'_, PyAny>>,
-        inc: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        locking: Option<&Bound<'_, PyAny>>,
-        replicate: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putchunk")
     }
 
     /// Not yet implemented in casa-rs.
@@ -1163,18 +1030,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (unit), text_signature = "($self, unit)")]
-    fn setbrightnessunit(&self, unit: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setbrightnessunit")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (csys), text_signature = "($self, csys)")]
-    fn setcoordsys(&self, csys: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setcoordsys")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (origin = None, history = None), text_signature = "($self, origin='', history=[])")]
     fn sethistory(
         &self,
@@ -1205,12 +1060,6 @@ impl PyImageTool {
         imagename: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("setrestoringbeam")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn shape(&self) -> PyResult<Py<PyAny>> {
-        stub("shape")
     }
 
     /// Not yet implemented in casa-rs.
@@ -1342,12 +1191,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("twopointcorrelation")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn r#type(&self) -> PyResult<Py<PyAny>> {
-        stub("type")
     }
 
     /// Not yet implemented in casa-rs.

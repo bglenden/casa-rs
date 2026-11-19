@@ -87,6 +87,21 @@ pub(crate) fn component_keyword_value(
     )?))
 }
 
+/// Convert a CASA tool's record argument with casacore scalar and array types.
+pub(crate) fn casa_record(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyDict>>,
+) -> PyResult<casa_types::RecordValue> {
+    let Some(value) = value else {
+        return Ok(casa_types::RecordValue::default());
+    };
+    let incoming = component_keyword_incoming(py, Some(value.as_any()))?;
+    match incoming.natural()? {
+        casa_types::Value::Record(record) => Ok(record),
+        _ => unreachable!("a Python dictionary converts to a record"),
+    }
+}
+
 fn component_keyword_incoming(
     py: Python<'_>,
     value: Option<&Bound<'_, PyAny>>,

@@ -11,6 +11,32 @@ Rust:
 
 ## Images
 
+### Create and edit a native CASA image
+
+Use `casars.tools.image` to create a native image and edit its pixels and
+coordinates through the CASA Python interface:
+
+```python
+import numpy as np
+from casars.tools import image
+
+ia = image()
+ia.fromshape("example.im", [4, 3])
+ia.putchunk(np.array([[1.0, 2.0], [3.0, 4.0]]), blc=[1, 0])
+cs = ia.coordsys()
+cs.setreferencepixel([1.5, 1.0])
+ia.setcoordsys(cs.torecord())
+ia.setbrightnessunit("Jy/pixel")
+ia.done()
+```
+
+Use `image.open("example.im")` on an image tool to reopen the product. Use
+`outfile=""` with `fromshape` or `fromarray` for a temporary image. The
+remaining CASA image and coordinate operations are tracked in
+[#1027](https://github.com/bglenden/casa-rs/issues/1027).
+
+### Access an existing image through the Data API
+
 Use `Image.open(path, writable=False)` to open an existing CASA-compatible image. The v1 surface is intentionally narrow:
 
 - metadata access through `shape`, `pixel_type`, `units`, `image_info`, `misc_info`, `mask_names`, and `default_mask_name`

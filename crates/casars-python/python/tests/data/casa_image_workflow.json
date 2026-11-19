@@ -1,0 +1,1368 @@
+{
+ "casa_version": "6.7.6-14",
+ "scripts": {
+  "native_workflow": [
+   {
+    "args": {},
+    "method": "isopen",
+    "returns": false,
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "getchunk",
+    "returns": {
+     "dtype": "bool",
+     "dtype_descriptor": "|b1",
+     "ndarray": [],
+     "shape": [
+      0
+     ]
+    },
+    "target": "ia"
+   },
+   {
+    "args": {
+     "outfile": "{tmp}/workflow.im",
+     "shape": [
+      4,
+      3,
+      2,
+      2
+     ]
+    },
+    "method": "fromshape",
+    "returns": true,
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "shape",
+    "returns": {
+     "dtype": "int64",
+     "dtype_descriptor": "<i8",
+     "ndarray": [
+      4,
+      3,
+      2,
+      2
+     ],
+     "shape": [
+      4
+     ]
+    },
+    "target": "ia"
+   },
+   {
+    "args": {
+     "strippath": true
+    },
+    "method": "name",
+    "returns": "workflow.im",
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "ispersistent",
+    "returns": true,
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "pixeltype",
+    "returns": "float",
+    "target": "ia"
+   },
+   {
+    "args": {
+     "blc": [
+      1,
+      0,
+      1,
+      0
+     ],
+     "inc": [
+      2,
+      1,
+      1,
+      1
+     ],
+     "pixels": {
+      "dtype": "float32",
+      "dtype_descriptor": "<f4",
+      "ndarray": [
+       [
+        1.5,
+        -2.0
+       ],
+       [
+        3.25,
+        4.0
+       ]
+      ],
+      "shape": [
+       2,
+       2
+      ]
+     }
+    },
+    "method": "putchunk",
+    "returns": true,
+    "target": "ia"
+   },
+   {
+    "args": {
+     "blc": [
+      0,
+      0,
+      1,
+      0
+     ],
+     "dropdeg": true,
+     "trc": [
+      3,
+      2,
+      1,
+      0
+     ]
+    },
+    "method": "getchunk",
+    "returns": {
+     "dtype": "float64",
+     "dtype_descriptor": "<f8",
+     "ndarray": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.5,
+       -2.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.25,
+       4.0,
+       0.0
+      ]
+     ],
+     "shape": [
+      4,
+      3
+     ]
+    },
+    "target": "ia"
+   },
+   {
+    "args": {
+     "axes": [
+      1
+     ],
+     "blc": [
+      0,
+      0,
+      1,
+      0
+     ],
+     "trc": [
+      3,
+      2,
+      1,
+      0
+     ]
+    },
+    "method": "getchunk",
+    "returns": {
+     "dtype": "float64",
+     "dtype_descriptor": "<f8",
+     "ndarray": [
+      [
+       [
+        [
+         0.0
+        ]
+       ]
+      ],
+      [
+       [
+        [
+         -0.1666666716337204
+        ]
+       ]
+      ],
+      [
+       [
+        [
+         0.0
+        ]
+       ]
+      ],
+      [
+       [
+        [
+         2.4166667461395264
+        ]
+       ]
+      ]
+     ],
+     "shape": [
+      4,
+      1,
+      1,
+      1
+     ]
+    },
+    "target": "ia"
+   },
+   {
+    "args": {
+     "blc": [
+      0,
+      0,
+      1,
+      0
+     ],
+     "getmask": true,
+     "trc": [
+      3,
+      2,
+      1,
+      0
+     ]
+    },
+    "method": "getchunk",
+    "returns": {
+     "dtype": "bool",
+     "dtype_descriptor": "|b1",
+     "ndarray": [
+      [
+       [
+        [
+         true
+        ]
+       ],
+       [
+        [
+         true
+        ]
+       ],
+       [
+        [
+         true
+        ]
+       ]
+      ],
+      [
+       [
+        [
+         true
+        ]
+       ],
+       [
+        [
+         true
+        ]
+       ],
+       [
+        [
+         true
+        ]
+       ]
+      ],
+      [
+       [
+        [
+         true
+        ]
+       ],
+       [
+        [
+         true
+        ]
+       ],
+       [
+        [
+         true
+        ]
+       ]
+      ],
+      [
+       [
+        [
+         true
+        ]
+       ],
+       [
+        [
+         true
+        ]
+       ],
+       [
+        [
+         true
+        ]
+       ]
+      ]
+     ],
+     "shape": [
+      4,
+      3,
+      1,
+      1
+     ]
+    },
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "as": "edit",
+    "method": "coordsys",
+    "returns": {
+     "tool": "coordsys"
+    },
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "type",
+    "returns": "coordsys",
+    "target": "edit"
+   },
+   {
+    "args": {},
+    "method": "referencepixel",
+    "returns": {
+     "ar_type": "absolute",
+     "numeric": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       2.0,
+       1.0,
+       0.0,
+       1.0
+      ],
+      "shape": [
+       4
+      ]
+     },
+     "pw_type": "pixel"
+    },
+    "target": "edit"
+   },
+   {
+    "args": {
+     "type": "direction",
+     "value": [
+      1.25,
+      2.5
+     ]
+    },
+    "method": "setreferencepixel",
+    "returns": true,
+    "target": "edit"
+   },
+   {
+    "args": {},
+    "as": "edited_record",
+    "method": "torecord",
+    "returns": {
+     "direction0": {
+      "axes": {
+       "dtype": "str480",
+       "dtype_descriptor": "<U15",
+       "ndarray": [
+        "Right Ascension",
+        "Declination"
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "cdelt": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        -1.0,
+        1.0
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "conversionSystem": "J2000",
+      "crpix": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        1.25,
+        2.5
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "crval": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        0.0,
+        0.0
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "latpole": 0.0,
+      "longpole": 180.0,
+      "pc": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        [
+         1.0,
+         0.0
+        ],
+        [
+         0.0,
+         1.0
+        ]
+       ],
+       "shape": [
+        2,
+        2
+       ]
+      },
+      "projection": "SIN",
+      "projection_parameters": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        0.0,
+        0.0
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "system": "J2000",
+      "units": {
+       "dtype": "str32",
+       "dtype_descriptor": "<U1",
+       "ndarray": [
+        "'",
+        "'"
+       ],
+       "shape": [
+        2
+       ]
+      }
+     },
+     "obsdate": {
+      "m0": {
+       "unit": "d",
+       "value": 51544.00000000116
+      },
+      "refer": "UTC",
+      "type": "epoch"
+     },
+     "observer": "Karl Jansky",
+     "pixelmap0": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       0,
+       1
+      ],
+      "shape": [
+       2
+      ]
+     },
+     "pixelmap1": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       2
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "pixelmap2": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       3
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "pixelreplace0": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       0.0,
+       0.0
+      ],
+      "shape": [
+       2
+      ]
+     },
+     "pixelreplace1": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       0.0
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "pixelreplace2": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       0.0
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "pointingcenter": {
+      "initial": true,
+      "value": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        0.0,
+        0.0
+       ],
+       "shape": [
+        2
+       ]
+      }
+     },
+     "spectral2": {
+      "conversion": {
+       "direction": {
+        "m0": {
+         "unit": "rad",
+         "value": 0.0
+        },
+        "m1": {
+         "unit": "rad",
+         "value": 1.5707963267948966
+        },
+        "refer": "J2000",
+        "type": "direction"
+       },
+       "epoch": {
+        "m0": {
+         "unit": "d",
+         "value": 0.0
+        },
+        "refer": "LAST",
+        "type": "epoch"
+       },
+       "position": {
+        "m0": {
+         "unit": "rad",
+         "value": 0.0
+        },
+        "m1": {
+         "unit": "rad",
+         "value": 0.0
+        },
+        "m2": {
+         "unit": "m",
+         "value": 0.0
+        },
+        "refer": "ITRF",
+        "type": "position"
+       },
+       "system": "LSRK"
+      },
+      "formatUnit": "",
+      "name": "Frequency",
+      "nativeType": 0,
+      "restfreq": 1420405751.7860003,
+      "restfreqs": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        1420405751.7860003
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "system": "LSRK",
+      "unit": "Hz",
+      "velType": 0,
+      "velUnit": "km/s",
+      "version": 2,
+      "waveUnit": "mm",
+      "wcs": {
+       "cdelt": 1000.0,
+       "crpix": 1.0,
+       "crval": 1415000000.0,
+       "ctype": "FREQ",
+       "pc": 1.0
+      }
+     },
+     "stokes1": {
+      "axes": {
+       "dtype": "str192",
+       "dtype_descriptor": "<U6",
+       "ndarray": [
+        "Stokes"
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "cdelt": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        1.0
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "crpix": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        0.0
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "crval": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        1.0
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "pc": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        [
+         1.0
+        ]
+       ],
+       "shape": [
+        1,
+        1
+       ]
+      },
+      "stokes": {
+       "dtype": "str32",
+       "dtype_descriptor": "<U1",
+       "ndarray": [
+        "I",
+        "Q"
+       ],
+       "shape": [
+        2
+       ]
+      }
+     },
+     "telescope": "ALMA",
+     "telescopeposition": {
+      "m0": {
+       "unit": "rad",
+       "value": -1.1825465955049892
+      },
+      "m1": {
+       "unit": "rad",
+       "value": -0.3994149869262738
+      },
+      "m2": {
+       "unit": "m",
+       "value": 6379946.01326443
+      },
+      "refer": "ITRF",
+      "type": "position"
+     },
+     "worldmap0": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       0,
+       1
+      ],
+      "shape": [
+       2
+      ]
+     },
+     "worldmap1": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       2
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "worldmap2": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       3
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "worldreplace0": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       0.0,
+       0.0
+      ],
+      "shape": [
+       2
+      ]
+     },
+     "worldreplace1": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       1.0
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "worldreplace2": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       1415000000.0
+      ],
+      "shape": [
+       1
+      ]
+     }
+    },
+    "target": "edit"
+   },
+   {
+    "args": {},
+    "method": "done",
+    "returns": true,
+    "target": "edit"
+   },
+   {
+    "args": {},
+    "as": "original",
+    "method": "coordsys",
+    "returns": {
+     "tool": "coordsys"
+    },
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "referencepixel",
+    "returns": {
+     "ar_type": "absolute",
+     "numeric": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       2.0,
+       1.0,
+       0.0,
+       1.0
+      ],
+      "shape": [
+       4
+      ]
+     },
+     "pw_type": "pixel"
+    },
+    "target": "original"
+   },
+   {
+    "args": {
+     "csys": {
+      "ref": "edited_record"
+     }
+    },
+    "method": "setcoordsys",
+    "returns": true,
+    "target": "ia"
+   },
+   {
+    "args": {
+     "unit": "Jy/beam"
+    },
+    "method": "setbrightnessunit",
+    "returns": true,
+    "target": "ia"
+   },
+   {
+    "args": {
+     "list": false
+    },
+    "method": "history",
+    "returns": [
+     "Created Paged image '{tmp}/workflow.im' of shape [4, 3, 2, 2] with float valued pixels.",
+     "Ran ia.fromshape",
+     "ia.fromshape(outfile=\"{tmp}/workflow.im\", shape=[4,3,2,2], csys={...}, linear=false, overwrite=false, log=true, type=\"f\")",
+     "Ran ia.putchunk",
+     "ia.putchunk(pixels=[1.500000,3.250000,-2.000000,4.000000], blc=[1,0,1,0], inc=[2,1,1,1], list=false, locking=true, replicate=false)",
+     "Ran ia.setcoordsys",
+     "ia.setcoordsys(csys={...})",
+     "Ran ia.setbrightnessunit",
+     "ia.setbrightnessunit(unit=\"Jy/beam\")"
+    ],
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "close",
+    "returns": true,
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "isopen",
+    "returns": false,
+    "target": "ia"
+   },
+   {
+    "args": {
+     "infile": "{tmp}/workflow.im"
+    },
+    "method": "open",
+    "returns": true,
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "brightnessunit",
+    "returns": "Jy/beam",
+    "target": "ia"
+   },
+   {
+    "args": {
+     "blc": [
+      0,
+      0,
+      1,
+      0
+     ],
+     "dropdeg": true,
+     "trc": [
+      3,
+      2,
+      1,
+      0
+     ]
+    },
+    "method": "getchunk",
+    "returns": {
+     "dtype": "float64",
+     "dtype_descriptor": "<f8",
+     "ndarray": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.5,
+       -2.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.25,
+       4.0,
+       0.0
+      ]
+     ],
+     "shape": [
+      4,
+      3
+     ]
+    },
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "as": "reopened",
+    "method": "coordsys",
+    "returns": {
+     "tool": "coordsys"
+    },
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "referencepixel",
+    "returns": {
+     "ar_type": "absolute",
+     "numeric": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       1.25,
+       2.5,
+       0.0,
+       1.0
+      ],
+      "shape": [
+       4
+      ]
+     },
+     "pw_type": "pixel"
+    },
+    "target": "reopened"
+   },
+   {
+    "args": {},
+    "method": "torecord",
+    "returns": {
+     "direction0": {
+      "axes": {
+       "dtype": "str480",
+       "dtype_descriptor": "<U15",
+       "ndarray": [
+        "Right Ascension",
+        "Declination"
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "cdelt": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        -1.0,
+        1.0
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "conversionSystem": "J2000",
+      "crpix": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        1.25,
+        2.5
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "crval": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        0.0,
+        0.0
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "latpole": 0.0,
+      "longpole": 180.0,
+      "pc": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        [
+         1.0,
+         0.0
+        ],
+        [
+         0.0,
+         1.0
+        ]
+       ],
+       "shape": [
+        2,
+        2
+       ]
+      },
+      "projection": "SIN",
+      "projection_parameters": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        0.0,
+        0.0
+       ],
+       "shape": [
+        2
+       ]
+      },
+      "system": "J2000",
+      "units": {
+       "dtype": "str32",
+       "dtype_descriptor": "<U1",
+       "ndarray": [
+        "'",
+        "'"
+       ],
+       "shape": [
+        2
+       ]
+      }
+     },
+     "obsdate": {
+      "m0": {
+       "unit": "d",
+       "value": 51544.00000000116
+      },
+      "refer": "UTC",
+      "type": "epoch"
+     },
+     "observer": "Karl Jansky",
+     "pixelmap0": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       0,
+       1
+      ],
+      "shape": [
+       2
+      ]
+     },
+     "pixelmap1": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       2
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "pixelmap2": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       3
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "pixelreplace0": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       0.0,
+       0.0
+      ],
+      "shape": [
+       2
+      ]
+     },
+     "pixelreplace1": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       0.0
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "pixelreplace2": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       0.0
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "pointingcenter": {
+      "initial": true,
+      "value": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        0.0,
+        0.0
+       ],
+       "shape": [
+        2
+       ]
+      }
+     },
+     "spectral2": {
+      "conversion": {
+       "direction": {
+        "m0": {
+         "unit": "rad",
+         "value": 0.0
+        },
+        "m1": {
+         "unit": "rad",
+         "value": 1.5707963267948966
+        },
+        "refer": "J2000",
+        "type": "direction"
+       },
+       "epoch": {
+        "m0": {
+         "unit": "d",
+         "value": 0.0
+        },
+        "refer": "LAST",
+        "type": "epoch"
+       },
+       "position": {
+        "m0": {
+         "unit": "rad",
+         "value": 0.0
+        },
+        "m1": {
+         "unit": "rad",
+         "value": 0.0
+        },
+        "m2": {
+         "unit": "m",
+         "value": 0.0
+        },
+        "refer": "ITRF",
+        "type": "position"
+       },
+       "system": "LSRK"
+      },
+      "formatUnit": "",
+      "name": "Frequency",
+      "nativeType": 0,
+      "restfreq": 1420405751.7860003,
+      "restfreqs": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        1420405751.7860003
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "system": "LSRK",
+      "unit": "Hz",
+      "velType": 0,
+      "velUnit": "km/s",
+      "version": 2,
+      "waveUnit": "mm",
+      "wcs": {
+       "cdelt": 1000.0,
+       "crpix": 1.0,
+       "crval": 1415000000.0,
+       "ctype": "FREQ",
+       "pc": 1.0
+      }
+     },
+     "stokes1": {
+      "axes": {
+       "dtype": "str192",
+       "dtype_descriptor": "<U6",
+       "ndarray": [
+        "Stokes"
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "cdelt": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        1.0
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "crpix": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        0.0
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "crval": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        1.0
+       ],
+       "shape": [
+        1
+       ]
+      },
+      "pc": {
+       "dtype": "float64",
+       "dtype_descriptor": "<f8",
+       "ndarray": [
+        [
+         1.0
+        ]
+       ],
+       "shape": [
+        1,
+        1
+       ]
+      },
+      "stokes": {
+       "dtype": "str32",
+       "dtype_descriptor": "<U1",
+       "ndarray": [
+        "I",
+        "Q"
+       ],
+       "shape": [
+        2
+       ]
+      }
+     },
+     "telescope": "ALMA",
+     "telescopeposition": {
+      "m0": {
+       "unit": "rad",
+       "value": -1.1825465955049892
+      },
+      "m1": {
+       "unit": "rad",
+       "value": -0.3994149869262738
+      },
+      "m2": {
+       "unit": "m",
+       "value": 6379946.01326443
+      },
+      "refer": "ITRF",
+      "type": "position"
+     },
+     "worldmap0": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       0,
+       1
+      ],
+      "shape": [
+       2
+      ]
+     },
+     "worldmap1": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       2
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "worldmap2": {
+      "dtype": "int64",
+      "dtype_descriptor": "<i8",
+      "ndarray": [
+       3
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "worldreplace0": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       0.0,
+       0.0
+      ],
+      "shape": [
+       2
+      ]
+     },
+     "worldreplace1": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       1.0
+      ],
+      "shape": [
+       1
+      ]
+     },
+     "worldreplace2": {
+      "dtype": "float64",
+      "dtype_descriptor": "<f8",
+      "ndarray": [
+       1415000000.0
+      ],
+      "shape": [
+       1
+      ]
+     }
+    },
+    "target": "reopened"
+   },
+   {
+    "args": {},
+    "method": "done",
+    "returns": true,
+    "target": "ia"
+   },
+   {
+    "args": {
+     "infile": "{tmp}/missing.im"
+    },
+    "method": "open",
+    "raises": [
+     "RuntimeError",
+     "Exception: File {tmp}/missing.im does not exist.."
+    ],
+    "target": "ia"
+   },
+   {
+    "args": {},
+    "method": "isopen",
+    "returns": false,
+    "target": "ia"
+   }
+  ]
+ }
+}

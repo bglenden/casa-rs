@@ -258,6 +258,7 @@ pub(crate) mod lock;
 pub(crate) mod storage;
 
 pub mod ascii;
+pub mod publication;
 pub mod statistics;
 pub mod table_measures;
 pub mod table_quantum;

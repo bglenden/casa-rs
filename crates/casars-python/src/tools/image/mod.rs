@@ -3,12 +3,22 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
 
+mod attachment;
+mod create;
+mod default_record;
+mod handle;
+mod lifecycle;
+mod metadata;
+mod pixels;
 mod stubs;
 pub(crate) mod surface;
+
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::prelude::*;
 
 use crate::tools::not_yet_implemented_in;
+use attachment::AttachedImage;
 
 /// The issue that records the methods casa-rs refuses.
 const ISSUE: u32 = 1027;
@@ -20,12 +30,30 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 
 /// CASA's `image` tool.
 #[pyclass(name = "image", module = "casars.tools", frozen)]
-pub(crate) struct PyImageTool;
+pub(crate) struct PyImageTool {
+    state: Mutex<ImageState>,
+}
+
+struct ImageState {
+    image: Option<AttachedImage>,
+    history: bool,
+}
+
+impl PyImageTool {
+    fn state(&self) -> MutexGuard<'_, ImageState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
 #[pymethods]
 impl PyImageTool {
     #[new]
     fn new() -> Self {
-        Self
+        Self {
+            state: Mutex::new(ImageState {
+                image: None,
+                history: true,
+            }),
+        }
     }
 }
