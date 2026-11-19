@@ -937,9 +937,9 @@ def flagdata(
     array: str = '',
     observation: str = '',
     feed: str = '',
-    clipminmax: list[float] | tuple[float, ...] = [],
+    clipminmax: float | list[float] | tuple[float, ...] = [],
     datacolumn: str = 'DATA',
-    clipoutside: bool = True,
+    clipoutside: bool | list[bool] = True,
     channelavg: bool = False,
     chanbin: int = 1,
     timeavg: bool = False,
@@ -1003,14 +1003,13 @@ def flagdata(
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``autocorr``, ``inpfile``, ``reason``, ``tbuff``, ``uvrange``,
     ``timerange``, ``correlation``, ``intent``, ``array``, ``observation``,
-    ``feed``, ``clipminmax``, ``clipoutside``, ``channelavg``, ``chanbin``,
-    ``timeavg``, ``timebin``, ``quackincrement``, ``tolerance``,
-    ``addantenna``, ``lowerlimit``, ``upperlimit``, ``ntime``,
-    ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
-    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
-    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
-    ``flagneartime``, ``flagnearfreq``, ``display``, ``savepars``,
-    ``cmdreason``, ``outfile``, ``overwrite``.
+    ``feed``, ``channelavg``, ``chanbin``, ``timeavg``, ``timebin``,
+    ``quackincrement``, ``tolerance``, ``addantenna``, ``lowerlimit``,
+    ``upperlimit``, ``ntime``, ``combinescans``, ``timefit``, ``freqfit``,
+    ``maxnpieces``, ``flagdimension``, ``usewindowstats``, ``halfwin``,
+    ``winsize``, ``antint_ref_antenna``, ``minchanfrac``, ``verbose``,
+    ``growaround``, ``flagneartime``, ``flagnearfreq``, ``display``,
+    ``savepars``, ``cmdreason``, ``outfile``, ``overwrite``.
     """
     return _call_casa(flagdata, locals())
 

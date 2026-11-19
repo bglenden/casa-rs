@@ -1069,9 +1069,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 | <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
 | <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
-| <code>clipminmax</code> | <code>flagdata.clipminmax@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Clip | Range of data values that clip mode keeps; values outside it are flagged. |
+| <code>clipminmax</code> | <code>flagdata.clipminmax@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Clip | Two values define the closed clipping range. Other lengths leave the range unset. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"DATA"</code>; optional | Data | Visibility data column used by the surface.<br><em>Surface:</em> Used as the visibility data column for automatic flagging modes. |
-| <code>clipoutside</code> | <code>flagdata.clipoutside@r1</code> | <code>bool</code> | <code>true</code>; optional | Clip | Clip outside clipminmax's range rather than inside it. |
+| <code>clipoutside</code> | <code>flagdata.clipoutside@r1</code> | <code>variant</code> | <code>true</code>; optional | Clip | Flag samples outside the closed clip range when true, or inside it when false. |
 | <code>channelavg</code> | <code>flagdata.channelavg@r1</code> | <code>bool</code> | <code>false</code>; optional | Clip | Average channels before clipping. |
 | <code>chanbin</code> | <code>parameter.chanbin@r1</code> | <code>integer</code> | <code>1</code>; optional | Clip | Channel bin mode. |
 | <code>timeavg</code> | <code>flagdata.timeavg@r1</code> | <code>bool</code> | <code>false</code>; optional | Clip | Average time before clipping. |

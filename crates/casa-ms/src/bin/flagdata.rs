@@ -13,6 +13,7 @@ use casa_ms::{
     flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
     parse_numeric_id_selector, task_selection_text,
 };
+use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -80,12 +81,32 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
     let spw = task_selection_text(task, "spw")?;
+    let clipminmax = match task.numbers("clipminmax")?.as_slice() {
+        [minimum, maximum] => Some([*minimum, *maximum]),
+        _ => None,
+    };
+    let clipoutside = match task.value("clipoutside") {
+        Some(ParameterValue::Bool(outside)) => Some(*outside),
+        Some(ParameterValue::Array(items))
+            if items
+                .iter()
+                .all(|item| matches!(item, ParameterValue::Bool(_))) =>
+        {
+            None
+        }
+        _ => {
+            return Err(
+                TaskFailure::validation("clipoutside must be a Boolean or Boolean vector")
+                    .at("clipoutside"),
+            );
+        }
+    };
     Ok(FlagDataRequest {
         selection: selection(task, &spw)?,
         spw: (!spw.is_empty()).then_some(spw),
         mode,
         action,
-        data_column: data_column(&task.required_text("datacolumn")?)?,
+        data_column: data_column(&task.required_text("datacolumn")?, mode)?,
         flagbackup: task.flag("flagbackup")?,
         summary_options: FlagSummaryOptions {
             spwchan: task.flag("spwchan")?,
@@ -98,6 +119,8 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
             maxabs: task.integer("maxabs")?,
         },
         clipzeros: task.flag("clipzeros")?,
+        clipminmax,
+        clipoutside,
         quackinterval: task.number("quackinterval")?,
         quackmode: quackmode(&task.required_text("quackmode")?)?,
         timecutoff: task.number("timecutoff")?,
@@ -185,10 +208,11 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
 /// CASA's `datacolumn`, which CASA reads in any case: casa-rs flags on
 /// `DATA` and `CORRECTED` (also spelled `CORRECTED_DATA`); CASA's other
 /// columns are #978.
-fn data_column(text: &str) -> Result<FlagDataColumn, TaskFailure> {
+fn data_column(text: &str, mode: FlagDataMode) -> Result<FlagDataColumn, TaskFailure> {
     match text.to_ascii_uppercase().as_str() {
         "DATA" => Ok(FlagDataColumn::Data),
         "CORRECTED" | "CORRECTED_DATA" => Ok(FlagDataColumn::CorrectedData),
+        "FLOAT_DATA" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::FloatData),
         "MODEL" | "RESIDUAL" | "RESIDUAL_DATA" | "FLOAT_DATA" | "WEIGHT_SPECTRUM" | "WEIGHT"
         | "FPARAM" | "CPARAM" | "PARAMERR" | "SNR" => Err(not_yet("datacolumn", text)),
         _ => Err(unknown("datacolumn", text, "'DATA' or 'CORRECTED'")),
