@@ -79,6 +79,7 @@ TASKS: tuple[tuple[str, str], ...] = (
     ("mstransform", "casatasks"),
     ("plotbandpass", "casatasks"),
     ("plotms", "casaplotms"),
+    ("plotweather", "casatasks"),
     ("rerefant", "casatasks"),
     ("simanalyze", "casatasks"),
     ("simalma", "casatasks"),

@@ -22,6 +22,7 @@
   "initweights": "vis",
   "mstransform": "vis",
   "plotbandpass": "caltable",
+  "plotweather": "vis",
   "split": "vis",
   "statwt": "vis",
   "uvmodelfit": "vis",

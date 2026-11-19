@@ -31,6 +31,7 @@ mod listcal;
 mod model_columns;
 mod multi_ms;
 mod plotbandpass;
+mod plotweather;
 mod read;
 mod render;
 mod rerefant;
@@ -91,6 +92,9 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     }
     if task.surface() == "initweights" {
         return initweights::run(task);
+    }
+    if task.surface() == "plotweather" {
+        return plotweather::run(task);
     }
     if task.surface() == "statwt" {
         return statwt::run(task);

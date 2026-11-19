@@ -474,15 +474,14 @@
       "include_in_suite": true
     },
     {
-      "id": "plotbandpass",
+      "id": "plotweather",
       "launch": {
         "executable": "calibrate",
         "cargo_package": "casa-calibration",
         "override_env": "CASARS_CALIBRATE_BIN"
       },
       "dataset_kinds": [
-        "measurement_set",
-        "calibration_table"
+        "measurement_set"
       ],
       "include_in_suite": true
     },
@@ -524,6 +523,19 @@
     },
     {
       "id": "listcal",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set",
+        "calibration_table"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "plotbandpass",
       "launch": {
         "executable": "calibrate",
         "cargo_package": "casa-calibration",

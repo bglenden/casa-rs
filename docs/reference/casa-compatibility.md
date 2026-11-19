@@ -46,6 +46,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | mstransform | mstransform | yes | 55 | 55 | 0 | 38 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
+| plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
@@ -1346,6 +1347,71 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Implementation: `casaplotms/private/task_plotms.py`, `plotms` (line 36): 0 return statements, 27 raise statements
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: ERROR: DISPLAY environment variable is not set! Cannot run plotms.
 - casa-rs: plotms waits for its own decision (#931): CASA's is the casaplotms GUI
+
+### plotweather
+
+- CASA source: `casatasks/plotweather.py`, 4 parameters
+- Implementation: `casatasks/private/task_plotweather.py`, `plotweather` (line 93): 2 return statements, 0 raise statements
+  - returns at line 282: `meanTau`
+  - returns at line 383: `meanTau`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 4, in CASA's order: yes
+- Defaults that differ: none
+
+#### plotweather parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `3b459173040b1758f761ba68e95d59e2d5d60214`. Status counts: Default only: 0, Implemented: 4, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing MeasurementSet path. The literal SPECTRAL_WINDOW and WEATHER tables supply the frequency and station samples. The earliest main TIME supplies the season when WEATHER cannot be used. [opacity](#plotweather-behavior-opacity)<br>Catalog domain: `path` (measurement_set) | [paired](#plotweather-evidence-paired) |
+| `seasonal_weight` | `0.5` | `0.5`; `seasonal_weight` → `seasonal_weight` | Implemented | Linear seasonal weighting, including extrapolation. Unavailable station data use the seasonal model alone. Nonfinite weights return nonfinite opacity when plotting is off. [opacity](#plotweather-behavior-opacity)<br>Catalog domain: `variant` | [paired](#plotweather-evidence-paired) |
+| `doPlot` | `True` | `True`; `doPlot` → `doPlot` | Implemented | Prepare the five-panel weather summary when station data are available. False returns just the spectral-window opacity. [weather-summary](#plotweather-behavior-weather-summary)<br>Catalog domain: `bool` | [paired](#plotweather-evidence-paired) |
+| `plotName` | `''` | `''`; `plotName` → `plotName` | Implemented | Optional Matplotlib output name. The default appends .plotweather.png to the MeasurementSet name. [weather-summary](#plotweather-behavior-weather-summary)<br>Catalog domain: `string` | [paired](#plotweather-evidence-paired) |
+
+#### plotweather interacting modes and task behavior
+
+<a id="plotweather-behavior-opacity"></a>
+##### VLA zenith opacity
+
+**Implemented** — Apply the station temperature and dew point and the seasonal EVLA Memo 143 model to the installed CASA VLA reference fit. This yields one NumPy float64 in a list for each spectral window in table order.
+
+
+
+Evidence: [paired](#plotweather-evidence-paired).
+
+<a id="plotweather-behavior-weather-summary"></a>
+##### Weather summary figure
+
+**Implemented** — Plot solar elevation at the VLA, wind, temperature and dew point, precipitable water and opacity. The Python host renders and saves the 150 dpi figure through the shared plot document.
+
+
+
+Evidence: [paired](#plotweather-evidence-paired).
+
+#### plotweather deviations and unfinished work
+
+#### plotweather evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="plotweather-evidence-paired"></a>
+##### paired
+
+**Same-input CASA Python results and Matplotlib artists — passed.** 10 paired opacity cases, 15 panels, 13 exact errors and five numerical laws passed. Zenith opacity per spectral window and the five-panel weather figure. Includes weather and seasonal weighting, fallback for absent, empty or unreadable WEATHER tables, fractional UTC times, named and default PNGs, and typed validation.
+
+- [tools/casa-compat/plotweather_oracle.py](https://github.com/bglenden/casa-rs/blob/3b459173040b1758f761ba68e95d59e2d5d60214/tools/casa-compat/plotweather_oracle.py)
+- [tools/casa-compat/generate_plotweather_opacity.py](https://github.com/bglenden/casa-rs/blob/3b459173040b1758f761ba68e95d59e2d5d60214/tools/casa-compat/generate_plotweather_opacity.py)
+- Revision: `3b459173040b1758f761ba68e95d59e2d5d60214`; CASA: `6.7.6.14`.
+- Command: `MPLBACKEND=Agg PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotweather_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotweather-20261119.json`.
 
 ### rerefant
 

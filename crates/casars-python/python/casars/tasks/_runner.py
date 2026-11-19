@@ -242,6 +242,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_initweights(values)
     if name == "plotbandpass":
         return _call_plotbandpass(values, arguments)
+    if name == "plotweather":
+        return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
         _coerce_ms_transform_selectors(name, values)
         try:
@@ -331,6 +333,41 @@ def _bandpass_statistics(value):
     if isinstance(value, float):
         return np.float64(value)
     return value
+
+
+def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    import numpy as np
+
+    errors: dict[str, list[str]] = {}
+    vis = arguments["vis"]
+    if vis is None:
+        errors["vis"] = ["null value not allowed"]
+    elif not isinstance(vis, str):
+        raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+    else:
+        _validate_required_path(values, "vis", vis, search_data=True)
+    types = {
+        "seasonal_weight": ((float, int, np.int32, np.int64, np.float32, np.float64), "cFloat", float),
+        "doPlot": ((bool, np.bool_), "cBool", bool),
+        "plotName": ((str,), "cStr", str),
+    }
+    for name, (expected, casa_type, convert) in types.items():
+        value = arguments[name]
+        if value is None:
+            errors[name] = ["null value not allowed"]
+        elif not isinstance(value, expected):
+            errors[name] = [f"must be of {casa_type} type"]
+        elif name in values:
+            values[name] = convert(value)
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
+    try:
+        value = run("plotweather", **values).value
+    except TaskExecutionError as error:
+        if error.completion.message in {"array of sample points is empty", "Axis limits cannot be NaN or Inf"}:
+            raise ValueError(error.completion.message) from error
+        raise
+    return [np.float64(item) for item in value]
 
 
 def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
@@ -705,6 +742,13 @@ def _execute_task(
             _render_task_plots(plots, payload, workspace)
         except Exception as error:
             raise TaskResultError(f"{task} plot rendering failed: {error}") from error
+
+    if task == "plotweather" and process.returncode == 0:
+        plot = loads(stdout)["result"]["plot"]
+        if plot is not None:
+            from ._weather_plot import render_weather
+
+            render_weather(plot, workspace)
 
     values = [
         (name, _display_value(state.value))
