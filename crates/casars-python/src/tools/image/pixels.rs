@@ -333,8 +333,31 @@ impl Chunk {
         } else {
             shape.clone()
         };
-        if axes.is_empty() && getmask {
-            let values = mask.map_or_else(|| vec![true; shape.iter().product()], fortran_values);
+        let collapse_index = |index: &[usize], output: &mut [usize]| {
+            output.copy_from_slice(index);
+            for &axis in axes {
+                output[axis] = 0;
+            }
+        };
+        if !axes.is_empty() && mask.as_ref().is_some_and(|mask| !mask.iter().any(|&v| v)) {
+            return Err(raised("All selected pixels are masked."));
+        }
+        if getmask {
+            let values = match mask {
+                None => vec![true; shape.iter().product()],
+                Some(mask) if axes.is_empty() => fortran_values(mask),
+                Some(mask) => {
+                    let mut valid = ArrayD::from_elem(IxDyn(&shape).f(), false);
+                    let mut output = vec![0; shape.len()];
+                    for (index, &pixel_valid) in mask.indexed_iter() {
+                        if pixel_valid {
+                            collapse_index(index.slice(), &mut output);
+                            valid[IxDyn(&output)] = true;
+                        }
+                    }
+                    fortran_values(valid)
+                }
+            };
             return Ok(CasaValue::Bools {
                 shape: output_shape,
                 values,
@@ -355,36 +378,22 @@ impl Chunk {
             if mask.as_ref().is_some_and(|mask| !mask[&index]) {
                 continue;
             }
-            out_index.copy_from_slice(index.slice());
-            for &axis in axes {
-                out_index[axis] = 0;
-            }
+            collapse_index(index.slice(), &mut out_index);
             counts[IxDyn(&out_index)] += 1;
-            if !getmask {
-                sums[IxDyn(&out_index)] += widen(pixel);
-            }
+            sums[IxDyn(&out_index)] += widen(pixel);
         }
-        let counts = fortran_values(counts);
-        if getmask {
-            let values = counts.into_iter().map(|n| n > 0).collect();
-            Ok(CasaValue::Bools {
-                shape: output_shape,
-                values,
+        let values = fortran_values(sums)
+            .into_iter()
+            .zip(fortran_values(counts))
+            .map(|(sum, n)| {
+                if n == 0 {
+                    U::default()
+                } else {
+                    round(sum / (n as f64))
+                }
             })
-        } else {
-            let values = fortran_values(sums)
-                .into_iter()
-                .zip(counts)
-                .map(|(sum, n)| {
-                    if n == 0 {
-                        U::default()
-                    } else {
-                        round(sum / (n as f64))
-                    }
-                })
-                .collect();
-            Ok(U::output(output_shape, values))
-        }
+            .collect();
+        Ok(U::output(output_shape, values))
     }
 }
 

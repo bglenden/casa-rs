@@ -2,12 +2,13 @@
 
 use std::collections::HashMap;
 
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{
     AnyPagedImage, ImageInterface,
     expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr, referenced_images},
     image_expr::ImageExprValue,
 };
-use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 use pyo3::prelude::*;
 
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
@@ -17,9 +18,32 @@ use super::{PyImageTool, stub};
 
 pub(super) struct MaskTarget<'a> {
     pub shape: &'a [usize],
-    pub section: Option<&'a Chunk>,
+    pub section: Option<(&'a Chunk, &'a CoordinateSystem)>,
     pub stretch: bool,
     pub method: &'static str,
+}
+
+fn mask_axes(system: &CoordinateSystem) -> Vec<(CoordinateType, usize, String)> {
+    (0..system.n_coordinates())
+        .flat_map(|index| {
+            let coordinate = system.coordinate(index);
+            let mut names = coordinate.axis_names();
+            match coordinate {
+                CoordinateModel::Direction(direction) => {
+                    names.fill(direction.conversion_direction_ref().to_string());
+                }
+                CoordinateModel::Spectral(spectral) => {
+                    names.fill(spectral.world_frequency_ref().to_string());
+                }
+                _ => {}
+            }
+            names
+                .into_iter()
+                .take(coordinate.n_pixel_axes())
+                .enumerate()
+                .map(move |(axis, name)| (coordinate.coordinate_type(), axis, name))
+        })
+        .collect()
 }
 
 fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
@@ -27,7 +51,8 @@ fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
     sources: HashMap<String, &dyn ImageInterface<T>>,
     target: &MaskTarget<'_>,
 ) -> PyResult<ArrayD<bool>> {
-    let compiled = parse_mask_expr(expression, &HashMapResolver(sources)).map_err(|error| {
+    let resolver = HashMapResolver(sources);
+    let compiled = parse_mask_expr(expression, &resolver).map_err(|error| {
         if error.message.contains("boolean") || error.message.contains("Boolean") {
             raised("Exception: The expression type must be Boolean.")
         } else {
@@ -35,12 +60,77 @@ fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
         }
     })?;
     let shape = target.shape;
-    if let Some(section) = target.section
-        && (target.stretch || compiled.shape().is_empty() || compiled.shape() == shape)
-    {
-        return compiled
-            .eval_section_for_shape(&section.start, &section.size, &section.stride, shape)
-            .map_err(raised);
+    if let Some((section, coordinates)) = target.section {
+        let source_shape = compiled.shape();
+        if source_shape.is_empty() {
+            return compiled
+                .eval_section_for_shape(&section.start, &section.size, &section.stride, shape)
+                .map_err(raised);
+        }
+        if source_shape != shape && !target.stretch {
+            return Err(raised(format!(
+                "The input image shape ({shape:?}) and mask shape ({source_shape:?}) are different, and it was specified that the mask should not be extended"
+            )));
+        }
+        let target_axes = mask_axes(coordinates);
+        let incompatible = if source_shape == shape {
+            "WCRegion::toLCRegion - a region axis is unknown or inconsistent in target coordinate system"
+        } else {
+            "Unable to extend mask: ExtendImage - new csys or shape incompatible with old ones"
+        };
+        let mut axes = None;
+        for source in resolver
+            .0
+            .values()
+            .filter(|source| source.shape() == source_shape)
+        {
+            let mapping = mask_axes(source.coordinates())
+                .iter()
+                .map(|axis| target_axes.iter().position(|candidate| candidate == axis))
+                .collect::<Option<Vec<_>>>()
+                .filter(|map| map.len() == source_shape.len())
+                .ok_or_else(|| raised(incompatible))?;
+            if mapping.windows(2).any(|pair| pair[0] >= pair[1]) {
+                return Err(raised(
+                    "WCLELMask::toLCRegion - the order of the mask axes cannot be changed",
+                ));
+            }
+            if axes.as_ref().is_some_and(|previous| *previous != mapping) {
+                return Err(raised(incompatible));
+            }
+            axes = Some(mapping);
+        }
+        let axes = axes.unwrap_or_else(|| (0..source_shape.len()).collect());
+        if axes.iter().zip(source_shape).any(|(&axis, &length)| {
+            shape
+                .get(axis)
+                .is_none_or(|&target_length| length != 1 && length != target_length)
+        }) {
+            return Err(raised(
+                "Unable to extend mask: ExtendSpecifier - lengths of old axis mismatch",
+            ));
+        }
+        let select = |values: &[usize]| axes.iter().map(|&axis| values[axis]).collect::<Vec<_>>();
+        let mut mask = compiled
+            .eval_section_for_shape(
+                &select(&section.start),
+                &select(&section.size),
+                &select(&section.stride),
+                &select(shape),
+            )
+            .map_err(raised)?;
+        for axis in 0..shape.len() {
+            if axes.binary_search(&axis).is_err() {
+                mask = mask.insert_axis(Axis(axis));
+            }
+        }
+        if mask.shape() == section.size {
+            return Ok(mask);
+        }
+        return mask
+            .broadcast(IxDyn(&section.size))
+            .map(|view| view.to_owned())
+            .ok_or_else(|| raised(incompatible));
     }
     if compiled.shape().is_empty() {
         return Ok(ArrayD::from_elem(

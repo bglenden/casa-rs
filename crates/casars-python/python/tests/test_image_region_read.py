@@ -81,6 +81,54 @@ def test_getregion_stretches_singleton_mask_axis(casa, tmp_path):
         _assert_value(actual, expected)
 
 
+@pytest.mark.parametrize(
+    ("source_shape", "target_shape", "linear", "stretch", "expected_error"),
+    [
+        ((4, 4), (4, 4), True, False, "a region axis is unknown"),
+        ((4, 4), (4, 4), True, True, "a region axis is unknown"),
+        ((4, 4, 1), (4, 4), False, True, "Unable to extend mask"),
+        ((4, 4), (4, 4, 2), False, False, "mask should not be extended"),
+        ((4, 4), (4, 4, 2), False, True, None),
+        ((4, 4, 1), (4, 4, 2, 3), False, True, None),
+    ],
+)
+def test_getregion_requires_matching_mask_axes(
+    casa, tmp_path, source_shape, target_shape, linear, stretch, expected_error
+):
+    path = str(tmp_path / "mask.im")
+    source = tools.image()
+    values = np.arange(np.prod(source_shape), dtype=np.float64).reshape(source_shape)
+    assert source.fromarray(path, values, linear=linear)
+    assert source.done()
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromshape(shape=list(target_shape))
+        kwargs = dict(mask=f'"{path}" > 3', getmask=True, stretch=stretch)
+        if expected_error:
+            with pytest.raises(RuntimeError, match=expected_error):
+                image.getregion(**kwargs)
+        else:
+            expanded_shape = (4, 4) + (1,) * (len(target_shape) - 2)
+            expected = np.broadcast_to((values > 3).reshape(expanded_shape), target_shape)
+            _assert_value(image.getregion(**kwargs), expected)
+        assert image.done()
+
+
+@pytest.mark.parametrize("getmask", [False, True])
+def test_getregion_rejects_fully_masked_collapse(casa, getmask):
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromshape(shape=[4, 3, 2])
+        for axes in ([0], [0, 1, 2]):
+            with pytest.raises(RuntimeError, match="All selected pixels are masked"):
+                image.getregion(axes=axes, getmask=getmask, mask="F")
+        _assert_value(
+            image.getregion(axes=[0, 1, 2], getmask=True),
+            np.ones((1, 1, 1), dtype=np.bool_),
+        )
+        assert image.done()
+
+
 def test_getregion_refuses_scalar_mask_and_region():
     image = tools.image()
     assert image.fromshape(shape=[3, 3])
