@@ -32,14 +32,14 @@ use crate::summary::{CalibrationTableError, summarize_table};
 
 #[path = "plan_fields.rs"]
 mod fields;
-use fields::resolve_gainfield;
+pub(crate) use fields::resolve_gainfield;
 
 #[path = "plan_callibrary.rs"]
 mod library;
 
 #[path = "plan_spw.rs"]
 mod windows;
-use windows::resolve_spw_mapping;
+pub(crate) use windows::resolve_spw_mapping;
 
 /// Calibration-application mode planned for the executor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

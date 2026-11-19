@@ -86,14 +86,20 @@ impl ImageHandle {
         with_pixels!(self, storage => storage.save())
     }
 
-    pub(super) fn add_history(&mut self, message: String) -> PyResult<()> {
-        with_pixels!(self, storage => with_storage!(storage, image => image.add_history(message)))
+    pub(super) fn append_history_at(
+        &mut self,
+        location: &str,
+        messages: &[String],
+    ) -> PyResult<()> {
+        with_pixels!(self, storage => with_storage!(storage, image => image.append_history_at(location, messages)))
             .map_err(raised)
     }
 
     pub(super) fn record_history(&mut self, method: &str, command: String) -> PyResult<()> {
-        self.add_history(format!("Ran ia.{method}"))?;
-        self.add_history(command)
+        self.append_history_at(
+            &format!("::image::{method}"),
+            &[format!("Ran ia.{method}"), command],
+        )
     }
 
     pub(super) fn coordinate_record(&self) -> RecordValue {

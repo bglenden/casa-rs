@@ -10,6 +10,8 @@ mod handle;
 mod lifecycle;
 mod metadata;
 mod pixels;
+mod point;
+mod records;
 mod stubs;
 pub(crate) mod surface;
 

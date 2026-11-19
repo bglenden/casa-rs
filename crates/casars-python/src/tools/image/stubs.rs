@@ -632,16 +632,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (v = None, shape = None), text_signature = "($self, v=0.0, shape=[0])")]
-    fn makearray(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        shape: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("makearray")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile, imag, region = None, overwrite = None), text_signature = "($self, outfile, imag, region={}, overwrite=False)")]
     fn makecomplex(
         &self,
@@ -684,12 +674,6 @@ impl PyImageTool {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("maxfit")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn miscinfo(&self) -> PyResult<Py<PyAny>> {
-        stub("miscinfo")
     }
 
     /// Not yet implemented in casa-rs.
@@ -839,12 +823,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("pbcor")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixel = None), text_signature = "($self, pixel=[-1])")]
-    fn pixelvalue(&self, pixel: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("pixelvalue")
     }
 
     /// Not yet implemented in casa-rs.
@@ -1027,22 +1005,6 @@ impl PyImageTool {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("set")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (origin = None, history = None), text_signature = "($self, origin='', history=[])")]
-    fn sethistory(
-        &self,
-        origin: Option<&Bound<'_, PyAny>>,
-        history: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("sethistory")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (info), text_signature = "($self, info)")]
-    fn setmiscinfo(&self, info: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setmiscinfo")
     }
 
     /// Not yet implemented in casa-rs.

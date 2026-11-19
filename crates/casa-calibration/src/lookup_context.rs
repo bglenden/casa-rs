@@ -490,12 +490,14 @@ fn selected_scope(
         let observations = rows.iter().map(|r| r[3]).collect::<HashSet<_>>();
         let metadata =
             Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
+        let owner = crate::paths::subtable_owner(&metadata, path)
+            .map_err(|error| invalid(path, &error.to_string()))?;
         let observation_path = metadata
             .keywords()
             .get("OBSERVATION")
             .and_then(casa_types::Value::as_table_ref)
-            .map(|name| casa_tables::add_directory(name, path))
-            .unwrap_or_else(|| path.join("OBSERVATION"));
+            .map(|name| casa_tables::add_directory(name, &owner))
+            .unwrap_or_else(|| owner.join("OBSERVATION"));
         let count =
             Table::rows_on_disk(&observation_path).map_err(|e| invalid(path, &e.to_string()))?;
         if observations.len() > 1
@@ -508,9 +510,36 @@ fn selected_scope(
     Ok(scope)
 }
 
-/// Only scalar columns are read; CPARAM arrays are never rematerialized.
+/// Read only scalar headers from plain calibration tables.
 fn headers(path: &Path) -> Result<Vec<[i32; 5]>, ApplyExecutionError> {
     let table = Table::open(TableOptions::new(path)).map_err(|e| invalid(path, &e.to_string()))?;
+    if table
+        .is_reference_table()
+        .map_err(|error| invalid(path, &error.to_string()))?
+    {
+        return (0..table.row_count())
+            .map(|row| {
+                let mut values = [0; 5];
+                for (value, column) in values.iter_mut().zip([
+                    "FIELD_ID",
+                    "SPECTRAL_WINDOW_ID",
+                    "ANTENNA1",
+                    "OBSERVATION_ID",
+                    "SCAN_NUMBER",
+                ]) {
+                    let cell = table
+                        .cell_accessor(row, column)
+                        .and_then(|cell| cell.scalar())
+                        .map_err(|error| invalid(path, &error.to_string()))?;
+                    let casa_types::ScalarValue::Int32(cell) = cell else {
+                        return Err(invalid(path, "invalid calibration context scalar"));
+                    };
+                    *value = *cell;
+                }
+                Ok(values)
+            })
+            .collect();
+    }
     let mut rows = Vec::with_capacity(table.row_count());
     let [
         mut fields,
