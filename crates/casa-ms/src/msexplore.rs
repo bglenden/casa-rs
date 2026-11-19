@@ -26,6 +26,7 @@
 
 mod calibration;
 pub mod cli;
+mod plotms_figure;
 mod plotms_text;
 pub mod task_contract;
 
@@ -2388,6 +2389,10 @@ pub struct PlotMsCalibratedRow {
     pub corrected_data: ArrayValue,
     /// Data flags combined with the calibration flags.
     pub flags: ArrayValue,
+    /// Calibrated per-correlation weights.
+    pub weight: ArrayValue,
+    /// Calibrated per-channel weights when the input defines a spectrum.
+    pub weight_spectrum: Option<ArrayValue>,
 }
 
 /// Selected MAIN rows and their read-only calibration overlay.
@@ -2398,6 +2403,8 @@ pub struct PlotMsCalibration {
     pub rows: HashMap<usize, PlotMsCalibratedRow>,
     /// Original channel indices for windows with a channel selection.
     pub channels: BTreeMap<i32, Vec<usize>>,
+    /// The independent abscissa column when PlotMS has two column selectors.
+    pub x_data_column: Option<MsDataColumn>,
 }
 
 fn build_msexplore_plot_payload_validated(
@@ -3427,6 +3434,7 @@ struct AveragingPointKeyInputs<'a> {
 
 #[derive(Debug, Default)]
 struct AveragedPointAccumulator {
+    x_visibility_samples: Vec<Complex64>,
     visibility_samples: Vec<Complex64>,
     visibility_sample_weights: Vec<f64>,
     numeric_axis_samples: Vec<(MsAxis, Vec<f64>)>,
@@ -3687,6 +3695,11 @@ fn build_generic_visibility_scatter(
         String::new()
     };
 
+    let x_data_source = calibration
+        .and_then(|input| input.x_data_column)
+        .filter(|_| spec.x_axis.is_visibility_math())
+        .map(|column| PreparedSelectedDataSource::new(ms, column, &row_numbers, calibration))
+        .transpose()?;
     let data_source = if needs_visibility_grid {
         Some(PreparedSelectedDataSource::new(
             ms,
@@ -3711,10 +3724,11 @@ fn build_generic_visibility_scatter(
         None
     };
     let selected_weights = if needs_weight_values {
-        Some(SelectedArrayColumn::load(
+        Some(SelectedArrayColumn::load_for_plot(
             ms.main_table(),
             "WEIGHT",
             &row_numbers,
+            calibration,
         )?)
     } else {
         None
@@ -3793,10 +3807,7 @@ fn build_generic_visibility_scatter(
             .copied()
             .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
     let selected_weight_spectrum = if needs_weight_spectrum {
-        WeightSpectrumColumn::new(ms.main_table())
-            .ok()
-            .map(|_| SelectedArrayColumn::load(ms.main_table(), "WEIGHT_SPECTRUM", &row_numbers))
-            .transpose()?
+        selected_plot_weight_spectrum(ms, &row_numbers, calibration)?
     } else {
         None
     };
@@ -3842,6 +3853,15 @@ fn build_generic_visibility_scatter(
             .as_ref()
             .map(|source| source.row(row_slot))
             .transpose()?;
+        let x_grid = x_data_source
+            .as_ref()
+            .map(|source| source.row(row_slot))
+            .transpose()?;
+        if let (Some(x), Some(y)) = (&x_grid, &grid)
+            && (x.corr_count, x.chan_count) != (y.corr_count, y.chan_count)
+        {
+            return Err("PlotMS X and Y data cells have different shapes".into());
+        }
         if let Some(started) = row_grid_started {
             scatter_timing.row_grid += started.elapsed();
         }
@@ -3952,7 +3972,9 @@ fn build_generic_visibility_scatter(
             vec![selected_correlations[0].clone()]
         };
 
-        let channels = calibration.and_then(|input| input.channels.get(&spw_id));
+        let channels = calibration
+            .and_then(|input| input.channels.get(&spw_id))
+            .map(Vec::as_slice);
         let channel_bins = plot_channel_bins_with_selection(chan_count, spec, channels)?;
 
         let field_id_value = selected_field_ids[row_slot];
@@ -4028,6 +4050,7 @@ fn build_generic_visibility_scatter(
             if let Some(started) = grouping_started {
                 scatter_timing.grouping += started.elapsed();
             }
+            let mut x_samples = Vec::<Complex64>::new();
             let mut samples = Vec::<Complex64>::new();
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
@@ -4048,6 +4071,16 @@ fn build_generic_visibility_scatter(
                     );
                 } else {
                     samples.clear();
+                }
+                if let Some(grid) = x_grid.as_ref() {
+                    collect_bin_samples_into(
+                        grid,
+                        flags.as_ref().expect("X visibility data loads flags"),
+                        &[*corr_index],
+                        bin.start,
+                        bin.end,
+                        &mut x_samples,
+                    );
                 }
                 if let Some(flags) = flags.as_ref() {
                     collect_bin_flags_into(
@@ -4096,7 +4129,11 @@ fn build_generic_visibility_scatter(
                 let axis_started = timing_enabled.then(Instant::now);
                 let Some(x_value) = compute_axis_value(
                     spec.x_axis,
-                    &samples,
+                    if x_grid.is_some() {
+                        &x_samples
+                    } else {
+                        &samples
+                    },
                     &flag_samples,
                     &weight_spectrum_samples,
                     &sigma_spectrum_samples,
@@ -4243,10 +4280,12 @@ fn build_generic_visibility_scatter(
         .filter_map(|panel_key| {
             let panel = panels.remove(&panel_key)?;
             let mut series = panel.series.into_values().collect::<Vec<_>>();
-            for entry in &mut series {
-                entry
-                    .points
-                    .sort_by(|left, right| left.0.total_cmp(&right.0));
+            if calibration.is_none() {
+                for entry in &mut series {
+                    entry
+                        .points
+                        .sort_by(|left, right| left.0.total_cmp(&right.0));
+                }
             }
             Some(MsScatterPanelPayload {
                 key: panel_key,
@@ -4472,11 +4511,12 @@ fn finalize_averaged_axis_value(
     accumulator: &AveragedPointAccumulator,
     scalar_average: bool,
     avgtime_enabled: bool,
+    visibility_samples: Option<&[Complex64]>,
 ) -> Option<f64> {
     if axis.is_visibility_math() {
         return compute_weighted_visibility_math(
             axis,
-            &accumulator.visibility_samples,
+            visibility_samples.unwrap_or(&accumulator.visibility_samples),
             &accumulator.visibility_sample_weights,
             scalar_average,
         );
@@ -4545,6 +4585,11 @@ fn build_generic_visibility_scatter_with_averaging(
             .copied()
             .any(MsAxis::uses_spectral_coordinates);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
+    let x_data_source = calibration
+        .and_then(|input| input.x_data_column)
+        .filter(|_| spec.x_axis.is_visibility_math())
+        .map(|column| PreparedSelectedDataSource::new(ms, column, &row_numbers, calibration))
+        .transpose()?;
     let data_source = if needs_visibility_grid {
         Some(PreparedSelectedDataSource::new(
             ms,
@@ -4557,7 +4602,8 @@ fn build_generic_visibility_scatter_with_averaging(
     };
     let selected_flags =
         SelectedArrayColumn::load_for_plot(ms.main_table(), "FLAG", &row_numbers, calibration)?;
-    let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
+    let selected_weights =
+        SelectedArrayColumn::load_for_plot(ms.main_table(), "WEIGHT", &row_numbers, calibration)?;
     let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
     let selected_flag_rows = selected_bool_values(ms.main_table(), "FLAG_ROW", &row_numbers)?;
     let selected_intervals = selected_f64_values(ms.main_table(), "INTERVAL", &row_numbers)?;
@@ -4615,10 +4661,7 @@ fn build_generic_visibility_scatter_with_averaging(
             .copied()
             .any(|axis| matches!(axis, MsAxis::SigmaSpectrum));
     let selected_weight_spectrum = if needs_weight_spectrum {
-        WeightSpectrumColumn::new(ms.main_table())
-            .ok()
-            .map(|_| SelectedArrayColumn::load(ms.main_table(), "WEIGHT_SPECTRUM", &row_numbers))
-            .transpose()?
+        selected_plot_weight_spectrum(ms, &row_numbers, calibration)?
     } else {
         None
     };
@@ -4736,6 +4779,15 @@ fn build_generic_visibility_scatter_with_averaging(
             .as_ref()
             .map(|source| source.row(row_slot))
             .transpose()?;
+        let x_grid = x_data_source
+            .as_ref()
+            .map(|source| source.row(row_slot))
+            .transpose()?;
+        if let (Some(x), Some(y)) = (&x_grid, &grid)
+            && (x.corr_count, x.chan_count) != (y.corr_count, y.chan_count)
+        {
+            return Err("PlotMS X and Y data cells have different shapes".into());
+        }
         let (corr_count, chan_count) = grid
             .as_ref()
             .map(|grid| (grid.corr_count, grid.chan_count))
@@ -4806,7 +4858,9 @@ fn build_generic_visibility_scatter_with_averaging(
             vec![selected_correlations[0].clone()]
         };
 
-        let channels = calibration.and_then(|input| input.channels.get(&spw_id));
+        let channels = calibration
+            .and_then(|input| input.channels.get(&spw_id))
+            .map(Vec::as_slice);
         let channel_bins = plot_channel_bins_with_selection(chan_count, spec, channels)?;
 
         let field_id_value = selected_field_ids[row_slot];
@@ -4844,6 +4898,7 @@ fn build_generic_visibility_scatter_with_averaging(
         for (corr_index, corr_label) in &selected_correlations {
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
+            let mut x_samples = Vec::<Complex64>::new();
             let mut samples = Vec::<Complex64>::new();
             let mut flag_samples = Vec::<bool>::new();
             let mut visibility_weight_samples = Vec::<f64>::new();
@@ -4862,6 +4917,16 @@ fn build_generic_visibility_scatter_with_averaging(
                         );
                     } else {
                         samples.clear();
+                    }
+                    if let Some(grid) = x_grid.as_ref() {
+                        collect_bin_samples_into(
+                            grid,
+                            &flags,
+                            &[*corr_index],
+                            bin.start,
+                            bin.end,
+                            &mut x_samples,
+                        );
                     }
                     collect_bin_flags_into(
                         &flags,
@@ -4984,6 +5049,16 @@ fn build_generic_visibility_scatter_with_averaging(
                                 .extend(visibility_weight_samples.iter().copied());
                             accumulator.visibility_samples.extend(transformed_samples);
                             series_used = true;
+                        }
+                        if x_grid.is_some() {
+                            accumulator.x_visibility_samples.extend(
+                                transform_visibility_samples_for_baseline_token(
+                                    &x_samples,
+                                    baseline_token,
+                                    antenna1_value,
+                                    antenna2_value,
+                                ),
+                            );
                         }
                         match spec.x_axis {
                             MsAxis::Flag => {
@@ -5136,7 +5211,22 @@ fn build_generic_visibility_scatter_with_averaging(
                 points: Vec::new(),
                 provenance: Vec::new(),
             };
-            for accumulator in series.points.into_values() {
+            let mut points = series.points.into_values();
+            let mut corrected_order = calibration.map(|_| {
+                let mut ordered = points.by_ref().collect::<Vec<_>>();
+                ordered.sort_by_key(|entry| {
+                    entry
+                        .representative
+                        .as_ref()
+                        .map(|point| (point.row, point.chan_start, point.corr))
+                });
+                ordered.into_iter()
+            });
+            let ordered = std::iter::from_fn(|| match &mut corrected_order {
+                Some(points) => points.next(),
+                None => points.next(),
+            });
+            for accumulator in ordered {
                 let Some(representative) = accumulator.representative.clone() else {
                     continue;
                 };
@@ -5145,6 +5235,9 @@ fn build_generic_visibility_scatter_with_averaging(
                     &accumulator,
                     spec.averaging.scalar,
                     spec.averaging.avgtime.is_some(),
+                    x_data_source
+                        .as_ref()
+                        .map(|_| accumulator.x_visibility_samples.as_slice()),
                 ) else {
                     continue;
                 };
@@ -5153,6 +5246,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     &accumulator,
                     spec.averaging.scalar,
                     spec.averaging.avgtime.is_some(),
+                    None,
                 ) else {
                     continue;
                 };
@@ -5165,9 +5259,11 @@ fn build_generic_visibility_scatter_with_averaging(
                         .unwrap_or("Requested plot"),
                 )?;
             }
-            output
-                .points
-                .sort_by(|left, right| left.0.total_cmp(&right.0));
+            if calibration.is_none() {
+                output
+                    .points
+                    .sort_by(|left, right| left.0.total_cmp(&right.0));
+            }
             if !output.points.is_empty() {
                 series_entries.push(output);
             }
@@ -5446,7 +5542,7 @@ fn channel_bins(chan_count: usize, avgchannel: Option<usize>) -> Result<Vec<Chan
 fn plot_channel_bins_with_selection(
     chan_count: usize,
     spec: &MsPlotSpec,
-    channels: Option<&Vec<usize>>,
+    channels: Option<&[usize]>,
 ) -> Result<Vec<ChannelBin>, String> {
     let Some(channels) = channels else {
         return plot_channel_bins(chan_count, spec);
@@ -6297,6 +6393,30 @@ fn selected_uvw_values(
         .collect()
 }
 
+fn selected_plot_weight_spectrum<'a>(
+    ms: &MeasurementSet,
+    rows: &[usize],
+    calibration: Option<&'a PlotMsCalibration>,
+) -> Result<Option<SelectedArrayColumn<'a>>, String> {
+    let has_spectrum = match calibration {
+        Some(input) => rows
+            .first()
+            .and_then(|row| input.rows.get(row))
+            .is_some_and(|row| row.weight_spectrum.is_some()),
+        None => WeightSpectrumColumn::new(ms.main_table()).is_ok(),
+    };
+    has_spectrum
+        .then(|| {
+            SelectedArrayColumn::load_for_plot(
+                ms.main_table(),
+                "WEIGHT_SPECTRUM",
+                rows,
+                calibration,
+            )
+        })
+        .transpose()
+}
+
 enum SelectedArrayValues<'a> {
     Stored(Vec<Option<ArrayValue>>),
     Calibrated(Vec<Option<&'a ArrayValue>>),
@@ -6326,9 +6446,11 @@ impl<'a> SelectedArrayColumn<'a> {
         rows: &[usize],
         calibration: Option<&'a PlotMsCalibration>,
     ) -> Result<Self, String> {
-        let cell: fn(&PlotMsCalibratedRow) -> &ArrayValue = match column {
-            "CORRECTED_DATA" => |row| &row.corrected_data,
-            "FLAG" => |row| &row.flags,
+        let cell: fn(&PlotMsCalibratedRow) -> Option<&ArrayValue> = match column {
+            "CORRECTED_DATA" => |row| Some(&row.corrected_data),
+            "FLAG" => |row| Some(&row.flags),
+            "WEIGHT" => |row| Some(&row.weight),
+            "WEIGHT_SPECTRUM" => |row| row.weight_spectrum.as_ref(),
             _ => return Self::load(table, column, rows),
         };
         let Some(calibration) = calibration else {
@@ -6336,7 +6458,7 @@ impl<'a> SelectedArrayColumn<'a> {
         };
         let values = rows
             .iter()
-            .map(|row| calibration.rows.get(row).map(cell))
+            .map(|row| calibration.rows.get(row).and_then(cell))
             .collect();
         Ok(Self {
             column,
