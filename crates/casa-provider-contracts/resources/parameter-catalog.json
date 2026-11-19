@@ -892,6 +892,18 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.array",
+      "semantic_revision": 2,
+      "casa_name": "array",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA subarray selection by ARRAY_ID.", "details": null, "examples": ["", "0"]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.correlation",
       "semantic_revision": 1,
       "casa_name": "correlation",
@@ -947,6 +959,18 @@
           ""
         ]
       },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.feed",
+      "semantic_revision": 2,
+      "casa_name": "feed",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA feed IDs and feed pair selection.", "details": null, "examples": ["", "0"]},
       "persistence_class": "profile"
     },
     {

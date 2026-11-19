@@ -491,15 +491,14 @@ def mstransform(
     CASA's ``mstransform``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,
-    ``correlation``, ``array``, ``uvrange``, ``feed``, ``realmodelcol``,
-    ``usewtspectrum``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,
-    ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,
-    ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,
-    ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,
-    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,
-    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,
-    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,
-    ``monolithic_processing``, ``reindex``.
+    ``correlation``, ``realmodelcol``, ``usewtspectrum``, ``combinespws``,
+    ``hanning``, ``regridms``, ``mode``, ``nchan``, ``start``, ``width``,
+    ``nspw``, ``interpolation``, ``phasecenter``, ``restfreq``,
+    ``outframe``, ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``,
+    ``timespan``, ``maxuvwdistance``, ``docallib``, ``callib``,
+    ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,
+    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,
+    ``ddistart``, ``monolithic_processing``, ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -514,10 +513,10 @@ def split(
     correlation: str = '',
     timerange: str = '',
     intent: str = '',
-    array: str = '',
+    array: str | int = '',
     uvrange: str = '',
     observation: str | int = '',
-    feed: str = '',
+    feed: str | int = '',
     datacolumn: str = 'corrected',
     keepflags: bool = True,
     width: int = 1,
@@ -530,8 +529,7 @@ def split(
 
     CASA's ``split``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``, ``correlation``, ``array``, ``uvrange``, ``feed``,
-    ``timebin``, ``combine``.
+    ``keepmms``, ``correlation``, ``timebin``, ``combine``.
     """
     return _call_casa(split, locals())
 
