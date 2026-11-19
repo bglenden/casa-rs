@@ -10,13 +10,25 @@ pub(super) fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<
 }
 
 pub(super) fn reference(value: Option<&Bound<'_, PyAny>>, default: &str) -> PyResult<String> {
+    text(value, "rf", default)
+}
+
+pub(super) fn text(
+    value: Option<&Bound<'_, PyAny>>,
+    name: &str,
+    default: &str,
+) -> PyResult<String> {
     let text: String = match value {
         None => default.into(),
         Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
         Some(value) if value.is_instance_of::<PyBytes>() => {
             value.call_method1("decode", ("utf-8",))?.extract()?
         }
-        _ => return Err(PyTypeError::new_err("argument _rf must be a string")),
+        _ => {
+            return Err(PyTypeError::new_err(format!(
+                "argument _{name} must be a string"
+            )));
+        }
     };
     Ok(text.split('\0').next().unwrap_or_default().to_owned())
 }

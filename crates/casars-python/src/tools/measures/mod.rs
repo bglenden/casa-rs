@@ -29,6 +29,7 @@
 //!   support offsets and vectors. Remaining kinds stay explicitly refused.
 
 mod arguments;
+mod comet;
 mod define;
 mod frame;
 mod geometry;
@@ -41,6 +42,7 @@ mod xvalue;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use casa_measures_data::CometTable;
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -67,6 +69,8 @@ struct Frame {
 pub(crate) struct State {
     frame: Frame,
     measures: Option<Arc<dyn MeasuresProvider>>,
+    // The comet queries retain their table when done clears the coordinate frame.
+    comet: Option<CometTable>,
 }
 
 impl State {
@@ -312,51 +316,6 @@ impl PyMeasures {
     fn addxvalue(&self, py: Python<'_>, a: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let record = xvalue::read_record(a)?;
         self.call(py, move |_, lines| xvalue::addxvalue(&record, lines))
-    }
-
-    /// CASA's sentinel angular diameter when no comet table is loaded.
-    fn cometangdiam(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "rad")))
-    }
-
-    /// CASA's sentinel distance when no comet table is loaded.
-    fn cometdist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "AU")))
-    }
-
-    /// Return an empty name and warn when no comet table is loaded.
-    fn cometname(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, lines| {
-            lines.push(LogLine::warning(
-                "Method cometname fails! No Comet table present",
-            ));
-            Ok(CasaValue::Text(String::new()))
-        })
-    }
-
-    /// Return CASA's sentinel when no topocentric comet table is loaded.
-    fn comettopo(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, lines| {
-            lines.push(LogLine::warning(
-                "Method comettopo fails!  No Topocentric Comet table present",
-            ));
-            Ok(CasaValue::record([
-                ("unit", CasaValue::Text(String::new())),
-                ("value", CasaValue::floats(vec![0.0])),
-            ]))
-        })
-    }
-
-    /// CASA's comet type when no comet table is loaded.
-    fn comettype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.call(py, |_, _| Ok(CasaValue::Text("none".to_string())))
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v='')")]
-    fn framecomet(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("framecomet")
     }
 
     /// The rest lines of the measures data, their names joined by spaces

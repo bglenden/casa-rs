@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tar::Archive;
 
+mod comet;
 mod interp;
 mod observatory;
 mod parser;
@@ -36,6 +37,7 @@ mod spectral_line;
 #[cfg(feature = "update")]
 pub mod update;
 
+pub use comet::CometTable;
 pub use observatory::{ObservatoryCatalog, ObservatoryEntry};
 pub use planet::PlanetaryEphemeris;
 pub use source::{SourceCatalog, SourceEntry};

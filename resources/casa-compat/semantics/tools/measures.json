@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "measures",
  "casa_version": "6.7.6.14",
- "audit_revision": "5174d43c3bb74b538b0477741ed412792b2d7926",
+ "audit_revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6",
  "methods": {
   "addxvalue": {
    "status": "Implemented",
@@ -31,48 +31,48 @@
    ]
   },
   "cometangdiam": {
-   "status": "Partial",
-   "issue": 1252,
-   "scope": "Returns CASA's -1 rad sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
+   "status": "Implemented",
+   "scope": "Use twice the mean physical radius divided by the interpolated distance. Apply the CASA missing-data sentinel when there is no epoch or no table sample.",
    "evidence": [
     "signature",
-    "no-comet-casa"
+    "no-comet-casa",
+    "comet-casa"
    ]
   },
   "cometdist": {
-   "status": "Partial",
-   "issue": 1252,
-   "scope": "Returns CASA's -1 AU sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
+   "status": "Implemented",
+   "scope": "Interpolate the Cartesian table position at the frame epoch and return its norm in AU. Use the CASA missing-data sentinel outside the table and when the epoch is absent.",
    "evidence": [
     "signature",
-    "no-comet-casa"
+    "no-comet-casa",
+    "comet-casa"
    ]
   },
   "cometname": {
-   "status": "Partial",
-   "issue": 1252,
-   "scope": "Returns the empty name and CASA warning when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
+   "status": "Implemented",
+   "scope": "Read the object name of the selected table, or return an empty string and warn with no table.",
    "evidence": [
     "signature",
-    "no-comet-casa"
+    "no-comet-casa",
+    "comet-casa"
    ]
   },
   "comettopo": {
-   "status": "Partial",
-   "issue": 1252,
-   "scope": "Returns CASA's dimensionless zero vector and warning when no topocentric comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
+   "status": "Implemented",
+   "scope": "Return the Cartesian observing position in metres for a topocentric table, or CASA's empty-unit array sentinel.",
    "evidence": [
     "signature",
-    "no-comet-casa"
+    "no-comet-casa",
+    "comet-casa"
    ]
   },
   "comettype": {
-   "status": "Partial",
-   "issue": 1252,
-   "scope": "Returns CASA's none type when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
+   "status": "Implemented",
+   "scope": "Report TOPO for a topocentric table, APP for another loaded reference, and none with no table.",
    "evidence": [
     "signature",
-    "no-comet-casa"
+    "no-comet-casa",
+    "comet-casa"
    ]
   },
   "direction": {
@@ -143,12 +143,12 @@
    ]
   },
   "framecomet": {
-   "status": "Not implemented",
-   "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Load, replace or clear the selected comet ephemeris using an explicit table path or a path relative to the runtime ephemerides or geodetic directory.",
    "evidence": [
     "signature",
-    "refusals"
+    "refusals",
+    "comet-casa"
    ]
   },
   "framenow": {
@@ -557,6 +557,21 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct data loss, corruption and contradictions of evident intent."
+  },
+  {
+   "id": "comet-missing-epoch-crash",
+   "record": "Comet numeric queries can terminate without an epoch",
+   "inputs": "A loaded comet table followed by cometdist or cometangdiam without setting an epoch, including after done.",
+   "casa": "Terminates with SIGSEGV.",
+   "ours": "Reports the missing epoch and returns the existing -1 AU or -1 rad missing-data sentinel.",
+   "rationale": "A missing input frame element must not terminate the caller.",
+   "impact": "Callers can set an epoch and retry using the same table.",
+   "evidence": [
+    "comet-casa",
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md CASA deviations: correct crashes and keep the approved empty initial frame."
   }
  ],
  "evidence": {
@@ -602,7 +617,7 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ],
-   "source_revision": "5174d43c3bb74b538b0477741ed412792b2d7926"
+   "source_revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6"
   },
   "casa-lists": {
    "kind": "CASA-recorded values",
@@ -728,6 +743,24 @@
    "revision": "5174d43c3bb74b538b0477741ed412792b2d7926",
    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_geometry.py; CASAPY tools/simulation/measures_geometry_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --repeat 1000 --samples 7",
    "receipt": "resources/casa-compat/evidence/me-geometry-equivalence-20261118.json"
+  },
+  "comet-casa": {
+   "kind": "CASA 6.7.6.14 comet tables, queries, upstream Ganymede tests, and release benchmark",
+   "state": "passed",
+   "scope": "Direct and configured relative table paths, reset and replacement, UTC and TAI epoch records, interpolation and endpoints, and TOPO versus other reference types.",
+   "result": "25 recorded sequences (199 steps) and the upstream distance/diameter assertions pass. All 10 release cases are faster than CASA (1.19x minimum).",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_measures_comet.json",
+    "crates/casars-python/python/tests/test_measures_comet.py",
+    "tools/simulation/measures_comet_oracle.py",
+    "tools/simulation/measures_comet_benchmark.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6",
+   "revision": "3ed4553798577b9d610a89e3ceda6ea73f5de1e6",
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures*.py crates/casars-python/python/tests/test_tools_measures.py crates/casars-python/python/tests/test_binding_snapshots.py; CASAPY tools/simulation/measures_comet_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --calls 1000 --samples 7",
+   "receipt": "resources/casa-compat/evidence/me-comet-equivalence-20261118.json"
   }
  }
 }

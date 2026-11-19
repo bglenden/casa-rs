@@ -102,7 +102,7 @@ const METHODS: &[Method] = &[
         R::Record,
         Yes,
     ),
-    method("framecomet", &[param("v", K::Text, Text(""))], R::Bool, No),
+    method("framecomet", &[param("v", K::Text, Text(""))], R::Bool, Yes),
     method("framenow", &[], R::Bool, Yes),
     method("frequency", &FREQUENCY, R::Record, Yes),
     method("getoffset", &V, R::Record, Yes),

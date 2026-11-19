@@ -1,0 +1,2052 @@
+{
+  "casa_version": "6.7.6-14",
+  "synthetic": {
+    "columns": {
+      "MJD": [
+        55564.0,
+        55565.0,
+        55566.0
+      ],
+      "RA": [
+        359.0,
+        1.0,
+        2.0
+      ],
+      "DEC": [
+        12.0,
+        14.0,
+        17.0
+      ],
+      "Rho": [
+        5.0,
+        5.01,
+        5.03
+      ],
+      "RadVel": [
+        0.01,
+        0.02,
+        0.02
+      ]
+    },
+    "keywords": {
+      "MJD0": 55563.0,
+      "dMJD": 1.0,
+      "NAME": "Test object",
+      "GeoDist": 6378.25,
+      "GeoLong": -67.25,
+      "GeoLat": 25.5,
+      "meanrad": {
+        "unit": "km",
+        "value": 2400.0
+      },
+      "VS_CREATE": "2013/02/20/10:04",
+      "VS_DATE": "2013/02/20/18:18",
+      "VS_TYPE": "Table of comet/planetary positions",
+      "VS_VERSION": "0003.0001"
+    },
+    "variants": {
+      "topocentric": {},
+      "explicit_j2000": {
+        "posrefsys": "ICRF/J2000.0"
+      },
+      "no_radius": {
+        "meanrad": null
+      },
+      "bad_grid": {
+        "MJD0": 55000.0
+      },
+      "bad_version_date": {
+        "VS_DATE": "not a date"
+      },
+      "one_sample": {},
+      "numeric_version_date": {
+        "VS_DATE": "55564"
+      },
+      "time_unit_version_date": {
+        "VS_DATE": "1s"
+      },
+      "zero_range": {},
+      "nonfinite_direction": {},
+      "bad_optional_column": {},
+      "nonconformant_radius": {
+        "meanrad": {
+          "unit": "s",
+          "value": 1.0
+        }
+      },
+      "integer_metadata": {
+        "MJD0": 55563,
+        "dMJD": 1,
+        "GeoDist": 6378,
+        "GeoLat": 25,
+        "GeoLong": -67,
+        "meanrad": {
+          "unit": "km",
+          "value": 2400
+        }
+      }
+    },
+    "row_counts": {
+      "one_sample": 1
+    },
+    "column_overrides": {
+      "zero_range": {
+        "Rho": [
+          0.0,
+          5.01,
+          5.03
+        ]
+      },
+      "nonfinite_direction": {
+        "RA": [
+          null,
+          1.0,
+          2.0
+        ]
+      },
+      "bad_optional_column": {
+        "DiskLong": [
+          "invalid",
+          "invalid",
+          "invalid"
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "unloaded_and_defaults",
+      "steps": [
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "upstream_ganymede",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_alma",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834453148
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343087275e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "path_protocol",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "bytes"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343088012e-06
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "nul"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            "JPL-Horizons/Ganymede_55437-56293dUTC.tab"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343088012e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "path_expansion",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "home"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "environment"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "plain_environment"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        }
+      ]
+    },
+    {
+      "name": "protocol_errors_keep_frame",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            null
+          ],
+          "error": "TypeError",
+          "message": "argument _v must be a string"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            42
+          ],
+          "error": "TypeError",
+          "message": "argument _v must be a string"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            []
+          ],
+          "error": "TypeError",
+          "message": "argument _v must be a string"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            false
+          ],
+          "error": "TypeError",
+          "message": "argument _v must be a string"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343088012e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "replacement_and_done",
+      "steps": [
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/absent.tab",
+              "form": "text"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "done",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343088012e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "dates_and_ref",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55436.9,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55437.0,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 4.02760224877623
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 8.737757594643867e-06
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "TAI",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.124108834452598
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55565.3,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.1344488206394265
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.8,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.125495156827768
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 56292.9999,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 4.2153993248525445
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 56293.0,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "explicit_table_reference",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.7083333333,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Ganymede",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.1241088343047005
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.867967343286243e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "topocentric",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "topocentric"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "explicit_j2000",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "explicit_j2000"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "APP",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "no_radius",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "no_radius"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -0.39971906715150013
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "bad_grid",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "bad_grid"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "bad_version_date",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "bad_version_date"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "one_sample",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "one_sample"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "numeric_version_date",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "numeric_version_date"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "time_unit_version_date",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "time_unit_version_date"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "zero_range",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "zero_range"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.0,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 6.684587124092374e-18
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 4800000000000.001
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "nonfinite_direction",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "nonfinite_direction"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": "nan"
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": "nan"
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "bad_optional_column",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "bad_optional_column"
+            }
+          ],
+          "result": false,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "none",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "",
+            "value": [
+              0.0
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "nonconformant_radius",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "nonconformant_radius"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2226261.9771230114,
+              -5309032.228633729,
+              2745907.4032175085
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 2.671956929535133e-12
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "integer_metadata",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "synthetic": "integer_metadata"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            {
+              "value": 55564.5,
+              "unit": "d"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometname",
+          "args": [],
+          "result": "Test object",
+          "python_type": "str"
+        },
+        {
+          "method": "comettype",
+          "args": [],
+          "result": "TOPO",
+          "python_type": "str"
+        },
+        {
+          "method": "comettopo",
+          "args": [],
+          "result": {
+            "unit": "m",
+            "value": [
+              2258594.3534631343,
+              -5320914.851042295,
+              2695459.273382181
+            ]
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "result": {
+            "unit": "AU",
+            "value": 5.003514128691707
+          },
+          "python_type": "dict"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "result": {
+            "unit": "rad",
+            "value": 6.41269663088432e-06
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "cometdist_no_epoch",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "casa_signal": "SIGSEGV",
+          "native_result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "cometdist_after_done",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "done",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometdist",
+          "args": [],
+          "casa_signal": "SIGSEGV",
+          "native_result": {
+            "unit": "AU",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "cometangdiam_no_epoch",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "casa_signal": "SIGSEGV",
+          "native_result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    },
+    {
+      "name": "cometangdiam_after_done",
+      "steps": [
+        {
+          "method": "framecomet",
+          "args": [
+            {
+              "ephemeris": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+              "form": "text"
+            }
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "set_epoch",
+          "args": [
+            "UTC",
+            "2011/01/03/17:00:00"
+          ],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "done",
+          "args": [],
+          "result": true,
+          "python_type": "bool"
+        },
+        {
+          "method": "cometangdiam",
+          "args": [],
+          "casa_signal": "SIGSEGV",
+          "native_result": {
+            "unit": "rad",
+            "value": -1.0
+          },
+          "python_type": "dict"
+        }
+      ]
+    }
+  ]
+}
