@@ -15,6 +15,18 @@ use crate::plotbandpass::{
 #[derive(Serialize)]
 struct Reply {
     pages: Vec<BandpassPage>,
+    pdf: Option<PdfOutput>,
+    empty_tuple: bool,
+}
+
+#[derive(Serialize)]
+struct PdfOutput {
+    output: String,
+    sequential: bool,
+    density: u32,
+    convert: String,
+    pdftk: String,
+    ghostscript: String,
 }
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -88,14 +100,40 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         limit_channels: task.flag("chanrangeSetXrange")?,
         resample: unsigned(task, "resample")?,
     };
+    let build_pdf = task.flag("buildpdf")?;
+    if figfile.is_empty()
+        && (build_pdf || (!display.interactive && request.derivative_sigma == 0.0))
+    {
+        let reply = Reply {
+            pages: Vec::new(),
+            pdf: None,
+            empty_tuple: true,
+        };
+        return TaskSuccess::new(CasaValue::None, &reply);
+    }
     let plan = prepare_bandpass(&request).map_err(TaskFailure::execution)?;
     let value = if request.derivative_sigma > 0.0 {
         derivative_record(&plan)
     } else {
         CasaValue::None
     };
+    let empty_tuple = !request.show_baseband_number || !plan.panels.is_empty();
+    let pdf = if build_pdf {
+        Some(PdfOutput {
+            output: format!("{figfile}.pdf"),
+            sequential: display.sequential_names,
+            density: display.density,
+            convert: task.text("convert")?.unwrap_or_default(),
+            pdftk: task.text("pdftk")?.unwrap_or_default(),
+            ghostscript: task.text("gs")?.unwrap_or_default(),
+        })
+    } else {
+        None
+    };
     let reply = Reply {
         pages: pages(plan, &display).map_err(TaskFailure::execution)?,
+        pdf,
+        empty_tuple,
     };
     TaskSuccess::new(value, &reply)
         .map(|success| success.with_note("Use casars.tasks.plotbandpass to render the figures."))
@@ -207,12 +245,9 @@ fn channel_range(
 
 fn check_remaining_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
     for name in [
-        "buildpdf",
         "zoom",
         "showatm",
         "pwv",
-        "gs",
-        "convert",
         "showtsky",
         "showfdm",
         "showatmfield",
@@ -220,7 +255,6 @@ fn check_remaining_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure
         "showimage",
         "showatmpoints",
         "parentms",
-        "pdftk",
         "platformingThreshold",
         "platformingSigma",
     ] {

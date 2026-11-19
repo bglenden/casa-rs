@@ -231,7 +231,11 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if message == "cannot access local variable 'mytime' where it is not associated with a value":
                 raise UnboundLocalError(message) from error
             raise
-        return () if completion.value is None else _bandpass_statistics(completion.value)
+        if completion.value is not None:
+            return _bandpass_statistics(completion.value)
+        from json import loads
+
+        return () if loads(completion.stdout)["result"]["empty_tuple"] else None
     if name in ("split", "mstransform"):
         _coerce_ms_transform_selectors(values)
         try:
@@ -623,7 +627,7 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         from json import loads
         from ._bandpass_plot import render_bandpass
 
-        render_bandpass(loads(stdout)["result"]["pages"], workspace)
+        render_bandpass(loads(stdout)["result"], workspace)
     return completion
 
 
