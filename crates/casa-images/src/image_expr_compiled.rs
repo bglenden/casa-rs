@@ -266,6 +266,11 @@ enum CompiledMaskExprNode<T: ImageExprValue> {
         expr: Box<CompiledNumericExprNode<T>>,
         scalar: T,
     },
+    CompareExpr {
+        op: ImageExprCompareOp,
+        lhs: Box<CompiledNumericExprNode<T>>,
+        rhs: Box<CompiledNumericExprNode<T>>,
+    },
     Logical {
         op: MaskLogicalOp,
         lhs: Box<Self>,
@@ -531,6 +536,15 @@ impl<T: ImageExprValue> CompileCtx<T> {
                         &expr.try_shape().unwrap_or_else(|| node_shape.to_vec()),
                     )?),
                     scalar: *scalar,
+                }
+            }
+            MaskExprNode::CompareExpr { op, lhs, rhs } => {
+                let lhs_shape = lhs.try_shape().unwrap_or_else(|| node_shape.to_vec());
+                let rhs_shape = rhs.try_shape().unwrap_or_else(|| node_shape.to_vec());
+                CompiledMaskExprNode::CompareExpr {
+                    op: *op,
+                    lhs: Box::new(self.compile_numeric(lhs, &lhs_shape)?),
+                    rhs: Box::new(self.compile_numeric(rhs, &rhs_shape)?),
                 }
             }
             MaskExprNode::Logical { op, lhs, rhs } => {
@@ -1227,6 +1241,9 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
             Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => {
                 return expr.preferred_cursor_shape(full_shape, arena, worker_limit);
             }
+            Self::CompareExpr { lhs, .. } => {
+                return lhs.preferred_cursor_shape(full_shape, arena, worker_limit);
+            }
             Self::Logical { lhs, .. } => {
                 return lhs.preferred_cursor_shape(full_shape, arena, worker_limit);
             }
@@ -1249,6 +1266,13 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
             Self::CompareScalar { op, expr, scalar } => {
                 let data = expr.eval_slice(arena, ctx, start, shape, stride)?;
                 Ok(data.mapv(|value| value.expr_compare(*scalar, *op)))
+            }
+            Self::CompareExpr { op, lhs, rhs } => {
+                let lhs_data = lhs.eval_slice(arena, ctx, start, shape, stride)?;
+                let rhs_data = rhs.eval_slice(arena, ctx, start, shape, stride)?;
+                Ok(Zip::from(&lhs_data)
+                    .and(&rhs_data)
+                    .map_collect(|&lhs, &rhs| lhs.expr_compare(rhs, *op)))
             }
             Self::Logical { op, lhs, rhs } => {
                 let lhs_mask = lhs.eval_slice(arena, ctx, start, shape, stride)?;

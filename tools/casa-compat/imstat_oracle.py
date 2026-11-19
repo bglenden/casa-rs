@@ -61,6 +61,35 @@ def make_stokes_image(path: Path) -> None:
     ia.done()
 
 
+def make_constant_image(path: Path, value: float, shape=(8, 8, 1, 4)) -> None:
+    """An image of one value, with CASA's default fromshape coordinates."""
+    ia = image()
+    ia.fromshape(str(path), list(shape), overwrite=True)
+    ia.putchunk(np.full(shape, value, dtype=np.float32, order="F"))
+    ia.done()
+
+
+def make_nan_image(path: Path) -> None:
+    """An image of zeros with one NaN pixel."""
+    shape = (8, 8, 1, 4)
+    ia = image()
+    ia.fromshape(str(path), list(shape), overwrite=True)
+    data = np.zeros(shape, dtype=np.float32, order="F")
+    data[0, 0, 0, 0] = np.nan
+    ia.putchunk(data)
+    ia.done()
+
+
+def make_mask_image(path: Path, shape) -> None:
+    """An image of zeros whose rows from the middle on are one."""
+    ia = image()
+    ia.fromshape(str(path), list(shape), overwrite=True)
+    data = np.zeros(shape, dtype=np.float32, order="F")
+    data[shape[0] // 2:, ...] = 1.0
+    ia.putchunk(data)
+    ia.done()
+
+
 def plain(value):
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -200,6 +229,39 @@ def main() -> None:
         ("verbose false", {"verbose": False}),
         ("listit and verbose false", {"listit": False, "verbose": False}),
     ):
+        call = dict(imagename=str(values), **call)
+        record_case(result["values"], name, **call)
+
+    # The full LEL mask forms, on the fixture images beside the target.
+    other = root / "other.im"
+    make_constant_image(other, 2.0)
+    nan_image = root / "nan.im"
+    make_nan_image(nan_image)
+    mask2d = root / "mask2d.im"
+    make_mask_image(mask2d, (8, 8))
+    mask3d = root / "mask3d.im"
+    make_mask_image(mask3d, (8, 8, 1))
+    small = root / "small.im"
+    make_constant_image(small, 1.0, shape=(4, 4))
+    for name, call in {
+        "mask boolean and": {"mask": f'"{values}" > 3 && "{values}" < 10'},
+        "mask boolean or": {"mask": f'"{values}" > 3 || "{values}" > 400'},
+        "mask boolean not": {"mask": f'!("{values}" > 3)'},
+        "mask isnan nan image": {"mask": f'isnan("{nan_image}")'},
+        "mask isnan no nan": {"mask": f'isnan("{values}")'},
+        "mask iif": {"mask": f'iif("{values}" > 100, "{values}", 0) > 50'},
+        "mask sqrt threshold": {"mask": f'"{values}" > sqrt(100)'},
+        "mask two images": {"mask": f'"{values}" > "{other}"'},
+        "mask single quotes": {"mask": f"'{values}' > 100"},
+        "mask pi comparison": {"mask": f'"{values}" > 2 * pi()'},
+        "mask 2d stretch": {"mask": f'"{mask2d}" > 0.5', "stretch": True},
+        "mask 2d no stretch": {"mask": f'"{mask2d}" > 0.5', "stretch": False},
+        "mask 3d stretch": {"mask": f'"{mask3d}" > 0.5', "stretch": True},
+        "mask unextendable": {"mask": f'"{small}" > 0.5', "stretch": True},
+        "mask bad name": {"mask": '"does-not-exist.im" > 3'},
+        "mask bare words": {"mask": "not an expression"},
+        "mask unbalanced": {"mask": f'"{values}" > '},
+    }.items():
         call = dict(imagename=str(values), **call)
         record_case(result["values"], name, **call)
 

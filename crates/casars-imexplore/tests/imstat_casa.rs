@@ -439,9 +439,9 @@ fn imstat_stokes_match_casas_selections() {
     assert_eq!(message, "Stokes Q is not one of this image's Stokes planes");
 }
 
-/// Every `mask` form the oracle recorded, with `stretch` inert on the
-/// same-shaped expressions this surface reaches; the record is the same
-/// whatever `listit` and `verbose` hold, as CASA returns it.
+/// Every `mask` form the oracle recorded, with `stretch` extending
+/// conforming shapes as CASA does; the record is the same whatever
+/// `listit` and `verbose` hold, as CASA returns it.
 #[test]
 fn imstat_mask_and_logging_match_casa() {
     let expected = expected();
@@ -452,6 +452,76 @@ fn imstat_mask_and_logging_match_casa() {
         (
             "mask threshold with stretch",
             json!({"mask": mask, "stretch": true}),
+        ),
+        (
+            "mask boolean and",
+            json!({"mask": format!(
+                "\"{}\" > 3 && \"{}\" < 10",
+                values.display(),
+                values.display()
+            )}),
+        ),
+        (
+            "mask boolean or",
+            json!({"mask": format!(
+                "\"{}\" > 3 || \"{}\" > 400",
+                values.display(),
+                values.display()
+            )}),
+        ),
+        (
+            "mask boolean not",
+            json!({"mask": format!("!(\"{}\" > 3)", values.display())}),
+        ),
+        (
+            "mask isnan nan image",
+            json!({"mask": format!("isnan(\"{}\")", fixture("nan.im").display())}),
+        ),
+        (
+            "mask isnan no nan",
+            json!({"mask": format!("isnan(\"{}\")", values.display())}),
+        ),
+        (
+            "mask iif",
+            json!({"mask": format!(
+                "iif(\"{}\" > 100, \"{}\", 0) > 50",
+                values.display(),
+                values.display()
+            )}),
+        ),
+        (
+            "mask sqrt threshold",
+            json!({"mask": format!("\"{}\" > sqrt(100)", values.display())}),
+        ),
+        (
+            "mask two images",
+            json!({"mask": format!(
+                "\"{}\" > \"{}\"",
+                values.display(),
+                fixture("other.im").display()
+            )}),
+        ),
+        (
+            "mask single quotes",
+            json!({"mask": format!("'{}' > 100", values.display())}),
+        ),
+        (
+            "mask pi comparison",
+            json!({"mask": format!("\"{}\" > 2 * pi()", values.display())}),
+        ),
+        (
+            "mask 2d stretch",
+            json!({
+                "mask": format!("\"{}\" > 0.5", fixture("mask2d.im").display()),
+                "stretch": true,
+            }),
+        ),
+        (
+            "mask 3d stretch",
+            json!({
+                "mask": format!("\"{}\" > 0.5", fixture("mask3d.im").display()),
+                "stretch": true,
+            }),
         ),
         ("listit false", json!({"listit": false})),
         ("verbose false", json!({"verbose": false})),
@@ -472,11 +542,50 @@ fn imstat_mask_and_logging_match_casa() {
         &expected["values"]["mask empty selection"],
         "mask empty",
     );
-    // CASA's mask expression subset: an image threshold. CASA's full LEL
-    // parser refuses this wording differently; casa-rs's own refusal is
-    // the immoments precedent.
-    let message = run_imstat_failure(&values, json!({"mask": "not an expression"}));
-    assert!(message.contains("unsupported mask expression"), "{message}");
+    // The refusals casa-rs words as CASA does.
+    for (case, call) in [
+        (
+            "mask 2d no stretch",
+            json!({
+                "mask": format!("\"{}\" > 0.5", fixture("mask2d.im").display()),
+                "stretch": false,
+            }),
+        ),
+        (
+            "mask unextendable",
+            json!({
+                "mask": format!("\"{}\" > 0.5", fixture("small.im").display()),
+                "stretch": true,
+            }),
+        ),
+        (
+            "mask bad name",
+            json!({"mask": "\"does-not-exist.im\" > 3"}),
+        ),
+    ] {
+        let message = run_imstat_failure(&values, call);
+        assert_eq!(
+            message.trim_end().trim_end_matches('.'),
+            expected["values"][case]["error"]
+                .as_str()
+                .expect("the recorded refusal")
+                .trim_end()
+                .trim_end_matches('.'),
+            "{case}"
+        );
+    }
+    // A malformed expression is refused with the engine's own wording;
+    // CASA's ImageExprParse message stays in the fixture as reference.
+    for call in [
+        json!({"mask": "not an expression"}),
+        json!({"mask": format!("\"{}\" > ", values.display())}),
+    ] {
+        let message = run_imstat_failure(&values, call);
+        assert!(
+            message.contains("Input mask specification is incorrect"),
+            "{message}"
+        );
+    }
 }
 
 /// CASA's logfile: the statistics block is written whatever `listit`

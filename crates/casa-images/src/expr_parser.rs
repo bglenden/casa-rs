@@ -532,6 +532,23 @@ impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
             }),
         }
     }
+
+    /// A numeric expression, with a bare scalar accepted as a constant
+    /// one: the shape context comes from the other operands, as LEL
+    /// allows.
+    fn into_numeric_or_constant(
+        self,
+        pos: usize,
+    ) -> Result<ImageExprBuilder<'a, T>, ExprParseError> {
+        match self {
+            Self::Numeric(expression) => Ok(*expression),
+            Self::Scalar(value) => Ok(ImageExprBuilder::scalar(T::from_f64(value))),
+            Self::Mask(_) => Err(ExprParseError {
+                message: "expected numeric expression but found boolean mask".into(),
+                position: pos,
+            }),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -737,13 +754,15 @@ where
                         .compare_scalar(Self::convert_f64_to_t(*s), flipped);
                     return Ok(ExprNode::Mask(mask));
                 }
-                (ExprNode::Numeric(_), ExprNode::Numeric(_)) => {
-                    return Err(ExprParseError {
-                        message: "image-to-image comparisons not yet supported; \
-                                  compare each image against a scalar"
-                            .into(),
-                        position: pos,
-                    });
+                (ExprNode::Numeric(lhs), ExprNode::Numeric(rhs)) => {
+                    let mask = (**lhs)
+                        .clone()
+                        .compare_expr((**rhs).clone(), op)
+                        .map_err(|e| ExprParseError {
+                            message: e.to_string(),
+                            position: pos,
+                        })?;
+                    return Ok(ExprNode::Mask(mask));
                 }
                 _ => {
                     return Err(ExprParseError {
@@ -1176,10 +1195,11 @@ where
         let lower = name.to_ascii_lowercase();
         match lower.as_str() {
             "iif" => {
-                // iif(condition, true_val, false_val)
+                // iif(condition, true_val, false_val): a scalar branch is
+                // a constant expression beside an image one, as LEL allows.
                 let condition = arg1.into_mask(pos)?;
-                let if_true = arg2.into_numeric(pos)?;
-                let if_false = arg3.into_numeric(pos)?;
+                let if_true = arg2.into_numeric_or_constant(pos)?;
+                let if_false = arg3.into_numeric_or_constant(pos)?;
                 ImageExprBuilder::iif(condition, if_true, if_false)
                     .map_err(|e| ExprParseError {
                         message: e.to_string(),

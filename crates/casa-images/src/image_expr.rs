@@ -866,6 +866,13 @@ enum MaskExprNode<'a, T: ImageExprValue> {
         expr: Box<NumericExprNode<'a, T>>,
         scalar: T,
     },
+    /// Element-wise comparison of two numeric expressions, as LEL's
+    /// image-to-image comparisons.
+    CompareExpr {
+        op: ImageExprCompareOp,
+        lhs: Box<NumericExprNode<'a, T>>,
+        rhs: Box<NumericExprNode<'a, T>>,
+    },
     Logical {
         op: MaskLogicalOp,
         lhs: Box<MaskExprNode<'a, T>>,
@@ -898,6 +905,11 @@ impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
     fn try_shape(&self) -> Option<Vec<usize>> {
         match self {
             Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => expr.try_shape(),
+            Self::CompareExpr { lhs, rhs, .. } => {
+                let lhs_shape = lhs.try_shape()?;
+                let rhs_shape = rhs.try_shape()?;
+                broadcast_shapes(&lhs_shape, &rhs_shape).ok()
+            }
             Self::Logical { lhs, rhs, .. } => {
                 let lhs_shape = lhs.try_shape()?;
                 let rhs_shape = rhs.try_shape()?;
@@ -1597,6 +1609,24 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
             },
             shape: self.meta.shape,
         }
+    }
+
+    /// Element-wise comparison of two expressions producing a lazy
+    /// boolean mask, as LEL's image-to-image comparisons.
+    pub fn compare_expr(
+        self,
+        rhs: Self,
+        op: ImageExprCompareOp,
+    ) -> Result<MaskExprBuilder<'a, T>, ImageError> {
+        let out_shape = broadcast_shapes(&self.meta.shape, &rhs.meta.shape)?;
+        Ok(MaskExprBuilder {
+            node: MaskExprNode::CompareExpr {
+                op,
+                lhs: Box::new(self.node),
+                rhs: Box::new(rhs.node),
+            },
+            shape: out_shape,
+        })
     }
 
     /// Convenience `>` comparison against a scalar.
