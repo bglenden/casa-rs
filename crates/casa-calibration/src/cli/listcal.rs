@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's terminal and file listings of calibration solution values.
 
-use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::Path;
 
 use casa_ms::MeasurementSet;
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
+use tempfile::NamedTempFile;
 
 use crate::listing::{CalibrationListing, list_calibration};
 
@@ -31,16 +32,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let text = listing.lines();
     let listfile = task.text("listfile")?.filter(|path| !path.is_empty());
     if let Some(path) = listfile {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|error| {
-                TaskFailure::execution(format!("could not create listing file {path:?}: {error}"))
-                    .at("listfile")
-            })?;
-        file.write_all(text.as_bytes())
-            .map_err(|error| TaskFailure::execution(error.to_string()).at("listfile"))?;
+        publish_listing(Path::new(&path), &text)?;
         let message = format!("Writing output to file: {path}\n");
         return Ok(TaskSuccess::new(
             CasaValue::None,
@@ -59,4 +51,24 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         },
     )?
     .with_text(text))
+}
+
+fn publish_listing(path: &Path, text: &str) -> Result<(), TaskFailure> {
+    let fail = |error: std::io::Error| {
+        TaskFailure::execution(format!(
+            "could not create listing file {}: {error}",
+            path.display()
+        ))
+        .at("listfile")
+    };
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut stage = NamedTempFile::new_in(directory).map_err(fail)?;
+    stage.write_all(text.as_bytes()).map_err(fail)?;
+    stage
+        .persist_noclobber(path)
+        .map_err(|error| fail(error.error))?;
+    Ok(())
 }

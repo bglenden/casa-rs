@@ -12,6 +12,7 @@ import sys
 
 import casatasks as casa
 
+from bpoly_oracle import multiwindow_data
 from calibration_rerefant_oracle import reference_fixture
 from calibration_smoothcal_oracle import fixture
 
@@ -24,7 +25,7 @@ def same_text(actual, expected):
         raise AssertionError(difference[:18000] or (repr(actual), repr(expected)))
 
 
-def files(root, vis, products, native):
+def files(root, vis, multi_vis, products, native):
     cases = [
         ('gain-all', 'gain', {}),
         ('gain-selected', 'gain', dict(field='FLUX', antenna='A3,A0', spw='0:0')),
@@ -36,12 +37,17 @@ def files(root, vis, products, native):
         ('bandpass-stride', 'bandpass', dict(field='FLUX', antenna='A0,A3', spw='0:2~6^2')),
         ('bandpass-first-range', 'bandpass', dict(field='FLUX', spw='0:1~2;5~6')),
         ('delay', 'delay', dict(pagerows=-1)),
+        ('scalar', 'scalar', dict(pagerows=0)),
+        ('fringe', 'fringe', dict(antenna='A0,A4', pagerows=0)),
+        ('phase-field', 'solved', dict(field='PHASE', antenna='A0', pagerows=0)),
+        ('multiple-windows', 'multi', dict(spw='1:0,0:0', antenna='A0,A3', pagerows=0)),
     ]
     for name, kind, options in cases:
         expected, actual = (root/f'{name}.{engine}.txt' for engine in ('casa', 'native'))
         inp = str(products[kind])
-        assert casa.listcal(str(vis), inp, listfile=str(expected), **options) is None
-        assert native.listcal(vis=str(vis), caltable=inp, listfile=str(actual), **options) is None
+        observed = str(multi_vis if kind == 'multi' else vis)
+        assert casa.listcal(observed, inp, listfile=str(expected), **options) is None
+        assert native.listcal(vis=observed, caltable=inp, listfile=str(actual), **options) is None
         same_text(actual.read_text(), expected.read_text())
     return len(cases)
 
@@ -110,11 +116,18 @@ def main():
     assert [p.replace(annotation=inspect.Parameter.empty) for p in actual.parameters.values()] == list(expected.parameters.values())
     vis = root/'source.ms'
     fixture(vis, root/'solved.cal')
-    products = {name: root/f'{name}.cal' for name in ('gain', 'bandpass', 'delay')}
+    products = {name: root/f'{name}.cal' for name in (
+        'gain', 'bandpass', 'delay', 'scalar', 'fringe', 'solved', 'multi',
+    )}
     reference_fixture(vis, products['gain'], 'G Jones')
     casa.bandpass(str(vis), str(products['bandpass']), refant='A0', solint='inf', minsnr=0.)
     casa.gencal(str(vis), str(products['delay']), 'sbd', parameter=[2.5])
-    file_cases = files(root, vis, products, native)
+    reference_fixture(vis, products['scalar'], 'T Jones', width=1)
+    reference_fixture(vis, products['fringe'], 'Fringe Jones', width=8, real=True)
+    multi_vis = root/'multi.ms'
+    multiwindow_data(vis, multi_vis)
+    casa.gaincal(str(multi_vis), str(products['multi']), refant='A0', solint='int', minsnr=0.)
+    file_cases = files(root, vis, multi_vis, products, native)
     terminal_cases = terminals(vis, products['bandpass'])
     failures = errors(root, vis, products['gain'], native)
     print(f'{file_cases} file listings, {terminal_cases} terminal transcripts and {failures} error cases passed')
