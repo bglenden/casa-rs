@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 
 import casatasks as casa
 from casatools import table
@@ -28,7 +29,7 @@ def retune(vis, window, frequency):
         tool.close()
 
 
-def attach_power_curves(vis, raw):
+def attach_power_curves(vis, raw, *, destination=None, missing_antenna=None):
     tool = table()
     assert tool.open(str(vis / 'ANTENNA'))
     antenna_count = tool.nrows()
@@ -39,9 +40,9 @@ def attach_power_curves(vis, raw):
     types = ('POWER(ZA)', 'POWER(EL)', 'VOLTAGE(ZA)', 'VOLTAGE(EL)')
     raw.write_text(''.join(
         f'{midpoint} {duration} {antenna} 0 {types[antenna % 4]} 2 1.1 1.2 .001 .002 0 0 0 0 1.3 1.5\n'
-        for antenna in range(antenna_count)
+        for antenna in range(antenna_count) if antenna != missing_antenna
     ))
-    path = vis / 'GAIN_CURVE'
+    path = destination if destination is not None else vis / 'GAIN_CURVE'
     assert tool.fromascii(
         str(path), str(raw), sep=' ',
         columnnames=['TIME', 'INTERVAL', 'ANTENNA_ID', 'SPECTRAL_WINDOW_ID', 'TYPE',
@@ -78,6 +79,23 @@ def refuses(root, case, vis, kind, options, native):
             assert not out.exists()
         else:
             raise AssertionError(f'{module.__name__} accepted {case}')
+    return {'refused': True}
+
+
+def protects_curve_input(root, vis, source, native):
+    input_file = source / 'table.dat'
+    expected = input_file.read_bytes()
+    caltable = root / 'must-not-publish.cal'
+    for output_table, options in ((caltable, {'output': str(input_file), 'overwrite': True}),
+                                  (source / 'inside.cal', {})):
+        try:
+            generate(native, vis, output_table, [('gc', options)])
+        except RuntimeError as error:
+            assert 'overlap' in str(error)
+        else:
+            raise AssertionError('gencal accepted an output inside its gain-curve input')
+        assert not output_table.exists()
+        assert input_file.read_bytes() == expected
     return {'refused': True}
 
 
@@ -121,6 +139,19 @@ def main():
         missing_case = f'{kind}-missing-file'
         results[missing_case] = refuses(root, missing_case, source, kind,
                                        {'infile': str(root / 'absent')}, native)
+    missing_band = root / 'curves-with-no-bandname.tbl'
+    shutil.copytree(args.gaincurves.resolve(), missing_band)
+    tool = table()
+    assert tool.open(str(missing_band), nomodify=False)
+    try:
+        tool.removecols(['BANDNAME'])
+    finally:
+        tool.close()
+    for kind in ('gc', 'gceff'):
+        case = f'{kind}-missing-bandname'
+        results[case] = refuses(root, case, source, kind, {'infile': str(missing_band)}, native)
+    results['eff-missing-bandname'], _ = compare_case(root, 'eff-missing-bandname', source, 'eff',
+                                                     {'infile': str(missing_band)}, native)
     results['inactive-selectors'], selected = compare_case(
         root, 'inactive-selectors', source, 'gc',
         {'spw': '0', 'antenna': '1', 'pol': 'Y', 'uniform': False, 'parameter': [1.7]}, native)
@@ -167,6 +198,20 @@ def main():
     assert power['FPARAM'].shape[0] == 16
     results['embedded-eff'], flat = compare_case(root, 'embedded-eff', embedded, 'eff', {}, native)
     np.testing.assert_array_equal(flat['FPARAM'], default['eff'])
+
+    sparse = root / 'sparse.ms'
+    external = root / 'sparse.tbl'
+    copy_ms(source, sparse)
+    attach_power_curves(sparse, root / 'sparse.txt', destination=external, missing_antenna=1)
+    assert b'./sparse.tbl' in (sparse / 'table.dat').read_bytes()
+    results['sparse-external'], _ = compare_case(root, 'sparse-external', sparse, 'gc', {}, native,
+                                                 check_apply=True)
+    sparse_unweighted = root / 'sparse-external-without-calwt'
+    sparse_unweighted.mkdir()
+    results['sparse-external-without-calwt'] = {'apply_nrms': apply_both(
+        sparse_unweighted, sparse, root / 'sparse-external' / 'casa.cal',
+        root / 'sparse-external' / 'native.cal', native, calwt=False)}
+    results['external-input-protection'] = protects_curve_input(root, sparse, external, native)
 
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     print(json.dumps(results, indent=2))

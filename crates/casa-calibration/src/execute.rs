@@ -3971,7 +3971,8 @@ impl GainCurveGrid {
                 angle_power *= za_degrees;
                 loss += f64::from(self.coefficients[[base + index, 0]]) * angle_power;
             }
-            return if loss >= 0.0 {
+            let missing = self.flags[[base, 0]];
+            return if !missing && loss >= 0.0 {
                 (loss.sqrt() as f32, false)
             } else {
                 (0.0, true)

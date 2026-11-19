@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Convert the embedded FITS gain-curve extension as CASA's EPowerCurve does.
 
+use std::path::{Path, PathBuf};
+
 use casa_ms::MeasurementSet;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayValue, ScalarValue, Value};
@@ -10,22 +12,22 @@ use super::{
     get_f32_array_fortran, get_f64, get_string,
 };
 
-pub(super) fn rows(
-    ms: &MeasurementSet,
-    reference: &Value,
-) -> Result<Vec<PriorCalRow>, GencalError> {
+pub(super) fn source_path(owner: &Path, table: &Table) -> Result<Option<PathBuf>, GencalError> {
+    match table.keywords().get("GAIN_CURVE") {
+        None => Ok(None),
+        Some(Value::TableRef(reference)) => Ok(Some(casa_tables::add_directory(reference, owner))),
+        Some(_) => Err(GencalError::InvalidRequest(
+            "Error in Calibrater::specifycal. GAIN_CURVE keyword does not name a table".into(),
+        )),
+    }
+}
+
+pub(super) fn rows(ms: &MeasurementSet, path: &Path) -> Result<Vec<PriorCalRow>, GencalError> {
     let invalid = |message: String| {
         GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {message}"))
     };
-    let Value::TableRef(reference) = reference else {
-        return Err(invalid("GAIN_CURVE keyword does not name a table".into()));
-    };
-    let root = ms
-        .path()
-        .ok_or_else(|| invalid("embedded gain curve requires a disk MeasurementSet".into()))?;
-    let path = root.join(reference);
     let table =
-        Table::open(TableOptions::new(&path)).map_err(|source| GencalError::OpenGainCurves {
+        Table::open(TableOptions::new(path)).map_err(|source| GencalError::OpenGainCurves {
             path: path.display().to_string(),
             source: Box::new(source),
         })?;
@@ -124,7 +126,9 @@ pub(super) fn rows(
             gain = power;
         }
         for (coefficients, scale) in gain
-            .chunks_exact_mut(POWER_CURVE_TERMS)
+            .as_chunks_mut::<POWER_CURVE_TERMS>()
+            .0
+            .iter_mut()
             .zip([*sensitivity_r, *sensitivity_l])
         {
             for coefficient in coefficients {

@@ -242,7 +242,9 @@ pub(crate) fn gencal_with_output_mode(
         && request.output_table.exists()
         && !request.caltype.is_gain_curve();
     let embedded = match request.caltype {
-        GencalType::Gc | GencalType::Gceff => ms.main_table().keywords().get("GAIN_CURVE"),
+        GencalType::Gc | GencalType::Gceff => {
+            power_curve::source_path(&request.measurement_set, ms.main_table())?
+        }
         _ => None,
     };
     let mut rows = match request.caltype {
@@ -252,8 +254,9 @@ pub(crate) fn gencal_with_output_mode(
         GencalType::Antpos => antpos_rows(&ms, request)?,
         GencalType::Gc | GencalType::Gceff | GencalType::Eff => {
             validate_gaincurve_selection(&ms, request)?;
-            if let Some(reference) = embedded {
-                power_curve::rows(&ms, reference)?
+            if let Some(path) = embedded.as_deref() {
+                refuse_curve_input_overlap(request, path)?;
+                power_curve::rows(&ms, path)?
             } else {
                 gaincurve_rows(&ms, request, gaincurve_infile)?
             }
@@ -570,6 +573,7 @@ fn gaincurve_rows(
             invalid("the standard VLA GainCurves table is missing from the CASA data tree".into())
         })?
     };
+    refuse_curve_input_overlap(request, &source_path)?;
     let gaincurves = Table::open(TableOptions::new(&source_path)).map_err(|source| {
         GencalError::OpenGainCurves {
             path: source_path.display().to_string(),
@@ -639,6 +643,46 @@ fn gaincurve_rows(
         return Err(invalid("Found no gaincurve data for any spw.".into()));
     }
     Ok(rows)
+}
+
+fn refuse_curve_input_overlap(request: &GencalRequest, input: &Path) -> Result<(), GencalError> {
+    let invalid = |reason| GencalError::PrepareOutput {
+        path: request.output_table.display().to_string(),
+        reason,
+    };
+    if crate::paths::overlap(&request.output_table, input)
+        .map_err(|error| invalid(error.to_string()))?
+    {
+        return Err(invalid(
+            "caltable overlaps the gain-curve input table".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn gaincurve_report_input(
+    request: &GencalRequest,
+    infile: Option<&Path>,
+) -> Result<Option<PathBuf>, GencalError> {
+    if !request.caltype.is_gain_curve() {
+        return Ok(None);
+    }
+    if matches!(request.caltype, GencalType::Gc | GencalType::Gceff) {
+        let ms = &request.measurement_set;
+        let main = Table::open(TableOptions::new(ms)).map_err(|source| {
+            GencalError::OpenMeasurementSet {
+                path: ms.display().to_string(),
+                source: Box::new(casa_ms::MsError::from(source)),
+            }
+        })?;
+        if let Some(path) = power_curve::source_path(ms, &main)? {
+            return Ok(Some(path));
+        }
+    }
+    Ok(infile
+        .map(Path::to_path_buf)
+        .or_else(|| request.gaincurve_table.clone())
+        .or_else(default_vla_gaincurve_table))
 }
 
 fn opacity_rows(
@@ -949,6 +993,10 @@ fn gaincurves_for_window(
                 selected.push(row);
             }
         }
+    } else if require_full_curve {
+        return Err(GencalError::UnsupportedTableValue(
+            "gain-curve input is missing BANDNAME".into(),
+        ));
     }
     if selected.is_empty() {
         for &row in valid {
