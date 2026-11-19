@@ -12935,7 +12935,7 @@
     {
       "kind": "task",
       "id": "mstransform",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "MSTransform",
       "category": "MeasurementSet",
       "summary": "Materialize a selected MeasurementSet into a new output MS.",
@@ -13159,7 +13159,7 @@
         },
         {
           "name": "array",
-          "concept": {"id": "ms.selection.array", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.array", "semantic_revision": 2},
           "order": 13,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13167,14 +13167,14 @@
           "projections": {
             "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
             "provider": {"field": "array"},
-            "python": {"name": "array"},
+            "python": {"name": "array", "type_hint": "str"},
             "presentation": {"label": "Array", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "reviewed_homonym": {"review_id": "#1614", "reason": "The transform tasks read the CASA variant without rewriting selector text."}
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 4},
           "order": 14,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13182,10 +13182,9 @@
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange"},
-            "python": {"name": "uvrange"},
+            "python": {"name": "uvrange", "type_hint": "str"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "observation",
@@ -13203,7 +13202,7 @@
         },
         {
           "name": "feed",
-          "concept": {"id": "ms.selection.feed", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.feed", "semantic_revision": 2},
           "order": 16,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13211,10 +13210,10 @@
           "projections": {
             "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
             "provider": {"field": "feed"},
-            "python": {"name": "feed"},
+            "python": {"name": "feed", "type_hint": "str"},
             "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "reviewed_homonym": {"review_id": "#1614", "reason": "The transform tasks read the CASA variant without rewriting selector text."}
         },
         {
           "name": "datacolumn",
@@ -13797,7 +13796,7 @@
     {
       "kind": "task",
       "id": "split",
-      "contract_version": 6,
+      "contract_version": 7,
       "display_name": "Split",
       "category": "MeasurementSet",
       "summary": "Create a selected MeasurementSet subset, equivalent to CASA split.",
@@ -13976,7 +13975,7 @@
         },
         {
           "name": "array",
-          "concept": {"id": "ms.selection.array", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.array", "semantic_revision": 2},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13984,14 +13983,13 @@
           "projections": {
             "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
             "provider": {"field": "array"},
-            "python": {"name": "array"},
+            "python": {"name": "array", "type_hint": "str | int"},
             "presentation": {"label": "Array", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 4},
           "order": 11,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13999,10 +13997,9 @@
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange"},
-            "python": {"name": "uvrange"},
+            "python": {"name": "uvrange", "type_hint": "str"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "observation",
@@ -14020,7 +14017,7 @@
         },
         {
           "name": "feed",
-          "concept": {"id": "ms.selection.feed", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.feed", "semantic_revision": 2},
           "order": 13,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -14028,10 +14025,9 @@
           "projections": {
             "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
             "provider": {"field": "feed"},
-            "python": {"name": "feed"},
+            "python": {"name": "feed", "type_hint": "str | int"},
             "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "datacolumn",

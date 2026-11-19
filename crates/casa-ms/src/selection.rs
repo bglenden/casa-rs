@@ -32,13 +32,16 @@ use std::time::Instant;
 use thiserror::Error;
 
 pub mod antenna_expr;
+pub(crate) mod array_expr;
 mod edit;
+mod feed_expr;
 mod intent;
 pub(crate) mod parser;
 mod row_grammar;
 pub mod spw_expr;
 pub mod syntax;
 pub mod time_expr;
+mod uv_expr;
 
 pub use antenna_expr::{AntennaRow, BaselineSelection, resolve_antenna_selector};
 pub use edit::{MsSelectorEditContext, validate_ms_selector_edit};
@@ -51,6 +54,13 @@ pub use time_expr::{
     LogicalRowFilter, TimeCondition, TimeDefaults, TimeListEntry, TimeSelection, TimeSelector,
     TimeSelectorDefaults, TimeTerm, msselection_first_logical_row, resolve_time_selector,
 };
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowGrammar {
+    Standard,
+    Casa,
+    Transform,
+}
 
 /// Builder for MS row selection criteria.
 ///
@@ -134,6 +144,9 @@ pub(crate) struct CompiledMsSelection {
     observation_ids: Vec<i32>,
     casa_observation_ranges: Option<Vec<(i32, i32)>>,
     array_ids: Vec<i32>,
+    casa_array_ranges: Option<Vec<(i32, i32)>>,
+    casa_feed: Option<feed_expr::FeedSelection>,
+    casa_uv: Option<uv_expr::UvDistanceSelection>,
     uv_ranges: Vec<UvSelectionRange>,
     uv_taql_exprs: Vec<String>,
     taql_exprs: Vec<String>,
@@ -462,13 +475,13 @@ impl MsSelection {
     }
 
     pub(crate) fn compile(&self, ms: &MeasurementSet) -> MsResult<CompiledMsSelection> {
-        self.compile_with_row_grammar(ms, false)
+        self.compile_with_row_grammar(ms, RowGrammar::Standard)
     }
 
     fn compile_with_row_grammar(
         &self,
         ms: &MeasurementSet,
-        full: bool,
+        grammar: RowGrammar,
     ) -> MsResult<CompiledMsSelection> {
         if !self.selectdata && !self.has_text_selection() {
             return Ok(CompiledMsSelection::default());
@@ -478,7 +491,7 @@ impl MsSelection {
                 "selectdata=false cannot be combined with MeasurementSet selectors".to_string(),
             ));
         }
-        let mut compiled = parser::selection_from_options(ms, &self.to_summary_options(), full)?;
+        let mut compiled = parser::selection_from_options(ms, &self.to_summary_options(), grammar)?;
         if let Some(value) = self.data_description.as_deref() {
             compiled = compiled.data_description(
                 &crate::selection::syntax::parse_numeric_id_selector(value, "data-description")?,
@@ -983,7 +996,8 @@ impl MeasurementSet {
         request: &MsSelection,
         io: MsSelectionIoBudget,
     ) -> Result<ResolvedMsSelection, MsSelectionError> {
-        self.resolve_rows(request, io, false).map(|(rows, _)| rows)
+        self.resolve_rows(request, io, RowGrammar::Standard)
+            .map(|(rows, _)| rows)
     }
 
     /// Resolve CASA's full row and channel selection grammars.
@@ -994,22 +1008,23 @@ impl MeasurementSet {
         request: &MsSelection,
         io: MsSelectionIoBudget,
     ) -> Result<ResolvedMsSelection, MsSelectionError> {
-        self.resolve_rows(request, io, true).map(|(rows, _)| rows)
+        self.resolve_rows(request, io, RowGrammar::Casa)
+            .map(|(rows, _)| rows)
     }
 
-    pub(crate) fn resolve_casa_selection_with_time(
+    pub(crate) fn resolve_transform_selection(
         &self,
         request: &MsSelection,
         io: MsSelectionIoBudget,
     ) -> Result<(ResolvedMsSelection, Option<TimeSelection>), MsSelectionError> {
-        self.resolve_rows(request, io, true)
+        self.resolve_rows(request, io, RowGrammar::Transform)
     }
 
     fn resolve_rows(
         &self,
         request: &MsSelection,
         io: MsSelectionIoBudget,
-        full: bool,
+        grammar: RowGrammar,
     ) -> Result<(ResolvedMsSelection, Option<TimeSelection>), MsSelectionError> {
         if io.requested_bytes_per_row < std::mem::size_of::<ResolvedMsSelectionRow>() {
             return Err(MsSelectionError::InvalidBudget(format!(
@@ -1017,7 +1032,7 @@ impl MeasurementSet {
                 std::mem::size_of::<ResolvedMsSelectionRow>()
             )));
         }
-        let compiled = request.compile_with_row_grammar(self, full)?;
+        let compiled = request.compile_with_row_grammar(self, grammar)?;
         let taql_predicate = compiled.resolved_to_taql(self)?;
         let selected_row_indices = compiled.apply_with_budget(self, io)?;
         let row_blocks = plan_selected_row_blocks(&selected_row_indices, io)?;
@@ -1259,15 +1274,20 @@ fn apply_structured_selection(
         field: !field_ids.is_empty(),
         data_desc: !spw_ddids.is_empty()
             || !data_desc_ids.is_empty()
-            || !uv_lambda_by_ddid.is_empty(),
+            || !uv_lambda_by_ddid.is_empty()
+            || sel
+                .casa_uv
+                .as_ref()
+                .is_some_and(|uv| uv.needs_data_desc_id()),
         antenna1: needs_antennas,
         antenna2: needs_antennas,
         time: sel.time_range.is_some() || sel.casa_time.is_some(),
         scan: !scan_numbers.is_empty() || sel.casa_scan_ranges.is_some(),
         state: !state_ids.is_empty(),
         observation: !observation_ids.is_empty() || sel.casa_observation_ranges.is_some(),
-        array: !array_ids.is_empty(),
-        uvw: !sel.uv_ranges.is_empty(),
+        array: !array_ids.is_empty() || sel.casa_array_ranges.is_some(),
+        feed: sel.casa_feed.is_some(),
+        uvw: !sel.uv_ranges.is_empty() || sel.casa_uv.is_some(),
     };
     let rows_per_block = rows_per_block.unwrap_or_else(|| table.row_count().max(1));
     let mut load_columns_ns = 0u64;
@@ -1316,20 +1336,21 @@ fn apply_structured_selection(
         "structured_selection",
         setup_started_at.elapsed().as_nanos() as u64,
         Some(format!(
-            "rows={} row_count={} load_columns={:.3}s filter_rows={:.3}s requested=field:{} data_desc:{} antenna:{} time:{} scan:{} state:{} observation:{} array:{} uvrange:{}",
+            "rows={} row_count={} load_columns={:.3}s filter_rows={:.3}s requested=field:{} data_desc:{} antenna:{} time:{} scan:{} state:{} observation:{} array:{} feed:{} uvrange:{}",
             rows.len(),
             table.row_count(),
             load_columns_ns as f64 / 1_000_000_000.0,
             filter_rows_ns as f64 / 1_000_000_000.0,
             !field_ids.is_empty(),
-            !spw_ddids.is_empty() || !data_desc_ids.is_empty(),
+            column_request.data_desc,
             needs_antennas,
             column_request.time,
             column_request.scan,
             !state_ids.is_empty(),
             column_request.observation,
-            !array_ids.is_empty(),
-            !sel.uv_ranges.is_empty(),
+            column_request.array,
+            column_request.feed,
+            column_request.uvw,
         )),
     );
 
@@ -1400,13 +1421,23 @@ fn structured_row_matches(
             .as_ref()
             .and_then(|values| values.get(slot))
             .copied();
-        if !sel
-            .uv_ranges
-            .iter()
-            .any(|range| uv_range_matches(*range, uvw[slot], data_desc_id, uv_lambda_by_ddid))
+        if (!sel.uv_ranges.is_empty()
+            && !sel
+                .uv_ranges
+                .iter()
+                .any(|range| uv_range_matches(*range, uvw[slot], data_desc_id, uv_lambda_by_ddid)))
+            || sel
+                .casa_uv
+                .as_ref()
+                .is_some_and(|uv| !uv.holds(uvw[slot], data_desc_id))
         {
             return false;
         }
+    }
+    if let (Some(selection), Some((first, second))) = (&sel.casa_feed, &columns.feed)
+        && !selection.holds(first[slot], second[slot])
+    {
+        return false;
     }
     columns
         .scan
@@ -1422,7 +1453,7 @@ fn structured_row_matches(
         && columns
             .array
             .as_ref()
-            .is_none_or(|column| array_ids.contains(&column[slot]))
+            .is_none_or(|column| row_id_matches(column[slot], array_ids, &sel.casa_array_ranges))
 }
 
 fn row_id_matches(id: i32, ids: &HashSet<i32>, ranges: &Option<Vec<(i32, i32)>>) -> bool {
@@ -1504,6 +1535,7 @@ struct StructuredSelectionColumnRequest {
     state: bool,
     observation: bool,
     array: bool,
+    feed: bool,
     uvw: bool,
 }
 
@@ -1518,6 +1550,7 @@ struct StructuredSelectionColumns {
     state: Option<Vec<i32>>,
     observation: Option<Vec<i32>>,
     array: Option<Vec<i32>>,
+    feed: Option<(Vec<i32>, Vec<i32>)>,
     uvw: Option<Vec<[f64; 3]>>,
 }
 
@@ -1556,6 +1589,9 @@ fn load_structured_selection_columns(
         if request.array {
             columns.array = Some(Vec::new());
         }
+        if request.feed {
+            columns.feed = Some((Vec::new(), Vec::new()));
+        }
         if request.uvw {
             columns.uvw = Some(Vec::new());
         }
@@ -1588,6 +1624,12 @@ fn load_structured_selection_columns(
     }
     if request.array {
         columns.array = Some(load_i32_column(table, "ARRAY_ID", rows)?);
+    }
+    if request.feed {
+        columns.feed = Some((
+            load_i32_column(table, "FEED1", rows)?,
+            load_i32_column(table, "FEED2", rows)?,
+        ));
     }
     if request.uvw {
         columns.uvw = Some(load_uvw_column(table, rows)?);

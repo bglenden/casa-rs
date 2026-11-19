@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Connect the CASA selector grammars to the bounded row selection API.
 
+use super::array_expr::ArraySelection;
+use super::feed_expr::FeedSelection;
 use super::syntax::{ChannelSelection, ChannelSelectionSegment, parse_numeric_row_id_ranges};
+use super::uv_expr::UvDistanceSelection;
 use super::{
     BaselineSelection, CompiledMsSelection, TimeCondition, TimeDefaults, TimeSelectorDefaults,
     int_list, resolve_time_selector,
@@ -69,21 +72,53 @@ pub(super) fn apply(
     ] {
         if let Some(text) = text.as_deref().filter(|text| !text.is_empty()) {
             let ranges = parse_numeric_row_id_ranges(text, label)?;
-            let terms = ranges
-                .iter()
-                .map(|&(start, end)| {
-                    if start == end {
-                        format!("{column}=={start}")
-                    } else {
-                        format!("({column}>={start} AND {column}<={end})")
-                    }
-                })
-                .collect::<Vec<_>>();
-            compiled.casa_taql_exprs.push(disjunction(terms));
+            compiled
+                .casa_taql_exprs
+                .push(row_ids_predicate(column, &ranges));
             *target = Some(ranges);
         }
     }
     Ok(compiled)
+}
+
+pub(super) fn apply_transform_selectors(
+    ms: &MeasurementSet,
+    mut compiled: CompiledMsSelection,
+    options: &ListObsOptions,
+) -> MsResult<CompiledMsSelection> {
+    if let Some(text) = options.array.as_deref().filter(|text| !text.is_empty()) {
+        let ranges = ArraySelection::parse(text)?.ranges;
+        compiled
+            .casa_taql_exprs
+            .push(row_ids_predicate("ARRAY_ID", &ranges));
+        compiled.casa_array_ranges = Some(ranges);
+    }
+    if let Some(text) = options.feed.as_deref().filter(|text| !text.is_empty()) {
+        let selection = FeedSelection::parse(ms, text)?;
+        compiled.casa_taql_exprs.push(selection.to_taql());
+        compiled.casa_feed = Some(selection);
+    }
+    if let Some(text) = options.uvrange.as_deref().filter(|text| !text.is_empty()) {
+        let selection = UvDistanceSelection::parse(ms, text)?;
+        compiled.casa_taql_exprs.push(selection.to_taql());
+        compiled.casa_uv = Some(selection);
+    }
+    Ok(compiled)
+}
+
+fn row_ids_predicate(column: &str, ranges: &[(i32, i32)]) -> String {
+    disjunction(
+        ranges
+            .iter()
+            .map(|&(start, end)| {
+                if start == end {
+                    format!("{column}=={start}")
+                } else {
+                    format!("({column}>={start} AND {column}<={end})")
+                }
+            })
+            .collect(),
+    )
 }
 
 pub(super) fn with_time(

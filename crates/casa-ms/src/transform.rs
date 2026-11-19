@@ -318,7 +318,7 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         selection.spw = Some(spw.to_string());
     }
     let (resolved_rows, time_selection) = input
-        .resolve_casa_selection_with_time(&selection, budget)
+        .resolve_transform_selection(&selection, budget)
         .map_err(selection_error)?;
     maybe_log_transform_progress(
         "select_rows",
@@ -455,7 +455,7 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
         time_selection.as_ref(),
     )?;
     let row_id_maps =
-        selection_metadata::reindex_observation_and_state(&input, request, antenna_id_map)?;
+        selection_metadata::reindex_selected_row_ids(&input, request, antenna_id_map)?;
     maybe_log_transform_progress(
         "compact_spectral_subtables",
         stage_started_at.elapsed(),
@@ -1263,6 +1263,7 @@ fn gather_selected_main_column_overrides(
                 }
                 if column.data_type().and_then(streamed_scalar_type).is_some() {
                     let id_map = row_id_maps.for_column(name);
+                    let array_selection = row_id_maps.array.as_ref().filter(|_| name == "ARRAY_ID");
                     for rows in selected_rows.chunks(batch_rows.max(1)) {
                         let values = table
                             .column_accessor(name)
@@ -1272,8 +1273,8 @@ fn gather_selected_main_column_overrides(
                                 source: Box::new(source),
                             })?;
                         for (row, value) in rows.iter().zip(values) {
-                            let value = match id_map {
-                                Some(ids) => {
+                            let value = match (id_map, array_selection) {
+                                (Some(ids), _) => {
                                     let old_id = scalar_i32(value.as_ref(), name, *row)?;
                                     let new_id = ids.get(&old_id).ok_or_else(|| {
                                         MsTransformError::SpectralMetadata {
@@ -1282,6 +1283,16 @@ fn gather_selected_main_column_overrides(
                                         }
                                     })?;
                                     Some(ScalarValue::Int32(*new_id))
+                                }
+                                (_, Some(selection)) => {
+                                    let old_id = scalar_i32(value.as_ref(), name, *row)?;
+                                    let new_id = selection.reindex(old_id).map_err(|source| {
+                                        MsTransformError::SpectralMetadata {
+                                            path: output_path.display().to_string(),
+                                            reason: source.to_string(),
+                                        }
+                                    })?;
+                                    Some(ScalarValue::Int32(new_id))
                                 }
                                 _ => value,
                             };

@@ -16,8 +16,11 @@ use crate::listobs::{ListObsOptions, format_float_compact};
 pub(crate) fn selection_from_options(
     ms: &MeasurementSet,
     options: &ListObsOptions,
-    full_row_grammar: bool,
+    grammar: super::RowGrammar,
 ) -> MsResult<CompiledMsSelection> {
+    use super::RowGrammar;
+
+    let full_row_grammar = grammar != RowGrammar::Standard;
     let mut selection = CompiledMsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
@@ -41,7 +44,9 @@ pub(crate) fn selection_from_options(
             selection = apply_antenna_selector(ms, selection, antenna)?;
         }
     }
-    if let Some(array) = options.array.as_deref() {
+    if grammar == RowGrammar::Transform {
+        selection = super::row_grammar::apply_transform_selectors(ms, selection, options)?;
+    } else if let Some(array) = options.array.as_deref() {
         selection = selection.array(&parse_numeric_id_selector(array, "array")?);
     }
     if let Some(intent) = options.intent.as_deref() {
@@ -50,7 +55,9 @@ pub(crate) fn selection_from_options(
     if let Some(correlation) = options.correlation.as_deref() {
         selection = apply_correlation_selector(ms, selection, correlation)?;
     }
-    if let Some(uvrange) = options.uvrange.as_deref() {
+    if grammar != RowGrammar::Transform
+        && let Some(uvrange) = options.uvrange.as_deref()
+    {
         selection = apply_uvrange_selector(ms, selection, uvrange)?;
     }
     if !full_row_grammar && let Some(timerange) = options.timerange.as_deref() {

@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 673
+- Concepts: 675
 - Surfaces: 42 (42 task, 0 session)
 - Surface bindings: 993
 
@@ -25,8 +25,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 5 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
-| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 6 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
-| [Split](#surface-split)<br><code>split</code> | task | 6 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
+| [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 7 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
+| [Split](#surface-split)<br><code>split</code> | task | 7 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
 | [Applycal](#surface-applycal)<br><code>applycal</code> | task | 7 | <code>calibration</code> | 25 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 6 | <code>calibration</code> | 42 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 6 | <code>calibration</code> | 39 | Solve bandpass calibration for a MeasurementSet. |
@@ -514,7 +514,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## MSTransform (<code>mstransform</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Materialize a selected MeasurementSet into a new output MS.
@@ -534,10 +534,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
 | <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
-| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
+| <code>feed</code> | <code>ms.selection.feed@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA feed IDs and feed pair selection. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>realmodelcol</code> | <code>mstransform.realmodelcol@r1</code> | <code>bool</code> | <code>false</code>; optional | Data | Write a virtual MODEL column as a real one. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
@@ -582,7 +582,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Split (<code>split</code>)
 
 - Kind: `task`
-- Contract version: `6`
+- Contract version: `7`
 - Category: MeasurementSet
 - Provider family: `mstransform`
 - Summary: Create a selected MeasurementSet subset, equivalent to CASA split.
@@ -599,10 +599,10 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlation selector. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
+| <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
 | <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
-| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
+| <code>feed</code> | <code>ms.selection.feed@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA feed IDs and feed pair selection. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
 | <code>width</code> | <code>ms.transform.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Selection | Number of adjacent selected channels averaged into each output channel. |

@@ -100,8 +100,11 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         scan: selector("scan")?,
         antenna: selector("antenna")?,
         timerange: selector("timerange")?,
-        observation: task.value("observation").and_then(observation_text),
+        observation: task.value("observation").and_then(variant_selector_text),
         intent: task.text("intent")?.filter(|text| !text.is_empty()),
+        array: variant_selector(task, "array")?,
+        uvrange: variant_selector(task, "uvrange")?,
+        feed: variant_selector(task, "feed")?,
         msselect: selector(taql_name)?,
         ..MsSelection::default()
     };
@@ -114,13 +117,37 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
     Ok(selection)
 }
 
-fn observation_text(value: &ParameterValue) -> Option<String> {
+fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<String>, TaskFailure> {
+    let Some(value) = task.value(name) else {
+        return Ok(None);
+    };
+    if task.surface() == "split" && matches!(name, "array" | "feed") {
+        return Ok(variant_selector_text(value));
+    }
+    let record_type = match value {
+        ParameterValue::String(text) => return Ok((!text.is_empty()).then(|| text.clone())),
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            ..
+        } => {
+            return Ok(None);
+        }
+        ParameterValue::Bool(_) => "Bool",
+        ParameterValue::Integer(_) => "Int",
+        _ => "unknown",
+    };
+    Err(TaskFailure::execution(format!(
+        "RecordRep::get_pointer - incorrect data type String   used for field {name} with type {record_type:<8}"
+    )).at(name))
+}
+
+fn variant_selector_text(value: &ParameterValue) -> Option<String> {
     match value {
         ParameterValue::NumpyScalar {
             dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
             value,
         }
-        | ParameterValue::ScalarArray(value) => observation_text(value),
+        | ParameterValue::ScalarArray(value) => variant_selector_text(value),
         ParameterValue::String(text) => (!text.is_empty()).then(|| text.clone()),
         other => Some(python_repr(other)),
     }
