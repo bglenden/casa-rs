@@ -176,8 +176,11 @@ impl ImageTransform {
         let requested = stokes
             .stokes()
             .iter()
-            .map(|code| polarization_coordinate(*code))
-            .collect::<Vec<_>>();
+            .map(|code| {
+                polarization_coordinate(*code)
+                    .ok_or_else(|| invalid("unsupported polarization plane in model image"))
+            })
+            .collect::<MsResult<Vec<_>>>()?;
         let routing = PolarizationRouting::compile(&correlations, &requested).map_err(invalid)?;
         let increment = [direction.increment()[0], direction.increment()[1]];
         // GridFT phases on the world direction of the integer image
@@ -444,19 +447,24 @@ fn grid_stokes(plane: &GridPolarization) -> MsResult<StokesType> {
     }
 }
 
-pub(crate) fn polarization_coordinate(stokes: StokesType) -> PolarizationCoordinate {
+pub(crate) fn polarization_coordinate(stokes: StokesType) -> Option<PolarizationCoordinate> {
     match stokes {
-        StokesType::I => PolarizationCoordinate::StokesI,
-        StokesType::Q => PolarizationCoordinate::StokesQ,
-        StokesType::U => PolarizationCoordinate::StokesU,
-        StokesType::V => PolarizationCoordinate::StokesV,
-        StokesType::XX => PolarizationCoordinate::LinearXx,
-        StokesType::XY => PolarizationCoordinate::LinearXy,
-        StokesType::YX => PolarizationCoordinate::LinearYx,
-        StokesType::YY => PolarizationCoordinate::LinearYy,
-        StokesType::RR => PolarizationCoordinate::CircularRr,
-        StokesType::RL => PolarizationCoordinate::CircularRl,
-        StokesType::LR => PolarizationCoordinate::CircularLr,
-        StokesType::LL => PolarizationCoordinate::CircularLl,
+        StokesType::I => Some(PolarizationCoordinate::StokesI),
+        StokesType::Q => Some(PolarizationCoordinate::StokesQ),
+        StokesType::U => Some(PolarizationCoordinate::StokesU),
+        StokesType::V => Some(PolarizationCoordinate::StokesV),
+        StokesType::XX => Some(PolarizationCoordinate::LinearXx),
+        StokesType::XY => Some(PolarizationCoordinate::LinearXy),
+        StokesType::YX => Some(PolarizationCoordinate::LinearYx),
+        StokesType::YY => Some(PolarizationCoordinate::LinearYy),
+        StokesType::RR => Some(PolarizationCoordinate::CircularRr),
+        StokesType::RL => Some(PolarizationCoordinate::CircularRl),
+        StokesType::LR => Some(PolarizationCoordinate::CircularLr),
+        StokesType::LL => Some(PolarizationCoordinate::CircularLl),
+        StokesType::Ptotal
+        | StokesType::Plinear
+        | StokesType::PFtotal
+        | StokesType::PFlinear
+        | StokesType::Pangle => None,
     }
 }

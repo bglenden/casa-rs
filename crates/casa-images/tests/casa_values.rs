@@ -335,16 +335,63 @@ fn immath_takes_casas_spellings_of_its_defaults() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    // A name of its own, or a polarization mode, is not yet.
-    let refused = |values: Value, parameter: &str| {
-        let mut request = values;
-        request["imagename"] = json!(["in.image"]);
-        request["outfile"] = json!("refused.im");
-        assert_refuses(json_run(immath, "immath", request, root), parameter, "#977");
-        assert!(!root.join("refused.im").exists());
-    };
-    refused(json!({"expr": "A*2", "varnames": ["A"]}), "varnames");
-    refused(json!({"mode": "poli", "sigma": "5mJy/beam"}), "mode");
+    // Varname binding succeeds on the JSON surface.
+    let named = json_run(
+        immath,
+        "immath",
+        json!({"imagename": ["in.image"], "expr": "A*2", "varnames": ["A"], "outfile": "named.im"}),
+        root,
+    );
+    assert!(
+        matches!(
+            named,
+            TaskReply::Succeeded {
+                value: CasaValue::Bool { value: true },
+                ..
+            }
+        ),
+        "{named:?}"
+    );
+    assert!(root.join("named.im").exists());
+    let input_pixels = casa_images::PagedImage::<f32>::open(root.join("in.image"))
+        .unwrap()
+        .get()
+        .unwrap();
+    let named_img = casa_images::PagedImage::<f32>::open(root.join("named.im")).unwrap();
+    let named_pixels = named_img.get().unwrap();
+    assert!(!named_pixels.is_empty());
+    for (&got, &orig) in named_pixels.iter().zip(input_pixels.iter()) {
+        assert!(
+            (got - orig * 2.0).abs() < 1e-6,
+            "expected named.im pixel {} == 2.0 * {orig}, got {got}",
+            orig * 2.0
+        );
+    }
+
+    // Invalid mode, prec, or insufficient inputs fail cleanly without creating output.
+    for (request, needle) in [
+        (
+            json!({"imagename": ["in.image"], "mode": "bogus", "outfile": "badmode.im"}),
+            "invalid choice",
+        ),
+        (
+            json!({"imagename": ["in.image"], "prec": "int", "outfile": "badprec.im"}),
+            "Unsupported value for type",
+        ),
+        (
+            json!({"imagename": ["in.image"], "mode": "spix", "outfile": "badspix.im"}),
+            "Requires two images",
+        ),
+    ] {
+        let reply = json_run(immath, "immath", request, root);
+        let TaskReply::Failed { message, .. } = reply else {
+            panic!("expected failure for {needle}: {reply:?}");
+        };
+        assert!(message.contains(needle), "got: {message}");
+    }
+    assert!(!root.join("badmode.im").exists());
+    assert!(!root.join("badprec.im").exists());
+    assert!(!root.join("badspix.im").exists());
 }
 
 /// CASA's default call, `imregrid('in.image')`, is `template='get'`, which

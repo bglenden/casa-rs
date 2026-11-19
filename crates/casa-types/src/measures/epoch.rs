@@ -388,20 +388,22 @@ impl fmt::Display for EpochRef {
 pub struct MEpoch {
     value: MjdHighPrec,
     refer: EpochRef,
+    razing: bool,
 }
 
 impl MEpoch {
     /// Creates a new `MEpoch` from a high-precision value and reference type.
     pub fn new(value: MjdHighPrec, refer: EpochRef) -> Self {
-        Self { value, refer }
+        Self {
+            value,
+            refer,
+            razing: false,
+        }
     }
 
     /// Creates a new `MEpoch` from a single MJD value and reference type.
     pub fn from_mjd(mjd: f64, refer: EpochRef) -> Self {
-        Self {
-            value: MjdHighPrec::from_mjd(mjd),
-            refer,
-        }
+        Self::new(MjdHighPrec::from_mjd(mjd), refer)
     }
 
     /// Creates a new `MEpoch` from MJD seconds (a MeasurementSet `TIME`).
@@ -426,10 +428,7 @@ impl MEpoch {
                 expected: "time",
                 got: q.unit().name().to_owned(),
             })?;
-        Ok(Self {
-            value: MjdHighPrec::from_mjd(mjd),
-            refer,
-        })
+        Ok(Self::from_mjd(mjd, refer))
     }
 
     /// Returns the high-precision value.
@@ -440,6 +439,18 @@ impl MEpoch {
     /// Returns the reference type.
     pub fn refer(&self) -> EpochRef {
         self.refer
+    }
+
+    /// Set the casacore RAZE flag. As an input measure it discards the
+    /// fractional day after converting to the requested time scale.
+    pub fn with_razing(mut self, razing: bool) -> Self {
+        self.razing = razing;
+        self
+    }
+
+    /// Whether converting this epoch discards the output's fractional day.
+    pub fn is_razing(&self) -> bool {
+        self.razing
     }
 
     /// Returns the epoch value as a [`Quantity`] in days.
@@ -456,22 +467,19 @@ impl MEpoch {
     /// - UT1 ↔ UTC: requires `dut1_seconds`
     /// - GMST1 ↔ LMST and GAST ↔ LAST: require `position` (for longitude)
     pub fn convert_to(&self, target: EpochRef, frame: &MeasFrame) -> Result<MEpoch, MeasureError> {
-        if self.refer == target {
-            return Ok(self.clone());
-        }
-        let path = find_path(self.refer, target)?;
         let mut current = self.value;
-        let mut current_ref = self.refer;
-
-        for next_ref in path {
-            current = apply_hop(current, current_ref, next_ref, frame)?;
-            current_ref = next_ref;
+        if self.refer != target {
+            let path = find_path(self.refer, target)?;
+            let mut current_ref = self.refer;
+            for next_ref in path {
+                current = apply_hop(current, current_ref, next_ref, frame)?;
+                current_ref = next_ref;
+            }
         }
-
-        Ok(MEpoch {
-            value: current,
-            refer: target,
-        })
+        if self.razing {
+            current = MjdHighPrec::new(current.day(), 0.0);
+        }
+        Ok(MEpoch::new(current, target))
     }
 }
 

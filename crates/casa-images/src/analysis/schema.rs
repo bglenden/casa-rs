@@ -367,20 +367,83 @@ pub struct ImsubimageRequest {
     pub overwrite: bool,
 }
 
-/// CASA `immath(..., mode="evalexpr")` request for tutorial image arithmetic.
+/// CASA `immath` request supporting `evalexpr`, `spix`, `pola`, `poli`,
+/// `lpoli`, and `tpoli` modes with CASA's full parameter surface.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImmathRequest {
-    /// Input CASA image paths. Tutorial expressions reference them as `IM0`,
-    /// `IM1`, and so on.
+    /// Input CASA or FITS image paths (`IM0`, `IM1`, ... or named via
+    /// `varnames`). May be empty in `mode = "evalexpr"` when `expr` names all
+    /// inputs directly in quotes.
+    #[serde(default)]
     pub imagename: Vec<PathBuf>,
+    /// Math mode: `evalexpr`, `spix`, `pola`, `poli`, `lpoli`, or `tpoli`.
+    #[serde(default = "default_immath_mode")]
+    pub mode: String,
     /// Output CASA image path.
+    #[serde(default = "default_immath_outfile")]
     pub outfile: PathBuf,
-    /// Expression to evaluate. This implementation supports tutorial forms
-    /// `IM0 * IM1`, `IM0 / IM1`, and scalar multiples of `IM0`.
+    /// Mathematical expression for `mode = "evalexpr"`.
+    #[serde(default = "default_immath_expr")]
     pub expr: String,
-    /// Replace an existing output image.
+    /// Optional variable names mapping to `imagename` entries.
+    #[serde(default)]
+    pub varnames: Vec<String>,
+    /// Noise standard deviation quantity string for polarization debiasing.
+    #[serde(default = "default_immath_sigma")]
+    pub sigma: String,
+    /// Linearly polarized intensity threshold below which `pola` masks pixels.
+    #[serde(default)]
+    pub polithresh: Option<String>,
+    /// LEL mask expression or mask image applied to the selection.
+    #[serde(default)]
+    pub mask: Option<String>,
+    /// Region selection (CRTF string, pixel box, or region file path).
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Inclusive directional pixel box (or comma-separated quadruplets).
+    #[serde(default, rename = "box")]
+    pub box_pixels: Option<String>,
+    /// CASA channel selection.
+    #[serde(default)]
+    pub chans: Option<String>,
+    /// CASA Stokes selection (ignored in polarization modes).
+    #[serde(default)]
+    pub stokes: Option<String>,
+    /// Stretch lower-dimensional masks to match target image shape.
+    #[serde(default)]
+    pub stretch: bool,
+    /// Metadata source image path or variable token (e.g. `IM1`).
+    #[serde(default)]
+    pub imagemd: Option<String>,
+    /// Output precision for `evalexpr` and `spix`: `float` or `double` (minimum match).
+    #[serde(default = "default_immath_prec")]
+    pub prec: String,
+    /// Replace an existing output image (casa-rs extension).
     #[serde(default)]
     pub overwrite: bool,
+}
+
+impl Default for ImmathRequest {
+    fn default() -> Self {
+        Self {
+            imagename: Vec::new(),
+            mode: default_immath_mode(),
+            outfile: default_immath_outfile(),
+            expr: default_immath_expr(),
+            varnames: Vec::new(),
+            sigma: default_immath_sigma(),
+            polithresh: None,
+            mask: None,
+            region: None,
+            box_pixels: None,
+            chans: None,
+            stokes: None,
+            stretch: false,
+            imagemd: None,
+            prec: default_immath_prec(),
+            overwrite: false,
+        }
+    }
 }
 
 /// CASA `impbcor` request for primary-beam image correction.
@@ -478,6 +541,26 @@ fn default_impbcor_mode() -> String {
 
 fn default_impbcor_cutoff() -> f64 {
     -1.0
+}
+
+fn default_immath_mode() -> String {
+    "evalexpr".to_string()
+}
+
+fn default_immath_outfile() -> PathBuf {
+    PathBuf::from("immath_results.im")
+}
+
+fn default_immath_expr() -> String {
+    "IM0".to_string()
+}
+
+fn default_immath_sigma() -> String {
+    "0.0mJy/beam".to_string()
+}
+
+fn default_immath_prec() -> String {
+    "float".to_string()
 }
 
 /// Summary returned after writing a PV image.

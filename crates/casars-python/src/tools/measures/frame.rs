@@ -16,73 +16,80 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, PositionRef};
 use pyo3::PyResult;
 
-use super::{State, no_measures};
+use super::{FrameValue, State, no_measures, record};
 use crate::convert::RecordArg;
-use crate::convert::holder::{CasaMeasure, Measure, MeasureKind, MeasureValue, direction_angles};
+use crate::convert::holder::{
+    CasaMeasure, Measure, MeasureKind, MeasureValue, direction_angles, epoch_ref,
+};
 use crate::convert::value::CasaValue;
 use crate::tools::LogLine;
 
 /// casacore's `C::degree`.
 const DEGREE: f64 = std::f64::consts::PI / 180.0;
 
-/// Reads a measure argument, logging casacore's messages (prefixed to CASA's
-/// `context`) when it is not one.
-fn read(record: &RecordArg, context: &str, lines: &mut Vec<LogLine>) -> Option<Measure> {
-    match Measure::from_record(&record.0) {
-        Ok(read) => {
-            if let Some(warning) = read.warning {
-                lines.push(LogLine::warning(warning));
-            }
-            Some(read.measure)
-        }
-        Err(error) => {
-            lines.push(LogLine::error(format!("{}{context}", error.message())));
-            None
-        }
-    }
-}
-
-/// `me.doframe(v)`: an epoch, position or direction joins the frame
-/// (`True`); other measures are not frame elements (`False`).
+/// Set a frame element from the first value in the supplied measure record.
 pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>) -> CasaValue {
-    if matches!(v.0.get("type"), Some(crate::convert::Variant::Text(kind)) if kind.eq_ignore_ascii_case("radialvelocity"))
-    {
-        return match super::record::Measures::read(v) {
-            Ok(values) => {
-                if let Some(warning) = &values.warning {
-                    lines.push(LogLine::warning(warning.clone()));
-                }
-                state.frame.radial_velocity = Some(values.into_reference_origin());
-                state.frame.rendered = None;
-                CasaValue::Bool(true)
-            }
-            Err(error) => {
-                lines.push(LogLine::error(format!(
-                    "{}Non-measure type v in measure conversion",
-                    error.message()
-                )));
-                CasaValue::Bool(false)
-            }
-        };
+    let mut values = match record::Measures::read(v) {
+        Ok(values) => values,
+        Err(error) => {
+            lines.push(LogLine::error(format!(
+                "{}Non-measure type v in measure conversion",
+                error.message()
+            )));
+            return CasaValue::Bool(false);
+        }
+    };
+    if let Some(warning) = values.warning.take() {
+        lines.push(LogLine::warning(warning));
     }
-    let Some(measure) = read(v, "Non-measure type v in measure conversion", lines) else {
+    let measure = values.values[0];
+    let kind = measure.kind();
+    if !matches!(
+        kind,
+        MeasureKind::Epoch
+            | MeasureKind::Position
+            | MeasureKind::Direction
+            | MeasureKind::RadialVelocity
+    ) {
         return CasaValue::Bool(false);
+    }
+    let absolute = match frame_absolute_value(state, measure, values.offset.as_deref()) {
+        Ok(absolute) => absolute,
+        Err(reason) => {
+            lines.push(LogLine::error(format!("Exception Reports: {reason}")));
+            return CasaValue::Bool(false);
+        }
     };
     let frame = &mut state.frame;
-    let slot = match measure.kind() {
+    let slot = match kind {
         MeasureKind::Epoch => &mut frame.epoch,
         MeasureKind::Position => &mut frame.position,
         MeasureKind::Direction => &mut frame.direction,
-        MeasureKind::RadialVelocity => unreachable!("handled with reference offsets above"),
-        MeasureKind::Frequency
-        | MeasureKind::Doppler
-        | MeasureKind::Baseline
-        | MeasureKind::Uvw
-        | MeasureKind::EarthMagnetic => return CasaValue::Bool(false),
+        MeasureKind::RadialVelocity => &mut frame.radial_velocity,
+        _ => unreachable!("only four measure kinds are frame elements"),
     };
-    *slot = Some(measure);
+    *slot = Some(FrameValue { measure, absolute });
     frame.rendered = None;
     CasaValue::Bool(true)
+}
+
+fn frame_absolute_value(
+    state: &mut State,
+    measure: Measure,
+    origin: Option<&record::Measures>,
+) -> Result<Measure, String> {
+    record::absolute_value(measure, origin, &mut |origin, target| {
+        // casacore builds the frame converter from the record's own
+        // reference. An offset cannot borrow the tool's ambient frame
+        // while that reference is being installed.
+        let mut frame = MeasFrame::new();
+        if origin.kind() == MeasureKind::Epoch && origin.refer != target {
+            frame = frame.with_measures(state.measures()?);
+        }
+        convert_native(origin, target, &frame, |direction, refer| {
+            direction.convert_to(refer, &frame)
+        })
+    })
 }
 
 /// `me.framenow()`: the frame's epoch is the system clock's UTC.
@@ -96,7 +103,7 @@ pub(super) fn framenow(state: &mut State) -> CasaValue {
         UNIX_EPOCH_MJD + since_unix_s / 86_400.0,
         EpochRef::UTC,
     ));
-    state.frame.epoch = Some(Measure::from_casa(&now));
+    state.frame.epoch = Some(Measure::from_casa(&now).into());
     state.frame.rendered = None;
     CasaValue::Bool(true)
 }
@@ -116,12 +123,6 @@ pub(super) fn measure(
     off: &RecordArg,
     lines: &mut Vec<LogLine>,
 ) -> PyResult<CasaValue> {
-    if !off.0.is_empty() {
-        lines.push(LogLine::error(
-            "measure offsets (off) are not yet implemented in casa-rs",
-        ));
-        return Ok(CasaValue::empty_record());
-    }
     let measure = match super::record::Measures::read(v) {
         Ok(measure) => measure,
         Err(error) => {
@@ -135,9 +136,34 @@ pub(super) fn measure(
     if let Some(warning) = &measure.warning {
         lines.push(LogLine::warning(warning.clone()));
     }
-    let target = measure.values[0].kind().codes().resolve_or_default(rf);
-    match measure.resolve(state, target)? {
+    let origin = if off.0.is_empty() {
+        None
+    } else {
+        match super::record::Measures::read(off) {
+            Ok(origin) => Some(origin),
+            Err(error) => {
+                if off.0.contains_key("offset") {
+                    lines.push(LogLine::warning(format!(
+                        "{}Non-measure type offset in measure conversion\n",
+                        error.message()
+                    )));
+                }
+                None
+            }
+        }
+    };
+    let kind = measure.values[0].kind();
+    let target = kind
+        .resolve_code(rf)
+        .unwrap_or_else(|| kind.codes().default_code());
+    match measure.resolve_relative(state, target, origin)? {
         Ok(converted) => Ok(converted.to_value()),
+        Err(reason) if reason == "Non-conforming offset measure type" => {
+            lines.push(LogLine::warning(format!(
+                "{reason}\nCannot convert measure"
+            )));
+            Ok(CasaValue::empty_record())
+        }
         Err(reason) => {
             lines.push(LogLine::warning(format!(
                 "Cannot convert due to missing frame information\nCannot convert measure: {reason}"
@@ -155,8 +181,22 @@ pub(super) fn convert(
     measure: &Measure,
     target: &'static str,
 ) -> PyResult<Result<Measure, String>> {
-    if measure.refer == target {
+    if measure.refer == target && !target.starts_with("R_") {
         return Ok(Ok(*measure));
+    }
+    if let MeasureValue::Epoch(value) = measure.value
+        && let (Ok((source, raze)), Ok((destination, label_razes))) =
+            (epoch_ref(measure.refer), epoch_ref(target))
+        && source == destination
+    {
+        let value = if raze {
+            casa_types::measures::MjdHighPrec::new(value.day(), 0.0)
+        } else {
+            value
+        };
+        return Ok(Ok(Measure::from_casa(&CasaMeasure::Epoch(
+            MEpoch::new(value, destination).with_razing(label_razes),
+        ))));
     }
     if matches!(
         measure.value,
@@ -190,75 +230,89 @@ pub(super) fn convert(
         measure.value,
         MeasureValue::Frequency(_) | MeasureValue::RadialVelocity(_)
     ) {
-        with_comet_direction(state, frame)
+        with_resolved_direction(state, frame)
     } else {
         frame
     };
-    let converted = (|| {
-        let unsupported =
-            |kind: &str| format!("the {target} {kind} frame is not yet implemented in casa-rs");
-        let error = |error: casa_types::measures::MeasureError| error.to_string();
-        Ok::<_, String>(match measure.to_casa()? {
-            CasaMeasure::Epoch(epoch) => CasaMeasure::Epoch(
-                epoch
-                    .convert_to(
-                        EpochRef::from_str(target).map_err(|_| unsupported("epoch"))?,
-                        &frame,
-                    )
-                    .map_err(error)?,
-            ),
-            CasaMeasure::Direction(direction) => CasaMeasure::Direction(
-                convert_direction(
-                    state,
-                    &direction,
-                    DirectionRef::from_str(target).map_err(|_| unsupported("direction"))?,
-                    &frame,
-                )
-                .map_err(error)?,
-            ),
-            CasaMeasure::Position(position) => CasaMeasure::Position(
-                position
-                    .convert_to(PositionRef::from_str(target).map_err(|_| unsupported("position"))?)
-                    .map_err(error)?,
-            ),
-            CasaMeasure::Doppler(value) => CasaMeasure::Doppler(
-                value
-                    .convert_to(crate::convert::holder::doppler_ref(target)?, &frame)
-                    .map_err(error)?,
-            ),
-            CasaMeasure::RadialVelocity(value) => CasaMeasure::RadialVelocity(
-                value
-                    .convert_to(
-                        target.parse().map_err(|_| unsupported("radialvelocity"))?,
-                        &frame,
-                    )
-                    .map_err(error)?,
-            ),
-            CasaMeasure::Frequency(frequency) => CasaMeasure::Frequency(
-                frequency
-                    .convert_to(
-                        FrequencyRef::from_str(target).map_err(|_| unsupported("frequency"))?,
-                        &frame,
-                    )
-                    .map_err(error)?,
-            ),
-        })
-    })();
-    Ok(converted.map(|converted| Measure::from_casa(&converted)))
+    Ok(convert_native(
+        *measure,
+        target,
+        &frame,
+        |direction, refer| convert_direction(state, direction, refer, &frame),
+    ))
 }
 
-pub(super) fn with_comet_direction(state: &State, frame: MeasFrame) -> MeasFrame {
-    if frame
-        .direction()
-        .is_some_and(|dir| dir.refer() == DirectionRef::COMET)
-    {
-        // Resolve the active sky position and its range. If it
-        // cannot be resolved, the actual conversion decides whether it needs
-        // a direction, just as it would with any other incomplete frame.
-        if let Ok((direction, distance)) = super::comet::resolve_direction(state, &frame) {
-            return frame.with_ephemeris_direction(direction, distance);
-        }
+fn convert_native(
+    measure: Measure,
+    target: &'static str,
+    frame: &MeasFrame,
+    convert_direction_callback: impl FnOnce(
+        &MDirection,
+        DirectionRef,
+    )
+        -> Result<MDirection, casa_types::measures::MeasureError>,
+) -> Result<Measure, String> {
+    if measure.refer == target && !target.starts_with("R_") {
+        return Ok(measure);
     }
+    let unsupported =
+        |kind: &str| format!("the {target} {kind} frame is not yet implemented in casa-rs");
+    let error = |error: casa_types::measures::MeasureError| error.to_string();
+    let converted = match measure.to_casa()? {
+        CasaMeasure::Epoch(epoch) => {
+            let (reference, raze) = epoch_ref(target).map_err(|_| unsupported("epoch"))?;
+            CasaMeasure::Epoch(
+                epoch
+                    .convert_to(reference, frame)
+                    .map_err(error)?
+                    .with_razing(raze),
+            )
+        }
+        CasaMeasure::Direction(direction) => CasaMeasure::Direction(
+            convert_direction_callback(
+                &direction,
+                DirectionRef::from_str(target).map_err(|_| unsupported("direction"))?,
+            )
+            .map_err(error)?,
+        ),
+        CasaMeasure::Position(position) => CasaMeasure::Position(
+            position
+                .convert_to(PositionRef::from_str(target).map_err(|_| unsupported("position"))?)
+                .map_err(error)?,
+        ),
+        CasaMeasure::Doppler(value) => CasaMeasure::Doppler(
+            value
+                .convert_to(crate::convert::holder::doppler_ref(target)?, frame)
+                .map_err(error)?,
+        ),
+        CasaMeasure::RadialVelocity(value) => CasaMeasure::RadialVelocity(
+            value
+                .convert_to(
+                    target.parse().map_err(|_| unsupported("radialvelocity"))?,
+                    frame,
+                )
+                .map_err(error)?,
+        ),
+        CasaMeasure::Frequency(frequency) => CasaMeasure::Frequency(
+            frequency
+                .convert_to(
+                    FrequencyRef::from_str(target).map_err(|_| unsupported("frequency"))?,
+                    frame,
+                )
+                .map_err(error)?,
+        ),
+    };
+    Ok(Measure::from_casa(&converted))
+}
+
+pub(super) fn with_resolved_direction(state: &mut State, frame: MeasFrame) -> MeasFrame {
+    if let Some(direction) = frame.direction()
+        && direction.refer().casacore_code() >= 32
+        && let Ok((direction, distance)) = resolve_direction(state, direction, &frame)
+    {
+        return frame.with_ephemeris_direction(direction, distance);
+    }
+    // Some conversions do not need a direction even if one was supplied.
     frame
 }
 
@@ -321,23 +375,26 @@ pub(super) fn materialize(
     elements: &super::Frame,
     mut frame: MeasFrame,
 ) -> Result<MeasFrame, String> {
-    for element in [elements.epoch, elements.position, elements.direction]
-        .into_iter()
-        .flatten()
-    {
-        frame = match element.to_casa()? {
-            CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
-            CasaMeasure::Position(position) => frame.with_position(position),
-            CasaMeasure::Direction(direction) => frame.with_direction(direction),
-            CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
-            CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
-        };
-    }
-    if let Some(velocity) = &elements.radial_velocity {
-        let value = velocity.radial_velocity(&frame)?;
-        frame = frame.with_radial_velocity(value);
+    let frame_elements = [
+        elements.position.as_ref(),
+        elements.epoch.as_ref(),
+        elements.direction.as_ref(),
+        elements.radial_velocity.as_ref(),
+    ];
+    for element in frame_elements.into_iter().flatten() {
+        frame = install_frame_value(frame, element.absolute)?;
     }
     Ok(frame)
+}
+
+fn install_frame_value(frame: MeasFrame, measure: Measure) -> Result<MeasFrame, String> {
+    Ok(match measure.to_casa()? {
+        CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
+        CasaMeasure::Position(position) => frame.with_position(position),
+        CasaMeasure::Direction(direction) => frame.with_direction(direction),
+        CasaMeasure::RadialVelocity(velocity) => frame.with_radial_velocity(velocity),
+        _ => unreachable!("only four measure kinds are frame elements"),
+    })
 }
 
 /// What `me.separation` and `me.posangle` compute.
@@ -367,24 +424,48 @@ pub(super) fn between(
     };
     let mut directions = Vec::with_capacity(2);
     for (name, record) in [("m1", m1), ("m2", m2)] {
-        let context = format!("Non-measure type {name} in measure conversion\n");
-        let Some(measure) = read(record, context.trim_end(), lines) else {
-            return Ok(zero());
+        let mut input = match record::Measures::read(record) {
+            Ok(input) => input.into_reference_origin(),
+            Err(error) => {
+                lines.push(LogLine::error(format!(
+                    "{}Non-measure type {name} in measure conversion",
+                    error.message()
+                )));
+                return Ok(zero());
+            }
         };
-        if measure.kind() != MeasureKind::Direction {
+        if let Some(warning) = input.warning.take() {
+            lines.push(LogLine::warning(warning));
+        }
+        if input.values[0].kind() != MeasureKind::Direction {
             lines.push(LogLine::error(
                 "Trying to convert non-direction to direction",
             ));
             return Ok(zero());
         }
-        directions.push(measure);
+        if DirectionRef::from_str(input.values[0].refer)
+            .is_ok_and(|refer| refer.casacore_code() >= 32)
+        {
+            input = match input.resolve(state, "J2000")? {
+                Ok(value) => value,
+                Err(reason) => {
+                    lines.push(LogLine::error(format!("Exception Reports: {reason}")));
+                    return Ok(zero());
+                }
+            };
+        }
+        directions.push(input);
     }
-    let (first, second) = (directions[0], directions[1]);
-    let second = match convert(state, &second, first.refer)? {
-        Ok(second) => second,
-        Err(reason) => {
-            lines.push(LogLine::error(format!("Exception Reports: {reason}")));
-            return Ok(zero());
+    let first = directions[0].values[0];
+    let second = if first.refer == directions[1].values[0].refer {
+        directions[1].values[0]
+    } else {
+        match directions[1].resolve(state, first.refer)? {
+            Ok(second) => second.values[0],
+            Err(reason) => {
+                lines.push(LogLine::error(format!("Exception Reports: {reason}")));
+                return Ok(zero());
+            }
         }
     };
     let (MeasureValue::Direction(a), MeasureValue::Direction(b)) = (first.value, second.value)

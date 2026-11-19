@@ -7,14 +7,17 @@ cd "$repo_root"
 export CARGO_INCREMENTAL=0
 
 extras="test"
-case "${1:-}" in
-  "") ;;
-  --plot) extras="test,plot" ;;
-  *)
-    echo "usage: $0 [--plot]" >&2
-    exit 2
-    ;;
-esac
+editable_only=false
+for flag in "$@"; do
+  case "$flag" in
+    --plot) extras="test,plot" ;;
+    --editable-only) editable_only=true ;;
+    *)
+      echo "usage: $0 [--plot] [--editable-only]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 python_bin="$("$repo_root/scripts/resolve-python.sh" 3.10)"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/casars-python.XXXXXXXX")"
@@ -54,6 +57,9 @@ source "$editable_venv/bin/activate"
 python -m pip install -e "crates/casars-python[$extras]"
 pytest crates/casars-python/python/tests -q
 deactivate
+if [[ "$editable_only" == true ]]; then
+  exit 0
+fi
 
 # The built wheel and sdist are tested too: an editable checkout can import
 # files a packaged install lacks. Their tests run from outside the source tree

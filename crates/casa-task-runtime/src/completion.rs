@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{
-    ManagedResultDecoder, RunProductDescriptor, RunProductKind, RunProductRole, RunProductSource,
-    SurfaceContractBundle,
+    DefaultSpec, ManagedResultDecoder, ParameterValue, RunProductDescriptor, RunProductKind,
+    RunProductRole, RunProductSource, SurfaceContractBundle,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -84,7 +84,24 @@ pub fn decode_task_completion(
                 let value = values
                     .get(parameter.as_str())
                     .map(|value| value.trim())
-                    .filter(|value| !value.is_empty() && *value != "none");
+                    .filter(|value| !value.is_empty() && *value != "none")
+                    .or_else(|| {
+                        (bundle.surface.id() == "immath" && parameter == "outfile")
+                            .then(|| {
+                                bundle
+                                    .surface
+                                    .bindings()
+                                    .iter()
+                                    .find(|entry| entry.name == *parameter)
+                            })
+                            .flatten()
+                            .and_then(|entry| match &entry.default {
+                                DefaultSpec::Literal {
+                                    value: ParameterValue::String(default),
+                                } if !default.is_empty() => Some(default.as_str()),
+                                _ => None,
+                            })
+                    });
                 let Some(value) = value else {
                     if descriptor.optional {
                         continue;
@@ -481,5 +498,26 @@ mod tests {
             assert_eq!(completion.products[0].resource_kind, RunProductKind::File);
             assert!(completion.products[0].exists);
         }
+    }
+
+    #[test]
+    fn immath_empty_outfile_resolves_default_product_path() {
+        let root = tempdir().unwrap();
+        let default_out = root.path().join("immath_results.im");
+        fs::create_dir(&default_out).unwrap();
+        let completion = decode_task_completion(
+            &builtin_surface_bundle("immath").unwrap(),
+            "",
+            root.path(),
+            &[TaskOutputValue {
+                name: "outfile".into(),
+                value: String::new(),
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(completion.products.len(), 1);
+        assert_eq!(completion.products[0].path, default_out);
+        assert!(completion.products[0].exists);
     }
 }

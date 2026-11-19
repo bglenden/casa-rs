@@ -123,14 +123,16 @@ pub(super) fn touvw(
         Ok(source) => source,
         Err(error) => return Ok(failed_tuple(lines, error, 3)),
     };
-    let Some(direction) = state.frame.direction else {
+    let Some(direction) = state.frame.direction.as_ref() else {
         return Ok(failed_tuple(
             lines,
             "No direction in frame for uvw calculation\n",
             3,
         ));
     };
-    let direction = match super::frame::convert(state, &direction, "J2000")? {
+    let direction = direction.absolute;
+    let result = super::frame::convert(state, &direction, "J2000")?;
+    let direction = match result {
         Ok(direction) => direction,
         Err(error) => return Ok(failed_tuple(lines, error, 3)),
     };
@@ -189,7 +191,7 @@ impl Conversion {
         target: &'static str,
     ) -> PyResult<Result<Self, String>> {
         let frame = match super::frame::native_frame(state)? {
-            Ok(frame) => super::frame::with_comet_direction(state, frame),
+            Ok(frame) => super::frame::with_resolved_direction(state, frame),
             Err(error) => return Ok(Err(error)),
         };
         Ok((|| {
@@ -260,7 +262,7 @@ fn failure(lines: &mut Vec<LogLine>, error: impl Into<String>) -> CasaValue {
     lines.push(LogLine::error(error));
     CasaValue::empty_record()
 }
-fn define_three(
+pub(super) fn define_three(
     state: &mut State,
     kind: MeasureKind,
     rf: &str,
@@ -276,19 +278,18 @@ fn define_three(
     if kind != MeasureKind::EarthMagnetic
         && let Some(first) = array
     {
+        let wrong_length = if kind == MeasureKind::Position {
+            "Exception Reports: The length of the 3 quantities are not conformant \n"
+        } else {
+            "The length of the 3 quantities are not conformant \n"
+        };
         let mut quantities = vec![first];
         for arg in &args[1..] {
             let Some(q) = quantum_holder(arg).ok().flatten() else {
-                return Ok(failure(
-                    lines,
-                    "The length of the 3 quantities are not conformant \n",
-                ));
+                return Ok(failure(lines, wrong_length));
             };
             if q.values.len() != quantities[0].values.len() {
-                return Ok(failure(
-                    lines,
-                    "The length of the 3 quantities are not conformant \n",
-                ));
+                return Ok(failure(lines, wrong_length));
             }
             quantities.push(q);
         }
@@ -337,10 +338,14 @@ fn define_three(
             ));
         }
     }
-    let refer = kind.codes().resolve_or_default(rf);
-    if kind.codes().resolve(rf).is_none() {
-        lines.push(LogLine::warning("Illegal reference frame string."));
-    }
+    let refer = if kind == MeasureKind::Position {
+        super::define::position_reference(rf, lines)
+    } else {
+        kind.codes().resolve(rf).unwrap_or_else(|| {
+            lines.push(LogLine::warning("Illegal reference frame string."));
+            kind.codes().default_code()
+        })
+    };
     let values = match triples
         .iter()
         .map(|q| Measure::from_values(kind, refer, q))
@@ -364,6 +369,7 @@ fn define_three(
                     };
                 }
             }
+            Err(_) if kind == MeasureKind::Position => {}
             Err(_) => lines.push(LogLine::warning(
                 "Illegal offset type specified, not used\n",
             )),

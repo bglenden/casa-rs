@@ -70,6 +70,7 @@ pub mod fits_read;
 pub mod fits_table;
 pub mod image;
 pub mod image_expr;
+mod image_expr_lel;
 mod image_expr_ops;
 pub mod image_info;
 mod linear_mosaic;

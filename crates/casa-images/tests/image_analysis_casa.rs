@@ -621,6 +621,7 @@ fn impbcor_immath_and_feather_match_casa() {
         outfile: outfile.clone(),
         expr: case["expr"].as_str().unwrap().into(),
         overwrite: false,
+        ..ImmathRequest::default()
     })
     .unwrap();
     let (data, mask) = read(&outfile);

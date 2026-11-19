@@ -43,7 +43,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 5 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
 | [Position Velocity](#surface-impv)<br><code>impv</code> | task | 5 | <code>image_analysis</code> | 16 | Extract a CASA-style position-velocity image |
 | [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 5 | <code>image_analysis</code> | 12 | Extract a CASA-style image section |
-| [Image Math](#surface-immath)<br><code>immath</code> | task | 5 | <code>image_analysis</code> | 16 | Evaluate tutorial image arithmetic expressions |
+| [Image Math](#surface-immath)<br><code>immath</code> | task | 5 | <code>image_analysis</code> | 16 | Evaluate mathematical expressions and spectral or polarization operations on images |
 | [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 5 | <code>image_analysis</code> | 10 | Regrid a CASA image onto a template image |
 | [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
 | [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 5 | <code>image_analysis</code> | 9 | Import a FITS primary image into a CASA image |
@@ -1192,11 +1192,11 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 - Contract version: `5`
 - Category: Images
 - Provider family: `image_analysis`
-- Summary: Evaluate tutorial image arithmetic expressions
+- Summary: Evaluate mathematical expressions and spectral or polarization operations on images
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
+| <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; optional | Input | Input CASA image path |
 | <code>mode</code> | <code>immath.mode@r1</code> | <code>choice (6 values)</code> | <code>"evalexpr"</code>; optional | Math | Image math: an expression, a spectral index, or a polarization angle or intensity. |
 | <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>"immath_results.im"</code>; optional | Output | Output image. |
 | <code>expr</code> | <code>parameter.expr@r1</code> | <code>string</code> | <code>"IM0"</code>; optional | Math | Expression such as IM0 * IM1 or IM0 / IM1 |
