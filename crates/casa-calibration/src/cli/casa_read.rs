@@ -266,6 +266,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         "gc" => GencalType::Gc,
         "gceff" => GencalType::Gceff,
         "eff" => GencalType::Eff,
+        "tsys" => GencalType::Tsys,
         "opac" => GencalType::Opac,
         other => return Err(not_yet("caltype", other)),
     };
@@ -307,6 +308,9 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         } else {
             None
         },
+        uniform: (caltype == GencalType::Tsys)
+            .then(|| task.flag("uniform"))
+            .transpose()?,
     })
 }
 

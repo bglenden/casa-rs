@@ -210,6 +210,7 @@ fn gencal(task: &TaskInvocation<'_>) -> Result<GencalTaskRequest, TaskFailure> {
         },
         polarization: String::new(),
         gaincurve_infile: None,
+        uniform: None,
     })
 }
 

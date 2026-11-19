@@ -569,6 +569,7 @@ fn gencal_reads_casas_values() {
             },
             polarization: String::new(),
             gaincurve_infile: None,
+            uniform: None,
         })
     );
     let caltype = |value: &str| {
@@ -578,7 +579,8 @@ fn gencal_reads_casas_values() {
         )
     };
     assert!(refused(caltype(""), "caltype").contains("requires a caltype"));
-    for value in ["tsys", "antposvla", "eop"] {
+    assert!(caltype("tsys").is_ok());
+    for value in ["antposvla", "eop"] {
         assert!(
             refused(caltype(value), "caltype").contains("#979"),
             "{value}"

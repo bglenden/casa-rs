@@ -2,6 +2,7 @@
 //! Native generation of externally specified CASA calibration tables.
 
 mod power_curve;
+mod tsys;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -57,6 +58,8 @@ pub enum GencalType {
     Gceff,
     /// VLA efficiency alone (`EGainCurve`).
     Eff,
+    /// System temperature from the MeasurementSet's SYSCAL subtable (`B TSYS`).
+    Tsys,
     /// Zenith-opacity table (`TOpac`).
     Opac,
 }
@@ -68,6 +71,7 @@ impl GencalType {
             Self::Sbd | Self::Mbd => "K Jones",
             Self::Antpos => "KAntPos Jones",
             Self::Gc | Self::Gceff | Self::Eff => "EGainCurve",
+            Self::Tsys => "B TSYS",
             Self::Opac => "TOpac",
         }
     }
@@ -100,9 +104,10 @@ impl std::str::FromStr for GencalType {
             "antpos" => Ok(Self::Antpos),
             "gceff" | "gc" => Ok(Self::Gceff),
             "eff" => Ok(Self::Eff),
+            "tsys" => Ok(Self::Tsys),
             "opac" | "opacity" => Ok(Self::Opac),
             other => Err(format!(
-                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, gceff, or opac"
+                "unsupported gencal caltype {other:?}; expected amp, ph, sbd, mbd, antpos, gc, gceff, eff, opac, or tsys"
             )),
         }
     }
@@ -213,6 +218,7 @@ struct PriorCalRow {
     spw_id: i32,
     antenna_id: i32,
     observation_id: i32,
+    scan_number: i32,
     parameters: ArrayValue,
     snr_value: f32,
     preserved: Option<RecordValue>,
@@ -220,13 +226,20 @@ struct PriorCalRow {
 
 /// Generate one native prior calibration table.
 pub fn gencal(request: &GencalRequest) -> Result<GencalReport, GencalError> {
-    gencal_with_output_mode(request, "", None, crate::CalibrationOutputMode::Update)
+    gencal_with_output_mode(
+        request,
+        "",
+        None,
+        true,
+        crate::CalibrationOutputMode::Update,
+    )
 }
 
 pub(crate) fn gencal_with_output_mode(
     request: &GencalRequest,
     polarization: &str,
     gaincurve_infile: Option<&Path>,
+    uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
     // Reserve before reading prior parameters, so concurrent updates cannot
@@ -240,20 +253,22 @@ pub(crate) fn gencal_with_output_mode(
     })?;
     let updating = mode == crate::CalibrationOutputMode::Update
         && request.output_table.exists()
-        && !request.caltype.is_gain_curve();
+        && !request.caltype.is_gain_curve()
+        && request.caltype != GencalType::Tsys;
     let embedded = match request.caltype {
         GencalType::Gc | GencalType::Gceff => {
             power_curve::source_path(&request.measurement_set, ms.main_table())?
         }
         _ => None,
     };
+    let mut collapse_spw = true;
     let mut rows = match request.caltype {
         GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd => {
             specified_rows(&ms, request, polarization, updating)?
         }
         GencalType::Antpos => antpos_rows(&ms, request)?,
         GencalType::Gc | GencalType::Gceff | GencalType::Eff => {
-            validate_gaincurve_selection(&ms, request)?;
+            validate_prior_selection(&ms, request)?;
             if let Some(path) = embedded.as_deref() {
                 refuse_curve_input_overlap(request, path)?;
                 power_curve::rows(&ms, path)?
@@ -262,6 +277,12 @@ pub(crate) fn gencal_with_output_mode(
             }
         }
         GencalType::Opac => opacity_rows(&ms, request)?,
+        GencalType::Tsys => {
+            validate_prior_selection(&ms, request)?;
+            let (rows, spectral) = tsys::rows(&ms, uniform)?;
+            collapse_spw = !spectral;
+            rows
+        }
     };
     if updating && !request.caltype.is_specified() {
         apply_existing_parameters(request, &mut rows)?;
@@ -271,7 +292,7 @@ pub(crate) fn gencal_with_output_mode(
     } else {
         request.caltype.table_subtype()
     };
-    write_prior_caltable(&ms, request, subtype, &rows, output, mode)
+    write_prior_caltable(&ms, request, subtype, &rows, output, mode, collapse_spw)
 }
 
 /// Load the existing `setSpecify` parameters and metadata. The ordered gain
@@ -441,6 +462,7 @@ fn specified_rows(
             spw_id: (row / antenna_count) as i32,
             antenna_id: (row % antenna_count) as i32,
             observation_id: 0,
+            scan_number: -1,
             parameters: identity.clone(),
             snr_value: 1.0,
             preserved: None,
@@ -517,6 +539,7 @@ fn antpos_rows(
             spw_id: 0,
             antenna_id: antenna_id as i32,
             observation_id: 0,
+            scan_number: -1,
             parameters: f32_column(&offsets.map(|value| value as f32)),
             snr_value: 1.0,
             preserved: None,
@@ -525,15 +548,15 @@ fn antpos_rows(
     Ok(rows)
 }
 
-fn validate_gaincurve_selection(
+fn validate_prior_selection(
     ms: &MeasurementSet,
     request: &GencalRequest,
 ) -> Result<(), GencalError> {
     let invalid = |detail: String| {
         GencalError::InvalidRequest(format!("Error in Calibrater::specifycal. {detail}"))
     };
-    // Calibrater resolves these expressions before EGainCurve writes the
-    // full antenna and spectral-window grid.
+    // Calibrater resolves these expressions before the selected family
+    // generates its own antenna and spectral-window grid.
     if !request.spw.is_empty() && request.spw != "*" {
         ms.resolve_spw_selector(&request.spw)
             .map_err(|error| invalid(error.to_string()))?;
@@ -633,6 +656,7 @@ fn gaincurve_rows(
                 spw_id: window as i32,
                 antenna_id: antenna as i32,
                 observation_id: -1,
+                scan_number: -1,
                 parameters: f32_column(&values),
                 snr_value: 0.0,
                 preserved: None,
@@ -725,6 +749,7 @@ fn opacity_rows(
                 spw_id,
                 antenna_id: antenna_id as i32,
                 observation_id: 0,
+                scan_number: -1,
                 parameters: f32_column(&[if selected_antennas.contains(&(antenna_id as i32)) {
                     opacities.get(&spw_id).copied().unwrap_or(0.0) as f32
                 } else {
@@ -763,6 +788,7 @@ fn write_prior_caltable(
     rows: &[PriorCalRow],
     output: crate::output::CalibrationOutput,
     mode: crate::CalibrationOutputMode,
+    collapse_spw: bool,
 ) -> Result<GencalReport, GencalError> {
     let (parameter_column, parameter_type, parameter_name) = request.caltype.parameter_column();
     let schema = TableSchema::new(vec![
@@ -801,10 +827,18 @@ fn write_prior_caltable(
     );
 
     for row in rows {
-        let len = row.parameters.shape()[0];
-        let zeros = vec![0.0_f32; len];
-        let flags = vec![false; len];
-        let snr = vec![row.snr_value; len];
+        let shape = IxDyn(row.parameters.shape());
+        let tsys = request.caltype == GencalType::Tsys;
+        let parameter_error = if tsys { 0.1 } else { 0.0 };
+        let flags = if let ArrayValue::Float32(values) = &row.parameters
+            && tsys
+        {
+            values.mapv(|value| value < f32::MIN_POSITIVE || value.is_nan())
+        } else {
+            ArrayD::from_elem(shape.clone(), false)
+        };
+        let errors = ArrayD::from_elem(shape.clone(), parameter_error);
+        let snr = ArrayD::from_elem(shape, row.snr_value);
         let mut record = RecordValue::new(vec![
             RecordField::new(
                 COL_TIME,
@@ -827,15 +861,18 @@ fn write_prior_caltable(
                 COL_INTERVAL,
                 Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
             ),
-            RecordField::new(COL_SCAN_NUMBER, Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new(
+                COL_SCAN_NUMBER,
+                Value::Scalar(ScalarValue::Int32(row.scan_number)),
+            ),
             RecordField::new(
                 COL_OBSERVATION_ID,
                 Value::Scalar(ScalarValue::Int32(row.observation_id)),
             ),
             RecordField::new(parameter_column, Value::Array(row.parameters.clone())),
-            RecordField::new(COL_PARAMERR, Value::Array(f32_column(&zeros))),
-            RecordField::new(COL_FLAG, Value::Array(bool_column(&flags))),
-            RecordField::new(COL_SNR, Value::Array(f32_column(&snr))),
+            RecordField::new(COL_PARAMERR, Value::Array(ArrayValue::Float32(errors))),
+            RecordField::new(COL_FLAG, Value::Array(ArrayValue::Bool(flags))),
+            RecordField::new(COL_SNR, Value::Array(ArrayValue::Float32(snr))),
         ]);
         if let Some(prior) = &row.preserved {
             for column in [COL_PARAMERR, COL_FLAG, COL_SNR] {
@@ -854,7 +891,11 @@ fn write_prior_caltable(
         (SubtableId::SpectralWindow, "SPECTRAL_WINDOW"),
         (SubtableId::History, "HISTORY"),
     ])?;
-    collapse_spectral_axis(&writer.output_path().join("SPECTRAL_WINDOW"), rows)?;
+    write_spectral_axis(
+        &writer.output_path().join("SPECTRAL_WINDOW"),
+        rows,
+        collapse_spw,
+    )?;
     writer.save_main()?;
 
     let spectral_window_ids = rows
@@ -1027,7 +1068,11 @@ fn gaincurves_for_window(
 /// SolvableVisCal::initSVC collapses all spectral vectors for uniform
 /// parameters: mean channel frequency and summed widths/resolutions.
 /// Keep this inside the writer's staging directory, before publication.
-fn collapse_spectral_axis(path: &Path, solutions: &[PriorCalRow]) -> Result<(), GencalError> {
+fn write_spectral_axis(
+    path: &Path,
+    solutions: &[PriorCalRow],
+    collapse: bool,
+) -> Result<(), GencalError> {
     let mut table = Table::open(TableOptions::new(path))
         .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
     for row in 0..table.row_count() {
@@ -1038,6 +1083,9 @@ fn collapse_spectral_axis(path: &Path, solutions: &[PriorCalRow]) -> Result<(), 
             .cell_accessor_mut(row, "FLAG_ROW")
             .and_then(|mut cell| cell.set(Value::Scalar(ScalarValue::Bool(absent))))
             .map_err(|e| GencalError::InvalidRequest(e.to_string()))?;
+        if !collapse {
+            continue;
+        }
 
         for column in ["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"] {
             let ArrayValue::Float64(values) = table
@@ -1289,13 +1337,6 @@ fn f32_column(values: &[f32]) -> ArrayValue {
     ArrayValue::Float32(
         ArrayD::from_shape_vec(IxDyn(&[values.len(), 1]).f(), values.to_vec())
             .expect("float gencal vector should reshape to receptor x channel"),
-    )
-}
-
-fn bool_column(values: &[bool]) -> ArrayValue {
-    ArrayValue::Bool(
-        ArrayD::from_shape_vec(IxDyn(&[values.len(), 1]).f(), values.to_vec())
-            .expect("flag gencal vector should reshape to receptor x channel"),
     )
 }
 

@@ -176,6 +176,9 @@ pub struct GencalTaskRequest {
     /// Explicit CASA gain-curve `infile`, which uses unmodified antenna names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gaincurve_infile: Option<PathBuf>,
+    /// Fill the full antenna grid when importing SYSCAL. CASA defaults to true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uniform: Option<bool>,
 }
 
 /// Request for planning an `applycal`-class operation.
@@ -543,6 +546,7 @@ impl CalibrationTaskRequest {
                 &request.prior,
                 &request.polarization,
                 request.gaincurve_infile.as_deref(),
+                request.uniform.unwrap_or(true),
                 mode.unwrap_or(Update),
             )
             .map(CalibrationTaskResult::Gencal)

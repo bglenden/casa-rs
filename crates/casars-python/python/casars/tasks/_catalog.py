@@ -806,7 +806,7 @@ def gencal(
     CASA's ``gencal``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #979:
     ``infile``, ``endpoint``, ``timeout``, ``retry``, ``retry_wait_time``,
-    ``ant_pos_time_limit``, ``pol``, ``uniform``.
+    ``ant_pos_time_limit``, ``pol``.
     """
     return _call_casa(gencal, locals())
 
