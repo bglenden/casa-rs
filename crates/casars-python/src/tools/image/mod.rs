@@ -9,6 +9,7 @@ mod beams;
 mod copy;
 mod copy_region;
 mod create;
+mod data_compat;
 mod default_record;
 mod fits_import;
 mod handle;
@@ -61,6 +62,16 @@ impl PyImageTool {
 
     fn state(&self) -> MutexGuard<'_, ImageState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Drop for PyImageTool {
+    fn drop(&mut self) {
+        let state = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
+        if let Some(image) = state.image.take() {
+            // The last attachment may flush tiles and release table locks.
+            let _ = Python::try_attach(|py| py.detach(|| drop(image)));
+        }
     }
 }
 

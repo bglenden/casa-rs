@@ -227,7 +227,7 @@ def schema_bundle() -> dict[str, Any]:
 
 
 class Image:
-    """Persistent CASA-compatible image access.
+    """Compatibility view of persistent images through the CASA image tool.
 
     This wrapper exposes rectangular slice and plane I/O using native NumPy
     arrays while keeping the storage model file-backed and stateful. V1 write
@@ -236,8 +236,9 @@ class Image:
     scope.
     """
 
-    def __init__(self, inner: _core.Image) -> None:
+    def __init__(self, inner: _core.image, *, writable: bool = False) -> None:
         self._inner = inner
+        self._writable = writable
 
     @classmethod
     def open(cls, path: StrPath, *, writable: bool = False) -> "Image":
@@ -247,43 +248,43 @@ class Image:
         :meth:`put_slice`.
         """
 
-        return cls(_core.Image.open(path, writable=writable))
+        return cls(_core.image._data_open(path, writable), writable=writable)
 
     @property
     def shape(self) -> tuple[int, ...]:
         """Image shape in CASA/Rust axis order."""
 
-        return tuple(self._inner.shape)
+        return tuple(self._inner._data_shape)
 
     @property
     def pixel_type(self) -> str:
         """Pixel dtype name such as ``float32`` or ``complex128``."""
 
-        return self._inner.pixel_type
+        return self._inner._data_pixel_type
 
     @property
     def units(self) -> str:
         """Image unit string."""
 
-        return self._inner.units
+        return self._inner._data_units
 
     @property
     def image_info(self) -> RecordLike:
         """Structured image-info record."""
 
-        return self._inner.image_info
+        return self._inner._data_image_info
 
     @property
     def misc_info(self) -> RecordLike:
         """Structured miscellaneous-info record."""
 
-        return self._inner.misc_info
+        return self._inner._data_misc_info
 
     @property
     def coordinate_system(self) -> RecordLike:
         """Renderer-neutral coordinate metadata, including celestial WCS."""
 
-        return self._inner.coordinate_system
+        return self._inner._data_coordinate_system
 
     def _direction_wcs(self) -> tuple[int, int, dict[str, Any]] | None:
         """The pixel axes of the image's direction and the FITS WCS keywords
@@ -295,13 +296,13 @@ class Image:
     def mask_names(self) -> list[str]:
         """Names of persisted masks attached to the image."""
 
-        return list(self._inner.mask_names)
+        return list(self._inner._data_mask_names)
 
     @property
     def default_mask_name(self) -> str | None:
         """Name of the default mask, if any."""
 
-        return self._inner.default_mask_name
+        return self._inner._data_default_mask_name
 
     def get_slice(
         self,
@@ -312,7 +313,7 @@ class Image:
     ) -> ArrayLike:
         """Read a rectangular image chunk as a NumPy array."""
 
-        return self._inner.get_slice(list(start), list(shape), stride=None if stride is None else list(stride))
+        return self._inner._data_slice(list(start), list(shape), stride=None if stride is None else list(stride))
 
     def put_slice(self, data: ArrayLike, start: Sequence[int]) -> None:
         """Write a rectangular image chunk into an existing persistent image.
@@ -321,12 +322,12 @@ class Image:
         support for Python-side image creation or coordinate/metadata editing.
         """
 
-        self._inner.put_slice(np.asarray(data), list(start))
+        self._inner._data_put_slice(np.asarray(data), list(start), self._writable)
 
     def get_plane(self, axis: int, index: int) -> ArrayLike:
         """Read one plane orthogonal to ``axis``."""
 
-        return np.squeeze(self._inner.get_plane(axis, index), axis=axis)
+        return np.squeeze(self._inner._data_plane(axis, index), axis=axis)
 
     def get_mask_slice(
         self,
@@ -337,7 +338,7 @@ class Image:
     ) -> ArrayLike | None:
         """Read a rectangular chunk from the default mask."""
 
-        return self._inner.get_mask_slice(
+        return self._inner._data_mask_slice(
             list(start),
             list(shape),
             stride=None if stride is None else list(stride),
