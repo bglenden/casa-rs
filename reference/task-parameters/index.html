@@ -589,6 +589,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fit-visibility-component-uvmodelfit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fit Visibility Component (uvmodelfit)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#clear-calibration-clearcal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1303,6 +1314,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fit-visibility-component-uvmodelfit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fit Visibility Component (uvmodelfit)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#clear-calibration-clearcal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1528,9 +1550,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 628</li>
-<li>Surfaces: 35 (35 task, 0 session)</li>
-<li>Surface bindings: 922</li>
+<li>Concepts: 633</li>
+<li>Surfaces: 36 (36 task, 0 session)</li>
+<li>Surface bindings: 936</li>
 </ul>
 <table>
 <thead>
@@ -1679,6 +1701,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">15</td>
 <td>Predict model visibilities from component lists and model images.</td>
+</tr>
+<tr>
+<td><a href="#surface-uvmodelfit">Fit Visibility Component</a><br><code>uvmodelfit</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">14</td>
+<td>Fit a single sky component to selected visibilities.</td>
 </tr>
 <tr>
 <td><a href="#surface-clearcal">Clear Calibration</a><br><code>clearcal</code></td>
@@ -6606,6 +6636,141 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>false</code>; optional</td>
 <td>Model</td>
 <td>Write MODEL_DATA.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-uvmodelfit"></a></p>
+<h2 id="fit-visibility-component-uvmodelfit">Fit Visibility Component (<code>uvmodelfit</code>)<a class="headerlink" href="#fit-visibility-component-uvmodelfit" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Fit a single sky component to selected visibilities.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal field selector text.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal spw selector text.</td>
+</tr>
+<tr>
+<td><code>selectdata</code></td>
+<td><code>parameter.selectdata@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Component fit</td>
+<td>Whether detailed data-selection controls are enabled.</td>
+</tr>
+<tr>
+<td><code>timerange</code></td>
+<td><code>ms.selection.timerange@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal timerange selector text.</td>
+</tr>
+<tr>
+<td><code>uvrange</code></td>
+<td><code>ms.selection.uvrange@r4</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Accepts a CASA variant and converts it to selector text during MeasurementSet selection.</td>
+</tr>
+<tr>
+<td><code>antenna</code></td>
+<td><code>ms.selection.antenna@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal antenna selector text.</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Data selection</td>
+<td>Applycal scan selector text.</td>
+</tr>
+<tr>
+<td><code>msselect</code></td>
+<td><code>ms.selection.msselect@r2</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Component fit</td>
+<td>Applycal msselect selector text.</td>
+</tr>
+<tr>
+<td><code>niter</code></td>
+<td><code>uvmodelfit.niter@r1</code></td>
+<td><code>integer</code></td>
+<td><code>5</code>; optional</td>
+<td>Component fit</td>
+<td>Visibility model fitting iteration limit.</td>
+</tr>
+<tr>
+<td><code>comptype</code></td>
+<td><code>uvmodelfit.comptype@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"P"</code>; optional</td>
+<td>Component fit</td>
+<td>Single component shape.</td>
+</tr>
+<tr>
+<td><code>sourcepar</code></td>
+<td><code>uvmodelfit.sourcepar@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[1.0,0.0,0.0]</code>; optional</td>
+<td>Component fit</td>
+<td>Initial model flux, direction offsets and optional ellipse.</td>
+</tr>
+<tr>
+<td><code>varypar</code></td>
+<td><code>uvmodelfit.varypar@r1</code></td>
+<td><code>array&lt;bool&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Component fit</td>
+<td>Which parameters the solver may vary.</td>
+</tr>
+<tr>
+<td><code>outfile</code></td>
+<td><code>uvmodelfit.outfile@r1</code></td>
+<td><code>path (table)</code></td>
+<td><code>""</code>; optional</td>
+<td>Component fit</td>
+<td>Optional fitted component-list table.</td>
 </tr>
 </tbody>
 </table>

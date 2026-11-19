@@ -3806,6 +3806,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fitting-through-the-legacy-calibrater-can-crash-without-corrected_data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fitting through the legacy calibrater can crash without CORRECTED_DATA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#fluxscale-negative-and-underdetermined-spectral-fit-orders" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9910,6 +9921,13 @@ domain. <code>tools/casa-compat/calibration_lifecycle_oracle.py</code> reproduce
 CASA error and compares the two native append products. Invalid boolean
 arguments retain the native exception policy documented in
 <code>docs/python/api.md</code>.</p>
+<h2 id="fitting-through-the-legacy-calibrater-can-crash-without-corrected_data">Fitting through the legacy calibrater can crash without CORRECTED_DATA<a class="headerlink" href="#fitting-through-the-legacy-calibrater-can-crash-without-corrected_data" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, use <code>calibrater.setvi(old=True)</code>, open a MeasurementSet
+without <code>CORRECTED_DATA</code> with <code>addcorr=False</code>, and select one populated field.
+Calling <code>calibrater.modelfit([], niter=0)</code> exits with a segmentation fault.
+The <code>uvmodelfit</code> task opens with <code>addcorr=True</code> and initializes the column.</p>
+<p>The native fitter reports an error when the corrected samples are missing.
+The task initializes the column before fitting, as CASA does (#1520).</p>
 <h2 id="fluxscale-negative-and-underdetermined-spectral-fit-orders">Fluxscale negative and underdetermined spectral-fit orders<a class="headerlink" href="#fluxscale-negative-and-underdetermined-spectral-fit-orders" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 <code>fluxscale</code> allocates coefficient arrays with <code>fitorder+1</code>
 entries before checking a negative order. With three valid spectral windows,
