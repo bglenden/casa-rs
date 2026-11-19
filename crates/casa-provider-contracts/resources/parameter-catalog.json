@@ -12782,6 +12782,66 @@
       "persistence_class": "profile"
     },
     {
+      "id": "calibration.seasonal_weight",
+      "semantic_revision": 1,
+      "casa_name": "seasonal_weight",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "numeric_variant"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Weight of the seasonal model in the opacity estimate.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.weather_plot",
+      "semantic_revision": 1,
+      "casa_name": "doPlot",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Create a weather summary plot when station data are available.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "calibration.weather_plot_name",
+      "semantic_revision": 1,
+      "casa_name": "plotName",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Name of the weather summary plot file.",
+        "details": null,
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "calibration.tablein",
       "semantic_revision": 1,
       "casa_name": "tablein",

@@ -33822,6 +33822,205 @@
     },
     {
       "kind": "task",
+      "id": "plotweather",
+      "contract_version": 1,
+      "display_name": "Plot Weather",
+      "category": "Calibration",
+      "summary": "Estimate zenith opacity and plot MeasurementSet weather.",
+      "provider_family": "calibration",
+      "casa_task": "plotweather",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "plotweather"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "plotName",
+              "role": "primary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "plotName"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "vis",
+          "concept": {
+            "id": "data.input.vis",
+            "semantic_revision": 3
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--vis",
+                "--ms"
+              ]
+            },
+            "provider": {
+              "field": "measurement_set"
+            },
+            "python": {
+              "name": "vis",
+              "type_hint": "str"
+            },
+            "presentation": {
+              "label": "MeasurementSet",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset"
+        },
+        {
+          "name": "seasonal_weight",
+          "concept": {
+            "id": "calibration.seasonal_weight",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "float",
+              "value": 0.5
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--seasonal-weight"
+              ]
+            },
+            "provider": {
+              "field": "seasonal_weight",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "seasonal_weight",
+              "type_hint": "float"
+            },
+            "presentation": {
+              "label": "seasonal_weight",
+              "group": "Weather model"
+            }
+          }
+        },
+        {
+          "name": "doPlot",
+          "concept": {
+            "id": "calibration.weather_plot",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--do-plot"
+              ]
+            },
+            "provider": {
+              "field": "doPlot",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "doPlot"
+            },
+            "presentation": {
+              "label": "doPlot",
+              "group": "Plot"
+            }
+          }
+        },
+        {
+          "name": "plotName",
+          "concept": {
+            "id": "calibration.weather_plot_name",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "doPlot",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--plot-name"
+              ]
+            },
+            "provider": {
+              "field": "plotName",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "plotName"
+            },
+            "presentation": {
+              "label": "plotName",
+              "group": "Plot"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "initweights",
       "contract_version": 1,
       "display_name": "Initialize Visibility Weights",
