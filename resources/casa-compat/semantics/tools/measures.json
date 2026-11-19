@@ -2,7 +2,7 @@
  "schema_version": 1,
  "tool": "measures",
  "casa_version": "6.7.6.14",
- "audit_revision": "d09863e14b8c1f3d3d4cdc782277aaba9c441e29",
+ "audit_revision": "1f3d5df5ce07ed994093aeefc94cd02067e0b31e",
  "methods": {
   "addxvalue": {
    "status": "Implemented",
@@ -77,11 +77,12 @@
   },
   "direction": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). The ten planetary labels resolve through DE200, with angular offsets applied before light deflection. COMET direction conversion remains in #1252.",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). The ten planetary labels resolve through DE200, with angular offsets applied before light deflection. COMET direction conversion remains in #1252. The distance of a DE200 body is applied when converting through the APP to TOPO hop.",
    "evidence": [
     "signature",
     "casa-values",
-    "showframe-casa"
+    "showframe-casa",
+    "rise-set-casa"
    ]
   },
   "dirshow": {
@@ -294,21 +295,23 @@
    ]
   },
   "rise": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Compute local apparent sidereal angles at the requested elevation, or return above/below for sources with no crossing. COMET direction conversion remains on #1252.",
    "evidence": [
     "signature",
-    "refusals"
+    "refusals",
+    "rise-set-casa"
    ]
   },
   "riseset": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1252,
-   "scope": "Raises NotImplementedError naming #1252. CASA's simutil.ephemeris calls it; ephemeris is not implemented either.",
+   "scope": "Compute crossing epochs in LAST and UTC, using the same razed sidereal day and angle wrap as CASA. COMET direction conversion remains on #1252.",
    "evidence": [
     "signature",
-    "refusals"
+    "refusals",
+    "rise-set-casa"
    ]
   },
   "separation": {
@@ -844,6 +847,22 @@
    "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_showframe.py; CASAPY tools/simulation/measures_showframe_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars --calls 1000 --samples 7",
    "receipt": "resources/casa-compat/evidence/me-showframe-equivalence-20261118.json"
+  },
+  "rise-set-casa": {
+   "kind": "CASA 6.7.6.14 rise, riseset, planetary parallax and release performance",
+   "state": "passed",
+   "scope": "Explicit frames, argument forms, event times, tangent cases, solar and lunar directions, caller state input offsets, and release timings.",
+   "result": "Both methods pass 32 recorded inputs each, plus an empty-frame test and four direct Moon controls. All 22 release cases are faster, from 10.84x to 20.40x.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_measures_rise_set.json",
+    "crates/casars-python/python/tests/test_measures_rise_set.py",
+    "tools/simulation/measures_rise_set_oracle.py"
+   ],
+   "source_revision": "1f3d5df5ce07ed994093aeefc94cd02067e0b31e",
+   "revision": "1f3d5df5ce07ed994093aeefc94cd02067e0b31e",
+   "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+   "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_rise_set.py; CASAPY tools/simulation/measures_rise_set_oracle.py --measures-data target/geometry-snapshot --benchmark casa/casars",
+   "receipt": "resources/casa-compat/evidence/me-rise-set-equivalence-20261118.json"
   }
  }
 }

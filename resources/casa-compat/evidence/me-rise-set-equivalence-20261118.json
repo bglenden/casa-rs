@@ -1,0 +1,597 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "1f3d5df5ce07ed994093aeefc94cd02067e0b31e",
+  "work_item": "https://github.com/bglenden/casa-rs/issues/1252",
+  "scope": "Rise and set angles, above/below classifications, and sidereal and UTC epochs. Include planetary parallax when converting through APP and TOPO. COMET remains on #1252.",
+  "sources": [
+    "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/casatools/src/tools/measures/measures_cmpt.cc?at=6.7.6.14",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCDirection.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MeasMath.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCEpoch.cc"
+  ],
+  "comparison": {
+    "fixture": "crates/casars-python/python/tests/data/casa_measures_rise_set.json",
+    "inputs": 32,
+    "capture": "CASAPY tools/simulation/measures_rise_set_oracle.py --measures-data target/geometry-snapshot --out crates/casars-python/python/tests/data/casa_measures_rise_set.json",
+    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_rise_set.py",
+    "result": "Both methods pass 32 recorded inputs each, plus an empty-frame test and four direct Moon controls. All 22 release cases are faster, from 10.84x to 20.40x.",
+    "tolerance": "1e-7 rad in directions and angles, 2e-7 d in epochs. Labels, units, result structure and above/below markers match exactly.",
+    "regression": "The first candidate missed the lunar horizon by about 75 seconds. Carrying the DE200 distance into the same APP to TOPO transfer as C++ fixes both lunar cases. The fixture separately verifies Moon APP, TOPO, HADEC and AZEL. The review regressions verify direct FK4 apparent place at a B1950 tangent, fixed and frame-dependent input offsets, and finite-distance dynamical output labels."
+  },
+  "performance": {
+    "command": "CASAPY tools/simulation/measures_rise_set_oracle.py --measures-data target/geometry-snapshot --benchmark casa/casars",
+    "conditions": "Same bundled data and CASA interpreter. One warm-up and seven samples of 400 calls on both backends. INFO logging filtered on both.",
+    "casa": {
+      "backend": "casa",
+      "casa_version": "6.7.6-14",
+      "revision": "1f3d5df5ce07ed994093aeefc94cd02067e0b31e",
+      "source_dirty": false,
+      "calls_per_sample": 400,
+      "cases": {
+        "rise_horizon": {
+          "median_ns": 79811.77,
+          "samples_ns": [
+            143657.915,
+            84211.04,
+            78855.105,
+            79283.75,
+            79893.23,
+            79654.585,
+            79811.77
+          ]
+        },
+        "riseset_horizon": {
+          "median_ns": 171819.7925,
+          "samples_ns": [
+            171692.605,
+            171819.7925,
+            170256.4575,
+            172584.48,
+            173187.3975,
+            171631.145,
+            172346.665
+          ]
+        },
+        "rise_positive": {
+          "median_ns": 88534.5825,
+          "samples_ns": [
+            89027.71,
+            89901.875,
+            88655.3125,
+            87788.855,
+            88534.5825,
+            88140.7275,
+            87355.9375
+          ]
+        },
+        "riseset_positive": {
+          "median_ns": 184359.8975,
+          "samples_ns": [
+            184496.145,
+            186044.7925,
+            182795.625,
+            183378.5425,
+            181763.4375,
+            184359.8975,
+            186025.2075
+          ]
+        },
+        "rise_turn_boundary": {
+          "median_ns": 80523.4375,
+          "samples_ns": [
+            80554.6875,
+            80523.4375,
+            80401.46,
+            80433.54,
+            78235.8325,
+            80590.9375,
+            81022.2925
+          ]
+        },
+        "riseset_turn_boundary": {
+          "median_ns": 171377.6025,
+          "samples_ns": [
+            172401.355,
+            172907.2925,
+            170728.9575,
+            170418.6475,
+            171559.165,
+            171377.6025,
+            171303.335
+          ]
+        },
+        "rise_above": {
+          "median_ns": 71498.3325,
+          "samples_ns": [
+            72418.75,
+            72521.875,
+            72089.48,
+            71485.52,
+            71498.3325,
+            71084.165,
+            71120.835
+          ]
+        },
+        "riseset_above": {
+          "median_ns": 75999.2725,
+          "samples_ns": [
+            75916.4575,
+            76232.8125,
+            75999.2725,
+            76503.3325,
+            76596.355,
+            75101.25,
+            75557.7075
+          ]
+        },
+        "rise_below": {
+          "median_ns": 72840.415,
+          "samples_ns": [
+            73705.8325,
+            72870.73,
+            71909.375,
+            73471.875,
+            72840.415,
+            72206.355,
+            71646.5625
+          ]
+        },
+        "riseset_below": {
+          "median_ns": 75753.75,
+          "samples_ns": [
+            73575.105,
+            75434.5825,
+            75514.6875,
+            76073.645,
+            75753.75,
+            75806.4575,
+            76240.8325
+          ]
+        },
+        "rise_north": {
+          "median_ns": 90058.125,
+          "samples_ns": [
+            93762.1875,
+            91491.0425,
+            91302.5,
+            89615.625,
+            89378.5425,
+            89126.1475,
+            90058.125
+          ]
+        },
+        "riseset_north": {
+          "median_ns": 183427.1875,
+          "samples_ns": [
+            183023.96,
+            185043.4375,
+            184526.665,
+            185496.355,
+            183427.1875,
+            183251.98,
+            182133.75
+          ]
+        },
+        "rise_angles_text": {
+          "median_ns": 83881.355,
+          "samples_ns": [
+            87563.2275,
+            86660.52,
+            83881.355,
+            83605.0,
+            84137.605,
+            83637.0825,
+            83611.355
+          ]
+        },
+        "riseset_angles_text": {
+          "median_ns": 180007.395,
+          "samples_ns": [
+            180007.395,
+            179461.875,
+            181637.605,
+            183808.23,
+            182457.3975,
+            177187.395,
+            179514.5825
+          ]
+        },
+        "rise_b1950_crossings": {
+          "median_ns": 61746.25,
+          "samples_ns": [
+            63165.3125,
+            61746.25,
+            63386.0425,
+            61163.54,
+            61530.52,
+            61865.105,
+            61013.0225
+          ]
+        },
+        "riseset_b1950_crossings": {
+          "median_ns": 155532.7075,
+          "samples_ns": [
+            161250.7275,
+            155322.8125,
+            154842.8125,
+            158191.4575,
+            156779.7925,
+            155532.7075,
+            154428.9575
+          ]
+        },
+        "rise_sun": {
+          "median_ns": 66165.9375,
+          "samples_ns": [
+            66019.165,
+            66458.75,
+            65128.125,
+            64685.835,
+            66167.8125,
+            66165.9375,
+            66223.335
+          ]
+        },
+        "riseset_sun": {
+          "median_ns": 158360.3125,
+          "samples_ns": [
+            158168.125,
+            158253.75,
+            161802.605,
+            158818.4375,
+            157479.895,
+            158360.3125,
+            158558.75
+          ]
+        },
+        "rise_moon": {
+          "median_ns": 79496.145,
+          "samples_ns": [
+            78793.125,
+            80426.46,
+            80055.3125,
+            78680.0,
+            79741.145,
+            79496.145,
+            79321.7725
+          ]
+        },
+        "riseset_moon": {
+          "median_ns": 175645.9375,
+          "samples_ns": [
+            179665.0,
+            176099.6875,
+            178278.75,
+            175645.9375,
+            173741.355,
+            173844.79,
+            173922.395
+          ]
+        },
+        "rise_same_reference_offset": {
+          "median_ns": 107617.8125,
+          "samples_ns": [
+            106213.0225,
+            107617.8125,
+            109522.2925,
+            106073.3325,
+            106364.895,
+            107778.4375,
+            108922.71
+          ]
+        },
+        "riseset_same_reference_offset": {
+          "median_ns": 203788.5425,
+          "samples_ns": [
+            212493.5425,
+            207746.77,
+            205420.3125,
+            201883.645,
+            201350.0,
+            203788.5425,
+            203608.125
+          ]
+        }
+      }
+    },
+    "native": {
+      "backend": "casars",
+      "casa_version": "6.7.6-14",
+      "revision": "1f3d5df5ce07ed994093aeefc94cd02067e0b31e",
+      "source_dirty": false,
+      "calls_per_sample": 400,
+      "cases": {
+        "rise_horizon": {
+          "median_ns": 5134.585,
+          "samples_ns": [
+            5615.0,
+            5183.3325,
+            5124.48,
+            5127.7075,
+            5110.0,
+            5134.585,
+            5185.0
+          ]
+        },
+        "riseset_horizon": {
+          "median_ns": 11146.4575,
+          "samples_ns": [
+            10803.75,
+            10801.04,
+            10835.5225,
+            11146.4575,
+            11182.0825,
+            11167.5,
+            11218.3325
+          ]
+        },
+        "rise_positive": {
+          "median_ns": 5466.7725,
+          "samples_ns": [
+            5452.7075,
+            5507.8125,
+            5458.23,
+            5466.7725,
+            5483.02,
+            5450.9375,
+            5503.02
+          ]
+        },
+        "riseset_positive": {
+          "median_ns": 11574.6875,
+          "samples_ns": [
+            11793.125,
+            11620.7275,
+            11574.6875,
+            11646.25,
+            11282.5,
+            11164.6875,
+            11186.98
+          ]
+        },
+        "rise_turn_boundary": {
+          "median_ns": 5148.125,
+          "samples_ns": [
+            5209.375,
+            5148.125,
+            5134.27,
+            5185.4175,
+            5137.2925,
+            5132.915,
+            5164.5825
+          ]
+        },
+        "riseset_turn_boundary": {
+          "median_ns": 11147.29,
+          "samples_ns": [
+            10747.085,
+            11368.335,
+            11203.75,
+            11182.71,
+            11147.29,
+            11125.0,
+            11140.52
+          ]
+        },
+        "rise_above": {
+          "median_ns": 5091.875,
+          "samples_ns": [
+            5096.9775,
+            5074.895,
+            5099.27,
+            5133.23,
+            5077.7075,
+            5091.875,
+            4815.3125
+          ]
+        },
+        "riseset_above": {
+          "median_ns": 4798.335,
+          "samples_ns": [
+            4790.625,
+            4821.355,
+            4798.23,
+            4786.25,
+            4798.335,
+            4860.52,
+            5188.02
+          ]
+        },
+        "rise_below": {
+          "median_ns": 4999.165,
+          "samples_ns": [
+            4996.04,
+            5108.125,
+            5008.4375,
+            4993.9575,
+            5017.8125,
+            4994.7925,
+            4999.165
+          ]
+        },
+        "riseset_below": {
+          "median_ns": 5117.6025,
+          "samples_ns": [
+            4976.25,
+            5048.5425,
+            5260.5225,
+            5134.5825,
+            5126.4575,
+            5117.6025,
+            5113.4375
+          ]
+        },
+        "rise_north": {
+          "median_ns": 5803.645,
+          "samples_ns": [
+            5803.645,
+            5768.335,
+            5767.915,
+            5778.125,
+            6032.2925,
+            5837.8125,
+            5830.3125
+          ]
+        },
+        "riseset_north": {
+          "median_ns": 11700.2075,
+          "samples_ns": [
+            11719.0625,
+            11700.9375,
+            11700.2075,
+            11645.0,
+            11761.98,
+            11593.4375,
+            11353.0225
+          ]
+        },
+        "rise_angles_text": {
+          "median_ns": 4111.98,
+          "samples_ns": [
+            4112.395,
+            4118.96,
+            4122.7075,
+            4111.98,
+            4100.105,
+            4102.71,
+            4098.4375
+          ]
+        },
+        "riseset_angles_text": {
+          "median_ns": 9828.75,
+          "samples_ns": [
+            9828.75,
+            9864.27,
+            9902.7075,
+            9867.1875,
+            9699.6875,
+            9673.645,
+            9652.605
+          ]
+        },
+        "rise_b1950_crossings": {
+          "median_ns": 5067.7075,
+          "samples_ns": [
+            5073.645,
+            5127.0825,
+            5037.3975,
+            5244.895,
+            5067.7075,
+            5004.0625,
+            5028.4375
+          ]
+        },
+        "riseset_b1950_crossings": {
+          "median_ns": 11003.02,
+          "samples_ns": [
+            10791.98,
+            11246.145,
+            11003.02,
+            11090.52,
+            11043.0225,
+            10982.2925,
+            10973.3325
+          ]
+        },
+        "rise_sun": {
+          "median_ns": 4723.2275,
+          "samples_ns": [
+            4801.5625,
+            4744.7925,
+            4752.605,
+            4723.2275,
+            4572.0825,
+            4572.605,
+            4613.3325
+          ]
+        },
+        "riseset_sun": {
+          "median_ns": 10402.6025,
+          "samples_ns": [
+            10167.6025,
+            10546.1475,
+            10375.21,
+            10402.6025,
+            10405.9375,
+            10498.125,
+            10238.855
+          ]
+        },
+        "rise_moon": {
+          "median_ns": 7336.4575,
+          "samples_ns": [
+            7548.8525,
+            7500.625,
+            7480.0,
+            7279.585,
+            7336.4575,
+            7285.4175,
+            7258.54
+          ]
+        },
+        "riseset_moon": {
+          "median_ns": 13331.1475,
+          "samples_ns": [
+            13331.1475,
+            13352.085,
+            13302.7075,
+            13321.5625,
+            13246.355,
+            13462.605,
+            13446.0425
+          ]
+        },
+        "rise_same_reference_offset": {
+          "median_ns": 7958.3325,
+          "samples_ns": [
+            7958.3325,
+            7897.5,
+            7933.5425,
+            7872.9175,
+            8447.395,
+            8483.3325,
+            8477.9175
+          ]
+        },
+        "riseset_same_reference_offset": {
+          "median_ns": 14390.0,
+          "samples_ns": [
+            14405.0,
+            14301.875,
+            14306.46,
+            14532.6025,
+            14390.0,
+            14433.75,
+            14319.48
+          ]
+        }
+      }
+    },
+    "speedups": {
+      "rise_horizon": 15.543957301320361,
+      "riseset_horizon": 15.41474432571963,
+      "rise_positive": 16.19503692535221,
+      "riseset_positive": 15.927850967898701,
+      "rise_turn_boundary": 15.641313585043099,
+      "riseset_turn_boundary": 15.373925187197964,
+      "rise_above": 14.041651159936174,
+      "riseset_above": 15.83867581150545,
+      "rise_below": 14.570516276218127,
+      "riseset_below": 14.802585781134818,
+      "rise_north": 15.517510978014677,
+      "riseset_north": 15.677259356297741,
+      "rise_angles_text": 20.399261426368806,
+      "riseset_angles_text": 18.31437314002289,
+      "rise_b1950_crossings": 12.184256885386537,
+      "riseset_b1950_crossings": 14.13545622020136,
+      "rise_sun": 14.008628104405304,
+      "riseset_sun": 15.223143679670542,
+      "rise_moon": 10.835767126027786,
+      "riseset_moon": 13.17560528829195,
+      "rise_same_reference_offset": 13.522658484048009,
+      "riseset_same_reference_offset": 14.161816712995137
+    }
+  },
+  "validation": "1330 affected Python cases and 311 Rust unit cases. Formatting, scoped Clippy, strict rustdoc, architecture and docs checks.",
+  "review": "One local Astra xhigh review. Resolved all three findings with direct FK4 horizon conversion, offsets decoded before attaching the observing frame, and finite-distance dynamical output labels. All added regression controls pass."
+}
