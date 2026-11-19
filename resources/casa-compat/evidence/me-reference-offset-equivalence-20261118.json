@@ -1,0 +1,2572 @@
+{
+  "casa_version": "casatools 6.7.6-14 / casatasks 6.7.6.14",
+  "source_revision": "5b2b19bbb6c0549c44353ac119aa5c09b255211f",
+  "work_item": "https://github.com/bglenden/casa-rs/issues/1252",
+  "scope": "Measure output and constructor offsets, nested and vector records, frame offsets and display, R_ epoch labels, position vectors and direction consumers.",
+  "sources": [
+    "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/casatools/src/tools/measures/measures_cmpt.cc?at=6.7.6.14",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MeasConvert.tcc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCEpoch.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/measures/Measures/MCPosition.cc",
+    "https://github.com/casacore/casacore/blob/v3.7.1/casa/Quanta/MVPosition.cc"
+  ],
+  "comparison": {
+    "fixture": "crates/casars-python/python/tests/data/casa_measures_offsets.json",
+    "capture": "CASAPY tools/simulation/measures_offsets_oracle.py --measures-data target/geometry-snapshot --out crates/casars-python/python/tests/data/casa_measures_offsets.json",
+    "command": "CASA_RS_MEASURESPATH=target/geometry-snapshot target/venv/bin/python -m pytest -q crates/casars-python/python/tests/test_measures_offsets.py",
+    "result": "140 recorded reference and frame cases pass. All 101 release timings are faster than CASA, from 1.20x to 32.75x.",
+    "controls": "Nine measure types, same and cross references, input and output origins, nested and vector offsets, malformed and mismatched offsets, apparent and modeled directions, epoch rounding, and raw display strings. Review regressions cover same-model origins in spectral projections, frame insertion refusing origins that would need the tool's ambient frame, and near-geocentre WGS84 convergence. Known CASA constructor and field-norm defects use the independent geometry controls.",
+    "tolerances": "Exact keys, canonical reference codes, units, shapes and text. Numeric comparisons use 2e-11 relative and 2e-7 absolute, with Cartesian controls for the known magnetic deviations."
+  },
+  "performance": {
+    "command": "CASAPY tools/simulation/measures_offsets_benchmark.py --measures-data target/geometry-snapshot --backend casa/casars",
+    "conditions": "Same bundled data and CASA Python process. One warm-up and seven retained samples of 400 calls for each successful case.",
+    "casa": {
+      "backend": "casa",
+      "casa_version": "6.7.6-14",
+      "revision": "5b2b19bbb6c0549c44353ac119aa5c09b255211f",
+      "source_dirty": false,
+      "calls_per_sample": 400,
+      "cases": {
+        "epoch_measure_same": {
+          "median_ns": 33364.7925,
+          "samples_ns": [
+            32977.9175,
+            33217.5,
+            34632.3975,
+            34366.145,
+            33464.0625,
+            33364.7925,
+            33083.23
+          ]
+        },
+        "epoch_measure_cross": {
+          "median_ns": 33820.52,
+          "samples_ns": [
+            32184.1675,
+            35906.355,
+            34087.915,
+            34038.02,
+            32725.105,
+            33648.645,
+            33820.52
+          ]
+        },
+        "epoch_measure_nested": {
+          "median_ns": 60381.3525,
+          "samples_ns": [
+            62653.9575,
+            60757.6025,
+            60712.085,
+            60188.9575,
+            60381.3525,
+            60134.27,
+            59934.0625
+          ]
+        },
+        "epoch_measure_vector": {
+          "median_ns": 39432.8125,
+          "samples_ns": [
+            39350.3125,
+            39264.6875,
+            39375.52,
+            39432.8125,
+            39926.6675,
+            39986.77,
+            40027.0825
+          ]
+        },
+        "epoch_measure_both": {
+          "median_ns": 45805.52,
+          "samples_ns": [
+            45804.7925,
+            45625.3125,
+            45805.52,
+            46284.1675,
+            46078.5425,
+            45915.9375,
+            45717.9175
+          ]
+        },
+        "epoch_define_offset": {
+          "median_ns": 44601.145,
+          "samples_ns": [
+            44195.7275,
+            44601.145,
+            47597.8125,
+            44257.915,
+            46395.0,
+            45795.7275,
+            44550.1025
+          ]
+        },
+        "direction_measure_same": {
+          "median_ns": 60169.5825,
+          "samples_ns": [
+            59932.7075,
+            59818.4375,
+            60558.645,
+            59844.27,
+            60620.4175,
+            61657.6025,
+            60169.5825
+          ]
+        },
+        "direction_measure_cross": {
+          "median_ns": 62478.335,
+          "samples_ns": [
+            63423.855,
+            63719.6875,
+            64310.73,
+            61983.02,
+            62140.3125,
+            61691.6675,
+            62478.335
+          ]
+        },
+        "direction_measure_nested": {
+          "median_ns": 107028.8525,
+          "samples_ns": [
+            108067.2925,
+            109457.915,
+            106949.79,
+            106840.3125,
+            109007.915,
+            106123.23,
+            107028.8525
+          ]
+        },
+        "direction_measure_vector": {
+          "median_ns": 74588.5425,
+          "samples_ns": [
+            74212.605,
+            74116.46,
+            74397.7075,
+            74931.875,
+            74839.5825,
+            77110.105,
+            74588.5425
+          ]
+        },
+        "direction_measure_both": {
+          "median_ns": 81744.1675,
+          "samples_ns": [
+            82481.46,
+            81880.3125,
+            81744.1675,
+            82742.2925,
+            80735.2075,
+            80849.6875,
+            81465.835
+          ]
+        },
+        "direction_define_offset": {
+          "median_ns": 69299.165,
+          "samples_ns": [
+            72856.875,
+            69413.02,
+            68330.625,
+            70933.4375,
+            68868.855,
+            69299.165,
+            68631.5625
+          ]
+        },
+        "position_measure_same": {
+          "median_ns": 75644.8975,
+          "samples_ns": [
+            76845.625,
+            73990.73,
+            73975.3125,
+            74554.165,
+            76855.3125,
+            78792.2925,
+            75644.8975
+          ]
+        },
+        "position_measure_cross": {
+          "median_ns": 78740.835,
+          "samples_ns": [
+            78480.4175,
+            79163.96,
+            80639.165,
+            78792.7075,
+            78740.835,
+            78275.0,
+            77650.73
+          ]
+        },
+        "position_measure_nested": {
+          "median_ns": 141414.1675,
+          "samples_ns": [
+            141414.1675,
+            138702.2925,
+            136520.73,
+            137614.5825,
+            142098.125,
+            144459.895,
+            148581.0425
+          ]
+        },
+        "position_measure_vector": {
+          "median_ns": 96883.3325,
+          "samples_ns": [
+            95321.1475,
+            96741.5625,
+            99777.71,
+            96883.3325,
+            96820.52,
+            103673.23,
+            99869.1675
+          ]
+        },
+        "position_measure_both": {
+          "median_ns": 106939.5825,
+          "samples_ns": [
+            104727.8125,
+            104925.625,
+            103468.5425,
+            106939.5825,
+            108943.6475,
+            110458.125,
+            111965.0
+          ]
+        },
+        "position_define_offset": {
+          "median_ns": 94966.0425,
+          "samples_ns": [
+            95724.27,
+            95186.145,
+            94083.335,
+            95300.625,
+            94836.25,
+            94878.4375,
+            94966.0425
+          ]
+        },
+        "frequency_measure_same": {
+          "median_ns": 36350.73,
+          "samples_ns": [
+            33713.75,
+            34358.125,
+            36436.77,
+            36350.73,
+            36359.1675,
+            36215.2075,
+            36731.04
+          ]
+        },
+        "frequency_measure_cross": {
+          "median_ns": 34729.6875,
+          "samples_ns": [
+            34715.52,
+            34698.5425,
+            34982.8125,
+            34727.395,
+            34834.27,
+            34729.6875,
+            34930.105
+          ]
+        },
+        "frequency_measure_nested": {
+          "median_ns": 61691.665,
+          "samples_ns": [
+            61022.1875,
+            60880.3125,
+            60715.3125,
+            63766.6675,
+            62460.0,
+            62261.25,
+            61691.665
+          ]
+        },
+        "frequency_measure_vector": {
+          "median_ns": 40195.625,
+          "samples_ns": [
+            43190.4175,
+            40617.3975,
+            40014.79,
+            40195.625,
+            40127.29,
+            40689.6875,
+            40040.625
+          ]
+        },
+        "frequency_measure_both": {
+          "median_ns": 46598.125,
+          "samples_ns": [
+            45895.9375,
+            46908.75,
+            45541.46,
+            46598.125,
+            46376.4575,
+            47460.52,
+            46708.02
+          ]
+        },
+        "frequency_define_offset": {
+          "median_ns": 35490.21,
+          "samples_ns": [
+            35214.27,
+            35588.3325,
+            35512.1875,
+            35143.02,
+            35592.0825,
+            35490.21,
+            35202.085
+          ]
+        },
+        "radialvelocity_measure_same": {
+          "median_ns": 33903.855,
+          "samples_ns": [
+            33937.605,
+            33632.2925,
+            34622.8125,
+            33779.8975,
+            34163.75,
+            33903.855,
+            33503.855
+          ]
+        },
+        "radialvelocity_measure_cross": {
+          "median_ns": 35224.585,
+          "samples_ns": [
+            35248.75,
+            35309.2725,
+            34843.855,
+            34862.9175,
+            34882.6025,
+            35224.585,
+            35587.7075
+          ]
+        },
+        "radialvelocity_measure_nested": {
+          "median_ns": 61677.1875,
+          "samples_ns": [
+            62204.6875,
+            63447.605,
+            61083.75,
+            61360.0,
+            61904.27,
+            61677.1875,
+            61222.915
+          ]
+        },
+        "radialvelocity_measure_vector": {
+          "median_ns": 40011.875,
+          "samples_ns": [
+            40564.6875,
+            39948.5425,
+            39811.98,
+            40365.0,
+            40076.875,
+            40011.875,
+            39854.0625
+          ]
+        },
+        "radialvelocity_measure_both": {
+          "median_ns": 45972.29,
+          "samples_ns": [
+            45233.4375,
+            45475.2075,
+            46004.7925,
+            46230.1025,
+            45972.29,
+            45886.1475,
+            47428.23
+          ]
+        },
+        "radialvelocity_define_offset": {
+          "median_ns": 31272.2925,
+          "samples_ns": [
+            31811.875,
+            31632.605,
+            31594.7925,
+            30901.6675,
+            31272.2925,
+            30618.75,
+            30548.23
+          ]
+        },
+        "doppler_measure_same": {
+          "median_ns": 33823.3325,
+          "samples_ns": [
+            34247.6025,
+            32800.5225,
+            34330.625,
+            33823.3325,
+            34241.6675,
+            33405.8325,
+            32892.0825
+          ]
+        },
+        "doppler_measure_cross": {
+          "median_ns": 33933.5425,
+          "samples_ns": [
+            35238.335,
+            35194.5825,
+            33933.5425,
+            33910.4175,
+            34076.4575,
+            33887.5,
+            33874.6875
+          ]
+        },
+        "doppler_measure_nested": {
+          "median_ns": 61261.25,
+          "samples_ns": [
+            61261.25,
+            64065.8325,
+            61540.52,
+            61901.355,
+            60566.77,
+            60787.8125,
+            60677.8125
+          ]
+        },
+        "doppler_measure_vector": {
+          "median_ns": 40181.145,
+          "samples_ns": [
+            43437.395,
+            40526.7725,
+            40248.3325,
+            40015.2075,
+            39923.2275,
+            40181.145,
+            40045.52
+          ]
+        },
+        "doppler_measure_both": {
+          "median_ns": 46252.3975,
+          "samples_ns": [
+            45965.2075,
+            46167.9175,
+            46252.3975,
+            46108.96,
+            46513.4375,
+            46308.5425,
+            46650.9375
+          ]
+        },
+        "doppler_define_offset": {
+          "median_ns": 35948.645,
+          "samples_ns": [
+            35948.645,
+            36078.4375,
+            36168.645,
+            35895.21,
+            35915.4175,
+            35819.895,
+            35948.855
+          ]
+        },
+        "baseline_measure_same": {
+          "median_ns": 80253.4375,
+          "samples_ns": [
+            80253.4375,
+            78036.5625,
+            79244.0625,
+            79355.73,
+            80288.6475,
+            82214.0625,
+            85605.0
+          ]
+        },
+        "baseline_measure_cross": {
+          "median_ns": 138726.355,
+          "samples_ns": [
+            142641.145,
+            141226.25,
+            138108.54,
+            137209.79,
+            138726.355,
+            137376.25,
+            141330.2075
+          ]
+        },
+        "baseline_measure_nested": {
+          "median_ns": 149639.6875,
+          "samples_ns": [
+            149918.645,
+            148151.5625,
+            149639.6875,
+            149172.7075,
+            151444.165,
+            151726.25,
+            148066.46
+          ]
+        },
+        "baseline_measure_vector": {
+          "median_ns": 105494.375,
+          "samples_ns": [
+            105494.375,
+            105339.2725,
+            103819.4775,
+            105315.0,
+            110204.6875,
+            106909.1675,
+            109533.645
+          ]
+        },
+        "baseline_measure_both": {
+          "median_ns": 109656.665,
+          "samples_ns": [
+            109656.665,
+            106748.8525,
+            109108.96,
+            105274.5825,
+            110177.7075,
+            113544.79,
+            112665.52
+          ]
+        },
+        "baseline_define_offset": {
+          "median_ns": 102203.6475,
+          "samples_ns": [
+            102243.855,
+            103668.23,
+            102954.48,
+            102078.6475,
+            100186.875,
+            101507.085,
+            102203.6475
+          ]
+        },
+        "uvw_measure_same": {
+          "median_ns": 81024.375,
+          "samples_ns": [
+            80724.1675,
+            78788.9575,
+            79965.9375,
+            81024.375,
+            82759.6875,
+            81960.52,
+            83209.1675
+          ]
+        },
+        "uvw_measure_cross": {
+          "median_ns": 82332.1875,
+          "samples_ns": [
+            82332.1875,
+            82088.4375,
+            81177.8125,
+            81491.25,
+            82931.875,
+            83305.9375,
+            84813.96
+          ]
+        },
+        "uvw_measure_nested": {
+          "median_ns": 149519.4775,
+          "samples_ns": [
+            143801.3525,
+            146020.2075,
+            150934.5825,
+            149676.145,
+            149519.4775,
+            143982.605,
+            151313.645
+          ]
+        },
+        "uvw_measure_vector": {
+          "median_ns": 103861.1475,
+          "samples_ns": [
+            103861.1475,
+            104627.5,
+            104323.23,
+            106818.9575,
+            100583.125,
+            102734.375,
+            101950.3125
+          ]
+        },
+        "uvw_measure_both": {
+          "median_ns": 108712.7075,
+          "samples_ns": [
+            104930.52,
+            115322.1875,
+            107474.0625,
+            106746.355,
+            108712.7075,
+            110581.1475,
+            114856.0425
+          ]
+        },
+        "uvw_define_offset": {
+          "median_ns": 79222.395,
+          "samples_ns": [
+            79339.79,
+            82578.4375,
+            79677.5,
+            79127.0825,
+            79063.125,
+            79222.395,
+            78726.0425
+          ]
+        },
+        "earthmagnetic_measure_same": {
+          "median_ns": 78918.645,
+          "samples_ns": [
+            79971.355,
+            78630.0,
+            77954.895,
+            80239.6875,
+            78918.645,
+            80409.375,
+            78913.0225
+          ]
+        },
+        "earthmagnetic_measure_cross": {
+          "median_ns": 131025.105,
+          "samples_ns": [
+            131025.105,
+            128761.875,
+            131838.02,
+            129887.9175,
+            127254.48,
+            131426.77,
+            133800.2075
+          ]
+        },
+        "earthmagnetic_measure_nested": {
+          "median_ns": 144531.98,
+          "samples_ns": [
+            144787.6025,
+            143343.23,
+            143678.5425,
+            144531.98,
+            144581.5625,
+            147586.9775,
+            142861.1475
+          ]
+        },
+        "earthmagnetic_measure_vector": {
+          "median_ns": 98677.8125,
+          "samples_ns": [
+            95626.77,
+            97861.355,
+            100896.25,
+            97075.1025,
+            98677.8125,
+            103145.73,
+            103802.1875
+          ]
+        },
+        "earthmagnetic_measure_both": {
+          "median_ns": 104688.75,
+          "samples_ns": [
+            106887.605,
+            111046.77,
+            104688.75,
+            106544.5825,
+            103402.0825,
+            103089.585,
+            104347.395
+          ]
+        },
+        "earthmagnetic_define_offset": {
+          "median_ns": 93431.875,
+          "samples_ns": [
+            93825.3125,
+            93431.875,
+            93896.875,
+            92522.29,
+            93220.0,
+            93108.855,
+            95367.3975
+          ]
+        },
+        "epoch_define_R_UTC": {
+          "median_ns": 22691.6675,
+          "samples_ns": [
+            23066.46,
+            22589.27,
+            22469.6875,
+            22400.625,
+            22691.6675,
+            22704.6875,
+            24141.7725
+          ]
+        },
+        "epoch_measure_R_UTC": {
+          "median_ns": 16083.3325,
+          "samples_ns": [
+            16083.3325,
+            16158.9575,
+            16091.98,
+            15506.3525,
+            15549.0625,
+            17132.5,
+            15510.73
+          ]
+        },
+        "epoch_define_R_LAST": {
+          "median_ns": 22345.3125,
+          "samples_ns": [
+            22322.9175,
+            22524.5825,
+            22226.4575,
+            23637.9175,
+            22331.6675,
+            22345.3125,
+            22420.21
+          ]
+        },
+        "epoch_measure_R_LAST": {
+          "median_ns": 18795.0,
+          "samples_ns": [
+            18793.125,
+            18795.0,
+            18452.605,
+            19372.1875,
+            18563.8525,
+            19243.75,
+            19025.73
+          ]
+        },
+        "epoch_define_r_tai": {
+          "median_ns": 22904.375,
+          "samples_ns": [
+            22758.5425,
+            23180.9375,
+            22871.4575,
+            23160.8325,
+            23022.1875,
+            22899.27,
+            22904.375
+          ]
+        },
+        "epoch_measure_r_tai": {
+          "median_ns": 15664.1675,
+          "samples_ns": [
+            15480.73,
+            15781.0425,
+            15538.75,
+            15628.335,
+            15718.6475,
+            15664.1675,
+            15761.9775
+          ]
+        },
+        "epoch_define_R_INVALID": {
+          "median_ns": 23667.3975,
+          "samples_ns": [
+            23243.6475,
+            23198.4375,
+            25840.105,
+            24267.8125,
+            23201.6675,
+            23785.2075,
+            23667.3975
+          ]
+        },
+        "epoch_measure_R_INVALID": {
+          "median_ns": 15928.75,
+          "samples_ns": [
+            15679.375,
+            15666.25,
+            17612.1875,
+            15739.1675,
+            16054.27,
+            15951.665,
+            15928.75
+          ]
+        },
+        "epoch_raze_on_input": {
+          "median_ns": 18995.3125,
+          "samples_ns": [
+            19060.8325,
+            19379.7925,
+            18995.3125,
+            19271.355,
+            18354.0625,
+            18490.4175,
+            18456.5625
+          ]
+        },
+        "epoch_raze_same_reference": {
+          "median_ns": 15387.2925,
+          "samples_ns": [
+            15898.54,
+            15161.25,
+            15387.2925,
+            15175.7275,
+            15166.7725,
+            15637.1875,
+            15543.75
+          ]
+        },
+        "dirshow_epoch": {
+          "median_ns": 8800.105,
+          "samples_ns": [
+            9404.1675,
+            8617.0825,
+            8603.02,
+            8599.165,
+            8800.105,
+            9080.3125,
+            9145.3125
+          ]
+        },
+        "dirshow_epoch_raze": {
+          "median_ns": 8787.7075,
+          "samples_ns": [
+            9243.6475,
+            9226.5625,
+            8787.7075,
+            8548.6475,
+            8538.5425,
+            8672.9175,
+            8926.665
+          ]
+        },
+        "dirshow_position": {
+          "median_ns": 18346.0425,
+          "samples_ns": [
+            18707.8125,
+            18779.5825,
+            18346.0425,
+            18458.855,
+            18253.855,
+            18227.29,
+            18212.1875
+          ]
+        },
+        "dirshow_geodetic_position": {
+          "median_ns": 19560.415,
+          "samples_ns": [
+            19560.415,
+            19802.915,
+            19761.3525,
+            19619.27,
+            18753.645,
+            18293.9575,
+            19557.5
+          ]
+        },
+        "dirshow_frequency": {
+          "median_ns": 8394.0625,
+          "samples_ns": [
+            8903.23,
+            8870.2075,
+            8779.5825,
+            8272.1875,
+            8340.52,
+            8394.0625,
+            8342.1875
+          ]
+        },
+        "dirshow_frequency_with_offset": {
+          "median_ns": 19680.415,
+          "samples_ns": [
+            19626.0425,
+            19892.605,
+            19680.105,
+            19655.8325,
+            19680.415,
+            20572.8125,
+            19754.6875
+          ]
+        },
+        "position_vector_cartesian": {
+          "median_ns": 54932.5,
+          "samples_ns": [
+            53894.48,
+            55756.9775,
+            56469.1675,
+            54932.5,
+            54632.5,
+            55121.46,
+            54132.7075
+          ]
+        },
+        "position_vector_with_offset": {
+          "median_ns": 97246.5625,
+          "samples_ns": [
+            95921.0425,
+            97755.3125,
+            94892.1875,
+            98280.7275,
+            100551.25,
+            97246.5625,
+            95602.395
+          ]
+        },
+        "position_vector_length_first": {
+          "median_ns": 55624.7925,
+          "samples_ns": [
+            56071.665,
+            56056.1475,
+            55371.25,
+            55897.605,
+            55624.7925,
+            55431.1475,
+            55337.395
+          ]
+        },
+        "position_vector_angle_first": {
+          "median_ns": 63866.98,
+          "samples_ns": [
+            58366.25,
+            56743.9575,
+            63602.6025,
+            63866.98,
+            130786.0425,
+            115619.1675,
+            93502.1875
+          ]
+        },
+        "position_vector_one": {
+          "median_ns": 44889.895,
+          "samples_ns": [
+            45669.8975,
+            44889.895,
+            45431.0425,
+            44928.02,
+            44459.7925,
+            44436.77,
+            44830.4175
+          ]
+        },
+        "separation_same_reference_offset": {
+          "median_ns": 49769.5825,
+          "samples_ns": [
+            48308.4375,
+            53392.085,
+            47320.4175,
+            47064.165,
+            49769.5825,
+            50121.1475,
+            49779.6875
+          ]
+        },
+        "separation_cross_reference_offset": {
+          "median_ns": 56562.1875,
+          "samples_ns": [
+            57378.8525,
+            56562.1875,
+            56547.9175,
+            55578.75,
+            56994.1675,
+            56605.9375,
+            55250.625
+          ]
+        },
+        "separation_vector_first": {
+          "median_ns": 34005.835,
+          "samples_ns": [
+            33447.9175,
+            33136.0425,
+            33735.8325,
+            35489.6875,
+            34302.2925,
+            34107.395,
+            34005.835
+          ]
+        },
+        "separation_solar_system": {
+          "median_ns": 48005.415,
+          "samples_ns": [
+            46931.98,
+            46985.2075,
+            48161.25,
+            48389.6875,
+            47983.23,
+            48364.27,
+            48005.415
+          ]
+        },
+        "separation_two_models": {
+          "median_ns": 63628.3325,
+          "samples_ns": [
+            64161.4575,
+            64014.79,
+            63268.645,
+            63062.5,
+            63846.4575,
+            63628.3325,
+            62738.4375
+          ]
+        },
+        "posangle_same_reference_offset": {
+          "median_ns": 50798.4375,
+          "samples_ns": [
+            50368.855,
+            51818.0225,
+            50886.4575,
+            51208.02,
+            47956.3525,
+            50798.4375,
+            48769.6875
+          ]
+        },
+        "posangle_cross_reference_offset": {
+          "median_ns": 56431.7725,
+          "samples_ns": [
+            58525.21,
+            59247.8125,
+            56431.7725,
+            56775.0,
+            55840.105,
+            56212.7075,
+            55786.3525
+          ]
+        },
+        "posangle_vector_first": {
+          "median_ns": 34198.125,
+          "samples_ns": [
+            34198.125,
+            33776.355,
+            33842.085,
+            34305.4175,
+            34010.9375,
+            36315.8325,
+            34403.02
+          ]
+        },
+        "posangle_solar_system": {
+          "median_ns": 47772.8125,
+          "samples_ns": [
+            48439.7925,
+            48220.105,
+            48521.77,
+            46048.335,
+            46916.4575,
+            45936.875,
+            47772.8125
+          ]
+        },
+        "posangle_two_models": {
+          "median_ns": 63194.375,
+          "samples_ns": [
+            62942.8125,
+            61281.77,
+            64362.8125,
+            65278.4375,
+            63194.375,
+            61988.125,
+            63626.25
+          ]
+        },
+        "source_with_offset": {
+          "median_ns": 61885.0,
+          "samples_ns": [
+            61885.0,
+            62426.145,
+            60598.75,
+            63131.145,
+            61763.2275,
+            61738.23,
+            61978.4375
+          ]
+        },
+        "showframe_with_offsets": {
+          "median_ns": 3351.0425,
+          "samples_ns": [
+            3313.855,
+            3346.5625,
+            3466.665,
+            3520.415,
+            3349.79,
+            3351.0425,
+            3421.875
+          ]
+        },
+        "epoch_offset_absolute": {
+          "median_ns": 28806.3525,
+          "samples_ns": [
+            28806.3525,
+            29231.875,
+            29342.9175,
+            28783.75,
+            27611.1475,
+            27971.9775,
+            28826.355
+          ]
+        },
+        "frequency_with_frame_offsets": {
+          "median_ns": 16098.02,
+          "samples_ns": [
+            15801.5625,
+            16636.665,
+            15941.875,
+            15905.3125,
+            16482.2925,
+            16194.5825,
+            16098.02
+          ]
+        },
+        "ambient_direction_with_frame_offsets": {
+          "median_ns": 55103.9575,
+          "samples_ns": [
+            55824.7925,
+            55103.9575,
+            54859.375,
+            53866.875,
+            55202.8125,
+            54828.02,
+            55686.355
+          ]
+        },
+        "showframe_with_vectors": {
+          "median_ns": 3428.23,
+          "samples_ns": [
+            3333.125,
+            3331.875,
+            3418.855,
+            3433.3325,
+            3435.21,
+            3428.23,
+            3433.335
+          ]
+        },
+        "SUN_frame_display": {
+          "median_ns": 3330.0,
+          "samples_ns": [
+            3419.79,
+            3432.8125,
+            3326.0425,
+            3330.0,
+            3318.855,
+            3319.1675,
+            3568.125
+          ]
+        },
+        "SUN_frame_barycentric_frequency": {
+          "median_ns": 16506.4575,
+          "samples_ns": [
+            15921.25,
+            16645.625,
+            15914.79,
+            16506.4575,
+            16920.9375,
+            16880.415,
+            16397.395
+          ]
+        },
+        "PLUTO_frame_display": {
+          "median_ns": 3374.0625,
+          "samples_ns": [
+            3374.165,
+            3374.0625,
+            3504.895,
+            3389.895,
+            3366.875,
+            3366.6675,
+            3356.875
+          ]
+        },
+        "PLUTO_frame_barycentric_frequency": {
+          "median_ns": 15888.75,
+          "samples_ns": [
+            15888.75,
+            15883.54,
+            15887.1875,
+            15840.52,
+            16250.3125,
+            16133.23,
+            16213.3325
+          ]
+        },
+        "measure_J2000_MOON_origin_resolved": {
+          "median_ns": 66061.875,
+          "samples_ns": [
+            64110.625,
+            63716.6675,
+            64874.1675,
+            67163.5425,
+            67804.0625,
+            67810.415,
+            66061.875
+          ]
+        },
+        "measure_APP_J2000_origin_resolved": {
+          "median_ns": 75308.3325,
+          "samples_ns": [
+            72594.7925,
+            75462.8125,
+            75308.3325,
+            74523.645,
+            74197.1875,
+            76166.355,
+            77400.2075
+          ]
+        },
+        "position_near_geocentre_42000": {
+          "median_ns": 64278.96,
+          "samples_ns": [
+            64018.3325,
+            63643.3325,
+            64278.96,
+            63858.96,
+            64750.625,
+            66414.0625,
+            64995.4175
+          ]
+        },
+        "position_near_geocentre_42500": {
+          "median_ns": 112523.75,
+          "samples_ns": [
+            113023.125,
+            110014.6875,
+            115912.5,
+            112713.3325,
+            112523.75,
+            110805.73,
+            110665.3125
+          ]
+        },
+        "position_near_geocentre_42700": {
+          "median_ns": 292912.7075,
+          "samples_ns": [
+            292912.7075,
+            296940.2075,
+            293500.105,
+            296046.665,
+            292554.0625,
+            289995.9375,
+            291254.0625
+          ]
+        },
+        "position_near_geocentre_43500": {
+          "median_ns": 60338.75,
+          "samples_ns": [
+            59176.145,
+            60012.1875,
+            59675.73,
+            60440.105,
+            61482.9175,
+            60338.75,
+            61031.145
+          ]
+        }
+      }
+    },
+    "native": {
+      "backend": "casars",
+      "casa_version": "6.7.6-14",
+      "revision": "5b2b19bbb6c0549c44353ac119aa5c09b255211f",
+      "source_dirty": false,
+      "calls_per_sample": 400,
+      "cases": {
+        "epoch_measure_same": {
+          "median_ns": 3759.48,
+          "samples_ns": [
+            3973.645,
+            3826.5625,
+            3758.4375,
+            3759.48,
+            3756.145,
+            3758.8525,
+            3776.4575
+          ]
+        },
+        "epoch_measure_cross": {
+          "median_ns": 4691.3525,
+          "samples_ns": [
+            4583.125,
+            4689.27,
+            4704.0625,
+            4691.3525,
+            4688.645,
+            4694.27,
+            4694.895
+          ]
+        },
+        "epoch_measure_nested": {
+          "median_ns": 6667.605,
+          "samples_ns": [
+            6667.605,
+            6788.125,
+            6687.085,
+            6636.5625,
+            6634.585,
+            6695.835,
+            6658.0225
+          ]
+        },
+        "epoch_measure_vector": {
+          "median_ns": 7162.605,
+          "samples_ns": [
+            7248.96,
+            7188.02,
+            7118.125,
+            7162.605,
+            7147.2925,
+            7174.48,
+            6538.645
+          ]
+        },
+        "epoch_measure_both": {
+          "median_ns": 5411.875,
+          "samples_ns": [
+            5421.6675,
+            5470.2075,
+            5400.105,
+            5400.625,
+            5471.5625,
+            5406.875,
+            5411.875
+          ]
+        },
+        "epoch_define_offset": {
+          "median_ns": 2771.145,
+          "samples_ns": [
+            2781.77,
+            2771.145,
+            2774.895,
+            2751.0425,
+            2754.375,
+            2756.875,
+            2773.4375
+          ]
+        },
+        "direction_measure_same": {
+          "median_ns": 6232.7075,
+          "samples_ns": [
+            6232.7075,
+            6271.4575,
+            6236.98,
+            6223.5425,
+            6244.0625,
+            6216.5625,
+            6225.8325
+          ]
+        },
+        "direction_measure_cross": {
+          "median_ns": 6913.855,
+          "samples_ns": [
+            6902.9175,
+            6913.4375,
+            6913.5425,
+            6913.855,
+            7004.6875,
+            6998.75,
+            6930.625
+          ]
+        },
+        "direction_measure_nested": {
+          "median_ns": 10070.625,
+          "samples_ns": [
+            10070.625,
+            10090.8325,
+            10051.5625,
+            10068.9575,
+            10019.0625,
+            10174.5825,
+            10075.52
+          ]
+        },
+        "direction_measure_vector": {
+          "median_ns": 12388.335,
+          "samples_ns": [
+            12390.625,
+            12504.165,
+            12390.52,
+            12388.335,
+            12376.5625,
+            11473.4375,
+            11528.645
+          ]
+        },
+        "direction_measure_both": {
+          "median_ns": 8992.5,
+          "samples_ns": [
+            8767.395,
+            9020.2075,
+            9011.5625,
+            9014.895,
+            8992.5,
+            8943.2275,
+            8571.145
+          ]
+        },
+        "direction_define_offset": {
+          "median_ns": 4522.5,
+          "samples_ns": [
+            4522.5,
+            4550.9375,
+            4519.165,
+            4566.1475,
+            4601.0425,
+            4510.3125,
+            4513.4375
+          ]
+        },
+        "position_measure_same": {
+          "median_ns": 8096.665,
+          "samples_ns": [
+            7761.875,
+            7776.355,
+            8277.7075,
+            8096.665,
+            7807.2925,
+            8156.5625,
+            8202.8125
+          ]
+        },
+        "position_measure_cross": {
+          "median_ns": 9126.4575,
+          "samples_ns": [
+            9251.875,
+            9144.6875,
+            9114.585,
+            9097.3975,
+            9367.29,
+            9122.395,
+            9126.4575
+          ]
+        },
+        "position_measure_nested": {
+          "median_ns": 13390.625,
+          "samples_ns": [
+            13417.9175,
+            13375.3125,
+            13390.625,
+            13550.3125,
+            13239.48,
+            13337.915,
+            13463.3325
+          ]
+        },
+        "position_measure_vector": {
+          "median_ns": 17260.0,
+          "samples_ns": [
+            17260.0,
+            17379.375,
+            17115.3125,
+            17260.8325,
+            17219.375,
+            17222.1875,
+            17405.21
+          ]
+        },
+        "position_measure_both": {
+          "median_ns": 12135.4175,
+          "samples_ns": [
+            12017.5,
+            11751.355,
+            11720.5225,
+            12185.3125,
+            12327.395,
+            12135.4175,
+            12190.7275
+          ]
+        },
+        "position_define_offset": {
+          "median_ns": 6456.77,
+          "samples_ns": [
+            6585.3125,
+            6459.7925,
+            6465.21,
+            6418.125,
+            6456.77,
+            6385.835,
+            6380.3125
+          ]
+        },
+        "frequency_measure_same": {
+          "median_ns": 3665.9375,
+          "samples_ns": [
+            3676.875,
+            3645.0,
+            3648.3325,
+            3665.9375,
+            3642.7075,
+            3711.5625,
+            3884.6875
+          ]
+        },
+        "frequency_measure_cross": {
+          "median_ns": 4879.375,
+          "samples_ns": [
+            4905.9375,
+            4719.375,
+            4568.9575,
+            4901.7725,
+            4922.3975,
+            4878.125,
+            4879.375
+          ]
+        },
+        "frequency_measure_nested": {
+          "median_ns": 6553.0225,
+          "samples_ns": [
+            6524.375,
+            6785.625,
+            6596.875,
+            6553.0225,
+            6546.145,
+            6564.27,
+            6527.9175
+          ]
+        },
+        "frequency_measure_vector": {
+          "median_ns": 7137.605,
+          "samples_ns": [
+            7181.1475,
+            7171.25,
+            7159.79,
+            7137.605,
+            7133.125,
+            7131.0425,
+            6795.8325
+          ]
+        },
+        "frequency_measure_both": {
+          "median_ns": 5858.6475,
+          "samples_ns": [
+            5806.98,
+            5858.6475,
+            5801.6675,
+            5807.9175,
+            6199.165,
+            5938.4375,
+            6029.895
+          ]
+        },
+        "frequency_define_offset": {
+          "median_ns": 3202.2925,
+          "samples_ns": [
+            3191.1475,
+            3232.8125,
+            3202.2925,
+            3215.0,
+            3189.0625,
+            3182.085,
+            3248.2275
+          ]
+        },
+        "radialvelocity_measure_same": {
+          "median_ns": 3863.125,
+          "samples_ns": [
+            3863.125,
+            3858.23,
+            3873.02,
+            3851.0425,
+            3866.25,
+            3861.875,
+            3887.2925
+          ]
+        },
+        "radialvelocity_measure_cross": {
+          "median_ns": 4982.5,
+          "samples_ns": [
+            4993.8525,
+            4999.375,
+            4979.48,
+            4991.77,
+            4961.665,
+            4982.5,
+            4958.02
+          ]
+        },
+        "radialvelocity_measure_nested": {
+          "median_ns": 6751.6675,
+          "samples_ns": [
+            6888.9575,
+            6805.52,
+            6771.355,
+            6699.27,
+            6751.6675,
+            6732.0825,
+            6638.8525
+          ]
+        },
+        "radialvelocity_measure_vector": {
+          "median_ns": 6910.7275,
+          "samples_ns": [
+            6633.3325,
+            6657.5,
+            6873.125,
+            6910.7275,
+            7169.895,
+            7351.5625,
+            7254.585
+          ]
+        },
+        "radialvelocity_measure_both": {
+          "median_ns": 6029.5825,
+          "samples_ns": [
+            6042.9175,
+            6017.8125,
+            6010.7275,
+            6229.375,
+            6029.5825,
+            6045.9375,
+            6009.48
+          ]
+        },
+        "radialvelocity_define_offset": {
+          "median_ns": 3068.75,
+          "samples_ns": [
+            3080.7275,
+            3068.23,
+            3069.48,
+            3068.75,
+            3097.6025,
+            2961.46,
+            2834.27
+          ]
+        },
+        "doppler_measure_same": {
+          "median_ns": 3735.73,
+          "samples_ns": [
+            3718.96,
+            3735.73,
+            3701.0425,
+            3702.7075,
+            4167.0825,
+            4127.6025,
+            4126.04
+          ]
+        },
+        "doppler_measure_cross": {
+          "median_ns": 4228.75,
+          "samples_ns": [
+            4286.77,
+            4215.5225,
+            4228.54,
+            4236.25,
+            4226.7725,
+            4228.75,
+            4230.73
+          ]
+        },
+        "doppler_measure_nested": {
+          "median_ns": 6686.04,
+          "samples_ns": [
+            6845.0,
+            6830.1025,
+            6679.0625,
+            6686.04,
+            6716.5625,
+            6672.0825,
+            6670.9375
+          ]
+        },
+        "doppler_measure_vector": {
+          "median_ns": 7189.27,
+          "samples_ns": [
+            7164.6875,
+            7189.27,
+            7171.355,
+            7200.835,
+            7300.415,
+            7263.23,
+            7160.9375
+          ]
+        },
+        "doppler_measure_both": {
+          "median_ns": 5995.0,
+          "samples_ns": [
+            6064.27,
+            5995.0,
+            6033.4375,
+            6160.0,
+            5921.5625,
+            5941.875,
+            5889.0625
+          ]
+        },
+        "doppler_define_offset": {
+          "median_ns": 2889.5825,
+          "samples_ns": [
+            2948.125,
+            2883.8525,
+            2881.7725,
+            2888.4375,
+            2889.5825,
+            3093.54,
+            3155.8325
+          ]
+        },
+        "baseline_measure_same": {
+          "median_ns": 8348.855,
+          "samples_ns": [
+            8370.3125,
+            8436.25,
+            8348.855,
+            8409.165,
+            8320.3125,
+            8345.415,
+            8328.3325
+          ]
+        },
+        "baseline_measure_cross": {
+          "median_ns": 31519.1675,
+          "samples_ns": [
+            31636.355,
+            31786.3525,
+            31519.1675,
+            30832.605,
+            31686.5625,
+            30583.855,
+            31302.1875
+          ]
+        },
+        "baseline_measure_nested": {
+          "median_ns": 13569.895,
+          "samples_ns": [
+            13605.9375,
+            13569.895,
+            13581.145,
+            13721.145,
+            13279.6875,
+            13432.3975,
+            13552.915
+          ]
+        },
+        "baseline_measure_vector": {
+          "median_ns": 17258.645,
+          "samples_ns": [
+            17263.75,
+            17008.125,
+            16623.75,
+            17200.3125,
+            17267.2925,
+            17258.645,
+            17348.4375
+          ]
+        },
+        "baseline_measure_both": {
+          "median_ns": 12133.9575,
+          "samples_ns": [
+            12020.2075,
+            12133.9575,
+            12149.27,
+            12141.5625,
+            12286.875,
+            11995.73,
+            11981.0425
+          ]
+        },
+        "baseline_define_offset": {
+          "median_ns": 6824.0625,
+          "samples_ns": [
+            6824.0625,
+            7018.75,
+            6877.085,
+            6820.835,
+            6818.4375,
+            6840.9375,
+            6788.4375
+          ]
+        },
+        "uvw_measure_same": {
+          "median_ns": 8264.48,
+          "samples_ns": [
+            8257.7075,
+            8272.2925,
+            8340.73,
+            8238.4375,
+            8274.895,
+            8264.48,
+            8249.165
+          ]
+        },
+        "uvw_measure_cross": {
+          "median_ns": 9079.1675,
+          "samples_ns": [
+            9251.25,
+            8995.3125,
+            8932.0825,
+            9036.5625,
+            9186.6675,
+            9115.835,
+            9079.1675
+          ]
+        },
+        "uvw_measure_nested": {
+          "median_ns": 13391.875,
+          "samples_ns": [
+            13453.335,
+            13606.77,
+            13391.875,
+            13366.3525,
+            13467.7075,
+            13372.605,
+            13348.4375
+          ]
+        },
+        "uvw_measure_vector": {
+          "median_ns": 17322.2925,
+          "samples_ns": [
+            17185.52,
+            17030.2075,
+            16413.75,
+            17322.2925,
+            17634.895,
+            17355.105,
+            17342.7075
+          ]
+        },
+        "uvw_measure_both": {
+          "median_ns": 11889.5825,
+          "samples_ns": [
+            11884.0625,
+            12028.125,
+            11878.4375,
+            11863.8525,
+            11889.5825,
+            11963.02,
+            11891.98
+          ]
+        },
+        "uvw_define_offset": {
+          "median_ns": 6590.9375,
+          "samples_ns": [
+            6819.5825,
+            6806.145,
+            6590.9375,
+            6275.4175,
+            6276.5625,
+            6280.0,
+            6902.8125
+          ]
+        },
+        "earthmagnetic_measure_same": {
+          "median_ns": 8438.54,
+          "samples_ns": [
+            8552.71,
+            8454.0625,
+            8438.54,
+            8410.5225,
+            8414.0625,
+            8581.355,
+            8353.5425
+          ]
+        },
+        "earthmagnetic_measure_cross": {
+          "median_ns": 14694.8975,
+          "samples_ns": [
+            14399.8975,
+            14694.8975,
+            14586.77,
+            14669.0625,
+            14906.3525,
+            14706.145,
+            14744.5825
+          ]
+        },
+        "earthmagnetic_measure_nested": {
+          "median_ns": 13799.2725,
+          "samples_ns": [
+            13799.2725,
+            13815.105,
+            13801.665,
+            13572.605,
+            13569.48,
+            13811.5625,
+            13579.48
+          ]
+        },
+        "earthmagnetic_measure_vector": {
+          "median_ns": 17434.4775,
+          "samples_ns": [
+            17011.46,
+            16901.5625,
+            17583.3325,
+            17367.1875,
+            17434.4775,
+            17803.4375,
+            17513.75
+          ]
+        },
+        "earthmagnetic_measure_both": {
+          "median_ns": 12313.0225,
+          "samples_ns": [
+            12053.54,
+            12265.9375,
+            12313.0225,
+            12359.375,
+            12301.0425,
+            12331.0425,
+            12491.145
+          ]
+        },
+        "earthmagnetic_define_offset": {
+          "median_ns": 7008.6475,
+          "samples_ns": [
+            6961.1475,
+            7008.6475,
+            6943.855,
+            6945.0,
+            7150.2075,
+            7072.29,
+            7099.27
+          ]
+        },
+        "epoch_define_R_UTC": {
+          "median_ns": 888.75,
+          "samples_ns": [
+            890.0,
+            888.4375,
+            889.5825,
+            905.0,
+            880.105,
+            888.5425,
+            888.75
+          ]
+        },
+        "epoch_measure_R_UTC": {
+          "median_ns": 2010.9375,
+          "samples_ns": [
+            2010.9375,
+            2008.8525,
+            2016.98,
+            2016.4575,
+            2007.915,
+            2084.375,
+            1983.96
+          ]
+        },
+        "epoch_define_R_LAST": {
+          "median_ns": 859.5825,
+          "samples_ns": [
+            883.645,
+            859.79,
+            859.375,
+            859.5825,
+            858.5425,
+            860.0,
+            856.875
+          ]
+        },
+        "epoch_measure_R_LAST": {
+          "median_ns": 2798.645,
+          "samples_ns": [
+            2775.835,
+            2911.875,
+            2881.25,
+            2764.5825,
+            2779.6875,
+            2812.1875,
+            2798.645
+          ]
+        },
+        "epoch_define_r_tai": {
+          "median_ns": 875.625,
+          "samples_ns": [
+            881.145,
+            876.355,
+            875.625,
+            873.125,
+            876.3525,
+            875.625,
+            873.5425
+          ]
+        },
+        "epoch_measure_r_tai": {
+          "median_ns": 2227.085,
+          "samples_ns": [
+            2260.8325,
+            2220.0,
+            2227.085,
+            2218.3325,
+            2239.48,
+            2219.48,
+            2241.5625
+          ]
+        },
+        "epoch_define_R_INVALID": {
+          "median_ns": 899.4775,
+          "samples_ns": [
+            935.105,
+            899.4775,
+            900.105,
+            918.4375,
+            885.0,
+            887.7075,
+            888.125
+          ]
+        },
+        "epoch_measure_R_INVALID": {
+          "median_ns": 1898.3325,
+          "samples_ns": [
+            1903.4375,
+            1898.3325,
+            1901.5625,
+            1920.52,
+            1894.6875,
+            1894.1675,
+            1892.8125
+          ]
+        },
+        "epoch_raze_on_input": {
+          "median_ns": 2888.9575,
+          "samples_ns": [
+            2898.0225,
+            2903.75,
+            2887.1875,
+            2885.0,
+            2887.395,
+            2908.125,
+            2888.9575
+          ]
+        },
+        "epoch_raze_same_reference": {
+          "median_ns": 2043.5425,
+          "samples_ns": [
+            2039.27,
+            2043.5425,
+            2046.0425,
+            2046.9775,
+            2036.145,
+            2048.125,
+            1993.5425
+          ]
+        },
+        "dirshow_epoch": {
+          "median_ns": 1864.5825,
+          "samples_ns": [
+            1864.5825,
+            1861.4575,
+            1861.3525,
+            1872.9175,
+            1888.54,
+            1903.75,
+            1855.52
+          ]
+        },
+        "dirshow_epoch_raze": {
+          "median_ns": 1842.0825,
+          "samples_ns": [
+            1842.0825,
+            1838.855,
+            1860.3125,
+            1841.5625,
+            1844.165,
+            1836.0425,
+            1843.125
+          ]
+        },
+        "dirshow_position": {
+          "median_ns": 3659.895,
+          "samples_ns": [
+            3647.605,
+            3675.73,
+            3646.25,
+            3664.1675,
+            3659.895,
+            3682.5,
+            3651.7725
+          ]
+        },
+        "dirshow_geodetic_position": {
+          "median_ns": 3626.6675,
+          "samples_ns": [
+            3628.125,
+            3626.6675,
+            3639.165,
+            3619.2725,
+            3687.8125,
+            3482.5,
+            3462.395
+          ]
+        },
+        "dirshow_frequency": {
+          "median_ns": 1657.6025,
+          "samples_ns": [
+            1657.1875,
+            1659.375,
+            1654.79,
+            1663.855,
+            1657.6025,
+            1655.52,
+            1657.605
+          ]
+        },
+        "dirshow_frequency_with_offset": {
+          "median_ns": 3309.375,
+          "samples_ns": [
+            3336.665,
+            3309.375,
+            3303.9575,
+            3308.125,
+            3305.52,
+            3807.0825,
+            3673.4375
+          ]
+        },
+        "position_vector_cartesian": {
+          "median_ns": 6700.2075,
+          "samples_ns": [
+            6734.48,
+            6777.085,
+            6700.2075,
+            6700.9375,
+            6583.54,
+            6307.395,
+            6311.875
+          ]
+        },
+        "position_vector_with_offset": {
+          "median_ns": 10622.0825,
+          "samples_ns": [
+            10620.625,
+            10670.73,
+            10622.0825,
+            10601.875,
+            10610.9375,
+            11469.48,
+            11218.125
+          ]
+        },
+        "position_vector_length_first": {
+          "median_ns": 6740.9375,
+          "samples_ns": [
+            6723.645,
+            6773.3325,
+            6723.75,
+            6740.9375,
+            6732.8125,
+            6791.9775,
+            6848.75
+          ]
+        },
+        "position_vector_angle_first": {
+          "median_ns": 6806.145,
+          "samples_ns": [
+            6833.3325,
+            6781.46,
+            6803.23,
+            6806.145,
+            6776.98,
+            6999.27,
+            6959.6875
+          ]
+        },
+        "position_vector_one": {
+          "median_ns": 6095.2075,
+          "samples_ns": [
+            6095.2075,
+            6051.0425,
+            6109.375,
+            6064.375,
+            6249.2725,
+            6098.6475,
+            6088.54
+          ]
+        },
+        "separation_same_reference_offset": {
+          "median_ns": 7253.02,
+          "samples_ns": [
+            7301.145,
+            7233.5425,
+            7272.3975,
+            7235.625,
+            7220.8325,
+            7276.665,
+            7253.02
+          ]
+        },
+        "separation_cross_reference_offset": {
+          "median_ns": 7704.7925,
+          "samples_ns": [
+            7866.5625,
+            7758.75,
+            7691.6675,
+            7740.52,
+            7671.875,
+            7704.7925,
+            7667.0825
+          ]
+        },
+        "separation_vector_first": {
+          "median_ns": 7320.73,
+          "samples_ns": [
+            7295.9375,
+            7332.6025,
+            7450.4175,
+            7320.73,
+            7296.9775,
+            7302.8125,
+            7337.8125
+          ]
+        },
+        "separation_solar_system": {
+          "median_ns": 6069.1675,
+          "samples_ns": [
+            6069.1675,
+            6043.4375,
+            6041.98,
+            6061.9775,
+            6143.5425,
+            6637.5,
+            6486.04
+          ]
+        },
+        "separation_two_models": {
+          "median_ns": 8218.125,
+          "samples_ns": [
+            8218.125,
+            8263.54,
+            8154.6875,
+            8239.7925,
+            8063.855,
+            7977.1875,
+            8334.7925
+          ]
+        },
+        "posangle_same_reference_offset": {
+          "median_ns": 7313.02,
+          "samples_ns": [
+            7354.0625,
+            7313.02,
+            7341.77,
+            7360.2075,
+            7220.3125,
+            7174.0625,
+            7217.7075
+          ]
+        },
+        "posangle_cross_reference_offset": {
+          "median_ns": 7735.52,
+          "samples_ns": [
+            7732.8125,
+            7957.8125,
+            7735.52,
+            7731.0425,
+            7808.4375,
+            7734.2725,
+            7875.4175
+          ]
+        },
+        "posangle_vector_first": {
+          "median_ns": 7229.0625,
+          "samples_ns": [
+            7178.75,
+            7145.0,
+            7229.0625,
+            7153.75,
+            7446.98,
+            7315.0,
+            7286.665
+          ]
+        },
+        "posangle_solar_system": {
+          "median_ns": 6260.105,
+          "samples_ns": [
+            6516.5625,
+            6457.1875,
+            6256.25,
+            6250.21,
+            6260.105,
+            6247.6025,
+            6346.5625
+          ]
+        },
+        "posangle_two_models": {
+          "median_ns": 8103.3325,
+          "samples_ns": [
+            7908.645,
+            24487.0825,
+            11040.5225,
+            8103.3325,
+            8141.145,
+            8096.9775,
+            8086.145
+          ]
+        },
+        "source_with_offset": {
+          "median_ns": 6958.96,
+          "samples_ns": [
+            7005.52,
+            6958.23,
+            7144.7925,
+            6979.6875,
+            6956.98,
+            6958.96,
+            6951.98
+          ]
+        },
+        "showframe_with_offsets": {
+          "median_ns": 109.4775,
+          "samples_ns": [
+            109.7925,
+            108.75,
+            109.375,
+            109.1675,
+            109.4775,
+            109.6875,
+            109.4775
+          ]
+        },
+        "epoch_offset_absolute": {
+          "median_ns": 3826.7725,
+          "samples_ns": [
+            3834.48,
+            3827.6025,
+            3826.7725,
+            4010.52,
+            3559.48,
+            3518.96,
+            3529.6875
+          ]
+        },
+        "frequency_with_frame_offsets": {
+          "median_ns": 2184.895,
+          "samples_ns": [
+            2183.9575,
+            2184.895,
+            2209.0625,
+            2186.9775,
+            2194.8975,
+            2181.145,
+            2183.5425
+          ]
+        },
+        "ambient_direction_with_frame_offsets": {
+          "median_ns": 5182.9175,
+          "samples_ns": [
+            5016.98,
+            5118.23,
+            5306.5625,
+            5195.835,
+            5182.9175,
+            5160.21,
+            5222.5
+          ]
+        },
+        "showframe_with_vectors": {
+          "median_ns": 109.375,
+          "samples_ns": [
+            109.6875,
+            109.375,
+            109.27,
+            109.48,
+            109.0625,
+            110.4175,
+            109.27
+          ]
+        },
+        "SUN_frame_display": {
+          "median_ns": 101.6675,
+          "samples_ns": [
+            101.98,
+            101.9775,
+            101.875,
+            101.5625,
+            101.5625,
+            101.5625,
+            101.6675
+          ]
+        },
+        "SUN_frame_barycentric_frequency": {
+          "median_ns": 3723.9575,
+          "samples_ns": [
+            3717.085,
+            3706.145,
+            3731.355,
+            3769.165,
+            3736.0425,
+            3723.9575,
+            3708.75
+          ]
+        },
+        "PLUTO_frame_display": {
+          "median_ns": 109.1675,
+          "samples_ns": [
+            109.1675,
+            109.27,
+            109.27,
+            109.27,
+            109.0625,
+            109.0625,
+            109.165
+          ]
+        },
+        "PLUTO_frame_barycentric_frequency": {
+          "median_ns": 3804.27,
+          "samples_ns": [
+            3813.3325,
+            3827.9175,
+            3888.5425,
+            3804.27,
+            3798.645,
+            3802.5,
+            3798.75
+          ]
+        },
+        "measure_J2000_MOON_origin_resolved": {
+          "median_ns": 7892.8125,
+          "samples_ns": [
+            8075.105,
+            7892.8125,
+            7845.2075,
+            7901.355,
+            7849.0625,
+            7924.0625,
+            7879.6875
+          ]
+        },
+        "measure_APP_J2000_origin_resolved": {
+          "median_ns": 7932.605,
+          "samples_ns": [
+            8035.3125,
+            8055.2075,
+            8198.23,
+            7905.4175,
+            7900.3125,
+            7932.605,
+            7880.835
+          ]
+        },
+        "position_near_geocentre_42000": {
+          "median_ns": 30686.77,
+          "samples_ns": [
+            30921.25,
+            30762.085,
+            30686.77,
+            30907.395,
+            29858.02,
+            28999.0625,
+            29691.25
+          ]
+        },
+        "position_near_geocentre_42500": {
+          "median_ns": 72520.0,
+          "samples_ns": [
+            72520.0,
+            72588.02,
+            72840.9375,
+            71219.6875,
+            73776.5625,
+            71660.625,
+            71580.1025
+          ]
+        },
+        "position_near_geocentre_42700": {
+          "median_ns": 243255.52,
+          "samples_ns": [
+            243255.52,
+            242362.8125,
+            244800.73,
+            241832.605,
+            241716.6675,
+            243835.4175,
+            244480.3125
+          ]
+        },
+        "position_near_geocentre_43500": {
+          "median_ns": 24621.98,
+          "samples_ns": [
+            24409.375,
+            24590.105,
+            24828.645,
+            25791.6675,
+            25649.79,
+            24611.9775,
+            24621.98
+          ]
+        }
+      }
+    },
+    "speedups": {
+      "epoch_measure_same": 8.874842398416803,
+      "epoch_measure_cross": 7.209119331791844,
+      "epoch_measure_nested": 9.055928253098378,
+      "epoch_measure_vector": 5.505373045142096,
+      "epoch_measure_both": 8.463890980482734,
+      "epoch_define_offset": 16.094843467231055,
+      "direction_measure_same": 9.653843454068717,
+      "direction_measure_cross": 9.036685756354451,
+      "direction_measure_nested": 10.627826227269905,
+      "direction_measure_vector": 6.0208690271937275,
+      "direction_measure_both": 9.090260494856825,
+      "direction_define_offset": 15.323198452183526,
+      "position_measure_same": 9.34272289887256,
+      "position_measure_cross": 8.627754525783963,
+      "position_measure_nested": 10.560684620770129,
+      "position_measure_vector": 5.613171060254925,
+      "position_measure_both": 8.812188167403388,
+      "position_define_offset": 14.707979763875745,
+      "frequency_measure_same": 9.915807348052171,
+      "frequency_measure_cross": 7.117650826181632,
+      "frequency_measure_nested": 9.414230608852632,
+      "frequency_measure_vector": 5.631528362805171,
+      "frequency_measure_both": 7.953734202305225,
+      "frequency_define_offset": 11.082750873007384,
+      "radialvelocity_measure_same": 8.776276977835302,
+      "radialvelocity_measure_cross": 7.069660812844957,
+      "radialvelocity_measure_nested": 9.13510440198662,
+      "radialvelocity_measure_vector": 5.7898209703681704,
+      "radialvelocity_measure_both": 7.624456585509859,
+      "radialvelocity_define_offset": 10.190563747454174,
+      "doppler_measure_same": 9.054008855029672,
+      "doppler_measure_cross": 8.024485368016554,
+      "doppler_measure_nested": 9.162561097450808,
+      "doppler_measure_vector": 5.589043811124077,
+      "doppler_measure_both": 7.715162218515429,
+      "doppler_define_offset": 12.440774748601225,
+      "baseline_measure_same": 9.612508242148175,
+      "baseline_measure_cross": 4.4013330935850385,
+      "baseline_measure_nested": 11.027328324942824,
+      "baseline_measure_vector": 6.112552578722141,
+      "baseline_measure_both": 9.03717233227494,
+      "baseline_define_offset": 14.976950680038469,
+      "uvw_measure_same": 9.803928982827717,
+      "uvw_measure_cross": 9.068252953808816,
+      "uvw_measure_nested": 11.164939748914922,
+      "uvw_measure_vector": 5.995808435863787,
+      "uvw_measure_both": 9.143526065780694,
+      "uvw_define_offset": 12.019897776302688,
+      "earthmagnetic_measure_same": 9.35216814757055,
+      "earthmagnetic_measure_cross": 8.916367398955998,
+      "earthmagnetic_measure_nested": 10.47388403990138,
+      "earthmagnetic_measure_vector": 5.659923705772083,
+      "earthmagnetic_measure_both": 8.502278786544897,
+      "earthmagnetic_define_offset": 13.330942239569046,
+      "epoch_define_R_UTC": 25.532115330520394,
+      "epoch_measure_R_UTC": 7.997927583527583,
+      "epoch_define_R_LAST": 25.9955414401759,
+      "epoch_measure_R_LAST": 6.715749943276121,
+      "epoch_define_r_tai": 26.157744468236974,
+      "epoch_measure_r_tai": 7.033484352864844,
+      "epoch_define_R_INVALID": 26.31238413412231,
+      "epoch_measure_R_INVALID": 8.390916765108326,
+      "epoch_raze_on_input": 6.575144321091605,
+      "epoch_raze_same_reference": 7.529714943535551,
+      "dirshow_epoch": 4.719611494798433,
+      "dirshow_epoch_raze": 4.770528735819378,
+      "dirshow_position": 5.0127237256806545,
+      "dirshow_geodetic_position": 5.393495543774002,
+      "dirshow_frequency": 5.063977944048709,
+      "dirshow_frequency_with_offset": 5.94686761095373,
+      "position_vector_cartesian": 8.198626684322836,
+      "position_vector_with_offset": 9.155131538471858,
+      "position_vector_length_first": 8.251788790505772,
+      "position_vector_angle_first": 9.383723091412246,
+      "position_vector_one": 7.364785366207794,
+      "separation_same_reference_offset": 6.861911658867616,
+      "separation_cross_reference_offset": 7.341169473415411,
+      "separation_vector_first": 4.645142629218671,
+      "separation_solar_system": 7.909719908043402,
+      "separation_two_models": 7.742439120845691,
+      "posangle_same_reference_offset": 6.946300912618863,
+      "posangle_cross_reference_offset": 7.295149194882826,
+      "posangle_vector_first": 4.7306445337829075,
+      "posangle_solar_system": 7.631311695251118,
+      "posangle_two_models": 7.79856620717464,
+      "source_with_offset": 8.892851805442193,
+      "showframe_with_offsets": 30.609417460208718,
+      "epoch_offset_absolute": 7.527584276305947,
+      "frequency_with_frame_offsets": 7.367868936493516,
+      "ambient_direction_with_frame_offsets": 10.63184152555004,
+      "showframe_with_vectors": 31.343817142857144,
+      "SUN_frame_display": 32.753829886640276,
+      "SUN_frame_barycentric_frequency": 4.432504264616339,
+      "PLUTO_frame_display": 30.90720681521515,
+      "PLUTO_frame_barycentric_frequency": 4.176556868991948,
+      "measure_J2000_MOON_origin_resolved": 8.369877657679059,
+      "measure_APP_J2000_origin_resolved": 9.493518522603862,
+      "position_near_geocentre_42000": 2.0946798897374994,
+      "position_near_geocentre_42500": 1.5516236900165472,
+      "position_near_geocentre_42700": 1.2041359123114659,
+      "position_near_geocentre_43500": 2.450605109743408
+    }
+  },
+  "validation": "2044 affected Python cases and 311 Rust unit cases. The three tool-signature checks also pass in CASA's Python environment. Formatting, scoped Clippy, strict rustdoc, architecture and docs checks.",
+  "review": "One local Astra xhigh review. Repaired three independently reproduced defects and verified eight recorded cases that fail before and pass after, covering active planetary spectral projections, frame insertion, and near-geocentre WGS84 convergence."
+}
