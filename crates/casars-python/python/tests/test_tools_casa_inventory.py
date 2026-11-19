@@ -33,16 +33,17 @@ ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "m
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["coordsys"] = {
-    "axesmap", "axiscoordinatetypes", "coordinatetype", "copy", "done",
-    "findaxis", "findaxisbyname", "findcoordinate", "names", "naxes", "ncoordinates",
-    "observer", "parentname", "referencepixel", "setparentname", "setreferencepixel",
+    "addcoordinate", "axesmap", "axiscoordinatetypes", "coordinatetype", "copy", "done", "epoch",
+    "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "names", "naxes", "ncoordinates", "newcoordsys",
+    "observer", "parentname", "referencepixel", "setobserver", "setparentname",
+    "setreferencepixel", "settelescope",
     "stokes", "telescope", "torecord", "type", "units",
 }
 IMPLEMENTED["image"] = {
-    "brightnessunit", "calcmask", "close", "coordsys", "dohistory", "done", "fromarray", "fromshape",
-    "getchunk", "history", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk",
+    "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fromarray", "fromshape",
+    "getchunk", "history", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk", "restoringbeam",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromshape",
-    "makearray", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "shape", "type",
+    "makearray", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "type",
 }
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",

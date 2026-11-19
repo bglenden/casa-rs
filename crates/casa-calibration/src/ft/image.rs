@@ -461,10 +461,6 @@ pub(crate) fn polarization_coordinate(stokes: StokesType) -> Option<Polarization
         StokesType::RL => Some(PolarizationCoordinate::CircularRl),
         StokesType::LR => Some(PolarizationCoordinate::CircularLr),
         StokesType::LL => Some(PolarizationCoordinate::CircularLl),
-        StokesType::Ptotal
-        | StokesType::Plinear
-        | StokesType::PFtotal
-        | StokesType::PFlinear
-        | StokesType::Pangle => None,
+        _ => None,
     }
 }

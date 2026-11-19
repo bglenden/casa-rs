@@ -95,7 +95,7 @@ pub use flagging::{
     FlagCounts, FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
     FlagMerge, FlagSummaryBreakdown, FlagVersionEntry, FlaggingError, QuackMode,
     delete_flag_version, flagdata, flagdata_path, list_flag_versions, rename_flag_version,
-    restore_flag_version, save_flag_version, save_next_flag_backup,
+    rename_flag_version_for_task, restore_flag_version, save_flag_version, save_next_flag_backup,
     save_next_partition_flag_backup,
 };
 pub use listobs::{

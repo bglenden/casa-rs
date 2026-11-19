@@ -1,0 +1,601 @@
+{
+  "schema_version": 1,
+  "task": "plotbandpass",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "e2e135fcea72b6295a72e238e22ab914d31e6a00",
+  "parameters": {
+    "caltable": {
+      "status": "Implemented",
+      "scope": "Input table name, either a bandpass solution or a Tsys solution",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "spectra"
+      ]
+    },
+    "antenna": {
+      "status": "Implemented",
+      "scope": "A comma-delimited string list of antennas (either names or integer indices) for which to display solutions. Default = all antennas.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "field": {
+      "status": "Implemented",
+      "scope": "A comma-delimited string list of fields (either names or integer indices) for which to display solutions. Default = all fields.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "spw": {
+      "status": "Implemented",
+      "scope": "A comma-delimited string list of spws for which to display solutions. Default = all spws.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "yaxis": {
+      "status": "Implemented",
+      "scope": "The quantity to plot on the y-axis (\"amp\", \"phase\", \"both\", \"tsys\", append \"db\" for dB).",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "xaxis": {
+      "status": "Implemented",
+      "scope": "The quantity to plot on the x-axis (\"chan\" or \"freq\").",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "figfile": {
+      "status": "Implemented",
+      "scope": "The name of the plot file to produce.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "plotrange": {
+      "status": "Implemented",
+      "scope": "The axes limits to use [x0,x1,y0,y1].",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "caltable2": {
+      "status": "Implemented",
+      "scope": "A second cal table, of type BPOLY or B, to overlay on a B table",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "spectra"
+      ]
+    },
+    "overlay": {
+      "status": "Implemented",
+      "scope": "Show multiple solutions in same frame in different colors (time, antenna, spw, baseband, or time,antenna)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "showflagged": {
+      "status": "Implemented",
+      "scope": "Show the values of the solution, even if flagged",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "spectra"
+      ]
+    },
+    "timeranges": {
+      "status": "Implemented",
+      "scope": "Show only these timeranges, the first timerange being 0",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "buildpdf": {
+      "status": "Implemented",
+      "scope": "If True, assemble all the pngs into a pdf",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "caltable3": {
+      "status": "Implemented",
+      "scope": "A third cal table, of type BPOLY, to overlay on the first two tables",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "spectra"
+      ]
+    },
+    "markersize": {
+      "status": "Implemented",
+      "scope": "Size of points",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "density": {
+      "status": "Implemented",
+      "scope": "dpi to use in creating PNGs and PDFs (default=108)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "interactive": {
+      "status": "Implemented",
+      "scope": "if False, then run to completion automatically without pause",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "showpoints": {
+      "status": "Implemented",
+      "scope": "Draw points for the data (default=F for amp, T for phase)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "showlines": {
+      "status": "Implemented",
+      "scope": "Draw lines connecting the data (default=T for amp, F for phase)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "subplot": {
+      "status": "Implemented",
+      "scope": "11..81,22,32 or 42 for RowsxColumns (default=22), any 3rd digit is ignored",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "zoom": {
+      "status": "Implemented",
+      "scope": "intersect displays the narrower B solution frequency range. Equal widths prefer the second table.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "poln": {
+      "status": "Implemented",
+      "scope": "Polarizations to plot: \"\" = all, or \"RR\",\"RL\",\"LR\",\"LL\",\"XX\",\"XY\",\"YX\",\"YY\",\"RR,LL\",\"XX,YY\"",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "spectra"
+      ]
+    },
+    "showatm": {
+      "status": "Implemented",
+      "scope": "Compute and overlay the atmospheric transmission curve",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "atmosphere"
+      ]
+    },
+    "pwv": {
+      "status": "Implemented",
+      "scope": "Define the pwv to use for the showatm option: \"auto\" or value in mm",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "atmosphere"
+      ]
+    },
+    "gs": {
+      "status": "Implemented",
+      "scope": "For buildpdf=T, full path for ghostscript command (in case it is not found)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "convert": {
+      "status": "Implemented",
+      "scope": "For buildpdf=T, full path for the ImageMagick convert command (in case it is not found)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "chanrange": {
+      "status": "Implemented",
+      "scope": "Set xrange (\"5~100\") over which to autoscale y-axis for xaxis=\"freq\"",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "solutionTimeThresholdSeconds": {
+      "status": "Implemented",
+      "scope": "Consider 2 solutions simultaneous if within this interval in seconds",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "debug": {
+      "status": "Implemented",
+      "scope": "Emit verbose information about the calibration table, associated MS, selected axes and planned panels.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "phase": {
+      "status": "Implemented",
+      "scope": "The y-axis limits to use for phase plots when yaxis=\"both\"",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "vis": {
+      "status": "Implemented",
+      "scope": "name of the ms for this table, in case it does not match the string in the caltable",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "spectra"
+      ]
+    },
+    "showtsky": {
+      "status": "Implemented",
+      "scope": "Compute and overlay the sky temperature curve instead of transmission",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "atmosphere"
+      ]
+    },
+    "showfdm": {
+      "status": "Implemented",
+      "scope": "when showing TDM spws, draw the locations of the corresponding FDM spws",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "showatmfield": {
+      "status": "Implemented",
+      "scope": "Select a field by name or ID for a time overlay and use its first observation.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "atmosphere"
+      ]
+    },
+    "lo1": {
+      "status": "Implemented",
+      "scope": "specify the LO1 setting (in GHz) for the observation ('' = automatic)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "atmosphere"
+      ]
+    },
+    "showimage": {
+      "status": "Implemented",
+      "scope": "also show the atmospheric curve for the image sideband (in black)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "atmosphere"
+      ]
+    },
+    "showatmpoints": {
+      "status": "Implemented",
+      "scope": "Draw atmospheric curve with points instead of a line",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "atmosphere"
+      ]
+    },
+    "parentms": {
+      "status": "Implemented",
+      "scope": "Identify the parent spectral window by name when the receiver table retains original window IDs.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "atmosphere"
+      ]
+    },
+    "pdftk": {
+      "status": "Implemented",
+      "scope": "For buildpdf=T, full path for pdftk command (in case it is not found)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "channeldiff": {
+      "status": "Implemented",
+      "scope": "Set to a value > 0 (sigma) to plot derivatives of the solutions",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "derivative"
+      ]
+    },
+    "edge": {
+      "status": "Implemented",
+      "scope": "The number of edge channels to ignore in finding outliers (for channeldiff>0)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "derivative"
+      ]
+    },
+    "resample": {
+      "status": "Implemented",
+      "scope": "Positive integers set the resampling name suffix. In derivative mode, factors above one reproduce the pinned CASA resampleSolution NameError.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "derivative"
+      ]
+    },
+    "platformingThreshold": {
+      "status": "Implemented",
+      "scope": "Absolute percentage threshold when platformingSigma is zero.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "derivative"
+      ]
+    },
+    "platformingSigma": {
+      "status": "Implemented",
+      "scope": "MAD multiple when positive. A zero value uses platformingThreshold.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "derivative"
+      ]
+    },
+    "basebands": {
+      "status": "Implemented",
+      "scope": "A baseband number or list of baseband numbers for which to display solutions. Default = all.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "showBasebandNumber": {
+      "status": "Implemented",
+      "scope": "Put the baseband converter number (BBC_NO) in the title of each plot",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    },
+    "scans": {
+      "status": "Implemented",
+      "scope": "A scan or list of scans for which to display solutions. Default = all. Does not work with overlay=\"time\".",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ]
+    },
+    "figfileSequential": {
+      "status": "Implemented",
+      "scope": "naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ]
+    },
+    "chanrangeSetXrange": {
+      "status": "Implemented",
+      "scope": "If True, then chanrange also sets the xrange to display",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "axes"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "selection",
+      "title": "Antenna, field, window, scan and solution time",
+      "status": "Implemented",
+      "scope": "Select current calibration rows by antenna and field names or IDs, spectral-window and baseband numbers, scan numbers and solution times. Apply the pinned CASA type and domain validation and retain the recorded return type for empty selections.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    },
+    {
+      "id": "spectra",
+      "title": "Bandpass and Tsys plots",
+      "status": "Implemented",
+      "scope": "Plot current complex B and real Tsys solutions and legacy BPOLY curves. Read the associated MS metadata, honor flags and receptor choices, and overlay one B or up to two BPOLY companions through the shared plot document.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    },
+    {
+      "id": "axes",
+      "title": "Plot axes and spectral windows",
+      "status": "Implemented",
+      "scope": "Use channel or frequency coordinates with amplitude, phase, dB, delay or temperature units. Apply explicit limits, channel windows and the CASA narrower-solution rule for comparison zoom. Draw FDM windows and label mapped baseband numbers.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    },
+    {
+      "id": "presentation",
+      "title": "Page layout, display, PNG and PDF products",
+      "status": "Implemented",
+      "scope": "Draw and page through the selected panels, including backward movement, early exit and EOF. Apply marker and line settings, density and calibrated filenames. Assemble PDFs with the selected local converter and document tools.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    },
+    {
+      "id": "atmosphere",
+      "title": "Atmospheric transmission, sky and image-sideband curves",
+      "status": "Implemented",
+      "scope": "Evaluate the native ATM profile using the calibration frequency grid, station conditions, pointing and field metadata, and requested or measured PWV. Recover the image oscillator from receiver metadata and parent window names when supplied.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    },
+    {
+      "id": "derivative",
+      "title": "Channel derivatives and platforming",
+      "status": "Implemented",
+      "scope": "Plot channel differences, report MAD and standard deviation, and include medians and platforming events in the typed result. Use the configured edge exclusion and thresholds. Reproduce the installed CASA error for derivative resampling greater than one.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    }
+  ],
+  "decisions": [
+    {
+      "id": "integer-platforming-channel-bounds",
+      "state": "Proposed",
+      "inputs": "Channel derivatives with enough interior points to enter the platforming check.",
+      "casa": "Passes floating-point channel offsets to Python range and raises TypeError.",
+      "ours": "Uses integer channel indices and tests the interior derivative against the requested MAD or percentage threshold.",
+      "rationale": "Keep the documented platforming check functional for wide calibration spectral windows.",
+      "impact": "An interior amplitude step is reported at a threshold it exceeds and omitted at a larger threshold.",
+      "evidence": [
+        "paired"
+      ]
+    },
+    {
+      "id": "default-atmosphere-without-weather",
+      "state": "Proposed",
+      "inputs": "An atmospheric overlay on a bandpass whose associated MS has no WEATHER table.",
+      "casa": "Raises NameError while referencing needToClose_mymsmd.",
+      "ours": "Evaluates the ATM profile using the station defaults available in the absence of measured weather.",
+      "rationale": "Allow a transmission or sky-temperature overlay for supported data with missing weather measurements.",
+      "impact": "The plot includes a finite atmospheric curve and the original calibration spectra.",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input public Python tasks and Matplotlib artist arrays",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 plots and return values, including selected arrays, axes, titles, companion time grids, physical receptor labels, masking, overlay colors and legends, paging, PNG filenames, PDFs, measured water, wide atmospheric grids and split receivers.",
+      "result": "41 plot cases, seven terminal cases, 24 argument and domain cases, 76 rendered panels, paired two-page PDFs and two analytic platforming thresholds passed. Default atmospheric conditions were verified when WEATHER was absent.",
+      "casa_version": "6.7.6.14",
+      "revision": "e2e135fcea72b6295a72e238e22ab914d31e6a00",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotbandpass_oracle.py",
+      "receipt": "resources/casa-compat/evidence/plotbandpass-20261119.json",
+      "links": [
+        "tools/casa-compat/plotbandpass_oracle.py"
+      ]
+    }
+  }
+}

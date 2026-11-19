@@ -19,6 +19,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
 [non-frequency component frequency units](#a-non-frequency-component-unit-corrupts-casas-spectrum),
 [nonconforming component flux conversion](#component-flux-conversion-can-relabel-incompatible-units-or-crash),
@@ -3809,6 +3810,25 @@ reads the input's world values at the pixels it was cut from. CASA's
 only way casa-rs cuts a tabular coordinate's axis, so no task reaches this in
 CASA.
 
+## A blank Stokes string can crash coordinate construction
+
+- Date noted 2026-11-19
+- Affected code is casatools `src/tools/coordsys/coordsys_cmpt.cc` in
+  `addcoordinate`.
+
+CASA 6.7.6.14 exits with SIGSEGV on
+`coordsys().addcoordinate(stokes=" ")`. In casa-rs that input adds no
+Stokes coordinate, matching the empty-string case.
+
+When `coordsys.fromrecord` receives a nonstring `parentName`, CASA reports
+a record type error after installing the decoded coordinates. casa-rs
+validates the parent-name field before replacing the existing system.
+
+CASA also terminates the process when a coordinate replacement vector has
+two dimensions, such as `worldreplace0=[[1.0]]` for a one-axis Stokes
+coordinate. Casa-rs reports a record type error and retains the former
+coordinate system.
+
 ## `tb.getcol` refuses a column of `int64`
 
 - Date noted: 2026-10-30
@@ -7063,6 +7083,26 @@ continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
 all 17 original history entries intact (#977).
 
+## plotbandpass passes a fractional platforming channel to range
+
+CASA 6.7.6.14 raises `TypeError` while checking a wide bandpass for
+platforming. The check computes the two interior channel offsets with
+floating-point division, then passes those offsets to Python `range()`.
+The paired 64-channel fixture enters this branch.
+
+casa-rs evaluates the check at integer channel indices. In the fixture,
+a step at channel 32 produces a platforming report at the 10 percent
+threshold and a clean result at the 100 percent threshold (#1526).
+
+## plotbandpass references an undefined name when WEATHER is absent
+
+An atmospheric overlay on the paired bandpass with no associated WEATHER
+table raises `NameError` in CASA 6.7.6.14 when it tries to read
+`needToClose_mymsmd`. casa-rs evaluates the native atmospheric profile
+with the station defaults and plots the original calibration spectra
+with the resulting curve (#1526).
+
+
 ## Listing an incomplete antenna integration can terminate CASA
 
 CASA 6.7.6.14's `listcal` reshapes each spectral window's solution
@@ -7094,3 +7134,15 @@ CASA labels the axes Dec, frequency, RA. In
 `CoordinateSystem::transpose` maps from creation order to pixel order,
 while `transpose` expects the inverse. casa-rs keeps the coordinates on
 their original pixel axes as it removes Stokes.
+
+## Beam removal can delete metadata before rejecting a record
+
+In CASA 6.7.6.14, `ia.setrestoringbeam(remove=True, beam={'junk': 2})`
+on a native image with a restoring beam raises `RuntimeError` because the
+record has no `major` field. Reopening the image shows the beam was already
+removed. The call validates the record while preparing history after deleting
+the beam, even when history is disabled.
+
+casa-rs validates the supplied record before it saves any changes, so a
+rejected call preserves the restoring beam and history. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).

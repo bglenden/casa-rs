@@ -44,16 +44,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (channel = None, polarization = None), text_signature = "($self, channel=-1, polarization=-1)")]
-    fn beamarea(
-        &self,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("beamarea")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (source = None, convolved = None), text_signature = "($self, source=[], convolved=[])")]
     fn beamforconvolvedsize(
         &self,
@@ -112,12 +102,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("collapse")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn commonbeam(&self) -> PyResult<Py<PyAny>> {
-        stub("commonbeam")
     }
 
     /// Not yet implemented in casa-rs.
@@ -880,17 +864,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (channel = None, polarization = None, mbret = None), text_signature = "($self, channel=-1, polarization=-1, mbret='list')")]
-    fn restoringbeam(
-        &self,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-        mbret: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("restoringbeam")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, shape = None, pa = None, region = None, mask = None, method = None, decimate = None, replicate = None, dropdeg = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', shape=[-1], pa=[], region={}, mask='', method='cubic', decimate=0, replicate=False, dropdeg=False, overwrite=False, stretch=False)")]
     fn rotate(
         &self,
@@ -942,23 +915,6 @@ impl PyImageTool {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("set")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (major = None, minor = None, pa = None, beam = None, remove = None, log = None, channel = None, polarization = None, imagename = None), text_signature = "($self, major=[], minor=[], pa='Not specified', beam={}, remove=False, log=True, channel=-1, polarization=-1, imagename='')")]
-    fn setrestoringbeam(
-        &self,
-        major: Option<&Bound<'_, PyAny>>,
-        minor: Option<&Bound<'_, PyAny>>,
-        pa: Option<&Bound<'_, PyAny>>,
-        beam: Option<&Bound<'_, PyAny>>,
-        remove: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-        imagename: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setrestoringbeam")
     }
 
     /// Not yet implemented in casa-rs.

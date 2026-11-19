@@ -45,6 +45,7 @@ mod output;
 mod output_merge;
 mod paths;
 mod plan;
+mod plotbandpass;
 mod plots;
 mod rerefant;
 mod selected_data;
@@ -62,6 +63,7 @@ mod task_contract;
 mod timing;
 mod uvmodelfit;
 mod uvsub;
+mod weather;
 mod weight_spectra;
 mod writer;
 

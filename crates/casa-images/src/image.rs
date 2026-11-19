@@ -1759,6 +1759,21 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    /// Replaces the image info using its original casacore record.
+    ///
+    /// Use this to retain individual restoring-beam quantity units and other
+    /// fields that the numerical image-info model does not store.
+    ///
+    /// # Errors
+    /// Returns an error before changing the image if the record is invalid.
+    pub fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+        ImageInfo::from_record(&record)?;
+        self.table
+            .keywords_mut()
+            .upsert("imageinfo", Value::Record(record));
+        Ok(())
+    }
+
     /// Store image info while preserving the units and values of its beams.
     pub(crate) fn set_image_info_with_beam_records(
         &mut self,
@@ -1782,11 +1797,7 @@ impl<T: ImagePixel> PagedImage<T> {
                 .ok_or_else(|| ImageError::InvalidMetadata("missing beam *0".into()))?;
             record.upsert("restoringbeam", beam.clone());
         }
-        ImageInfo::from_record(&record)?;
-        self.table
-            .keywords_mut()
-            .upsert("imageinfo", Value::Record(record));
-        Ok(())
+        self.set_image_info_record(record)
     }
 
     /// Returns the misc-info record.

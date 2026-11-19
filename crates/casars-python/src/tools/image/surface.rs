@@ -57,7 +57,7 @@ const METHODS: &[Method] = &[
             param("polarization", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "beamforconvolvedsize",
@@ -128,7 +128,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("commonbeam", &[], R::Any, No),
+    method("commonbeam", &[], R::Any, Yes),
     method(
         "continuumsub",
         &[
@@ -998,7 +998,7 @@ const METHODS: &[Method] = &[
             param("mbret", K::Text, Text("list")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "rotate",
@@ -1087,7 +1087,7 @@ const METHODS: &[Method] = &[
             param("imagename", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("shape", &[], R::Any, Yes),
     method(
