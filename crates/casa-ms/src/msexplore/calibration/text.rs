@@ -13,8 +13,13 @@ pub(super) fn axes_header(
     y: Axis,
     verbose: bool,
     has_points: bool,
+    position_parameters: bool,
 ) -> io::Result<()> {
     let (columns, units) = match (verbose, has_points) {
+        (true, true) if position_parameters => (
+            "chan scan field ant1 ant2 ant1name ant2name time freq spw antpos obs",
+            " None None None None None None None MJD(seconds) GHz None None None",
+        ),
         (true, true) => (
             "chan scan field ant1 ant2 ant1name ant2name time freq spw poln obs",
             " None None None None None None None MJD(seconds) GHz None None None",
@@ -52,7 +57,9 @@ pub(super) fn point(
             .and_then(|id| table.antennas.get(id))
             .map_or_else(|| "*".to_string(), |antenna| antenna.label())
     });
-    let polarization = if metadata.receptor < 0 {
+    let polarization = if table.position_parameters() {
+        CalibrationTable::position_label(metadata.receptor).to_owned()
+    } else if metadata.receptor < 0 {
         "/".to_string()
     } else {
         metadata.receptor.to_string()

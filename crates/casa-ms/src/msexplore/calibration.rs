@@ -61,7 +61,7 @@ pub(super) fn run(
     path: &Path,
     payload: Option<&Path>,
 ) -> Result<TaskSuccess, TaskFailure> {
-    validate_pending_controls(task)?;
+    validate_calibration_controls(task)?;
     figure::plot_limits(task.value("plotrange"))?;
     let output = task
         .text("plotfile")?
@@ -92,10 +92,27 @@ pub(super) fn run(
     let scan = expression("scan")?;
     let timerange = expression("timerange")?;
     let observation = expression("observation")?;
+    let taql = expression("msselect")?;
+    let antenna_position = expression("antpos")?;
     let mut polarization = expression("correlation")?;
     if polarization.is_empty() {
         polarization = expression("polarization")?;
     }
+    if table.position_parameters()
+        && !matches!(
+            antenna_position.as_str(),
+            "" | "X" | "Y" | "Z" | "XY" | "XZ" | "YZ" | "XYZ"
+        )
+    {
+        return Err(
+            TaskFailure::validation("Invalid antpos selection for cal table.").at("antpos"),
+        );
+    }
+    let receptor_selection = if table.position_parameters() && !antenna_position.is_empty() {
+        &antenna_position
+    } else {
+        &polarization
+    };
     let expressions = Expressions {
         antenna: &antenna,
         field: &field,
@@ -103,6 +120,7 @@ pub(super) fn run(
         scan: &scan,
         timerange: &timerange,
         observation: &observation,
+        taql: &taql,
     };
     let selection = Selection::resolve(&table, &expressions).map_err(TaskFailure::validation)?;
     let averaging = averaging::options(task)?;
@@ -120,7 +138,7 @@ pub(super) fn run(
             let request = SeriesRequest {
                 x,
                 y,
-                polarization: &polarization,
+                polarization: receptor_selection,
                 averaging: &averaging,
             };
             let points =
@@ -159,6 +177,7 @@ pub(super) fn run(
                 path,
                 expressions,
                 polarization,
+                antenna_position,
                 averaging: &averaging,
                 requested_channels: if task.flag("averagedata")? {
                     task.text("avgchannel")?
@@ -197,22 +216,38 @@ pub(super) fn run(
     )
 }
 
-fn validate_pending_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
+fn validate_calibration_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
     let pending = |name| {
         TaskFailure::validation(format!(
             "PlotMS calibration control {name} is pending #1526"
         ))
         .at(name)
     };
-    for name in ["headeritems", "freqframe", "restfreq"] {
-        if task.text(name)?.is_some_and(|value| !value.is_empty()) {
-            return Err(pending(name));
+    if task
+        .text("headeritems")?
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Err(pending("headeritems"));
+    }
+    if task.flag("transform")? {
+        if task
+            .text("freqframe")?
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Err(pending("freqframe"));
+        }
+        if let Some(rest_frequency) = task.text("restfreq")?.filter(|value| !value.is_empty()) {
+            super::parse_rest_frequency_hz(&rest_frequency)
+                .map_err(|error| TaskFailure::validation(error.to_string()).at("restfreq"))?;
         }
     }
     if task.flag("selectdata")? {
-        for name in ["uvrange", "antpos", "array", "intent", "feed", "msselect"] {
+        for name in ["uvrange", "array", "intent", "feed"] {
             if task.text(name)?.is_some_and(|value| !value.is_empty()) {
-                return Err(pending(name));
+                return Err(TaskFailure::validation(format!(
+                    "Selection by {name} not supported for NewCalTable"
+                ))
+                .at(name));
             }
         }
     }
@@ -265,7 +300,8 @@ fn default_axes(subtype: &str) -> [Axis; 2] {
     match subtype {
         "B Jones" | "BPOLY" => [Channel, Amplitude],
         "K Jones" => [Antenna1, Amplitude],
-        subtype if subtype.contains("TSYS") => [Frequency, SystemTemperature],
+        subtype if subtype.starts_with("KAntPos") => [Antenna1, Amplitude],
+        subtype if subtype.contains("TSYS") => [Channel, Amplitude],
         "TOpac" => [Time, Opacity],
         "F Jones" => [Time, Tec],
         _ => [Time, Amplitude],
@@ -276,6 +312,7 @@ struct ExportHeader<'a> {
     path: &'a Path,
     expressions: Expressions<'a>,
     polarization: String,
+    antenna_position: String,
     averaging: &'a crate::MsAverageSpec,
     requested_channels: Option<f64>,
     plotindex: usize,
@@ -314,6 +351,8 @@ fn write_export(
         ("scan", selections.scan),
         ("correlation/polarization", header.polarization.as_str()),
         ("observation", selections.observation),
+        ("msselect", selections.taql),
+        ("antenna position", header.antenna_position.as_str()),
     ] {
         if !value.is_empty() {
             writeln!(output, "# {name}: {value}")?;
@@ -370,6 +409,7 @@ fn write_export(
                 series.y,
                 header.verbose,
                 points.peek().is_some(),
+                table.position_parameters(),
             )?;
             for point in points {
                 text::point(
