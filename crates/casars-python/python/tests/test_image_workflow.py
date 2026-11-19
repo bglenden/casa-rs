@@ -338,3 +338,29 @@ def test_putchunk_progresses_during_ndarray_input_capture():
             start.set()
             other.join(timeout=5)
     assert ratios and min(ratios) < 0.5
+
+
+@pytest.mark.parametrize("kind,dtype,pixel_type", [
+    ("d", np.float64, "double"),
+    ("f", np.complex64, "complex"),
+    ("d", np.complex128, "dcomplex"),
+])
+@pytest.mark.parametrize("writer", ["casars", "casa"])
+def test_native_pixel_types_cross_reader(tmp_path, kind, dtype, pixel_type, writer):
+    casa = pytest.importorskip("casatools")
+    assert casa.version_string().replace("-", ".") == "6.7.6.14"
+    modules = {"casa": casa, "casars": tools}
+    reader = "casa" if writer == "casars" else "casars"
+    path = str(tmp_path / "typed.im")
+    pixels = np.array([[0.25, 1.0], [-1.0, 4.5]], dtype=dtype)
+    if np.iscomplexobj(pixels):
+        pixels += 1j * pixels[::-1]
+    image = modules[writer].image()
+    assert image.fromarray(path, pixels, type=kind)
+    assert image.done()
+    opened = modules[reader].image()
+    assert opened.open(path)
+    assert opened.pixeltype() == pixel_type
+    expected = pixels.astype(np.complex128 if np.iscomplexobj(pixels) else np.float64)
+    _assert_value(opened.getchunk(), expected)
+    assert opened.done()
