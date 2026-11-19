@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! VLA semester 2016B online tropospheric delay correction for KAntPos.
 
-use casa_ms::{MeasurementSet, MsResult, derived::engine::MsCalEngine, subtables::SubTable};
+use casa_ms::{MeasurementSet, MsResult, derived::engine::MsCalEngine};
 
 pub(crate) const TROPO_KEYWORD: &str = "VLATrDelCorr";
 
