@@ -124,16 +124,17 @@ pub(super) fn weight_factors(
     first: &CalibrationGrid,
     second: &CalibrationGrid,
     correlations: &[i32],
-    system_temperature: bool,
+    temperature_channels: Option<DataChannelGrid<'_>>,
 ) -> Option<Vec<f32>> {
     let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) = (first, second)
     else {
         return None;
     };
-    let scale = if system_temperature {
-        inverse_mean_tsys
-    } else {
-        mean_power
+    let scale = |grid: &GainGrid, receptor| {
+        temperature_channels.map_or_else(
+            || mean_power(grid, receptor),
+            |channels| inverse_mean_tsys(grid, receptor, channels),
+        )
     };
     (0..correlations.len())
         .map(|index| {
@@ -143,11 +144,12 @@ pub(super) fn weight_factors(
         .collect()
 }
 
-fn inverse_mean_tsys(grid: &GainGrid, receptor: usize) -> f32 {
+fn inverse_mean_tsys(grid: &GainGrid, receptor: usize, channels: DataChannelGrid<'_>) -> f32 {
     let receptor = receptor.min(grid.receptor_count.saturating_sub(1));
     let mut total = 0.0_f64;
     let mut count = 0;
-    for channel in 0..grid.channel_count {
+    for index in 0..channels.frequencies_hz.len() {
+        let channel = channels.original_index(index);
         let gain = f64::from(grid.value_at(receptor, channel).re);
         if !grid.flag_at(receptor, channel) && gain > 0.0 {
             // The interpolated temperature is the inverse square of this gain.
@@ -299,7 +301,7 @@ mod tests {
                     &CalibrationGrid::Complex(gain.clone()),
                     &CalibrationGrid::Complex(other),
                     &[9],
-                    false,
+                    None,
                 ),
                 Some(vec![100.])
             );

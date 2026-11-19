@@ -242,20 +242,28 @@ pub(crate) fn gencal_with_output_mode(
     uniform: bool,
     mode: crate::CalibrationOutputMode,
 ) -> Result<GencalReport, GencalError> {
-    // Reserve before reading prior parameters, so concurrent updates cannot
-    // both accumulate from the same old product and silently lose a correction.
-    let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;
     let ms = open_measurement_set(&request.measurement_set)?;
-    let updating = mode == crate::CalibrationOutputMode::Update
-        && request.output_table.exists()
-        && !request.caltype.is_gain_curve()
-        && request.caltype != GencalType::Tsys;
     let embedded = match request.caltype {
         GencalType::Gc | GencalType::Gceff => {
             power_curve::source_path(&request.measurement_set, ms.main_table())?
         }
         _ => None,
     };
+    let linked_input = if request.caltype == GencalType::Tsys {
+        ms.subtable(SubtableId::SysCal).and_then(Table::path)
+    } else {
+        embedded.as_deref()
+    };
+    if let Some(path) = linked_input {
+        refuse_prior_input_overlap(request, path)?;
+    }
+    // Reserve before reading prior parameters, so concurrent updates cannot
+    // both accumulate from the same old product and silently lose a correction.
+    let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;
+    let updating = mode == crate::CalibrationOutputMode::Update
+        && request.output_table.exists()
+        && !request.caltype.is_gain_curve()
+        && request.caltype != GencalType::Tsys;
     let mut collapse_spw = true;
     let mut rows = match request.caltype {
         GencalType::Amp | GencalType::Ph | GencalType::Sbd | GencalType::Mbd => {
@@ -265,7 +273,6 @@ pub(crate) fn gencal_with_output_mode(
         GencalType::Gc | GencalType::Gceff | GencalType::Eff => {
             validate_prior_selection(&ms, request)?;
             if let Some(path) = embedded.as_deref() {
-                refuse_prior_input_overlap(request, path)?;
                 power_curve::rows(&ms, path)?
             } else {
                 gaincurve_rows(&ms, request, gaincurve_infile)?
@@ -274,9 +281,6 @@ pub(crate) fn gencal_with_output_mode(
         GencalType::Opac => opacity_rows(&ms, request)?,
         GencalType::Tsys => {
             validate_prior_selection(&ms, request)?;
-            if let Some(path) = ms.subtable(SubtableId::SysCal).and_then(Table::path) {
-                refuse_prior_input_overlap(request, path)?;
-            }
             let (rows, spectral) = tsys::rows(&ms, uniform)?;
             collapse_spw = !spectral;
             rows

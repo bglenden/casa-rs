@@ -87,7 +87,8 @@ def protects_prior_input(root, vis, source, native, kind):
     expected = input_file.read_bytes()
     caltable = root / 'must-not-publish.cal'
     for output_table, options in ((caltable, {'output': str(input_file), 'overwrite': True}),
-                                  (source / 'inside.cal', {})):
+                                  (source / 'inside.cal', {}),
+                                  (source / 'unexpected' / 'nested' / 'inside.cal', {})):
         try:
             generate(native, vis, output_table, [(kind, options)])
         except (ValueError, RuntimeError) as error:
@@ -95,6 +96,7 @@ def protects_prior_input(root, vis, source, native, kind):
         else:
             raise AssertionError('gencal accepted an output inside its prior input')
         assert not output_table.exists()
+        assert not (source / 'unexpected').exists()
         assert input_file.read_bytes() == expected
     return {'refused': True}
 

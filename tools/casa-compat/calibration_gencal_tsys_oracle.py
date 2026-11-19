@@ -63,10 +63,10 @@ def attach_syscal(vis, raw, *, spectrum, channel_override=None, destination=None
         tool.close()
 
 
-def check_apply(root, vis, reference, candidate, native, *, spectral_weights):
+def check_apply(root, vis, reference, candidate, native, *, spectral_weights, spw=''):
     root.mkdir()
     return {'apply_nrms': apply_both(root, vis, reference, candidate, native,
-                                   spectral_weights=spectral_weights, weight_rtol=2.e-6)}
+                                   spectral_weights=spectral_weights, weight_rtol=2.e-6, spw=spw)}
 
 
 def main():
@@ -121,6 +121,9 @@ def main():
                     results['spectrum-scalar-weights'] = check_apply(
                         root / 'spectrum-scalar-weights', plain, reference, candidate,
                         native, spectral_weights=False)
+                    results['selected-channels'] = check_apply(
+                        root / 'selected-channels', plain, reference, candidate,
+                        native, spectral_weights=False, spw='0:0~2')
                     shifted = root / 'shifted-spectral-window.ms'
                     copy_ms(plain, shifted)
                     frequencies = columns(plain / 'SPECTRAL_WINDOW', ('CHAN_FREQ',))['CHAN_FREQ'][:, 0]
