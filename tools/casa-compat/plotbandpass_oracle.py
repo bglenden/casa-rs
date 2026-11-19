@@ -210,6 +210,17 @@ def check_platforming(root):
     print("verified analytic interior-step platforming at two thresholds")
 
 
+def check_missing_weather(root, options):
+    expected, *_ = capture(reference, root / "missing-weather-casa", options)
+    assert expected == ("NameError", "name 'needToClose_mymsmd' is not defined"), expected
+    result, figures, _, _ = capture(native, root / "missing-weather-native", options)
+    assert result == () and len(figures) == 1, (result, figures)
+    [axes] = figures[0][2]
+    assert len(axes["artists"]) == 2
+    assert any(text.startswith("PWV ") for text in axes["texts"])
+    print("verified default atmospheric conditions when WEATHER is absent")
+
+
 def artist_data(figure):
     return [{
         "title": axes.get_title(),
@@ -418,6 +429,9 @@ def comparisons(root):
         pages = next(line for line in summary.splitlines() if line.startswith("Pages:"))
         assert pages.split()[-1] == "2", summary
     check_platforming(root)
+    check_missing_weather(root, common | plots["circular-hand"] | dict(
+        showatm=True, xaxis="freq", pwv=1.1, timeranges="0",
+    ))
     print(f"{len(plots) + 3} plot cases, {len(prompts)} terminal cases, {len(domains)} domain cases, "
           f"{panels} rendered panels and paired two-page PDFs", flush=True)
     assert not failures, failures
