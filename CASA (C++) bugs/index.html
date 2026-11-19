@@ -3300,6 +3300,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#direction-shifts-can-use-the-wrong-longitude-quadrant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direction shifts can use the wrong longitude quadrant
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#frame-display-can-discard-the-coordinate-conversion-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frame display can discard the coordinate conversion context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#frame-display-can-report-ut1-outside-the-earth-orientation-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frame display can report UT1 outside the Earth-orientation table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#component-spectrum-changes-can-discard-data" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9107,6 +9140,47 @@ the frame while retaining the active table for the comet queries.</p>
 requested epoch. Setting an epoch enables the queries on the retained
 table again. The oracle runs each missing-epoch probe in its own process
 with core files disabled (#1252).</p>
+<h2 id="direction-shifts-can-use-the-wrong-longitude-quadrant">Direction shifts can use the wrong longitude quadrant<a class="headerlink" href="#direction-shifts-can-use-the-wrong-longitude-quadrant" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 derives the longitude increment for <code>me.shift</code> from an
+inverse sine. This confines that increment to ±90° even when the
+requested offset points across either pole or into the other longitude
+quadrant. From longitude 0° on the equator, a 120° eastward shift returns
+longitude 60°. From longitude 0° and latitude 80°, a 20° northward shift
+returns the original direction.</p>
+<p>Casa-rs uses both east and meridian components to determine the longitude
+quadrant. For a direction starting at a pole, the local north axis
+is undefined and casa-rs uses CASA's longitude convention. Independent
+CASA direction records at longitude 120° on the equator and longitude 180° at latitude 80° yield separations of 120° and
+20° from the respective starting directions. The fixture retains those
+controls alongside the raw shift results. This follows the standing rule
+for results that contradict the documented operation (#1252).
+<a href="https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html">CASA measures documentation</a></p>
+<h2 id="frame-display-can-discard-the-coordinate-conversion-context">Frame display can discard the coordinate conversion context<a class="headerlink" href="#frame-display-can-discard-the-coordinate-conversion-context" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>showframe()</code> fails to display many radial-velocity
+references even after the epoch, observatory, and direction have all
+been set. For a TOPO velocity of 15.123 km/s at ALMA on
+2011-01-03 17:00 UTC with a J2000 direction of (10°, 20°),
+it reports that the frame epoch is missing. On that same tool,
+<code>measure(velocity, "LSRK")</code> returns approximately -12.87952549 km/s.</p>
+<p>Casa-rs evaluates the displayed LSRK velocity with the explicit frame,
+using the same native conversion as <code>measure</code>. The fixture retains
+CASA's raw display errors and separately records the direct conversion
+for all seven affected references. The missing-frame errors still apply
+when the required epoch or direction is absent.</p>
+<p>At the same observatory, CASA's display also reports a missing
+position for LAST and LMST epochs. Casa-rs uses the explicit position
+to display TDB, UT1, and TT. The fixture retains the display errors
+and verifies the derived time scales against CASA's direct conversions
+(#1252).</p>
+<h2 id="frame-display-can-report-ut1-outside-the-earth-orientation-table">Frame display can report UT1 outside the Earth-orientation table<a class="headerlink" href="#frame-display-can-report-ut1-outside-the-earth-orientation-table" title="Permanent link">&para;</a></h2>
+<p>With the bundled measures snapshot and an explicit UTC epoch in 2030
+or 2100, CASA 6.7.6.14 displays a UT1 value despite missing
+Earth-orientation coverage. Casa-rs displays the raw epoch and the
+available TDB and TT values, and writes <code>UT1 = unavailable</code>. This keeps
+the frame visible after <code>framenow()</code> when the Earth-orientation table
+does not cover the current date. The fixture retains CASA's exact
+display and uses direct TDB and TT conversions as independent controls
+(#1252).</p>
 <h2 id="component-spectrum-changes-can-discard-data">Component spectrum changes can discard data<a class="headerlink" href="#component-spectrum-changes-can-discard-data" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-06</li>
