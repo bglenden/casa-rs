@@ -225,7 +225,7 @@ fn gencal_rejects_invalid_antpos_and_spw_contracts() {
         gaincurve_table: None,
     })
     .unwrap_err();
-    assert!(err.to_string().contains("outside 0.."));
+    assert!(err.to_string().contains("No match found for 9"), "{err}");
 }
 
 fn write_gaincurve_table(path: &std::path::Path) {
