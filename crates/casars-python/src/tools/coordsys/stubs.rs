@@ -28,18 +28,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (toworld = None), text_signature = "($self, toworld=True)")]
-    fn axesmap(&self, toworld: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("axesmap")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (world = None), text_signature = "($self, world=True)")]
-    fn axiscoordinatetypes(&self, world: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("axiscoordinatetypes")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type = None), text_signature = "($self, type='direction')")]
     fn conversiontype(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("conversiontype")
@@ -84,51 +72,9 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (which = None), text_signature = "($self, which=-1)")]
-    fn coordinatetype(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("coordinatetype")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn copy(&self) -> PyResult<Py<PyAny>> {
-        stub("copy")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn epoch(&self) -> PyResult<Py<PyAny>> {
         stub("epoch")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (world = None, axis = None), text_signature = "($self, world=True, axis=0)")]
-    fn findaxis(
-        &self,
-        world: Option<&Bound<'_, PyAny>>,
-        axis: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("findaxis")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (axisname = None, allowfriendlyname = None), text_signature = "($self, axisname='', allowfriendlyname=True)")]
-    fn findaxisbyname(
-        &self,
-        axisname: Option<&Bound<'_, PyAny>>,
-        allowfriendlyname: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("findaxisbyname")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None, which = None), text_signature = "($self, type='direction', which=0)")]
-    fn findcoordinate(
-        &self,
-        r#type: Option<&Bound<'_, PyAny>>,
-        which: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("findcoordinate")
     }
 
     /// Not yet implemented in casa-rs.
@@ -187,24 +133,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None), text_signature = "($self, type='')")]
-    fn names(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("names")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (world = None), text_signature = "($self, world=True)")]
-    fn naxes(&self, world: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("naxes")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn ncoordinates(&self) -> PyResult<Py<PyAny>> {
-        stub("ncoordinates")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (direction = None, spectral = None, stokes = None, linear = None, tabular = None), text_signature = "($self, direction=False, spectral=False, stokes=[], linear=0, tabular=False)")]
     fn newcoordsys(
         &self,
@@ -215,18 +143,6 @@ impl PyCoordsys {
         tabular: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("newcoordsys")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn observer(&self) -> PyResult<Py<PyAny>> {
-        stub("observer")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn parentname(&self) -> PyResult<Py<PyAny>> {
-        stub("parentname")
     }
 
     /// Not yet implemented in casa-rs.
@@ -347,12 +263,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (imagename), text_signature = "($self, imagename)")]
-    fn setparentname(&self, imagename: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setparentname")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type, parameters = None), text_signature = "($self, type, parameters=[-1.0])")]
     fn setprojection(
         &self,
@@ -454,12 +364,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn stokes(&self) -> PyResult<Py<PyAny>> {
-        stub("stokes")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (originshft = None, newshape = None), text_signature = "($self, originshft=[], newshape=[])")]
     fn subimage(
         &self,
@@ -477,12 +381,6 @@ impl PyCoordsys {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("summary")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn telescope(&self) -> PyResult<Py<PyAny>> {
-        stub("telescope")
     }
 
     /// Not yet implemented in casa-rs.
@@ -557,12 +455,6 @@ impl PyCoordsys {
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn transpose(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("transpose")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None), text_signature = "($self, type='')")]
-    fn units(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("units")
     }
 
     /// Not yet implemented in casa-rs.

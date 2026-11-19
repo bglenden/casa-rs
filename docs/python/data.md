@@ -30,6 +30,13 @@ ia.setbrightnessunit("Jy/pixel")
 ia.done()
 ```
 
+A coordinate tool returned by `ia.coordsys()` has its own state. Inspect the
+direction axes with `cs.findcoordinate("direction")["pixel"]` or identify the
+coordinate for a particular axis with `cs.findaxis(world=False, axis=0)`.
+`cs.names()` and `cs.units()` follow world-axis order. Use `cs.copy()` to edit
+a separate coordinate system, then pass its record to `ia.setcoordsys()` to
+persist the edits to the image.
+
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
 `ia.sethistory(origin, messages)` to append provenance. The remaining CASA
