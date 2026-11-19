@@ -43,7 +43,7 @@ const ARCMIN: f64 = std::f64::consts::PI / 10_800.0;
 pub fn direction_coordinate() -> DirectionCoordinate {
     DirectionCoordinate::new(
         DirectionRef::J2000,
-        Projection::new(ProjectionType::SIN),
+        Projection::with_parameters(ProjectionType::SIN, vec![0.0, 0.0]),
         [0.0, 0.0],
         [-ARCMIN, ARCMIN],
         [0.0, 0.0],

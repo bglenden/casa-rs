@@ -1342,6 +1342,28 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    /// Replaces the coordinate system using its original casacore record.
+    ///
+    /// The record retains coordinate numbering and metadata that the
+    /// computational coordinate model does not store.
+    ///
+    /// # Errors
+    /// Returns an error before changing the image if the record is invalid
+    /// or the number of pixel axes differs from the image's dimensionality.
+    pub fn set_coordinate_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+        let coords = CoordinateSystem::from_record(&record)?;
+        if coords.n_pixel_axes() != self.ndim() {
+            return Err(ImageError::InvalidMetadata(
+                "Supplied CoordinateSystem and image shape are inconsistent".into(),
+            ));
+        }
+        self.table
+            .keywords_mut()
+            .upsert("coords", Value::Record(record));
+        self.coords = coords;
+        Ok(())
+    }
+
     /// Returns the brightness unit string.
     pub fn units(&self) -> &str {
         &self.units
