@@ -203,6 +203,10 @@ fn subimage_matches_casa_6_7_6_14() {
                 "\"stretch.im",
                 &format!("\"{}", input_path("stretch.im").display()),
             )
+            .replace(
+                "\"double.im",
+                &format!("\"{}", input_path("double.im").display()),
+            )
         });
         let keepaxes = match &params["keepaxes"] {
             Json::Number(axis) => vec![axis.as_i64().unwrap()],
@@ -232,6 +236,7 @@ fn subimage_matches_casa_6_7_6_14() {
             let message = result.expect_err(name).to_string();
             let expected = match name.as_str() {
                 "no_stretch" => "mask should not be extended",
+                "named_double_mask" => "unsupported data type",
                 "drop_all" => "cannot drop all axes",
                 "empty" => "outfile must be specified",
                 unexpected => panic!("no assertion for error case {unexpected}"),

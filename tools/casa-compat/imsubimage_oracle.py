@@ -63,6 +63,8 @@ def make_inputs():
         ("stretch.im", plane[:, :, None, None], "f", False),
     ]:
         assert ia.fromarray(name, pixels, type=precision, overwrite=True, linear=linear)
+        if name == "double.im":
+            ia.calcmask('"double.im" > 150', name="selected", asdefault=False)
         ia.done()
 
     casatasks.exportfits(imagename="plane.im", fitsimage="plane.fits", overwrite=True)
@@ -149,6 +151,7 @@ def capture_cases(output):
     capture("bare_lel", mask="abs(cube.im) > 200", box="1,1,4,4", chans="1", stokes="Q")
     capture("mask_image", "plane.im", mask="plane.im")
     capture("named_mask", mask='mask("cube.im:selected")', box="1,1,4,4", stokes="Q", chans="1")
+    capture("named_double_mask", "double.im", mask='mask("double.im:selected")', error=True)
     capture("all_true", "plane.im", mask='"plane.im" >= 0')
     capture("stretch", mask='"stretch.im" > 200', stretch=True, box="1,1,4,4")
     capture("no_stretch", mask='"stretch.im" > 200', error=True)

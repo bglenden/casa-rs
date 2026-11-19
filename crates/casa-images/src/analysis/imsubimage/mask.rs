@@ -2,13 +2,11 @@
 //! LEL mask evaluation, `image:maskname` resolution, and `stretch` handling
 //! for `imsubimage`.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
-use casa_lattices::{Lattice, LatticeError};
-use casa_types::{ArrayD, Complex32, Complex64, RecordValue};
+use casa_types::{ArrayD, Complex32, Complex64};
 
 use crate::analysis::mask_error_wording;
 use crate::expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr, referenced_images};
@@ -29,103 +27,6 @@ impl<T: ImagePixel> MaskSource<T> {
         match self {
             Self::Paged(img) => img.as_ref(),
             Self::Memory(img) => img.as_ref(),
-        }
-    }
-}
-
-/// Adapts a CASA image to present a specific named mask (e.g. `img.im:altmask`)
-/// as its default mask so LEL's `mask("img.im:altmask")` and implicit mask
-/// propagation evaluate that mask directly.
-struct NamedMaskImage<T: ImagePixel> {
-    source: MaskSource<T>,
-    mask_name: Option<String>,
-}
-
-impl<T: ImagePixel> Lattice<T> for NamedMaskImage<T> {
-    fn shape(&self) -> &[usize] {
-        self.source.as_interface().shape()
-    }
-
-    fn is_writable(&self) -> bool {
-        false
-    }
-
-    fn get_at(&self, position: &[usize]) -> Result<T, LatticeError> {
-        self.source.as_interface().get_at(position)
-    }
-
-    fn get_slice(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<ArrayD<T>, LatticeError> {
-        self.source.as_interface().get_slice(start, shape, stride)
-    }
-
-    fn get(&self) -> Result<ArrayD<T>, LatticeError> {
-        self.source.as_interface().get()
-    }
-}
-
-impl<T: ImagePixel> ImageInterface<T> for NamedMaskImage<T> {
-    fn as_any(&self) -> Option<&dyn Any> {
-        self.source.as_interface().as_any()
-    }
-
-    fn coordinates(&self) -> &CoordinateSystem {
-        self.source.as_interface().coordinates()
-    }
-
-    fn units(&self) -> &str {
-        self.source.as_interface().units()
-    }
-
-    fn misc_info(&self) -> RecordValue {
-        self.source.as_interface().misc_info()
-    }
-
-    fn image_info(&self) -> Result<ImageInfo, ImageError> {
-        self.source.as_interface().image_info()
-    }
-
-    fn name(&self) -> Option<&Path> {
-        self.source.as_interface().name()
-    }
-
-    fn default_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
-        match &self.mask_name {
-            Some(mask) => match &self.source {
-                MaskSource::Paged(img) => img.get_named_mask(mask).map(Some),
-                MaskSource::Memory(img) => Ok(img.get_mask()?),
-            },
-            None => self.source.as_interface().default_mask(),
-        }
-    }
-
-    fn default_mask_name(&self) -> Option<String> {
-        self.mask_name
-            .clone()
-            .or_else(|| self.source.as_interface().default_mask_name())
-    }
-
-    fn get_mask_slice(
-        &self,
-        start: &[usize],
-        shape: &[usize],
-        stride: &[usize],
-    ) -> Result<Option<ArrayD<bool>>, ImageError> {
-        match &self.mask_name {
-            Some(mask) => match &self.source {
-                MaskSource::Paged(img) => img
-                    .get_named_mask_slice(mask, start, shape, stride)
-                    .map(Some),
-                MaskSource::Memory(img) => img.get_mask_slice(start, shape, stride),
-            },
-            None => self
-                .source
-                .as_interface()
-                .get_mask_slice(start, shape, stride),
         }
     }
 }
@@ -155,7 +56,7 @@ pub(super) fn evaluate_subimage_mask(
     }
     let ref_names = referenced_images(&expr).map_err(mask_parse_error)?;
 
-    let mut opened: Vec<(String, NamedMaskImage<f64>)> = Vec::with_capacity(ref_names.len());
+    let mut opened: Vec<(String, MaskSource<f64>)> = Vec::with_capacity(ref_names.len());
     for name in &ref_names {
         opened.push((name.clone(), open_mask_target_f64(name)?));
     }
@@ -168,14 +69,14 @@ fn evaluate_typed<T>(
     target_shape: &[usize],
     stretch: bool,
     window: (&[usize], &[usize]),
-    opened: Vec<(String, NamedMaskImage<T>)>,
+    opened: Vec<(String, MaskSource<T>)>,
 ) -> Result<Option<ArrayD<bool>>, ImageError>
 where
     T: ImagePixel + ImageExprValue + PartialOrd + ExprValueConvert + Copy + 'static,
 {
     let mut map: HashMap<String, &dyn ImageInterface<T>> = HashMap::new();
     for (name, img) in &opened {
-        map.insert(name.clone(), img);
+        map.insert(name.clone(), img.as_interface());
     }
     let resolver = HashMapResolver(map);
     let parsed = parse_mask_expr(expr, &resolver).map_err(mask_parse_error)?;
@@ -206,7 +107,7 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
     ))
 }
 
-fn open_mask_target_f64(spec: &str) -> Result<NamedMaskImage<f64>, ImageError> {
+fn open_mask_target_f64(spec: &str) -> Result<MaskSource<f64>, ImageError> {
     let direct_path = Path::new(spec);
     if direct_path.exists() {
         return open_path_with_mask_name(direct_path, None, spec);
@@ -228,7 +129,7 @@ fn open_path_with_mask_name(
     path: &Path,
     mask_name: Option<String>,
     spec: &str,
-) -> Result<NamedMaskImage<f64>, ImageError> {
+) -> Result<MaskSource<f64>, ImageError> {
     if path.is_file() {
         if mask_name.is_some() {
             return Err(ImageError::CasaSelection(format!(
@@ -247,19 +148,18 @@ fn open_path_with_mask_name(
             pixels,
             mask,
         )?;
-        return Ok(NamedMaskImage {
-            source: MaskSource::Memory(Box::new(temp)),
-            mask_name: None,
-        });
+        return Ok(MaskSource::Memory(Box::new(temp)));
     }
 
     match AnyPagedImage::open(path)? {
         AnyPagedImage::Float64(img) => {
-            validate_mask_name(&img, mask_name.as_deref())?;
-            Ok(NamedMaskImage {
-                source: MaskSource::Paged(Box::new(img)),
-                mask_name,
-            })
+            if mask_name.is_some() {
+                return Err(ImageError::CasaSelection(format!(
+                    "Input mask specification is incorrect: ImageExprParse: {} is a PagedImage with an unsupported data type",
+                    path.display()
+                )));
+            }
+            Ok(MaskSource::Paged(Box::new(img)))
         }
         AnyPagedImage::Float32(img) => {
             convert_paged_to_f64_mask_source(&img, mask_name.as_deref(), f64::from)
@@ -279,7 +179,7 @@ fn convert_paged_to_f64_mask_source<S: ImagePixel + Copy>(
     img: &PagedImage<S>,
     mask_name: Option<&str>,
     to_f64: impl Fn(S) -> f64,
-) -> Result<NamedMaskImage<f64>, ImageError> {
+) -> Result<MaskSource<f64>, ImageError> {
     validate_mask_name(img, mask_name)?;
     let data = img.get()?.mapv(to_f64);
     let mask = match mask_name {
@@ -294,10 +194,7 @@ fn convert_paged_to_f64_mask_source<S: ImagePixel + Copy>(
         data,
         mask,
     )?;
-    Ok(NamedMaskImage {
-        source: MaskSource::Memory(Box::new(temp)),
-        mask_name: None,
-    })
+    Ok(MaskSource::Memory(Box::new(temp)))
 }
 
 fn validate_mask_name<T: ImagePixel>(
