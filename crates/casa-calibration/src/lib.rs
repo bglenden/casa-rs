@@ -54,6 +54,7 @@ mod solve;
 mod solve_stats;
 mod stats;
 mod summary;
+mod table_maintenance;
 mod task_contract;
 mod timing;
 mod uvmodelfit;
@@ -65,6 +66,7 @@ pub use uvsub::{
 };
 
 pub use output::CalibrationOutputMode;
+pub use table_maintenance::{create_calibration_table, update_calibration_table};
 
 pub use bandpass::{
     BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveError,

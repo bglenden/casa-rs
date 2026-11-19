@@ -14,6 +14,17 @@ pub(crate) fn edit_calibration_table(
     destination: &Path,
     edit: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
 ) -> Result<(), String> {
+    stage_calibration_table_edit(input, destination, |table, path| {
+        edit(table, path)?;
+        crate::output_merge::save_sorted(table, path).map_err(error_text)
+    })
+}
+
+pub(crate) fn stage_calibration_table_edit(
+    input: &Path,
+    destination: &Path,
+    edit_and_save: impl FnOnce(&mut Table, &Path) -> Result<(), String>,
+) -> Result<(), String> {
     let input = normalized(input).map_err(error_text)?;
     let destination = normalized(destination).map_err(error_text)?;
     if input != destination && overlap(&input, &destination).map_err(error_text)? {
@@ -35,9 +46,8 @@ pub(crate) fn edit_calibration_table(
     copy_dir_recursive(&input, &output.staging).map_err(error_text)?;
     let mut lock = TableWriteLock::acquire_to_reread(&output.staging, 0).map_err(error_text)?;
     let mut table = Table::open(TableOptions::new(&output.staging)).map_err(error_text)?;
-    edit(&mut table, &output.staging)?;
+    edit_and_save(&mut table, &output.staging)?;
     lock.record_write();
-    crate::output_merge::save_sorted(&mut table, &output.staging).map_err(error_text)?;
     drop(table);
     lock.release().map_err(error_text)?;
     output.commit().map_err(error_text)
