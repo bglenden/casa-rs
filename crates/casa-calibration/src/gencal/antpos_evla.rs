@@ -4,7 +4,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use casa_ms::{MeasurementSet, schema::SubtableId};
-use casa_types::{ArrayValue, quanta::time::MvTime};
+use casa_types::{ArrayValue, ScalarValue, Value, quanta::time::MvTime};
 
 use super::{GencalError, GencalRequest, get_string};
 
@@ -107,6 +107,23 @@ pub(super) fn observation_start(ms: &MeasurementSet) -> Result<MvTime, GencalErr
 pub(super) fn affected_tropo_epoch(time: MvTime) -> bool {
     let mjd = time.as_mjd_days();
     mjd > 57_609.0 && mjd < 57_707.0
+}
+
+pub(super) fn tropo_keyword(
+    ms: &MeasurementSet,
+    request: &GencalRequest,
+    mode: crate::CalibrationOutputMode,
+) -> Result<Option<Value>, GencalError> {
+    if crate::antpos_vla::only_vla_observations(ms).map_err(invalid)?
+        && affected_tropo_epoch(observation_start(ms)?)
+    {
+        return Ok(Some(Value::Scalar(ScalarValue::Float64(1.0))));
+    }
+    if mode == crate::CalibrationOutputMode::Update && request.output_table.exists() {
+        let previous = crate::output_merge::open(&request.output_table)?;
+        return Ok(previous.keywords().get(crate::antpos_vla::TROPO_KEYWORD).cloned());
+    }
+    Ok(None)
 }
 
 fn load_antennas(ms: &MeasurementSet) -> Result<Vec<Antenna>, GencalError> {

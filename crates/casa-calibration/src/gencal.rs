@@ -855,6 +855,12 @@ fn write_prior_caltable(
         mode,
     );
 
+    if matches!(request.caltype, GencalType::Antpos | GencalType::AntposVla)
+        && let Some(value) = antpos_evla::tropo_keyword(ms, request, mode)?
+    {
+        writer.table_mut().keywords_mut().upsert(crate::antpos_vla::TROPO_KEYWORD, value);
+    }
+
     for row in rows {
         let shape = IxDyn(row.parameters.shape());
         let tsys = request.caltype == GencalType::Tsys;

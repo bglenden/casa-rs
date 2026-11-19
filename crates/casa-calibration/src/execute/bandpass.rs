@@ -215,6 +215,7 @@ mod tests {
             interp: ApplyInterpolationMode::Linear,
             supports_calwt: true,
             engine: None,
+            antpos_tropo: None,
             time_parameter_family: family,
             phase_delay: false,
             callibrary: None,

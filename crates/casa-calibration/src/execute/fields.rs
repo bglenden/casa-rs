@@ -13,7 +13,7 @@ pub(super) fn load(
     // Interpolate the real FPARAM coefficients before constructing the Jones
     // matrix. Antenna positions, opacity and gain-curve coefficients share
     // the same real time operator as delays.
-    let mut table = load_parameters(plan, engine, family.is_some())?;
+    let mut table = load_parameters(plan, engine, family.is_some(), Some(ms))?;
     table.time_parameter_family = family;
     table.callibrary = plan.spec.callibrary.clone();
     if !plan.resolved_gainfields.is_empty() {
@@ -109,6 +109,7 @@ pub(super) fn load(
                 interp: table.interp,
                 supports_calwt: false,
                 engine: None,
+                antpos_tropo: None,
                 solutions,
                 callibrary: None,
                 time_plans: HashMap::new(),
