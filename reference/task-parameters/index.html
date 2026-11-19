@@ -819,6 +819,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#statistical-weights-statwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Statistical Weights (statwt)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1566,6 +1577,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#statistical-weights-statwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Statistical Weights (statwt)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1594,9 +1616,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 648</li>
-<li>Surfaces: 38 (38 task, 0 session)</li>
-<li>Surface bindings: 953</li>
+<li>Concepts: 664</li>
+<li>Surfaces: 39 (39 task, 0 session)</li>
+<li>Surface bindings: 978</li>
 </ul>
 <table>
 <thead>
@@ -1913,6 +1935,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>calibration</code></td>
 <td style="text-align: right;">7</td>
 <td>Initialize MeasurementSet weights and their channel spectra.</td>
+</tr>
+<tr>
+<td><a href="#surface-statwt">Statistical Weights</a><br><code>statwt</code></td>
+<td>task</td>
+<td style="text-align: right;">1</td>
+<td><code>calibration</code></td>
+<td style="text-align: right;">25</td>
+<td>Estimate MeasurementSet weights from visibility variance.</td>
 </tr>
 </tbody>
 </table>
@@ -10411,6 +10441,229 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>false</code>; optional</td>
 <td>Weights</td>
 <td>Create WEIGHT_SPECTRUM when it is absent.</td>
+</tr>
+</tbody>
+</table>
+<p><a id="surface-statwt"></a></p>
+<h2 id="statistical-weights-statwt">Statistical Weights (<code>statwt</code>)<a class="headerlink" href="#statistical-weights-statwt" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Kind: <code>task</code></li>
+<li>Contract version: <code>1</code></li>
+<li>Category: Calibration</li>
+<li>Provider family: <code>calibration</code></li>
+<li>Summary: Estimate MeasurementSet weights from visibility variance.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Concept ID / revision</th>
+<th>Type / unit</th>
+<th>Default / required</th>
+<th>Group</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vis</code></td>
+<td><code>data.input.vis@r1</code></td>
+<td><code>array&lt;path (measurement_set)&gt;</code></td>
+<td><code>""</code>; required</td>
+<td>Input</td>
+<td>Input MeasurementSet path or paths.</td>
+</tr>
+<tr>
+<td><code>selectdata</code></td>
+<td><code>parameter.selectdata@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Weights</td>
+<td>Whether detailed data-selection controls are enabled.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td><code>ms.selection.field@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Applycal field selector text.</td>
+</tr>
+<tr>
+<td><code>spw</code></td>
+<td><code>ms.selection.spw@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Applycal spw selector text.</td>
+</tr>
+<tr>
+<td><code>intent</code></td>
+<td><code>ms.selection.intent@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Intent selector.</td>
+</tr>
+<tr>
+<td><code>array</code></td>
+<td><code>ms.selection.array@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Comma-separated ARRAY_ID integers</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>ms.selection.observation@r3</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Observation selection applied to every MeasurementSet</td>
+</tr>
+<tr>
+<td><code>scan</code></td>
+<td><code>ms.selection.scan@r4</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Applycal scan selector text.</td>
+</tr>
+<tr>
+<td><code>combine</code></td>
+<td><code>weightstats.combine@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Ignore changes in these columns (scan, field, and/or state) when aggregating samples to compute weights. The value "corr" is also supported to aggregate samples across correlations.</td>
+</tr>
+<tr>
+<td><code>timebin</code></td>
+<td><code>weightstats.timebin@r1</code></td>
+<td><code>variant</code></td>
+<td><code>1</code>; optional</td>
+<td>Weights</td>
+<td>Length for binning in time to determine statistics. Can either be integer to be multiplied by the representative integration time, a quantity (string) in time units</td>
+</tr>
+<tr>
+<td><code>slidetimebin</code></td>
+<td><code>weightstats.slidetimebin@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Weights</td>
+<td>Use a sliding window for time binning, as opposed to time block processing?</td>
+</tr>
+<tr>
+<td><code>chanbin</code></td>
+<td><code>weightstats.chanbin@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"spw"</code>; optional</td>
+<td>Weights</td>
+<td>Channel bin width for computing weights. Can either be integer, in which case it is interpreted as number of channels to include in each bin, or a string "spw" or quantity with frequency units.</td>
+</tr>
+<tr>
+<td><code>minsamp</code></td>
+<td><code>weightstats.minsamp@r1</code></td>
+<td><code>integer</code></td>
+<td><code>2</code>; optional</td>
+<td>Weights</td>
+<td>Minimum number of unflagged visibilities required for computing weights in a sample. Must be &gt;= 2.</td>
+</tr>
+<tr>
+<td><code>statalg</code></td>
+<td><code>weightstats.statalg@r1</code></td>
+<td><code>string</code></td>
+<td><code>"classic"</code>; optional</td>
+<td>Weights</td>
+<td>Statistics algorithm to use for computing variances. Supported values are "chauvenet", "classic", "fit-half", and "hinges-fences". Minimum match is supported, although the full string must be specified for the subparameters to appear in the inputs list.</td>
+</tr>
+<tr>
+<td><code>fence</code></td>
+<td><code>weightstats.fence@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
+<td>Weights</td>
+<td>Fence value for statalg="hinges-fences". A negative value means use the entire data set (ie default to the "classic" algorithm). Ignored if statalg is not "hinges-fences".</td>
+</tr>
+<tr>
+<td><code>center</code></td>
+<td><code>weightstats.center@r1</code></td>
+<td><code>string</code></td>
+<td><code>"mean"</code>; optional</td>
+<td>Weights</td>
+<td>Center to use for statalg="fit-half". Valid choices are "mean", "median", and "zero". Ignored if statalg is not "fit-half".</td>
+</tr>
+<tr>
+<td><code>lside</code></td>
+<td><code>weightstats.lside@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Weights</td>
+<td>For statalg="fit-half", real data are &lt;=; center? If false, real data are &gt;= center. Ignored if statalg is not "fit-half".</td>
+</tr>
+<tr>
+<td><code>zscore</code></td>
+<td><code>weightstats.zscore@r1</code></td>
+<td><code>float</code></td>
+<td><code>-1.0</code>; optional</td>
+<td>Weights</td>
+<td>For statalg="chauvenet", this is the target maximum number of standard deviations data may have to be included. If negative, use Chauvenet's criterion. Ignored if statalg is not "chauvenet".</td>
+</tr>
+<tr>
+<td><code>maxiter</code></td>
+<td><code>weightstats.maxiter@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Weights</td>
+<td>For statalg="chauvenet", this is the maximum number of iterations to attempt. Iterating will stop when either this limit is reached, or the zscore criterion is met. If negative, iterate until the zscore criterion is met. Ignored if statalg is not "chauvenet".</td>
+</tr>
+<tr>
+<td><code>fitspw</code></td>
+<td><code>weightstats.fitspw@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Weights</td>
+<td>Channels to include in the computation of weights. Specified as an MS select channel selection string.</td>
+</tr>
+<tr>
+<td><code>excludechans</code></td>
+<td><code>weightstats.excludechans@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Weights</td>
+<td>If True: invert the channel selection in fitspw and exclude the fitspw selection from the computation of the weights.</td>
+</tr>
+<tr>
+<td><code>wtrange</code></td>
+<td><code>weightstats.wtrange@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Weights</td>
+<td>Range of acceptable weights. Data with weights outside this range will be flagged. Empty array (default) means all weights are good.</td>
+</tr>
+<tr>
+<td><code>flagbackup</code></td>
+<td><code>parameter.flagbackup@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Weights</td>
+<td>Create a flagmanager backup before mutating flags.</td>
+</tr>
+<tr>
+<td><code>preview</code></td>
+<td><code>weightstats.preview@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Weights</td>
+<td>Preview mode. If True, no data is changed, although the amount of data that would have been flagged is reported.</td>
+</tr>
+<tr>
+<td><code>datacolumn</code></td>
+<td><code>weightstats.datacolumn@r1</code></td>
+<td><code>string</code></td>
+<td><code>"corrected"</code>; optional</td>
+<td>Weights</td>
+<td>Data column to use to compute weights. Supported values are "data", "corrected", "residual", and "residual_data" (case insensitive, minimum match supported).</td>
 </tr>
 </tbody>
 </table>

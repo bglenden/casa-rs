@@ -1455,6 +1455,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#casars.tasks.statwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        statwt
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casars.tasks.tclean" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2420,6 +2431,17 @@
     <span class="md-ellipsis">
       
         split
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tasks.statwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        statwt
       
     </span>
   </a>
@@ -7642,6 +7664,92 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="sd">    ``observation``, ``feed``, ``timebin``, ``combine``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">split</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="casars.tasks.statwt" class="doc doc-heading">
+            <code class=" language-python"><span class="n">statwt</span><span class="p">(</span><span class="n">vis</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">selectdata</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">spw</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">intent</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">array</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">observation</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">scan</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">combine</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">timebin</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">slidetimebin</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">chanbin</span><span class="o">=</span><span class="s1">'spw'</span><span class="p">,</span> <span class="n">minsamp</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">statalg</span><span class="o">=</span><span class="s1">'classic'</span><span class="p">,</span> <span class="n">fence</span><span class="o">=-</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">center</span><span class="o">=</span><span class="s1">'mean'</span><span class="p">,</span> <span class="n">lside</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">zscore</span><span class="o">=-</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">fitspw</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">excludechans</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">wtrange</span><span class="o">=</span><span class="p">[],</span> <span class="n">flagbackup</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">preview</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">datacolumn</span><span class="o">=</span><span class="s1">'corrected'</span><span class="p">)</span></code>
+
+<a href="#casars.tasks.statwt" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Estimate MeasurementSet weights from visibility variance.</p>
+<p>CASA's <code>statwt</code>: its parameters, defaults and return value.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1346</span>
+<span class="normal">1347</span>
+<span class="normal">1348</span>
+<span class="normal">1349</span>
+<span class="normal">1350</span>
+<span class="normal">1351</span>
+<span class="normal">1352</span>
+<span class="normal">1353</span>
+<span class="normal">1354</span>
+<span class="normal">1355</span>
+<span class="normal">1356</span>
+<span class="normal">1357</span>
+<span class="normal">1358</span>
+<span class="normal">1359</span>
+<span class="normal">1360</span>
+<span class="normal">1361</span>
+<span class="normal">1362</span>
+<span class="normal">1363</span>
+<span class="normal">1364</span>
+<span class="normal">1365</span>
+<span class="normal">1366</span>
+<span class="normal">1367</span>
+<span class="normal">1368</span>
+<span class="normal">1369</span>
+<span class="normal">1370</span>
+<span class="normal">1371</span>
+<span class="normal">1372</span>
+<span class="normal">1373</span>
+<span class="normal">1374</span>
+<span class="normal">1375</span>
+<span class="normal">1376</span>
+<span class="normal">1377</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">statwt</span><span class="p">(</span>
+    <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">selectdata</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">spw</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">intent</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">array</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">observation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">scan</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">combine</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">timebin</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="n">slidetimebin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">chanbin</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="s1">'spw'</span><span class="p">,</span>
+    <span class="n">minsamp</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>
+    <span class="n">statalg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'classic'</span><span class="p">,</span>
+    <span class="n">fence</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">center</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'mean'</span><span class="p">,</span>
+    <span class="n">lside</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">zscore</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">maxiter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">fitspw</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">excludechans</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">wtrange</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
+    <span class="n">flagbackup</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">preview</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">datacolumn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'corrected'</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Estimate MeasurementSet weights from visibility variance.</span>
+
+<span class="sd">    CASA's ``statwt``: its parameters, defaults and return value.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">statwt</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
