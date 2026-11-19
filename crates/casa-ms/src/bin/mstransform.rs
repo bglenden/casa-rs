@@ -144,6 +144,17 @@ fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
                         .collect::<Vec<_>>();
                     format!("\"{}\"", labels.join(", "))
                 }
+                ParameterValue::ScalarArray(value)
+                    if matches!(
+                        binding.name.as_str(),
+                        "field" | "spw" | "scan" | "antenna" | "timerange"
+                    ) =>
+                {
+                    match value.as_ref() {
+                        ParameterValue::String(text) => text.clone(),
+                        value => python_repr(value),
+                    }
+                }
                 ParameterValue::NumpyScalar { value, .. } => python_repr(value),
                 ParameterValue::EmptyArray { .. } => "[]".into(),
                 value => python_repr(value),

@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 import casatasks
 import numpy as np
 
+from casacore.tables import table
 from casars import tasks
 from ms_selection_tasks_oracle import MAIN, add_second_window, compare_columns, make_input
 
@@ -21,6 +22,10 @@ def compare(root, source, task, name, case, argument):
                                        **{name: argument})
         assert result is None, (task, name, case, module.__name__, result)
     compare_columns(*targets, MAIN, f"{task} {name} {case}")
+    if case == "zero-dimensional-text":
+        for output in targets:
+            with table(str(output / "HISTORY"), ack=False) as history:
+                assert f"{name:<11} = {argument.item()}" in history.getcol("MESSAGE")
 
 
 def reject(root, source, task, name, case, value, kind, message):
@@ -53,10 +58,12 @@ def main():
                 if task == "split" and name != "timerange":
                     compare(root, source, task, name, "integer", number)
                     compare(root, source, task, name, "zero-dimensional", np.array(number))
-                    products += 2
+                    compare(root, source, task, name, "zero-dimensional-text", np.array(str(number)))
+                    products += 3
                     for case, value in (
                         ("bool", bool(number)), ("int-list", [number]), ("string-list", [str(number)]),
                         ("tuple", (number,)), ("array", np.array([number])), ("empty", []),
+                        ("range", range(number, number + 1)), ("bytes", str(number).encode()),
                     ):
                         reject(root, source, task, name, case, value, RuntimeError, None)
                         rejections += 1
@@ -67,6 +74,8 @@ def main():
                         ("int-list", [number], "unknown"), ("string-list", [str(number)], "unknown"),
                         ("tuple", (number,), "unknown"), ("array", np.array([number]), "unknown"),
                         ("empty", [], "unknown"),
+                        ("range", range(number, number + 1), "unknown"),
+                        ("bytes", str(number).encode(), "unknown"),
                     ):
                         reject(root, source, task, name, case, value, RuntimeError,
                                f"used for field {name} with type {record_type}")
