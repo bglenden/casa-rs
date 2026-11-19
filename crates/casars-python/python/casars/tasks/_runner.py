@@ -183,6 +183,13 @@ def run(
     else:
         resolved = TaskParameters.defaults(task, workspace=resolved_workspace)
     if values:
+        if task in ("split", "mstransform"):
+            for selector in ("array", "uvrange", "feed"):
+                if selector in values and not isinstance(values[selector], str):
+                    try:
+                        _ms_transform_selector_variant(selector, values[selector])
+                    except AssertionError as error:
+                        raise ValueError(str(error)) from error
         resolved.set_many(values)
     return _execute(task, resolved, resolved_workspace)
 

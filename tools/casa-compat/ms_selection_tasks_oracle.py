@@ -159,8 +159,12 @@ def add_arrays_and_feeds(source):
         tool.putcol("ARRAY_ID", 2 + 2 * (indices % 4))
         tool.putcol("FEED1", 2 * (indices % 2))
         tool.putcol("FEED2", 2 * ((indices // 2) % 2))
-        # Put exact distances on the U axis and much larger values in W.
-        tool.putcol("UVW", np.stack([5 * (indices % 8), 0 * indices, 100 + indices], axis=1))
+        # 14.9 m is below 5 klambda at 100 GHz and above it at 101 GHz.
+        # Give these samples a nonzero V component and a larger W component.
+        edge = indices % 8 == 3
+        u = np.where(edge, 8.94, 5 * (indices % 8))
+        v = np.where(edge, 11.92, 0)
+        tool.putcol("UVW", np.stack([u, v, 100 + indices], axis=1))
 
 
 def succeeds(root, source, name, case, options, subtables=SUBTABLES, *, via_run=False):
@@ -229,6 +233,7 @@ def rejected_selector_types(root, source, name):
 
 
 def compare_array_uv_feed(root, source, name, subtables):
+    first_time = columns_from_casacore(source, ("TIME",))["TIME"].min()
     cases = {
         "array-ordered": {"array": "8,2"},
         "array-repeated": {"array": "8,2,8"},
@@ -241,6 +246,7 @@ def compare_array_uv_feed(root, source, name, subtables):
         "uv-greater-strict": {"uvrange": ">10m"},
         "uv-distance-union": {"uvrange": "0~5m,0.025~0.035km"},
         "uv-scientific-bounds": {"uvrange": "2.5e1~3.5e1m"},
+        "uv-exponent-without-mantissa": {"uvrange": "e-3~5m"},
         "uv-wavelength-bounds": {"uvrange": "5~10klambda"},
         "uv-mixed-units": {"uvrange": "0~5m,5~10klambda"},
         "uv-percentage": {"uvrange": "5~10m:50%"},
@@ -256,14 +262,21 @@ def compare_array_uv_feed(root, source, name, subtables):
         "feed-remove": {"feed": "0&&&;!2&&&"},
         "feed-numpy-int": {"feed": np.int64(0)},
         "array-uv-feed": {"array": "8,2~6", "uvrange": "5~30m", "feed": "0&2"},
+        "array-uv-feed-time": {"array": "8,2~6", "uvrange": "5~30m", "feed": "0&2",
+                               "timerange": f">{calendar(first_time - 1)}"},
     }
     if name == "split":
         cases.update({"array-int": {"array": 2}, "feed-int": {"feed": 0},
                       "array-scalar-array": {"array": np.array(2)}})
     else:
         cases["array-uv-feed-taql"] = cases["array-uv-feed"] | {"taql": "SCAN_NUMBER >= 0"}
+        cases["uv-mixed-units-taql"] = cases["uv-mixed-units"] | {"taql": "SCAN_NUMBER >= 0"}
     for case, options in cases.items():
-        succeeds(root, source, name, case, options, subtables)
+        selected = succeeds(root, source, name, case, options, subtables)
+        if case == "uv-wavelength-bounds":
+            output = columns_from_casacore(selected, ("UVW", "DATA_DESC_ID"))
+            edges = output["DATA_DESC_ID"][output["UVW"][:, 1] != 0]
+            assert len(edges) > 0 and (edges == 1).all(), (name, edges)
     provider_cases = {
         "provider-array-numpy-int": {"array": np.int32(2)},
         "provider-feed-numpy-int": {"feed": np.int32(0)},
@@ -280,12 +293,15 @@ def compare_array_uv_feed(root, source, name, subtables):
         ("uvrange", "5m~10m", RuntimeError, "UV Distribution Expression"),
         ("uvrange", "10~5m", RuntimeError, "MSSelectionNullSelection"),
         ("uvrange", "10m", RuntimeError, "MSSelectionNullSelection"),
+        ("uvrange", "5~10KM", RuntimeError, "Unrecognized units k"),
         ("uvrange", 10, RuntimeError, "used for field uvrange with type Int"),
         ("uvrange", [">10m"], RuntimeError, "used for field uvrange with type unknown"),
         ("feed", "0&", RuntimeError, "MSSelectionNullSelection"),
         ("feed", "1", RuntimeError, "No match found for requested feeds"),
         ("feed", "*", RuntimeError, "Feed Expression"),
         ("feed", 1.5, AssertionError, "must be of cInt type"),
+        ("array", np.array(2, dtype=np.int16), AssertionError, "must be of cInt type"),
+        ("array", np.array(2, dtype=np.uint8), AssertionError, "must be of cInt type"),
     ]
     if name == "split":
         rejections.append(("feed", [0], RuntimeError, "Feed Expression"))
@@ -304,6 +320,16 @@ def compare_array_uv_feed(root, source, name, subtables):
             else:
                 raise AssertionError(f"{module.__name__}.{name} accepted {parameter}={value!r}")
             assert not path.exists(), path
+    for dtype in (np.int16, np.uint8):
+        path = root / f"{name}-provider-array-{dtype.__name__}.ms"
+        try:
+            tasks.run(name, vis=str(source), outputvis=str(path), datacolumn="data",
+                      array=np.array(2, dtype=dtype))
+        except ValueError as error:
+            assert "must be of cInt type" in str(error), str(error)
+        else:
+            raise AssertionError(f"tasks.run accepted ARRAY_ID as {dtype.__name__}")
+        assert not path.exists(), path
     return len(cases) + len(provider_cases), len(rejections)
 
 

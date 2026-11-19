@@ -134,6 +134,11 @@ fn number_with_unit(text: &str) -> MsResult<(f64, UvUnit)> {
         "lambda" | "LAMBDA" => UvUnit::Lambda(1.0),
         "klambda" | "Klambda" | "kLAMBDA" | "KLAMBDA" => UvUnit::Lambda(1_000.0),
         "Mlambda" | "MLAMBDA" => UvUnit::Lambda(1_000_000.0),
+        "k" | "K" | "kM" | "KM" | "kLambda" | "KLambda" => {
+            return Err(MsError::InvalidInput(
+                "Unrecognized units k found. Possible units are [KM]LAMBDA for wavelengths or [K]M for distance.".into(),
+            ));
+        }
         _ => return Err(invalid_uv(token)),
     };
     Ok((value, unit))
@@ -144,12 +149,7 @@ fn number(text: &str) -> MsResult<(f64, &str)> {
     let digits = |data: &[u8]| data.iter().take_while(|byte| byte.is_ascii_digit()).count();
     let bytes = text.as_bytes();
     let mut end = digits(bytes);
-    if end == 0 {
-        return Err(invalid_uv(
-            &text[..text.chars().next().map_or(0, char::len_utf8)],
-        ));
-    }
-    if bytes.get(end) == Some(&b'.') {
+    if end > 0 && bytes.get(end) == Some(&b'.') {
         end += 1 + digits(&bytes[end + 1..]);
     }
     let mut numeric_end = end;
@@ -159,12 +159,22 @@ fn number(text: &str) -> MsResult<(f64, &str)> {
         if count > 0 {
             end = start + count;
             // The lexer accepts D exponents and converts through atof.
-            if matches!(kind, b'e' | b'E') {
+            if numeric_end > 0 && matches!(kind, b'e' | b'E') {
                 numeric_end = end;
             }
         }
     }
-    let value = text[..numeric_end].parse().map_err(|_| invalid_uv(text))?;
+    let value = if end == 0 {
+        return Err(invalid_uv(
+            &text[..text.chars().next().map_or(0, char::len_utf8)],
+        ));
+    } else if numeric_end == 0 {
+        // An exponent without a mantissa is accepted by the lexer and
+        // converted to zero by atof.
+        0.0
+    } else {
+        text[..numeric_end].parse().map_err(|_| invalid_uv(text))?
+    };
     Ok((value, trim_row_id_space(&text[end..])))
 }
 

@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform,
+    MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform_task,
     mstransform_task_schema_bundle, task_selection_text,
 };
 use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue, python_repr};
@@ -35,7 +35,9 @@ fn main() -> ExitCode {
 /// Both surfaces run the one transform; CASA's tasks return None.
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = transform_request(task)?;
-    let report = mstransform(&request).map_err(|error| match error {
+    // The output the transform refuses before it starts is the argument's
+    // fault; anything else failed the transform.
+    let report = mstransform_task(&request).map_err(|error| match error {
         MsTransformError::OutputExists { .. } | MsTransformError::SameInputOutput { .. } => {
             TaskFailure::validation(error.to_string()).at("outputvis")
         }

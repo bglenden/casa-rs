@@ -92,6 +92,7 @@ pub(super) fn reindex_selected_row_ids(
     input: &MeasurementSet,
     request: &MsTransformRequest,
     antenna: Option<BTreeMap<i32, i32>>,
+    reindex_array: bool,
 ) -> Result<RowIdMaps, MsTransformError> {
     let observation = request
         .selection
@@ -129,7 +130,7 @@ pub(super) fn reindex_selected_row_ids(
         .selection
         .array
         .as_deref()
-        .filter(|text| !text.is_empty())
+        .filter(|text| reindex_array && !text.is_empty())
         .map(ArraySelection::parse)
         .transpose()
         .map_err(|source| metadata_error(request, source))?;

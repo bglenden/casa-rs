@@ -17,6 +17,7 @@ pub(crate) fn selection_from_options(
     ms: &MeasurementSet,
     options: &ListObsOptions,
     grammar: super::RowGrammar,
+    rows_per_block: Option<usize>,
 ) -> MsResult<CompiledMsSelection> {
     use super::RowGrammar;
 
@@ -70,7 +71,7 @@ pub(crate) fn selection_from_options(
         }
     }
     if full_row_grammar && let Some(timerange) = options.timerange.as_deref() {
-        selection = super::row_grammar::with_time(ms, selection, timerange)?;
+        selection = super::row_grammar::with_time(ms, selection, timerange, rows_per_block)?;
     }
 
     Ok(selection)

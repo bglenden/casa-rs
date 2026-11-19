@@ -125,6 +125,7 @@ pub(super) fn with_time(
     ms: &MeasurementSet,
     selection: CompiledMsSelection,
     text: &str,
+    rows_per_block: Option<usize>,
 ) -> MsResult<CompiledMsSelection> {
     if text.is_empty() {
         return Ok(selection);
@@ -142,7 +143,7 @@ pub(super) fn with_time(
         }
         first
     } else {
-        selection.apply(ms)?.first().copied().unwrap_or(0)
+        selection.first_match(ms, rows_per_block)?.unwrap_or(0)
     };
     let defaults = |row| -> MsResult<TimeDefaults> {
         Ok(TimeDefaults {

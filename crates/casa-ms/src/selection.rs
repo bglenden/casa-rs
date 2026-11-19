@@ -475,13 +475,14 @@ impl MsSelection {
     }
 
     pub(crate) fn compile(&self, ms: &MeasurementSet) -> MsResult<CompiledMsSelection> {
-        self.compile_with_row_grammar(ms, RowGrammar::Standard)
+        self.compile_with_row_grammar(ms, RowGrammar::Standard, None)
     }
 
     fn compile_with_row_grammar(
         &self,
         ms: &MeasurementSet,
         grammar: RowGrammar,
+        rows_per_block: Option<usize>,
     ) -> MsResult<CompiledMsSelection> {
         if !self.selectdata && !self.has_text_selection() {
             return Ok(CompiledMsSelection::default());
@@ -491,7 +492,12 @@ impl MsSelection {
                 "selectdata=false cannot be combined with MeasurementSet selectors".to_string(),
             ));
         }
-        let mut compiled = parser::selection_from_options(ms, &self.to_summary_options(), grammar)?;
+        let mut compiled = parser::selection_from_options(
+            ms,
+            &self.to_summary_options(),
+            grammar,
+            rows_per_block,
+        )?;
         if let Some(value) = self.data_description.as_deref() {
             compiled = compiled.data_description(
                 &crate::selection::syntax::parse_numeric_id_selector(value, "data-description")?,
@@ -798,23 +804,23 @@ impl CompiledMsSelection {
     /// If antenna names were specified, they are resolved against the ANTENNA
     /// subtable first.
     pub(crate) fn apply(&self, ms: &MeasurementSet) -> MsResult<Vec<usize>> {
-        self.apply_internal(ms, None)
+        self.apply_internal(ms, None, false)
     }
 
-    fn apply_with_budget(
+    fn first_match(
         &self,
         ms: &MeasurementSet,
-        io: MsSelectionIoBudget,
-    ) -> Result<Vec<usize>, MsSelectionError> {
-        let rows_per_block = rows_per_block_for_budget(io)?;
-        self.apply_internal(ms, Some(rows_per_block))
-            .map_err(MsSelectionError::Domain)
+        rows_per_block: Option<usize>,
+    ) -> MsResult<Option<usize>> {
+        self.apply_internal(ms, rows_per_block, true)
+            .map(|rows| rows.first().copied())
     }
 
     fn apply_internal(
         &self,
         ms: &MeasurementSet,
         structured_rows_per_block: Option<usize>,
+        first_only: bool,
     ) -> MsResult<Vec<usize>> {
         let apply_started_at = Instant::now();
         let mut sel = self.clone();
@@ -847,6 +853,7 @@ impl CompiledMsSelection {
                 &effective_ddids,
                 structured_rows_per_block,
                 exclude_autocorrelations,
+                first_only,
             )?;
             log_selection_profile(
                 "apply_structured",
@@ -890,7 +897,11 @@ impl CompiledMsSelection {
 
         let taql_started_at = Instant::now();
         let view = ms.main_table().query(&taql)?;
-        let rows = view.row_numbers().to_vec();
+        let rows = if first_only {
+            view.row_numbers().first().copied().into_iter().collect()
+        } else {
+            view.row_numbers().to_vec()
+        };
         log_selection_profile(
             "apply_taql",
             apply_started_at.elapsed().as_nanos() as u64,
@@ -1012,12 +1023,13 @@ impl MeasurementSet {
             .map(|(rows, _)| rows)
     }
 
-    pub(crate) fn resolve_transform_selection(
+    pub(crate) fn resolve_selection_with_time(
         &self,
         request: &MsSelection,
         io: MsSelectionIoBudget,
+        grammar: RowGrammar,
     ) -> Result<(ResolvedMsSelection, Option<TimeSelection>), MsSelectionError> {
-        self.resolve_rows(request, io, RowGrammar::Transform)
+        self.resolve_rows(request, io, grammar)
     }
 
     fn resolve_rows(
@@ -1032,9 +1044,10 @@ impl MeasurementSet {
                 std::mem::size_of::<ResolvedMsSelectionRow>()
             )));
         }
-        let compiled = request.compile_with_row_grammar(self, grammar)?;
+        let rows_per_block = Some(rows_per_block_for_budget(io)?);
+        let compiled = request.compile_with_row_grammar(self, grammar, rows_per_block)?;
         let taql_predicate = compiled.resolved_to_taql(self)?;
-        let selected_row_indices = compiled.apply_with_budget(self, io)?;
+        let selected_row_indices = compiled.apply_internal(self, rows_per_block, false)?;
         let row_blocks = plan_selected_row_blocks(&selected_row_indices, io)?;
         let selected_rows = resolve_selected_row_facts(self, &selected_row_indices, &row_blocks)?;
         Ok((
@@ -1229,6 +1242,7 @@ fn apply_structured_selection(
     effective_ddids: &[i32],
     rows_per_block: Option<usize>,
     exclude_autocorrelations: bool,
+    first_only: bool,
 ) -> MsResult<Vec<usize>> {
     let setup_started_at = Instant::now();
     if sel.field_ids.as_ref().is_some_and(Vec::is_empty) {
@@ -1326,10 +1340,16 @@ fn apply_structured_selection(
                 &uv_lambda_by_ddid,
             ) {
                 rows.push(row);
+                if first_only {
+                    break;
+                }
             }
         }
         filter_rows_ns =
             filter_rows_ns.saturating_add(filter_rows_started_at.elapsed().as_nanos() as u64);
+        if first_only && !rows.is_empty() {
+            break;
+        }
     }
 
     log_selection_profile(
@@ -1852,6 +1872,36 @@ mod tests {
     fn empty_selection_selects_all() {
         let sel = MsSelection::new();
         assert_eq!(sel.to_taql(), "SELECT *");
+    }
+
+    #[test]
+    fn first_match_stops_before_loading_later_uv_blocks() {
+        use casa_tables::{ColumnSchema, TableSchema};
+        use casa_types::{PrimitiveType, RecordField, RecordValue, Value};
+
+        let mut ms = MeasurementSet::create_memory(crate::MeasurementSetBuilder::new()).unwrap();
+        let main = ms.main_table_mut();
+        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+            "UVW",
+            PrimitiveType::Float64,
+            Some(1),
+        )])
+        .unwrap();
+        *main = Table::with_schema(schema);
+        let uvws: [&[f64]; 2] = [&[3.0, 4.0, 0.0], &[1.0, 2.0]];
+        for uvw in uvws {
+            main.add_row(RecordValue::new(vec![RecordField::new(
+                "UVW",
+                Value::Array(ArrayValue::Float64(ndarray::arr1(uvw).into_dyn())),
+            )]))
+            .unwrap();
+        }
+        let selection = CompiledMsSelection {
+            casa_uv: Some(uv_expr::UvDistanceSelection::parse(&ms, "<10m").unwrap()),
+            ..CompiledMsSelection::default()
+        };
+        assert_eq!(selection.first_match(&ms, Some(1)).unwrap(), Some(0));
+        assert!(selection.apply_internal(&ms, Some(1), false).is_err());
     }
 
     #[test]
