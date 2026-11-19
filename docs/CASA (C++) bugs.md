@@ -6956,6 +6956,19 @@ retain the spectrum obtained by expanding their original scalar values.
 The paired fixture compares this result with CASA's documented two-call
 sequence and checks unselected rows (#1524).
 
+## Column statistics change when the same NaN moves between rows
+
+CASA 6.7.6.14 derives `table.statistics` and `calstat` quantiles from
+an ordering that includes NaN. The rows `[0, 3, 1, NaN, 4, 8, 9]`
+gave a finite interquartile range of 7 and a NaN median. Moving that
+NaN to the start gave an interquartile range of 8, a median of 3 and
+NaN for both bounds. The sum and variance were NaN in each case.
+
+casa-rs returns deterministic bounds from the non-NaN samples, counts
+all samples and returns NaN for the moments and quantiles when a NaN
+makes those quantities undefined. This preserves the existing native
+table tool behavior in the public calibration task (#1526).
+
 ## Accumulating a bandpass updates a fraction of the Jones cells
 
 CASA 6.7.6.14's `calibrater.accumulate` is available with

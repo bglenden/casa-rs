@@ -18,6 +18,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
+| calstat | calstat | yes | 3 | 3 | 0 | 0 | 0 | 0 |
 | clearcal | clearcal | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
@@ -42,6 +43,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 41 | 0 | 0 |
+| plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | pending | 102 | pending | | | | |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
@@ -222,6 +224,69 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - casa-rs parameters CASA lacks: `output`, `overwrite`, `format`, `array`
 - Shared parameters: 35, in CASA's order: yes
 - Defaults that differ: none
+
+### calstat
+
+- CASA source: `casatasks/calstat.py`, 3 parameters
+- Implementation: `casatasks/private/task_calstat.py`, `calstat` (line 6): 1 return statements, 0 raise statements
+  - returns at line 53: `s`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the caltable parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 3, in CASA's order: yes
+- Defaults that differ: none
+
+#### calstat parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `567b979d3f9780a690d1aa8afcdc5a7c9dedabb9`. Status counts: Default only: 0, Implemented: 3, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Existing casacore table or saved view. Supports local, home-relative and configured data paths. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `path` (calibration_table) | [paired](#calstat-evidence-paired) |
+| `axis` | `'amplitude'` | `'amplitude'`; `axis` → `axis` | Implemented | Complex amplitude, phase in radians, real or imaginary projection, or a literal scalar or array column. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `string` | [paired](#calstat-evidence-paired) |
+| `datacolumn` | `'gain'` | `'gain'`; `datacolumn` → `datacolumn` | Implemented | For complex projection axes only, the literal column name with CASA's corrected and model aliases. The default reads GAIN from legacy tables. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `string` | [paired](#calstat-evidence-paired) |
+
+#### calstat interacting modes and task behavior
+
+<a id="calstat-behavior-column-statistics"></a>
+##### Descriptive calibration statistics
+
+**Implemented** — CASA scalar and array return records, complex projections, real delays, flags retained in the sample population, literal column aliases, single-precision samples and squares, vector components, saved table views, argument errors and local, home-relative and configured data paths.
+
+The documented NaN behavior difference is recorded below.
+
+Evidence: [paired](#calstat-evidence-paired).
+
+#### calstat deviations and unfinished work
+
+##### deterministic-nan-statistics: Proposed
+
+- Inputs: A table column with both numeric values and NaN samples.
+- CASA: The median, quartile range and bounds can change when the same NaN moves between rows.
+- casa-rs: Preserves deterministic bounds over non-NaN samples, counts every sample and reports undefined moments and quantiles.
+- Rationale: The moments and quantiles of the unmasked data are undefined when a sample is NaN.
+- User impact: The selected row order does not change the native NaN policy.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#calstat-evidence-paired).
+
+#### calstat evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="calstat-evidence-paired"></a>
+##### paired
+
+**Same-input public task and table tool comparisons — passed.** 25 result comparisons, 17 error cases, four table-tool comparisons and independent moment checks passed. CASA scalar and array return records, complex projections, real delays, flags retained in the sample population, literal column aliases, single-precision samples and squares, vector components, saved table views, argument errors and local, home-relative and configured data paths.
+
+- [tools/casa-compat/calstat_oracle.py](https://github.com/bglenden/casa-rs/blob/567b979d3f9780a690d1aa8afcdc5a7c9dedabb9/tools/casa-compat/calstat_oracle.py)
+- Revision: `567b979d3f9780a690d1aa8afcdc5a7c9dedabb9`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calstat_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calstat-20261119.json`.
 
 ### clearcal
 
@@ -935,6 +1000,126 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `correlation`, `array`, `uvrange`, `feed`, `realmodelcol`, `usewtspectrum`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
+- Defaults that differ: none
+
+### plotbandpass
+
+- CASA source: `casatasks/plotbandpass.py`, 49 parameters
+- Implementation: `casatasks/private/task_plotbandpass.py`, `plotbandpass` (line 780): 109 return statements, 0 raise statements
+  - returns at line 885: `()`
+  - returns at line 965: `None`
+  - returns at line 983: `()`
+  - returns at line 989: `()`
+  - returns at line 992: `()`
+  - returns at line 996: `()`
+  - returns at line 999: `()`
+  - returns at line 1003: `vm`
+  - returns at line 1007: `vm`
+  - returns at line 1012: `()`
+  - returns at line 1016: `()`
+  - returns at line 1023: `()`
+  - returns at line 1026: `()`
+  - returns at line 1029: `None`
+  - returns at line 1042: `()`
+  - returns at line 1049: `()`
+  - returns at line 1052: `()`
+  - returns at line 1055: `()`
+  - returns at line 1058: `()`
+  - returns at line 1062: `()`
+  - returns at line 1097: `()`
+  - returns at line 1107: `()`
+  - returns at line 1116: `()`
+  - returns at line 1126: `()`
+  - returns at line 1133: `()`
+  - returns at line 1137: `()`
+  - returns at line 1141: `()`
+  - returns at line 1160: `()`
+  - returns at line 1257: `()`
+  - returns at line 1269: `vm`
+  - returns at line 1279: `()`
+  - returns at line 1308: `()`
+  - returns at line 1316: `()`
+  - returns at line 1410: `None`
+  - returns at line 1420: `None`
+  - returns at line 1437: `None`
+  - returns at line 1523: `None`
+  - returns at line 1560: `()`
+  - returns at line 1590: `None`
+  - returns at line 1593: `None`
+  - returns at line 1597: `None`
+  - returns at line 1621: `None`
+  - returns at line 1624: `None`
+  - returns at line 1627: `None`
+  - returns at line 1652: `None`
+  - returns at line 1664: `()`
+  - returns at line 1677: `()`
+  - returns at line 1688: `()`
+  - returns at line 1697: `()`
+  - returns at line 1708: `()`
+  - returns at line 1712: `()`
+  - returns at line 1726: `()`
+  - returns at line 1729: `()`
+  - returns at line 1732: `()`
+  - returns at line 1738: `()`
+  - returns at line 1741: `()`
+  - returns at line 1750: `()`
+  - returns at line 1753: `()`
+  - returns at line 1764: `vm`
+  - returns at line 1767: `vm`
+  - returns at line 1778: `vm`
+  - returns at line 1781: `vm`
+  - returns at line 1792: `()`
+  - returns at line 1800: `()`
+  - returns at line 1861: `()`
+  - returns at line 1922: `None`
+  - returns at line 1939: `None`
+  - returns at line 1945: `None`
+  - returns at line 1955: `None`
+  - returns at line 1964: `None`
+  - returns at line 1975: `None`
+  - returns at line 2052: `()`
+  - returns at line 2056: `()`
+  - returns at line 2084: `()`
+  - returns at line 2105: `()`
+  - returns at line 2108: `()`
+  - returns at line 2115: `()`
+  - returns at line 2118: `()`
+  - returns at line 2159: `()`
+  - returns at line 2196: `()`
+  - returns at line 2203: `()`
+  - returns at line 2210: `()`
+  - returns at line 2213: `()`
+  - returns at line 2231: `()`
+  - returns at line 2249: `()`
+  - returns at line 2255: `()`
+  - returns at line 2261: `()`
+  - returns at line 2304: `()`
+  - returns at line 2307: `()`
+  - returns at line 2460: `()`
+  - returns at line 2546: `()`
+  - returns at line 2622: `()`
+  - returns at line 2732: `()`
+  - returns at line 2747: `()`
+  - returns at line 2754: `()`
+  - returns at line 2757: `()`
+  - returns at line 3082: `None`
+  - returns at line 3223: `()`
+  - returns at line 3867: `()`
+  - returns at line 3962: `()`
+  - returns at line 3992: `()`
+  - returns at line 4434: `None`
+  - returns at line 4470: `()`
+  - returns at line 4690: `()`
+  - returns at line 4791: `()`
+  - returns at line 4827: `()`
+  - returns at line 5245: `None`
+  - returns at line 5503: `madstats`
+  - returns at line 5507: `()`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the caltable parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 49, in CASA's order: yes
 - Defaults that differ: none
 
 ### plotms

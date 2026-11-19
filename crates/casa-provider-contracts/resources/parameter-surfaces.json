@@ -37154,6 +37154,154 @@
           }
         }
       ]
+    },
+    {
+      "kind": "task",
+      "id": "calstat",
+      "contract_version": 1,
+      "display_name": "Calibration Statistics",
+      "category": "Calibration",
+      "summary": "Compute descriptive statistics for a calibration table column.",
+      "provider_family": "calibration",
+      "casa_task": "calstat",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "calstat"
+        ],
+        "products": {
+          "kind": "no_products"
+        }
+      },
+      "bindings": [
+        {
+          "name": "caltable",
+          "concept": {
+            "id": "parameter.caltable",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "always"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "Calibration Table",
+              "group": "Input"
+            }
+          },
+          "context_role": "input_dataset",
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat reads an existing table, while the calibration solve surfaces name an output."
+          }
+        },
+        {
+          "name": "axis",
+          "concept": {
+            "id": "statistics.calibration_axis",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "amplitude"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--axis"
+              ]
+            },
+            "provider": {
+              "field": "axis"
+            },
+            "python": {
+              "name": "axis"
+            },
+            "presentation": {
+              "label": "Statistics Axis",
+              "group": "Statistics"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat selects a numeric column or complex projection. The image moments axis selects a coordinate."
+          }
+        },
+        {
+          "name": "datacolumn",
+          "concept": {
+            "id": "statistics.calibration_datacolumn",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "gain"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--datacolumn"
+              ]
+            },
+            "provider": {
+              "field": "datacolumn"
+            },
+            "python": {
+              "name": "datacolumn"
+            },
+            "presentation": {
+              "label": "Data Column",
+              "group": "Statistics"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "calstat names a literal calibration or visibility table column, including complex projection mode."
+          }
+        }
+      ]
     }
   ]
 }

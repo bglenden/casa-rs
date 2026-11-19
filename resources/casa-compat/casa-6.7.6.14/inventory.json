@@ -3,6 +3,7 @@
   "tasks": [
     "applycal",
     "bandpass",
+    "calstat",
     "clearcal",
     "concat",
     "delmod",
