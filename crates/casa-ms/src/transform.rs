@@ -38,8 +38,11 @@ use crate::write_session::{
     MeasurementSetWriteResources, MeasurementSetWriteSession, MeasurementSetWriteTelemetry,
 };
 
+mod correlation_metadata;
 mod selection_metadata;
 mod spectral_metadata;
+
+use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 
 /// Input visibility column to materialize as output `DATA`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -335,6 +338,26 @@ fn mstransform_staged(
     if selection.spw.is_none() {
         selection.spw = Some(spw.to_string());
     }
+    let correlations = if grammar == RowGrammar::Transform {
+        selection
+            .correlation
+            .take()
+            .filter(|text| !text.is_empty())
+            .map(|text| CorrelationSelection::resolve(&input, &text))
+            .transpose()
+            .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
+    } else {
+        None
+    };
+    if let Some(correlations) = correlations.as_ref()
+        && !correlations
+            .constrain(&mut selection)
+            .map_err(|source| selection_error(MsSelectionError::Domain(source)))?
+    {
+        return Err(MsTransformError::EmptySelection {
+            path: request.input_ms.display().to_string(),
+        });
+    }
     let (resolved_rows, time_selection) = input
         .resolve_selection_with_time(&selection, budget, grammar)
         .map_err(selection_error)?;
@@ -458,7 +481,11 @@ fn mstransform_staged(
         &channel_bins,
         &ddid_to_spw,
         &spw_selection,
+        correlations.as_ref(),
     )?;
+    if let Some(correlations) = correlations.as_ref() {
+        correlations.write_polarizations(request)?;
+    }
     let field_id_map = selection_metadata::reindex_fields_and_sources(
         &input,
         request,
@@ -497,6 +524,7 @@ fn mstransform_staged(
         &selected_ddids,
         &ddid_to_spw,
         &channel_bins,
+        correlations.as_ref(),
         write_resources,
     )?;
     let batch_rows = write_plan.batch_rows();
@@ -598,11 +626,24 @@ fn mstransform_staged(
             .enumerate()
         {
             let row_index = batch_start + batch_offset;
+            let axes = correlations
+                .as_ref()
+                .and_then(|selection| selection.axes(ddid));
+            let select_correlations = |value, name| {
+                select_visibility_axes(value, axes, name).map_err(|source| {
+                    MsTransformError::MutateMeasurementSet {
+                        path: request.output_ms.display().to_string(),
+                        source: Box::new(source),
+                    }
+                })
+            };
             let data = data.ok_or_else(|| {
                 missing_column_error(&request.output_ms, row_index, source_column)
             })?;
             let flags =
                 flags.ok_or_else(|| missing_column_error(&request.output_ms, row_index, "FLAG"))?;
+            let data = select_correlations(data, source_column)?;
+            let flags = select_correlations(flags, "FLAG")?;
             let spw_id = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
                 MsTransformError::SpectralMetadata {
                     path: request.output_ms.display().to_string(),
@@ -646,6 +687,7 @@ fn mstransform_staged(
                 .flatten()
                 .filter(|value| !value.is_empty())
             {
+                let flag_category = select_correlations(flag_category, "FLAG_CATEGORY")?;
                 let transformed =
                     transform_flag_category_channels(flag_category, bins).map_err(|source| {
                         MsTransformError::MutateMeasurementSet {
@@ -687,6 +729,8 @@ fn mstransform_staged(
                 .next()
                 .flatten()
                 .ok_or_else(|| missing_column_error(&request.output_ms, row_index, "SIGMA"))?;
+            let weight = select_correlations(weight, "WEIGHT")?;
+            let sigma = select_correlations(sigma, "SIGMA")?;
             push_f32_array_row(
                 &mut write_session,
                 "WEIGHT",
@@ -703,6 +747,7 @@ fn mstransform_staged(
             )?;
             for (name, values) in &mut spectrum_values {
                 if let Some(value) = values.next().flatten().filter(|value| !value.is_empty()) {
+                    let value = select_correlations(value, name)?;
                     let transformed = if *name == "SIGMA_SPECTRUM" {
                         transform_sigma_channels(value, &flags, bins)
                     } else {
@@ -864,6 +909,7 @@ fn transform_array_write_plan(
     selected_ddids: &[i32],
     ddid_to_spw: &BTreeMap<i32, i32>,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
+    correlations: Option<&CorrelationSelection>,
     resources: MeasurementSetWriteResources,
 ) -> Result<MeasurementSetWritePlan, MsTransformError> {
     let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
@@ -889,7 +935,9 @@ fn transform_array_write_plan(
             path: input_path.display().to_string(),
             reason: format!("negative DATA_DESC_ID {ddid}"),
         })?;
-        let correlation_count = if let Some(&count) = correlation_count_by_ddid.get(&ddid) {
+        let correlation_count = if let Some(axes) = correlations.and_then(|plan| plan.axes(ddid)) {
+            axes.len()
+        } else if let Some(&count) = correlation_count_by_ddid.get(&ddid) {
             count
         } else {
             let polarization_id = data_description
@@ -962,7 +1010,16 @@ fn transform_array_write_plan(
         .collect::<Vec<_>>();
     let (flag_category_correlation_count, flag_category_channel_count, category_count) =
         transform_flag_category_shape(input, selected_rows)?;
-    let flag_category_shapes = if flag_category_channel_count == 1 {
+    let flag_category_shapes = if flag_category_channel_count == 1 && correlations.is_some() {
+        weight_shapes
+            .iter()
+            .map(|shape| MeasurementSetArrayShapePlan {
+                tile_shape: vec![shape.tile_shape[0], 1, 1, shape.tile_shape[1]],
+                cell_shape: vec![shape.cell_shape[0], 1, category_count],
+                row_count: shape.row_count,
+            })
+            .collect()
+    } else if flag_category_channel_count == 1 {
         vec![MeasurementSetArrayShapePlan {
             cell_shape: vec![
                 flag_category_correlation_count,
@@ -1504,6 +1561,7 @@ fn compact_spectral_subtables(
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
     ddid_to_spw: &BTreeMap<i32, i32>,
     selection: &SpwSelection,
+    correlations: Option<&CorrelationSelection>,
 ) -> Result<CompactSpectralMetadata, MsTransformError> {
     let selected_spws = channel_bins.keys().copied().collect::<Vec<_>>();
     let spw_map = selected_spws
@@ -1538,6 +1596,7 @@ fn compact_spectral_subtables(
         .data_description_ids()
         .iter()
         .map(|&id| id as i32)
+        .filter(|&id| correlations.is_none_or(|selection| selection.axes(id).is_some()))
         .collect::<Vec<_>>();
     let ddid_map = ordered_ddids
         .iter()
@@ -2122,10 +2181,15 @@ fn select_fortran_contiguous_axis1<T: Clone>(
             "channel range {start}..{end} is outside array shape {shape:?}"
         )));
     }
+    let corr_count = shape[0];
+    if (corr_count > 1 && values.strides()[0] != 1)
+        || (shape[1] > 1 && values.strides()[1] != corr_count as isize)
+    {
+        return Ok(None);
+    }
     let Some(input) = values.as_slice_memory_order() else {
         return Ok(None);
     };
-    let corr_count = shape[0];
     let output_shape = [corr_count, end - start];
     let start_offset = start * corr_count;
     let end_offset = end * corr_count;
