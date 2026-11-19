@@ -1145,7 +1145,7 @@ def rerefant(
 
 def plotweather(
     vis: StrPath = ...,
-    seasonal_weight: float = ...,
+    seasonal_weight: ParameterData = ...,
     doPlot: bool = ...,
     plotName: str = ...,
 ) -> Any:

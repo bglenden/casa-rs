@@ -12762,10 +12762,10 @@
       "semantic_revision": 1,
       "casa_name": "seasonal_weight",
       "value_domain": {
-        "kind": "float"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "numeric_variant"
       },
       "base_constraints": [],
       "unit_dimension": null,

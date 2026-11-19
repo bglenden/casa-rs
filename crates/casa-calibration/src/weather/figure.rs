@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare the five panels of the CASA weather summary for the shared renderer.
 
+use std::f64::consts::FRAC_PI_2;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_measures_data::{MeasuresRuntime, RuntimePolicy};
+use casa_measures_data::{MeasuresRuntime, PlanetaryTable, RuntimePolicy};
 use casa_ms::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAnnotation, PlotDocumentAxis, PlotDocumentLayer,
     PlotDocumentPanel, PlotLayerKind, PlotLayerStyle, PlotPayloadStrategy, PlotTextStyle,
@@ -43,7 +44,11 @@ pub(super) fn prepare(
     let labels =
         [0, time.len() / 2, time.len() - 1].map(|row| weather_date(data.time_seconds[row]));
     let [first_label, mid, end] = labels;
-    let time_labels = [first_label, mid[11..].into(), end[11..].into()];
+    let time_labels = [
+        first_label,
+        mid.get(11..).unwrap_or_default().into(),
+        end.get(11..).unwrap_or_default().into(),
+    ];
 
     let mut sun = solar_panel(&time, &data.time_seconds, xlim)?;
     sun.title = format!("Weather Summary for {vis}");
@@ -129,15 +134,21 @@ fn solar_panel(time: &[f64], seconds: &[f64], xlim: [f64; 2]) -> Result<PlotDocu
     let frame = MeasFrame::new()
         .with_position(position)
         .with_measures(measures);
+    let ephemeris = PlanetaryTable::open_discovered().map_err(|error| error.to_string())?;
+    let sun = MDirection::from_angles(0.0, FRAC_PI_2, DirectionRef::SUN);
     let mut layers = Vec::with_capacity(31);
     for (point, row) in samples(time.len(), 30).enumerate() {
         let frame = frame
             .clone()
             .with_epoch(MEpoch::from_mjd_seconds(seconds[row], EpochRef::UTC));
-        let sun = MDirection::from_source_name("SUN", &frame)
-            .and_then(|sun| sun.convert_to(DirectionRef::AZELGEO, &frame))
+        let (direction, distance) = ephemeris
+            .geocentric_direction(&sun, &frame)
             .map_err(|error| error.to_string())?;
-        let height = sun.latitude_rad().to_degrees();
+        let height = direction
+            .convert_with_parallax(DirectionRef::AZELGEO, &frame, distance)
+            .map_err(|error| error.to_string())?
+            .latitude_rad()
+            .to_degrees();
         let color = if height < 0.0 { "black" } else { "#FFCC00" };
         let mut markers = line(
             &format!("sun-{point}"),
