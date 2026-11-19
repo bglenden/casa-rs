@@ -148,9 +148,10 @@ fn inverse_mean_tsys(grid: &GainGrid, receptor: usize) -> f32 {
     let mut total = 0.0_f64;
     let mut count = 0;
     for channel in 0..grid.channel_count {
-        let value = grid.value_at(receptor, channel).re;
-        if !grid.flag_at(receptor, channel) && value > 0.0 {
-            total += f64::from(value);
+        let gain = f64::from(grid.value_at(receptor, channel).re);
+        if !grid.flag_at(receptor, channel) && gain > 0.0 {
+            // The interpolated temperature is the inverse square of this gain.
+            total += 1.0 / (gain * gain);
             count += 1;
         }
     }

@@ -13,11 +13,11 @@ from casatools import table
 import numpy as np
 
 from applycal_oracle import copy_ms
-from calibration_gencal_gaincurve_oracle import refuses
+from calibration_gencal_gaincurve_oracle import protects_prior_input, refuses
 from calibration_gencal_specify_oracle import apply_both, columns, compare_tables, generate
 
 
-def attach_syscal(vis, raw, *, spectrum, channel_override=None):
+def attach_syscal(vis, raw, *, spectrum, channel_override=None, destination=None):
     times = np.unique(columns(vis, ('TIME',))['TIME'])
     channels = int(columns(vis / 'SPECTRAL_WINDOW', ('NUM_CHAN',))['NUM_CHAN'][0])
     sample_times = (times[0], times[1], times[-1])
@@ -36,7 +36,7 @@ def attach_syscal(vis, raw, *, spectrum, channel_override=None):
             record = [antenna, 0, 0, float(time) + 2.5, 5, *values, 'true']
             records.append(' '.join(map(str, record)) + '\n')
     raw.write_text(''.join(records))
-    path = vis / 'SYSCAL'
+    path = vis / 'SYSCAL' if destination is None else destination
     if path.exists():
         shutil.rmtree(path)
     tool = table()
@@ -66,7 +66,7 @@ def attach_syscal(vis, raw, *, spectrum, channel_override=None):
 def check_apply(root, vis, reference, candidate, native, *, spectral_weights):
     root.mkdir()
     return {'apply_nrms': apply_both(root, vis, reference, candidate, native,
-                                   spectral_weights=spectral_weights)}
+                                   spectral_weights=spectral_weights, weight_rtol=2.e-6)}
 
 
 def main():
@@ -88,7 +88,12 @@ def main():
     for form in ('scalar', 'spectrum'):
         vis = root / f'{form}.ms'
         copy_ms(source, vis)
-        attach_syscal(vis, root / f'{form}.txt', spectrum=form == 'spectrum')
+        linked = root / 'scalar-syscal.tbl' if form == 'scalar' else None
+        attach_syscal(vis, root / f'{form}.txt', spectrum=form == 'spectrum', destination=linked)
+        if linked is not None:
+            assert b'./scalar-syscal.tbl' in (vis / 'table.dat').read_bytes()
+            results['external-input-protection'] = protects_prior_input(root, vis, linked, native,
+                                                                       'tsys')
         for uniform in (True, False):
             case = f'{form}-{uniform}'
             reference, candidate = (root / f'{case}-{engine}.cal' for engine in ('casa', 'native'))

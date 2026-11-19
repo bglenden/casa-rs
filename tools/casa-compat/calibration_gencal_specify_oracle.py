@@ -95,7 +95,8 @@ def generate(module, vis, table_path, stages):
         assert module.gencal(str(vis), str(table_path), kind, **options) is None
 
 
-def apply_both(root, source, casa_table, native_table, native, *, calwt=True, spectral_weights=False):
+def apply_both(root, source, casa_table, native_table, native, *, calwt=True, spectral_weights=False,
+               weight_rtol=None):
     common = ('DATA', 'FLAG', 'FLAG_ROW', 'WEIGHT', 'CORRECTED_DATA')
     if spectral_weights:
         common += ('WEIGHT_SPECTRUM',)
@@ -114,6 +115,8 @@ def apply_both(root, source, casa_table, native_table, native, *, calwt=True, sp
         for name in common[3:]:
             errors.append(relative_rms(output[name], expected[name]))
             assert errors[-1] < 3e-5, (name, errors[-1])
+            if weight_rtol is not None and name.startswith('WEIGHT'):
+                np.testing.assert_allclose(output[name], expected[name], rtol=weight_rtol, atol=0.)
     return max(errors)
 
 

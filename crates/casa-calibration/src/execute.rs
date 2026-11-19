@@ -2121,10 +2121,9 @@ fn apply_row_all_channels(
                 "B Jones" | "BPOLY"
             );
         let scalar_bandpass = is_bandpass && correlation_types.len() == 1;
-        let bandpass_weights =
-            (is_bandpass && calibrate_weights && !(is_tsys && has_weight_spectrum))
-                .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types, is_tsys))
-                .flatten();
+        let bandpass_weights = (is_bandpass && !is_tsys && calibrate_weights)
+            .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types, false))
+            .flatten();
         let (ant1, ant2) = if is_bandpass {
             let ant1 = bandpass::prepare(
                 ant1,
@@ -2143,6 +2142,11 @@ fn apply_row_all_channels(
             (ant1, ant2)
         } else {
             (ant1, ant2)
+        };
+        let bandpass_weights = if is_tsys && calibrate_weights && !has_weight_spectrum {
+            bandpass::weight_factors(&ant1, &ant2, correlation_types, true)
+        } else {
+            bandpass_weights
         };
         let sampling_context = CalibrationSamplingContext {
             data_channels,

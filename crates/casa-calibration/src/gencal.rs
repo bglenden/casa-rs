@@ -245,12 +245,7 @@ pub(crate) fn gencal_with_output_mode(
     // Reserve before reading prior parameters, so concurrent updates cannot
     // both accumulate from the same old product and silently lose a correction.
     let output = crate::output::CalibrationOutput::prepare(&request.output_table, mode)?;
-    let ms = MeasurementSet::open(&request.measurement_set).map_err(|source| {
-        GencalError::OpenMeasurementSet {
-            path: request.measurement_set.display().to_string(),
-            source: Box::new(source),
-        }
-    })?;
+    let ms = open_measurement_set(&request.measurement_set)?;
     let updating = mode == crate::CalibrationOutputMode::Update
         && request.output_table.exists()
         && !request.caltype.is_gain_curve()
@@ -270,7 +265,7 @@ pub(crate) fn gencal_with_output_mode(
         GencalType::Gc | GencalType::Gceff | GencalType::Eff => {
             validate_prior_selection(&ms, request)?;
             if let Some(path) = embedded.as_deref() {
-                refuse_curve_input_overlap(request, path)?;
+                refuse_prior_input_overlap(request, path)?;
                 power_curve::rows(&ms, path)?
             } else {
                 gaincurve_rows(&ms, request, gaincurve_infile)?
@@ -279,6 +274,9 @@ pub(crate) fn gencal_with_output_mode(
         GencalType::Opac => opacity_rows(&ms, request)?,
         GencalType::Tsys => {
             validate_prior_selection(&ms, request)?;
+            if let Some(path) = ms.subtable(SubtableId::SysCal).and_then(Table::path) {
+                refuse_prior_input_overlap(request, path)?;
+            }
             let (rows, spectral) = tsys::rows(&ms, uniform)?;
             collapse_spw = !spectral;
             rows
@@ -596,7 +594,7 @@ fn gaincurve_rows(
             invalid("the standard VLA GainCurves table is missing from the CASA data tree".into())
         })?
     };
-    refuse_curve_input_overlap(request, &source_path)?;
+    refuse_prior_input_overlap(request, &source_path)?;
     let gaincurves = Table::open(TableOptions::new(&source_path)).map_err(|source| {
         GencalError::OpenGainCurves {
             path: source_path.display().to_string(),
@@ -669,7 +667,7 @@ fn gaincurve_rows(
     Ok(rows)
 }
 
-fn refuse_curve_input_overlap(request: &GencalRequest, input: &Path) -> Result<(), GencalError> {
+fn refuse_prior_input_overlap(request: &GencalRequest, input: &Path) -> Result<(), GencalError> {
     let invalid = |reason| GencalError::PrepareOutput {
         path: request.output_table.display().to_string(),
         reason,
@@ -677,17 +675,29 @@ fn refuse_curve_input_overlap(request: &GencalRequest, input: &Path) -> Result<(
     if crate::paths::overlap(&request.output_table, input)
         .map_err(|error| invalid(error.to_string()))?
     {
-        return Err(invalid(
-            "caltable overlaps the gain-curve input table".into(),
-        ));
+        return Err(invalid("caltable overlaps the prior input table".into()));
     }
     Ok(())
 }
 
-pub(crate) fn gaincurve_report_input(
+fn open_measurement_set(path: &Path) -> Result<MeasurementSet, GencalError> {
+    MeasurementSet::open(path).map_err(|source| GencalError::OpenMeasurementSet {
+        path: path.display().to_string(),
+        source: Box::new(source),
+    })
+}
+
+pub(crate) fn prior_input_for_report(
     request: &GencalRequest,
     infile: Option<&Path>,
 ) -> Result<Option<PathBuf>, GencalError> {
+    if request.caltype == GencalType::Tsys {
+        let ms = open_measurement_set(&request.measurement_set)?;
+        return Ok(ms
+            .subtable(SubtableId::SysCal)
+            .and_then(Table::path)
+            .map(Path::to_path_buf));
+    }
     if !request.caltype.is_gain_curve() {
         return Ok(None);
     }

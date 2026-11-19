@@ -82,18 +82,18 @@ def refuses(root, case, vis, kind, options, native):
     return {'refused': True}
 
 
-def protects_curve_input(root, vis, source, native):
+def protects_prior_input(root, vis, source, native, kind):
     input_file = source / 'table.dat'
     expected = input_file.read_bytes()
     caltable = root / 'must-not-publish.cal'
     for output_table, options in ((caltable, {'output': str(input_file), 'overwrite': True}),
                                   (source / 'inside.cal', {})):
         try:
-            generate(native, vis, output_table, [('gc', options)])
+            generate(native, vis, output_table, [(kind, options)])
         except (ValueError, RuntimeError) as error:
             assert 'overlap' in str(error)
         else:
-            raise AssertionError('gencal accepted an output inside its gain-curve input')
+            raise AssertionError('gencal accepted an output inside its prior input')
         assert not output_table.exists()
         assert input_file.read_bytes() == expected
     return {'refused': True}
@@ -211,7 +211,7 @@ def main():
     results['sparse-external-without-calwt'] = {'apply_nrms': apply_both(
         sparse_unweighted, sparse, root / 'sparse-external' / 'casa.cal',
         root / 'sparse-external' / 'native.cal', native, calwt=False)}
-    results['external-input-protection'] = protects_curve_input(root, sparse, external, native)
+    results['external-input-protection'] = protects_prior_input(root, sparse, external, native, 'gc')
 
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     print(json.dumps(results, indent=2))
