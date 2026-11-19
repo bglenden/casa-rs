@@ -93,7 +93,7 @@
 <a href=#93 id=93 data-nosnippet>93</a>    method(<span class="string">"dirshow"</span>, <span class="kw-2">&amp;</span>V, R::Text, Yes),
 <a href=#94 id=94 data-nosnippet>94</a>    method(<span class="string">"doframe"</span>, <span class="kw-2">&amp;</span>V, R::Bool, Yes),
 <a href=#95 id=95 data-nosnippet>95</a>    method(<span class="string">"done"</span>, <span class="kw-2">&amp;</span>[], R::Bool, Yes),
-<a href=#96 id=96 data-nosnippet>96</a>    method(<span class="string">"doppler"</span>, <span class="kw-2">&amp;</span>DOPPLER, R::Record, No),
+<a href=#96 id=96 data-nosnippet>96</a>    method(<span class="string">"doppler"</span>, <span class="kw-2">&amp;</span>DOPPLER, R::Record, Yes),
 <a href=#97 id=97 data-nosnippet>97</a>    method(<span class="string">"earthmagnetic"</span>, <span class="kw-2">&amp;</span>EARTHMAGNETIC, R::Record, No),
 <a href=#98 id=98 data-nosnippet>98</a>    method(<span class="string">"epoch"</span>, <span class="kw-2">&amp;</span>EPOCH, R::Record, Yes),
 <a href=#99 id=99 data-nosnippet>99</a>    method(
@@ -136,7 +136,7 @@
 <a href=#136 id=136 data-nosnippet>136</a>    method(<span class="string">"obslist"</span>, <span class="kw-2">&amp;</span>[], R::Texts, Yes),
 <a href=#137 id=137 data-nosnippet>137</a>    method(<span class="string">"posangle"</span>, <span class="kw-2">&amp;</span>PAIR, R::Record, Yes),
 <a href=#138 id=138 data-nosnippet>138</a>    method(<span class="string">"position"</span>, <span class="kw-2">&amp;</span>POSITION, R::Record, Yes),
-<a href=#139 id=139 data-nosnippet>139</a>    method(<span class="string">"radialvelocity"</span>, <span class="kw-2">&amp;</span>RADIALVELOCITY, R::Record, No),
+<a href=#139 id=139 data-nosnippet>139</a>    method(<span class="string">"radialvelocity"</span>, <span class="kw-2">&amp;</span>RADIALVELOCITY, R::Record, Yes),
 <a href=#140 id=140 data-nosnippet>140</a>    method(<span class="string">"rise"</span>, <span class="kw-2">&amp;</span>RISE, R::Record, No),
 <a href=#141 id=141 data-nosnippet>141</a>    method(<span class="string">"riseset"</span>, <span class="kw-2">&amp;</span>RISE, R::Record, No),
 <a href=#142 id=142 data-nosnippet>142</a>    method(<span class="string">"separation"</span>, <span class="kw-2">&amp;</span>PAIR, R::Record, Yes),
@@ -181,7 +181,7 @@
 <a href=#181 id=181 data-nosnippet>181</a>            param(<span class="string">"rfq"</span>, K::Any, Empty),
 <a href=#182 id=182 data-nosnippet>182</a>        ],
 <a href=#183 id=183 data-nosnippet>183</a>        R::Record,
-<a href=#184 id=184 data-nosnippet>184</a>        No,
+<a href=#184 id=184 data-nosnippet>184</a>        Yes,
 <a href=#185 id=185 data-nosnippet>185</a>    ),
 <a href=#186 id=186 data-nosnippet>186</a>    method(
 <a href=#187 id=187 data-nosnippet>187</a>        <span class="string">"tofrequency"</span>,
@@ -191,9 +191,9 @@
 <a href=#191 id=191 data-nosnippet>191</a>            param(<span class="string">"rfq"</span>, K::Record, Required),
 <a href=#192 id=192 data-nosnippet>192</a>        ],
 <a href=#193 id=193 data-nosnippet>193</a>        R::Record,
-<a href=#194 id=194 data-nosnippet>194</a>        No,
+<a href=#194 id=194 data-nosnippet>194</a>        Yes,
 <a href=#195 id=195 data-nosnippet>195</a>    ),
-<a href=#196 id=196 data-nosnippet>196</a>    method(<span class="string">"toradialvelocity"</span>, <span class="kw-2">&amp;</span>RF_V0, R::Record, No),
+<a href=#196 id=196 data-nosnippet>196</a>    method(<span class="string">"toradialvelocity"</span>, <span class="kw-2">&amp;</span>RF_V0, R::Record, Yes),
 <a href=#197 id=197 data-nosnippet>197</a>    method(
 <a href=#198 id=198 data-nosnippet>198</a>        <span class="string">"torestfrequency"</span>,
 <a href=#199 id=199 data-nosnippet>199</a>        <span class="kw-2">&amp;</span>[
@@ -201,7 +201,7 @@
 <a href=#201 id=201 data-nosnippet>201</a>            param(<span class="string">"d0"</span>, K::Record, Required),
 <a href=#202 id=202 data-nosnippet>202</a>        ],
 <a href=#203 id=203 data-nosnippet>203</a>        R::Record,
-<a href=#204 id=204 data-nosnippet>204</a>        No,
+<a href=#204 id=204 data-nosnippet>204</a>        Yes,
 <a href=#205 id=205 data-nosnippet>205</a>    ),
 <a href=#206 id=206 data-nosnippet>206</a>    method(
 <a href=#207 id=207 data-nosnippet>207</a>        <span class="string">"touvw"</span>,

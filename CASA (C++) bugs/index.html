@@ -3228,6 +3228,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#measures-spectral-conversions-reject-or-truncate-valid-vectors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measures spectral conversions reject or truncate valid vectors
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Measures spectral conversions reject or truncate valid vectors">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cyclic-spectral-arguments-terminate-the-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cyclic spectral arguments terminate the process
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#component-spectrum-changes-can-discard-data" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8942,6 +8970,37 @@ Passing a cyclic <code>optionalparms</code> list terminates CASA with SIGSEGV; c
 rejects the cycle before changing the component.
 CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
 casa-rs rejects a non-finite shape or error before mutation.</p>
+<h2 id="measures-spectral-conversions-reject-or-truncate-valid-vectors">Measures spectral conversions reject or truncate valid vectors<a class="headerlink" href="#measures-spectral-conversions-reject-or-truncate-valid-vectors" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 <code>me.tofrequency</code> and <code>me.toradialvelocity</code> return only the
+first result for a Doppler record whose <code>m0</code> contains two velocity values.
+<code>me.torestfrequency</code> likewise drops values when either input is a vector.
+Both elements convert successfully in separate scalar calls. This silently
+loses requested scientific results; the C++ helpers contain element loops,
+which also show the intended vector behavior.</p>
+<p>With no explicit frame, <code>me.todoppler('BETA', frequency, '1.42GHz')</code> rejects
+a BARY frequency vector <code>[1.3e9, 2.6e9] Hz</code> with <code>No MeasFrame direction
+specified for conversion of Frequency</code>. The same scalar inputs return
+valid Doppler values without a frame. This algebraic conversion does not
+need a direction; the vector path introduces a frame-dependent conversion.</p>
+<p>casa-rs preserves every input element and broadcasts a scalar against a
+vector. Its expected values come from independent CASA scalar calls for
+each element, including the approaching source at 2.6 GHz. Original CASA
+vector outputs and failures remain in the fixture alongside those controls.
+Input offsets follow each helper's semantics: <code>todoppler</code> reads the raw
+frequency/velocity, while conversions from Doppler resolve its reference
+offset. The correction follows the standing rule to correct scientific
+data loss and behavior that contradicts CASA's evident intent (#1252).</p>
+<p>Evidence: <code>tools/simulation/measures_spectral_oracle.py</code>,
+<code>crates/casars-python/python/tests/data/casa_measures_spectral.json</code>, and
+<code>test_measures_spectral.py</code> (the <code>scalar_controls</code> cases).</p>
+<h3 id="cyclic-spectral-arguments-terminate-the-process">Cyclic spectral arguments terminate the process<a class="headerlink" href="#cyclic-spectral-arguments-terminate-the-process" title="Permanent link">&para;</a></h3>
+<p>CASA 6.7.6.14 terminates with SIGSEGV for a cyclic dictionary or list passed
+to <code>me.doppler(v0=...)</code>, and for a cyclic record passed to <code>me.todoppler</code>.
+The first native spectral candidate exposed the same recursion failure in
+shared Python value capture. casa-rs now bounds recursive record and sequence
+capture at 128 levels and raises <code>ValueError</code> naming #1252. Capture state is
+restored on failure, so repeated failures and a subsequent valid call work.
+The isolated subprocess regressions run with core files disabled.</p>
 <h2 id="component-spectrum-changes-can-discard-data">Component spectrum changes can discard data<a class="headerlink" href="#component-spectrum-changes-can-discard-data" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-06</li>
