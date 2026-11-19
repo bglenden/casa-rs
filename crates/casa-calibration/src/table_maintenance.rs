@@ -142,9 +142,10 @@ pub fn update_calibration_table(path: &Path) -> Result<(), String> {
                 return Err("the table already contains an unlinked OBSERVATION subtable".into());
             }
             write_generic_observation(&observation)?;
-            table
-                .keywords_mut()
-                .upsert("OBSERVATION", Value::table_ref("OBSERVATION"));
+            table.keywords_mut().upsert(
+                "OBSERVATION",
+                Value::table_ref(casa_tables::strip_directory(&observation, stage)),
+            );
         }
         table.save(TableOptions::new(stage)).map_err(error_text)
     })
