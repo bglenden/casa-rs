@@ -1,0 +1,1181 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "name": "default",
+      "args": [],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: offset must be an angular quantity.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 854"
+      }
+    },
+    {
+      "name": "default_angles",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: offset must be an angular quantity.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 854"
+      }
+    },
+    {
+      "name": "default_pa",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "20arcmin"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: pa must be an angular quantity.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 859"
+      }
+    },
+    {
+      "name": "none_v",
+      "args": [
+        null,
+        "20arcmin",
+        "0deg"
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "_v is not a dictionary"
+      }
+    },
+    {
+      "name": "nonrecord_v",
+      "args": [
+        [],
+        "20arcmin",
+        "0deg"
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "_v is not a dictionary"
+      }
+    },
+    {
+      "name": "wrong_measure",
+      "args": [
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.0
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "1deg",
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: v is not a direction measure.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 870"
+      }
+    },
+    {
+      "name": "malformed_v",
+      "args": [
+        {},
+        "1deg",
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: v is not a valid measure.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 866"
+      }
+    },
+    {
+      "name": "missing_m0",
+      "args": [
+        {
+          "type": "direction",
+          "refer": "J2000",
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          }
+        },
+        "1deg",
+        "0deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.553343034274955
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "scalar_numeric_offset",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        1,
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: offset must be an angular quantity.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 854"
+      }
+    },
+    {
+      "name": "time_offset",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "1s",
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: offset must be an angular quantity.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 854"
+      }
+    },
+    {
+      "name": "bad_offset_text",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "opaque",
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Empty QuantumHolder argument for asQuantumDouble"
+      }
+    },
+    {
+      "name": "bad_pa_text",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "1deg",
+        "opaque"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Empty QuantumHolder argument for asQuantumDouble"
+      }
+    },
+    {
+      "name": "bad_offset_record",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "value": 1,
+          "unit": "bogusXX"
+        },
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'bogusXX'"
+      }
+    },
+    {
+      "name": "bad_offset_type",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "items": [
+            1,
+            2
+          ]
+        },
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Empty QuantumHolder argument for asQuantumDouble"
+      }
+    },
+    {
+      "name": "quantity_record_int",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "value": 1,
+          "unit": "deg"
+        },
+        "0deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1366456753613072
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5470152763958895
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "quantity_record_vector_1",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "value": [
+            1.0
+          ],
+          "unit": "deg"
+        },
+        "0deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1366456753613072
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5470152763958895
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "quantity_record_vector_2",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "deg"
+        },
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "name": "quantity_vector",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        [
+          1.0,
+          2.0
+        ],
+        "0deg"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: offset must be an angular quantity.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 854"
+      }
+    },
+    {
+      "name": "bytes_angles",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "__python_bytes__": [
+            50,
+            48,
+            97,
+            114,
+            99,
+            109,
+            105,
+            110
+          ]
+        },
+        {
+          "__python_bytes__": [
+            57,
+            48,
+            100,
+            101,
+            103
+          ]
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1433867531223854
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5295520783025025
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "none_angles",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        null,
+        null
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: offset must be an angular quantity.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 854"
+      }
+    },
+    {
+      "name": "pa_time",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "1deg",
+        "1s"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Exception: pa must be an angular quantity.\n... thrown by record *casac::measures::shift(const record &, const variant &, const variant &) at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/measures/measures_cmpt.cc, line: 859"
+      }
+    },
+    {
+      "name": "unknown_reference",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "opaque",
+          "type": "direction"
+        },
+        "1deg",
+        "0deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1366456753613072
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5470152763958895
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "vector",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": [
+              1.1366456753613072,
+              1.2366456753613073
+            ]
+          },
+          "m1": {
+            "unit": "rad",
+            "value": [
+              0.5295619838759461,
+              0.6295619838759461
+            ]
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "1deg",
+        "0deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1366456753613072
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5470152763958895
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "offset_record",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.20943951023931953
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.48869219055841234
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          }
+        },
+        "20arcmin",
+        "90deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1433867531223854
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5295520783025025
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.20943951023931953
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.4886921905584124
+          },
+          "refer": "ICRS",
+          "type": "direction"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "nested_offset",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction",
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.20943951023931953
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.48869219055841234
+            },
+            "refer": "ICRS",
+            "type": "direction",
+            "offset": {
+              "m0": {
+                "unit": "rad",
+                "value": 0.20943951023931953
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.48869219055841234
+              },
+              "refer": "ICRS",
+              "type": "direction"
+            }
+          }
+        },
+        "20arcmin",
+        "90deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1433867531223854
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5295520783025025
+        },
+        "offset": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.20943951023931953
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.4886921905584124
+          },
+          "offset": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.20943951023931953
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.4886921905584124
+            },
+            "refer": "ICRS",
+            "type": "direction"
+          },
+          "refer": "ICRS",
+          "type": "direction"
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "large_east",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "120deg",
+        "90deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.0471975511965979
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 5.3028761936245346e-17
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "rad",
+          "value": 2.0943951023931953
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "separation_control_deg": {
+        "requested": 120.0,
+        "casa": 59.99999999999999,
+        "target": 119.99999999999999
+      }
+    },
+    {
+      "name": "pole_crossing",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.3962634015954634
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "20deg",
+        "0deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.396263401595464
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "native_result": {
+        "m0": {
+          "unit": "rad",
+          "value": 3.141592653589793
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.3962634015954634
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "separation_control_deg": {
+        "requested": 20.0,
+        "casa": 3.7125398329748e-14,
+        "target": 20.000000000000036
+      }
+    },
+    {
+      "name": "upstream_north",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "20arcmin",
+        "0deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1366456753613072
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5353797480492606
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "upstream_east",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "20arcmin",
+        "90deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1433867531223854
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5295520783025025
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "upstream_south",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "20arcmin",
+        "180deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1366456753613072
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5237442197026319
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "zero_offset",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "0deg",
+        "70deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1366456753613072
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5295619838759462
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "north_pole",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "5deg",
+        "135deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.9599310885968817
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.4835298641951802
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "south_pole",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -1.5707963267948966
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "5deg",
+        "180deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -0.17453292519943284
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -1.4835298641951802
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "negative_offset",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "-31arcsec",
+        "37deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1365408795367558
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5294419527613684
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "west",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "10arcmin",
+        "-90deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.133275126709621
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5295595074719625
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "record_pa",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "value": 4.1,
+          "unit": "arcmin"
+        },
+        {
+          "value": 18.0,
+          "unit": "deg"
+        }
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1370729979525098
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5306962136903277
+        },
+        "refer": "J2000",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "galactic",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.5882496193148399
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.6108652381980153
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        },
+        "15arcmin",
+        "54deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.592551232538671
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.6082961917357096
+        },
+        "refer": "GALACTIC",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "azimuth",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -3.12413936106985
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.2217304763960306
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        },
+        "3deg",
+        "131deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": -3.018867229075908
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.1854315614687236
+        },
+        "refer": "AZEL",
+        "type": "direction"
+      }
+    },
+    {
+      "name": "comet_label",
+      "args": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1366456753613072
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.5295619838759461
+          },
+          "refer": "COMET",
+          "type": "direction"
+        },
+        "20arcmin",
+        "90deg"
+      ],
+      "result": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1433867531223854
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.5295520783025025
+        },
+        "refer": "COMET",
+        "type": "direction"
+      }
+    }
+  ]
+}

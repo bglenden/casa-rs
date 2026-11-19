@@ -148,7 +148,7 @@ const METHODS: &[Method] = &[
             param("pa", K::Quantity, Empty),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "show",
@@ -159,7 +159,7 @@ const METHODS: &[Method] = &[
         R::Text,
         Yes,
     ),
-    method("showframe", &[], R::Text, No),
+    method("showframe", &[], R::Text, Yes),
     method(
         "source",
         &[param("name", K::Measure, Empty)],

@@ -36,13 +36,15 @@ mod geometry;
 mod inspect;
 mod offset;
 mod record;
+mod shift;
+mod showframe;
 mod spectral;
 pub(crate) mod surface;
 mod xvalue;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use casa_measures_data::CometTable;
+use casa_measures_data::{CometTable, PlanetaryTable};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -62,6 +64,9 @@ struct Frame {
     position: Option<Measure>,
     direction: Option<Measure>,
     radial_velocity: Option<record::Measures>,
+    comet: Option<Arc<CometTable>>,
+    // Formatted display of these frame elements, cleared when an element changes.
+    rendered: Option<String>,
 }
 
 /// The tool's state: the frame and the measures data.
@@ -69,8 +74,9 @@ struct Frame {
 pub(crate) struct State {
     frame: Frame,
     measures: Option<Arc<dyn MeasuresProvider>>,
+    planets: Option<PlanetaryTable>,
     // The comet queries retain their table when done clears the coordinate frame.
-    comet: Option<CometTable>,
+    comet: Option<Arc<CometTable>>,
 }
 
 impl State {
@@ -365,26 +371,6 @@ impl PyMeasures {
         ev: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("riseset")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(
-        signature = (v = None, offset = None, pa = None),
-        text_signature = "($self, v={}, offset=[], pa=[])"
-    )]
-    fn shift(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        offset: Option<&Bound<'_, PyAny>>,
-        pa: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("shift")
-    }
-
-    /// Not yet implemented in casa-rs.
-    fn showframe(&self) -> PyResult<Py<PyAny>> {
-        stub("showframe")
     }
 
     /// The sources of the measures data, their names joined by spaces in

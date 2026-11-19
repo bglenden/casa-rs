@@ -2,6 +2,7 @@
 //! Read the fixed sampling grid of a casacore MeasComet table.
 
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 
 use casa_tables::ColumnType;
 use casa_types::quanta::{Quantity, Unit, UnitVal, casacore};
@@ -22,7 +23,7 @@ pub struct CometTable {
     topocentre_m: Option<[f64; 3]>,
     mean_radius_au: Option<f64>,
     zero_range_au: f64,
-    bracket: Option<Bracket>,
+    bracket: Mutex<Option<Bracket>>,
 }
 
 #[derive(Debug)]
@@ -147,13 +148,21 @@ impl CometTable {
             topocentre_m,
             mean_radius_au,
             zero_range_au: 1e-6 / au.val().factor,
-            bracket: None,
+            bracket: Mutex::new(None),
         })
     }
 
     /// The object's name from the table keyword.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The first and last sample dates on the table's native MJD grid.
+    pub fn span_mjd(&self) -> [f64; 2] {
+        [
+            self.origin_mjd + self.step_days,
+            self.origin_mjd + self.table.row_count() as f64 * self.step_days,
+        ]
     }
 
     /// Cartesian topocentre in metres, when the ephemeris uses TOPO.
@@ -169,25 +178,22 @@ impl CometTable {
     /// Interpolate the geocentric or topocentric position on the table's
     /// native MJD grid and return its norm in AU. The last row is the upper
     /// endpoint of the last bracket and is excluded as an observation date.
-    pub fn distance_au(&mut self, mjd: f64) -> Result<Option<f64>, MeasuresDataError> {
+    pub fn distance_au(&self, mjd: f64) -> Result<Option<f64>, MeasuresDataError> {
         let index = ((mjd - self.origin_mjd) / self.step_days).floor() - 1.0;
         if !(0.0..(self.table.row_count() - 1) as f64).contains(&index) {
             return Ok(None);
         }
         let index = index as usize;
-        if self
-            .bracket
-            .as_ref()
-            .is_none_or(|bracket| bracket.index != index)
-        {
-            self.bracket = Some(Bracket {
+        let mut cache = self.bracket.lock().unwrap_or_else(PoisonError::into_inner);
+        if cache.as_ref().is_none_or(|bracket| bracket.index != index) {
+            *cache = Some(Bracket {
                 index,
                 start_mjd: scalar(&self.table, "MJD", index)?,
                 start_au: position(&self.table, index, self.zero_range_au)?,
                 end_au: position(&self.table, index + 1, self.zero_range_au)?,
             });
         }
-        let bracket = self.bracket.as_ref().expect("comet bracket is loaded");
+        let bracket = cache.as_ref().expect("comet bracket is loaded");
         let fraction = (mjd - bracket.start_mjd) / self.step_days;
         let xyz: [f64; 3] = std::array::from_fn(|i| {
             bracket.start_au[i] + fraction * (bracket.end_au[i] - bracket.start_au[i])

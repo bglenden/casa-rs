@@ -11,7 +11,7 @@
 
 use std::str::FromStr;
 
-use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, PositionRef};
 use pyo3::PyResult;
@@ -53,6 +53,7 @@ pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>
                     lines.push(LogLine::warning(warning.clone()));
                 }
                 state.frame.radial_velocity = Some(values.into_reference_origin());
+                state.frame.rendered = None;
                 CasaValue::Bool(true)
             }
             Err(error) => {
@@ -80,6 +81,7 @@ pub(super) fn doframe(state: &mut State, v: &RecordArg, lines: &mut Vec<LogLine>
         | MeasureKind::EarthMagnetic => return CasaValue::Bool(false),
     };
     *slot = Some(measure);
+    frame.rendered = None;
     CasaValue::Bool(true)
 }
 
@@ -95,6 +97,7 @@ pub(super) fn framenow(state: &mut State) -> CasaValue {
         EpochRef::UTC,
     ));
     state.frame.epoch = Some(Measure::from_casa(&now));
+    state.frame.rendered = None;
     CasaValue::Bool(true)
 }
 
@@ -197,12 +200,13 @@ pub(super) fn convert(
                     .map_err(error)?,
             ),
             CasaMeasure::Direction(direction) => CasaMeasure::Direction(
-                direction
-                    .convert_to(
-                        DirectionRef::from_str(target).map_err(|_| unsupported("direction"))?,
-                        &frame,
-                    )
-                    .map_err(error)?,
+                convert_direction(
+                    state,
+                    &direction,
+                    DirectionRef::from_str(target).map_err(|_| unsupported("direction"))?,
+                    &frame,
+                )
+                .map_err(error)?,
             ),
             CasaMeasure::Position(position) => CasaMeasure::Position(
                 position
@@ -235,30 +239,73 @@ pub(super) fn convert(
     Ok(converted.map(|converted| Measure::from_casa(&converted)))
 }
 
+pub(super) fn convert_direction(
+    state: &mut State,
+    direction: &MDirection,
+    target: DirectionRef,
+    frame: &MeasFrame,
+) -> Result<MDirection, casa_types::measures::MeasureError> {
+    use casa_measures_data::PlanetaryTable;
+    use casa_types::measures::MeasureError;
+
+    let refer = direction.refer();
+    if refer == DirectionRef::COMET && target != refer && state.frame.comet.is_some() {
+        return Err(MeasureError::NotYetImplemented {
+            route: format!("COMET → {target} (casa-rs #1252)"),
+        });
+    }
+    if refer == target || refer.casacore_code() < 32 || refer == DirectionRef::COMET {
+        return direction.convert_to(target, frame);
+    }
+    if frame.epoch().is_none() {
+        return Err(MeasureError::MissingFrameData { what: "epoch" });
+    }
+    let model_error = |error: casa_measures_data::MeasuresDataError| MeasureError::ModelError {
+        model: "DE200",
+        reason: error.to_string(),
+    };
+    if state.planets.is_none() {
+        state.planets = Some(PlanetaryTable::open_discovered().map_err(model_error)?);
+    }
+    state
+        .planets
+        .as_ref()
+        .expect("the planetary table has been opened")
+        .geocentric_direction(direction, frame)
+        .map_err(model_error)?
+        .convert_to(target, frame)
+}
+
 /// Build the explicit native frame once for a conversion or vector plan.
 pub(super) fn native_frame(state: &mut State) -> PyResult<Result<MeasFrame, String>> {
     let measures = state.measures().map_err(no_measures)?;
-    Ok((|| {
-        let mut frame = MeasFrame::new().with_measures(measures);
-        let elements = &state.frame;
-        for element in [elements.epoch, elements.position, elements.direction]
-            .into_iter()
-            .flatten()
-        {
-            frame = match element.to_casa()? {
-                CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
-                CasaMeasure::Position(position) => frame.with_position(position),
-                CasaMeasure::Direction(direction) => frame.with_direction(direction),
-                CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
-                CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
-            };
-        }
-        if let Some(velocity) = &elements.radial_velocity {
-            let value = velocity.radial_velocity(&frame)?;
-            frame = frame.with_radial_velocity(value);
-        }
-        Ok::<_, String>(frame)
-    })())
+    Ok(materialize(
+        &state.frame,
+        MeasFrame::new().with_measures(measures),
+    ))
+}
+
+pub(super) fn materialize(
+    elements: &super::Frame,
+    mut frame: MeasFrame,
+) -> Result<MeasFrame, String> {
+    for element in [elements.epoch, elements.position, elements.direction]
+        .into_iter()
+        .flatten()
+    {
+        frame = match element.to_casa()? {
+            CasaMeasure::Epoch(epoch) => frame.with_epoch(epoch),
+            CasaMeasure::Position(position) => frame.with_position(position),
+            CasaMeasure::Direction(direction) => frame.with_direction(direction),
+            CasaMeasure::RadialVelocity(value) => frame.with_radial_velocity(value),
+            CasaMeasure::Frequency(_) | CasaMeasure::Doppler(_) => frame,
+        };
+    }
+    if let Some(velocity) = &elements.radial_velocity {
+        let value = velocity.radial_velocity(&frame)?;
+        frame = frame.with_radial_velocity(value);
+    }
+    Ok(frame)
 }
 
 /// What `me.separation` and `me.posangle` compute.

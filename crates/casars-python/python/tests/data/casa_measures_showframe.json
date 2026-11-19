@@ -1,0 +1,2406 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "name": "fresh",
+      "setup": [],
+      "setup_results": [],
+      "result": "Frame: Epoch: 0::00:00:00.0000 (TDB = -0.000170546, UT1 = 0, TT = -0.000170532)\n       Position: [0, 0, 0]\n        (Longitude = 0 Latitude = 0)\n       Direction: [0, 0, 1]\n        (J2000 = [0, 90] deg)",
+      "native_result": "Frame: ",
+      "owner_decision": "The native tool starts with an explicit empty frame."
+    },
+    {
+      "name": "empty",
+      "setup": [
+        "done"
+      ],
+      "setup_results": [
+        true
+      ],
+      "result": "Frame: "
+    },
+    {
+      "name": "epoch",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)"
+    },
+    {
+      "name": "split_epoch",
+      "setup": [
+        "done",
+        {
+          "type": "epoch",
+          "refer": "UTC",
+          "m0": {
+            "value": 55564.0,
+            "unit": "d"
+          },
+          "m1": {
+            "value": 3600.0,
+            "unit": "s"
+          }
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::01:00:00.0000 (TDB = 55564, UT1 = 55564, TT = 55564)"
+    },
+    {
+      "name": "ut2",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UT2",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "d",
+              "value": 55564.708333333336
+            },
+            "refer": "UT2",
+            "type": "epoch"
+          },
+          "UT1",
+          {
+            "m0": {
+              "unit": "d",
+              "value": 55564.708333333336
+            },
+            "refer": "UT1",
+            "type": "epoch"
+          }
+        ],
+        [
+          {
+            "m0": {
+              "unit": "d",
+              "value": 55564.708333333336
+            },
+            "refer": "UT1",
+            "type": "epoch"
+          },
+          "UT2",
+          {
+            "m0": {
+              "unit": "d",
+              "value": 55564.708333333336
+            },
+            "refer": "UT2",
+            "type": "epoch"
+          }
+        ],
+        [
+          {
+            "m0": {
+              "unit": "d",
+              "value": 55564.708333333336
+            },
+            "refer": "UT2",
+            "type": "epoch"
+          },
+          "UTC",
+          {
+            "m0": {
+              "unit": "d",
+              "value": 55564.7083349665
+            },
+            "refer": "UTC",
+            "type": "epoch"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "sidereal_last",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "LAST",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame position specified for conversion of Epoch"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 48859, UT1 = 48859, TT = 48859)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)",
+      "epoch_controls": {
+        "TDB": {
+          "m0": {
+            "unit": "d",
+            "value": 48858.97088917897
+          },
+          "refer": "TDB",
+          "type": "epoch"
+        },
+        "UT1": {
+          "m0": {
+            "unit": "d",
+            "value": 48858.970208367464
+          },
+          "refer": "UT1",
+          "type": "epoch"
+        },
+        "TT": {
+          "m0": {
+            "unit": "d",
+            "value": 48858.97088919366
+          },
+          "refer": "TDT",
+          "type": "epoch"
+        }
+      }
+    },
+    {
+      "name": "sidereal_lmst",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "LMST",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame position specified for conversion of Epoch"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 48859, UT1 = 48859, TT = 48859)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)",
+      "epoch_controls": {
+        "TDB": {
+          "m0": {
+            "unit": "d",
+            "value": 48858.97090209486
+          },
+          "refer": "TDB",
+          "type": "epoch"
+        },
+        "UT1": {
+          "m0": {
+            "unit": "d",
+            "value": 48858.97022128334
+          },
+          "refer": "UT1",
+          "type": "epoch"
+        },
+        "TT": {
+          "m0": {
+            "unit": "d",
+            "value": 48858.97090210954
+          },
+          "refer": "TDT",
+          "type": "epoch"
+        }
+      }
+    },
+    {
+      "name": "tai",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.123456
+          },
+          "refer": "TAI",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::02:57:46.5984 (TDB = 55564.1, UT1 = 55564.1, TT = 55564.1)"
+    },
+    {
+      "name": "future_2030",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 62502.5
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 62502::12:00:00.0000 (TDB = 62502.5, UT1 = 62502.5, TT = 62502.5)",
+      "native_result": "Frame: Epoch: 62502::12:00:00.0000 (TDB = 62502.5, UT1 = unavailable, TT = 62502.5)",
+      "epoch_controls": {
+        "TDB": {
+          "m0": {
+            "unit": "d",
+            "value": 62502.500800739974
+          },
+          "refer": "TDB",
+          "type": "epoch"
+        },
+        "TT": {
+          "m0": {
+            "unit": "d",
+            "value": 62502.50080074074
+          },
+          "refer": "TDT",
+          "type": "epoch"
+        }
+      }
+    },
+    {
+      "name": "future_2100",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 88069.5
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 88069::12:00:00.0000 (TDB = 88069.5, UT1 = 88069.5, TT = 88069.5)",
+      "native_result": "Frame: Epoch: 88069::12:00:00.0000 (TDB = 88069.5, UT1 = unavailable, TT = 88069.5)",
+      "epoch_controls": {
+        "TDB": {
+          "m0": {
+            "unit": "d",
+            "value": 88069.50080073958
+          },
+          "refer": "TDB",
+          "type": "epoch"
+        },
+        "TT": {
+          "m0": {
+            "unit": "d",
+            "value": 88069.50080074075
+          },
+          "refer": "TDT",
+          "type": "epoch"
+        }
+      }
+    },
+    {
+      "name": "position",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)"
+    },
+    {
+      "name": "itrf",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 1.1071487177940904
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.9302740141154722
+          },
+          "m2": {
+            "unit": "m",
+            "value": 374.16573867739413
+          },
+          "refer": "ITRF",
+          "type": "position"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Position: [100, 200, 300]\n        (Longitude = 1.10715 Latitude = 0.930274)"
+    },
+    {
+      "name": "direction",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)"
+    },
+    {
+      "name": "galactic",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.767944870877505
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.5410520681182421
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Direction: [0.616595, 0.595438, -0.515038]\n        (J2000 = [-44.7623, -5.0714] deg)"
+    },
+    {
+      "name": "azel_missing",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 2.356194490192345
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.7853981633974482
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Missing information in Frame specified for conversion"
+      }
+    },
+    {
+      "name": "azel_with_frame",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 2.356194490192345
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.7853981633974482
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [-0.5, 0.5, 0.707107]\n        (J2000 = [-22.3773, -47.4146] deg)"
+    },
+    {
+      "name": "sun_offset",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.2967059728390361
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.6108652381980153
+          },
+          "refer": "SUN",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.783359, 0.239497, 0.573576]\n        (J2000 = [-59.0794, 12.1792] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.2967059728390361
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.6108652381980153
+            },
+            "refer": "SUN",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -1.0311300310730696
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.21256667448076233
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "velocity",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Radialvelocity: 15000\n        (LSR velocity = 15 km/s)"
+    },
+    {
+      "name": "velocity_offset",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity",
+          "offset": {
+            "m0": {
+              "unit": "m/s",
+              "value": 1000.0
+            },
+            "refer": "LSRK",
+            "type": "radialvelocity"
+          }
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Radialvelocity: 15000\n        (LSR velocity = 16 km/s)"
+    },
+    {
+      "name": "all",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        "JPL-Horizons/Ganymede_55437-56293dUTC.tab"
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15000\n        (LSR velocity = 15 km/s)\n       Ganymede comet between MJD 55437 and 56293"
+    },
+    {
+      "name": "comet_only",
+      "setup": [
+        "done",
+        "JPL-Horizons/Ganymede_55437-56293dUTC.tab"
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "result": "Frame: Ganymede comet between MJD 55437 and 56293"
+    },
+    {
+      "name": "comet_failed",
+      "setup": [
+        "done",
+        "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+        "absent-data.tab"
+      ],
+      "setup_results": [
+        true,
+        true,
+        false
+      ],
+      "result": "Frame: Ganymede comet between MJD 55437 and 56293"
+    },
+    {
+      "name": "comet_after_done",
+      "setup": [
+        "done",
+        "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+        "done"
+      ],
+      "setup_results": [
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: "
+    },
+    {
+      "name": "replacement",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.123456
+          },
+          "refer": "TAI",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.767944870877505
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.5410520681182421
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Direction: [0.616595, 0.595438, -0.515038]\n        (J2000 = [-44.7623, -5.0714] deg)"
+    },
+    {
+      "name": "inverse_activation_order",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15000.0
+          },
+          "refer": "LSRK",
+          "type": "radialvelocity"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        "JPL-Horizons/Ganymede_55437-56293dUTC.tab"
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15000\n        (LSR velocity = 15 km/s)\n       Ganymede comet between MJD 55437 and 56293"
+    },
+    {
+      "name": "sun",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "SUN",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-76.0794, -22.8208] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "SUN",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -1.3278359787808125
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.39829851220588125
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "moon",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "MOON",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-84.6665, -23.1372] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "MOON",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -1.4777093375484018
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.4038204066287004
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "mercury",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "MERCURY",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-99.8177, -20.5966] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "MERCURY",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -1.7421472937187912
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3594784480996418
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "venus",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "VENUS",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-125.42, -15.848] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "VENUS",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -2.1889869046148536
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.27660039244784773
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "mars",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "MARS",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-67.8618, -22.8922] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "MARS",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -1.184412211741486
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3995434235322333
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "jupiter",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "JUPITER",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.46761, -2.43832] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "JUPITER",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04306799595223198
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.04255674904091927
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "saturn",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "SATURN",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-163.757, -4.29436] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "SATURN",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -2.858093002025994
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.07495066296817574
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "uranus",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "URANUS",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-2.58592, -1.92115] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "URANUS",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -0.04513276574754914
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.03353034413002556
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "neptune",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "NEPTUNE",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-30.9478, -13.0816] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "NEPTUNE",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -0.5401402734394306
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.22831618380958754
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "pluto",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 1.5707963267948966
+          },
+          "refer": "PLUTO",
+          "type": "direction"
+        }
+      ],
+      "setup_results": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [6.12323e-17, 0, 1]\n        (J2000 = [-84.4441, -18.8325] deg)",
+      "conversion_controls": [
+        [
+          {
+            "m0": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 1.5707963267948966
+            },
+            "refer": "PLUTO",
+            "type": "direction"
+          },
+          "J2000",
+          {
+            "m0": {
+              "unit": "rad",
+              "value": -1.4738271170132262
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.3286882690669013
+            },
+            "refer": "J2000",
+            "type": "direction"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "velocity_BARY_missing",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "BARY",
+          "type": "radialvelocity"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_BARY_explicit",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "BARY",
+          "type": "radialvelocity"
+        }
+      ],
+      "velocity_control": {
+        "m0": {
+          "unit": "m/s",
+          "value": 15986.337095361889
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15123\n        (LSR velocity = 15.9863 km/s)",
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_LSRD_missing",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "LSRD",
+          "type": "radialvelocity"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_LSRD_explicit",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "LSRD",
+          "type": "radialvelocity"
+        }
+      ],
+      "velocity_control": {
+        "m0": {
+          "unit": "m/s",
+          "value": 16288.803018144825
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15123\n        (LSR velocity = 16.2888 km/s)",
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_GEO_missing",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "GEO",
+          "type": "radialvelocity"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame epoch specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_GEO_explicit",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "GEO",
+          "type": "radialvelocity"
+        }
+      ],
+      "velocity_control": {
+        "m0": {
+          "unit": "m/s",
+          "value": -13275.927806788886
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15123\n        (LSR velocity = -13.2759 km/s)",
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame epoch specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_TOPO_missing",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "TOPO",
+          "type": "radialvelocity"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame epoch specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_TOPO_explicit",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "TOPO",
+          "type": "radialvelocity"
+        }
+      ],
+      "velocity_control": {
+        "m0": {
+          "unit": "m/s",
+          "value": -12879.525489994996
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15123\n        (LSR velocity = -12.8795 km/s)",
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame epoch specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_GALACTO_missing",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "GALACTO",
+          "type": "radialvelocity"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_GALACTO_explicit",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "GALACTO",
+          "type": "radialvelocity"
+        }
+      ],
+      "velocity_control": {
+        "m0": {
+          "unit": "m/s",
+          "value": -124545.0824209156
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15123\n        (LSR velocity = -124.545 km/s)",
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_LGROUP_missing",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "LGROUP",
+          "type": "radialvelocity"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_LGROUP_explicit",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "LGROUP",
+          "type": "radialvelocity"
+        }
+      ],
+      "velocity_control": {
+        "m0": {
+          "unit": "m/s",
+          "value": -226929.94659485293
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15123\n        (LSR velocity = -226.93 km/s)",
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_CMB_missing",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "CMB",
+          "type": "radialvelocity"
+        }
+      ],
+      "setup_results": [
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    },
+    {
+      "name": "velocity_CMB_explicit",
+      "setup": [
+        "done",
+        {
+          "m0": {
+            "unit": "d",
+            "value": 55564.708333333336
+          },
+          "refer": "UTC",
+          "type": "epoch"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": -1.1825465955049892
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.4018251640113072
+          },
+          "m2": {
+            "unit": "m",
+            "value": 5056.8
+          },
+          "refer": "WGS84",
+          "type": "position"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "m/s",
+            "value": 15123.0
+          },
+          "refer": "CMB",
+          "type": "radialvelocity"
+        }
+      ],
+      "velocity_control": {
+        "m0": {
+          "unit": "m/s",
+          "value": 351393.9963170703
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      },
+      "native_result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15123\n        (LSR velocity = 351.394 km/s)",
+      "setup_results": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "No MeasFrame direction specified for conversion of Radialvelocity"
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "element": "done",
+      "setup_result": true,
+      "result": "Frame: "
+    },
+    {
+      "element": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.708333333336
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      },
+      "setup_result": true,
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)"
+    },
+    {
+      "element": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.1825465955049892
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.4018251640113072
+        },
+        "m2": {
+          "unit": "m",
+          "value": 5056.8
+        },
+        "refer": "WGS84",
+        "type": "position"
+      },
+      "setup_result": true,
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)"
+    },
+    {
+      "element": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "setup_result": true,
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)"
+    },
+    {
+      "element": {
+        "m0": {
+          "unit": "m/s",
+          "value": 15000.0
+        },
+        "refer": "LSRK",
+        "type": "radialvelocity"
+      },
+      "setup_result": true,
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15000\n        (LSR velocity = 15 km/s)"
+    },
+    {
+      "element": "JPL-Horizons/Ganymede_55437-56293dUTC.tab",
+      "setup_result": true,
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15000\n        (LSR velocity = 15 km/s)\n       Ganymede comet between MJD 55437 and 56293"
+    },
+    {
+      "element": "absent-data.tab",
+      "setup_result": false,
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15000\n        (LSR velocity = 15 km/s)\n       Ganymede comet between MJD 55437 and 56293"
+    },
+    {
+      "element": "JPL-Horizons/Ganymede_55197-59214dUTC_J2000.tab",
+      "setup_result": true,
+      "result": "Frame: Epoch: 55564::17:00:00.0000 (TDB = 55564.7, UT1 = 55564.7, TT = 55564.7)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15000\n        (LSR velocity = 15 km/s)\n       Ganymede comet between MJD 55197 and 59214"
+    },
+    {
+      "element": {
+        "m0": {
+          "unit": "d",
+          "value": 55564.123456
+        },
+        "refer": "TAI",
+        "type": "epoch"
+      },
+      "setup_result": true,
+      "result": "Frame: Epoch: 55564::02:57:46.5984 (TDB = 55564.1, UT1 = 55564.1, TT = 55564.1)\n       Position: [1761.87, -4307.63, -1977.71]\n        (Longitude = -1.18255 Latitude = -0.399415)\n       Direction: [0.925417, 0.163176, 0.34202]\n        (J2000 = [10, 20] deg)\n       Radialvelocity: 15000\n        (LSR velocity = 15 km/s)\n       Ganymede comet between MJD 55197 and 59214"
+    },
+    {
+      "element": "done",
+      "setup_result": true,
+      "result": "Frame: "
+    }
+  ]
+}

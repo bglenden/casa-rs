@@ -42,7 +42,7 @@ IMPLEMENTED = {
     "doppler", "radialvelocity", "todoppler", "tofrequency", "toradialvelocity", "torestfrequency",
     "addxvalue", "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framecomet", "framenow", "frequency", "getoffset", "getref",
     "gettype", "getvalue", "ismeasure", "linelist", "listcodes", "measure", "observatory", "obslist",
-    "posangle", "position", "separation", "show", "source", "sourcelist", "spectralline", "type",
+    "posangle", "position", "separation", "shift", "show", "showframe", "source", "sourcelist", "spectralline", "type",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
