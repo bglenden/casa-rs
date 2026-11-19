@@ -7,8 +7,8 @@ use std::process::ExitCode;
 use casa_ms::{
     FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, FlaggingError,
     MeasurementSet, delete_flag_version, flagmanager_list_record, flagmanager_task_schema_bundle,
-    list_flag_versions, ms_task_success, rename_flag_version, rename_flag_version_for_task,
-    restore_flag_version, save_flag_version, task_flag_merge,
+    initialize_flag_versions, list_flag_versions, ms_task_success, rename_flag_version,
+    rename_flag_version_for_task, restore_flag_version, save_flag_version, task_flag_merge,
 };
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
@@ -53,14 +53,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 
 fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, TaskFailure> {
     let failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
-    let required = |name: &str, value: Option<String>| {
-        value.ok_or_else(|| {
-            TaskFailure::validation(format!(
-                "flagmanager mode {:?} requires {name}",
-                request.mode
-            ))
-            .at(name)
-        })
+    let require_version = |message| {
+        request
+            .versionname
+            .clone()
+            .ok_or_else(|| TaskFailure::validation(message).at("versionname"))
     };
     let mut ms = MeasurementSet::open(&request.vis)
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
@@ -72,25 +69,29 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
         }))
     };
     match request.mode.as_str() {
-        "list" => Ok(FlagManagerTaskResult::Versions(
-            list_flag_versions(&ms).map_err(failed)?,
-        )),
+        "list" => {
+            initialize_flag_versions(&ms).map_err(failed)?;
+            Ok(FlagManagerTaskResult::Versions(
+                list_flag_versions(&ms).map_err(failed)?,
+            ))
+        }
         "save" => {
-            let name = required("versionname", request.versionname.clone())?;
+            let name = require_version("Illegal empty versionname: ''")?;
             let comment = request.comment.as_deref().unwrap_or("");
             keep_existing_version(&ms, &name)?;
             save_flag_version(&ms, &name, comment, request.merge).map_err(failed)?;
             mutation("save", Some(name), None)
         }
         "restore" => {
-            let name = required("versionname", request.versionname.clone())?;
+            let name = require_version("Illegal versionname: ''")?;
+            initialize_flag_versions(&ms).map_err(failed)?;
             restore_flag_version(&mut ms, &name, request.merge).map_err(failed)?;
             ms.save_main_table_only()
                 .map_err(|error| TaskFailure::execution(error.to_string()))?;
             mutation("restore", Some(name), None)
         }
         "delete" => {
-            let name = required("versionname", request.versionname.clone())?;
+            let name = require_version("Illegal versionname: ''")?;
             delete_flag_version(&ms, &name).map_err(failed)?;
             mutation("delete", Some(name), None)
         }

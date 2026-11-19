@@ -30,13 +30,16 @@ def read_flags(path):
         return storage.getcol("FLAG"), storage.getcol("FLAG_ROW")
 
 
-def set_flags(path, row):
+def set_flags(path, row, *, shared_row=None):
     with table(str(path), readonly=False, ack=False) as storage:
         flags = np.zeros_like(storage.getcol("FLAG"))
         flag_rows = np.zeros_like(storage.getcol("FLAG_ROW"))
         flags[row] = True
         flag_rows[row] = True
         flags[row + 2, 0, 0] = True
+        if shared_row is not None:
+            flags[shared_row] = True
+            flag_rows[shared_row] = True
         storage.putcol("FLAG", flags)
         storage.putcol("FLAG_ROW", flag_rows)
     return flags, flag_rows

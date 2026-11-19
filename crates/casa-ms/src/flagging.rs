@@ -2586,6 +2586,11 @@ fn data_description_spw_map(ms: &MeasurementSet) -> Result<BTreeMap<i32, i32>, F
     Ok(result)
 }
 
+/// Initialize the companion catalog that flagmanager opens with the MeasurementSet.
+pub fn initialize_flag_versions(ms: &MeasurementSet) -> Result<(), FlaggingError> {
+    ensure_flagversions_dir(ms_path(ms)?).map(|_| ())
+}
+
 /// Return flag-version list entries.
 pub fn list_flag_versions(ms: &MeasurementSet) -> Result<Vec<FlagVersionEntry>, FlaggingError> {
     let path = ms_path(ms)?;
@@ -3149,12 +3154,16 @@ fn ensure_flagversions_dir(path: &Path) -> Result<PathBuf, FlaggingError> {
         path: path.display().to_string(),
         reason: format!("create flagversions directory: {source}"),
     })?;
-    let list = dir.join(FLAG_VERSION_LIST);
-    if !list.exists() {
-        fs::write(&list, "").map_err(|source| FlaggingError::FlagVersion {
+    if let Err(source) = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join(FLAG_VERSION_LIST))
+        && source.kind() != std::io::ErrorKind::AlreadyExists
+    {
+        return Err(FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("create FLAG_VERSION_LIST: {source}"),
-        })?;
+        });
     }
     Ok(dir)
 }
