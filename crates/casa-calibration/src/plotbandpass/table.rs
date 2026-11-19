@@ -212,14 +212,11 @@ impl Layout {
 }
 
 fn associated_ms(explicit: Option<&Path>, stored: &str, caltable: &Path) -> Option<PathBuf> {
-    let vis = explicit
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new(stored));
-    if vis.as_os_str().is_empty() {
-        return None;
-    }
-    [vis.to_path_buf(), caltable.parent()?.join(vis)]
+    [Some(Path::new(stored)), explicit]
         .into_iter()
+        .flatten()
+        .filter(|vis| !vis.as_os_str().is_empty())
+        .flat_map(|vis| [vis.to_path_buf(), caltable.with_file_name(vis)])
         .find(|candidate| candidate.is_dir())
 }
 

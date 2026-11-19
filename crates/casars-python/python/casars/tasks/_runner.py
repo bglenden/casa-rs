@@ -221,23 +221,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name == "initweights":
         return _call_initweights(values)
     if name == "plotbandpass":
-        _validate_required_path(values, "caltable", arguments["caltable"])
-        try:
-            completion = run(name, **values)
-        except TaskExecutionError as error:
-            message = error.completion.message
-            if message == "name 'resampleSolution' is not defined":
-                raise NameError(message) from error
-            if message == "cannot access local variable 'mytime' where it is not associated with a value":
-                raise UnboundLocalError(message) from error
-            if message == "expected string or bytes-like object, got 'float'":
-                raise TypeError(message) from error
-            raise
-        if completion.value is not None:
-            return _bandpass_statistics(completion.value)
-        from json import loads
-
-        return () if loads(completion.stdout)["result"]["empty_tuple"] else None
+        return _call_plotbandpass(values, arguments)
     if name in ("split", "mstransform"):
         _coerce_ms_transform_selectors(values)
         try:
@@ -284,6 +268,37 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     return run(name, **values).value
+
+
+def _call_plotbandpass(values, arguments):
+    from json import loads
+    from ._bandpass_arguments import normalize
+
+    caltable = arguments["caltable"]
+    if caltable is None:
+        raise AssertionError("{'caltable': ['null value not allowed']}")
+    if not isinstance(caltable, str):
+        raise AssertionError(f"the caltable parameter must be a path that exists ('{caltable}' does not exist)")
+    _validate_required_path(values, "caltable", caltable)
+    normalize(values, arguments)
+    try:
+        completion = run("plotbandpass", **values)
+    except TaskExecutionError as error:
+        message = error.completion.message
+        exceptions = {
+            "name 'resampleSolution' is not defined": NameError,
+            "cannot access local variable 'mytime' where it is not associated with a value": UnboundLocalError,
+            "expected string or bytes-like object, got 'float'": TypeError,
+            "unsupported operand type(s) for //=: 'str' and 'int'": TypeError,
+        }
+        if message is not None and message.startswith("invalid literal for int()"):
+            raise ValueError(message) from error
+        if message in exceptions:
+            raise exceptions[message](message) from error
+        raise
+    if completion.value is not None:
+        return _bandpass_statistics(completion.value)
+    return () if loads(completion.stdout)["result"]["empty_tuple"] else None
 
 
 def _bandpass_statistics(value):

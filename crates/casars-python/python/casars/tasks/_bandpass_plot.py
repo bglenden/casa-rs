@@ -6,6 +6,8 @@ from .._plot_document import render_document
 
 
 def render_bandpass(reply, workspace):
+    for message in reply["diagnostics"]:
+        print(message)
     pages = reply["pages"]
     if not pages:
         return 0, False

@@ -46,14 +46,21 @@ struct Selection {
     baseband: BTreeSet<i32>,
 }
 
+pub(super) struct SelectionMismatch {
+    pub(super) parameter: &'static str,
+    pub(super) word: String,
+}
+
+type SelectedGroups = (BTreeMap<GroupKey, Vec<SelectedRow>>, usize);
+
 pub(super) fn groups(
     source: &Solutions,
     selectors: &Selectors,
     overlay: Overlay,
     threshold_seconds: f64,
-) -> Result<(BTreeMap<GroupKey, Vec<SelectedRow>>, usize), String> {
+) -> Result<SelectedGroups, SelectionMismatch> {
     let times = TimeGroups::for_source(source, threshold_seconds);
-    let select = Selection::new(source, selectors, times.len())?;
+    let select = Selection::new(source, selectors, times.len(), overlay)?;
     let mut groups: BTreeMap<GroupKey, Vec<SelectedRow>> = BTreeMap::new();
     let mut first_rows = HashSet::new();
     for (row_index, row) in source.rows.iter().enumerate() {
@@ -91,19 +98,27 @@ pub(super) fn groups(
 }
 
 impl Selection {
-    fn new(source: &Solutions, selectors: &Selectors, times: usize) -> Result<Self, String> {
+    fn new(
+        source: &Solutions,
+        selectors: &Selectors,
+        times: usize,
+        overlay: Overlay,
+    ) -> Result<Self, SelectionMismatch> {
         Ok(Self {
             antenna: select(
+                "antenna",
                 &selectors.antenna,
                 source.rows.iter().map(|row| row.antenna),
                 |id| name_at(&source.antennas, id),
             )?,
             field: select(
+                "field",
                 &selectors.field,
                 source.rows.iter().map(|row| row.field),
                 |id| name_at(&source.fields, id),
             )?,
             window: select(
+                "spw",
                 &selectors.spw,
                 source.rows.iter().map(|row| row.window),
                 |id| {
@@ -113,13 +128,24 @@ impl Selection {
                         .map_or("", |window| &window.name)
                 },
             )?,
-            time: select(&selectors.time, (0..times).map(|time| time as i32), |_| "")?,
-            scan: select(
-                &selectors.scan,
-                source.rows.iter().filter_map(|row| row.scan),
+            time: select(
+                "timeranges",
+                &selectors.time,
+                (0..times).map(|time| time as i32),
                 |_| "",
             )?,
+            scan: if overlay.time {
+                BTreeSet::new()
+            } else {
+                select(
+                    "scans",
+                    &selectors.scan,
+                    source.rows.iter().filter_map(|row| row.scan),
+                    |_| "",
+                )?
+            },
             baseband: select(
+                "basebands",
                 &selectors.baseband,
                 source.windows.iter().filter_map(|window| window.baseband),
                 |_| "",
@@ -149,10 +175,11 @@ fn name_at(names: &[String], id: i32) -> &str {
 }
 
 fn select<'a>(
+    parameter: &'static str,
     selectors: &[String],
     identifiers: impl Iterator<Item = i32>,
     name: impl Fn(i32) -> &'a str,
-) -> Result<BTreeSet<i32>, String> {
+) -> Result<BTreeSet<i32>, SelectionMismatch> {
     let words = selectors
         .iter()
         .flat_map(|part| part.split(',').map(str::trim))
@@ -184,7 +211,10 @@ fn select<'a>(
             })
             .count();
         if count == 0 {
-            return Err(format!("selection {word:?} matches no bandpass solution"));
+            return Err(SelectionMismatch {
+                parameter,
+                word: word.into(),
+            });
         }
     }
     Ok(selected)

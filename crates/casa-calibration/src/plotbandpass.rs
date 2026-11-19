@@ -57,6 +57,8 @@ pub(crate) struct BandpassPlots {
     pub(crate) panels: Vec<BandpassPanel>,
     statistics: Option<StatisticsGrid>,
     pub(crate) polynomial: bool,
+    pub(crate) returns_none: bool,
+    pub(crate) selection_notice: Option<String>,
     immediate_combined_overlay: bool,
 }
 
@@ -120,35 +122,35 @@ pub(crate) fn prepare_bandpass(
         .map(|path| Companion::open(path, request.vis))
         .collect::<Result<Vec<_>, _>>()?;
     if invalid_overlay(&source, request, &companions) {
-        return Ok(BandpassPlots {
-            caltable: source.path,
-            measurement_set: source.measurement_set,
-            panels: Vec::new(),
-            statistics: None,
-            polynomial,
-            immediate_combined_overlay: false,
-        });
+        return Ok(empty_plots(source, false, None));
     }
-    let (selected, time_count) = groups(
+    let (selected, time_count) = match groups(
         &source,
         &request.selectors,
         request.overlay,
         request.threshold_seconds,
-    )?;
+    ) {
+        Ok(selected) => selected,
+        Err(error) => {
+            let message = format!(
+                "No bandpass solutions for {}={:?}",
+                error.parameter, error.word
+            );
+            let none = !matches!(error.parameter, "antenna" | "field");
+            return Ok(empty_plots(source, none, Some(message)));
+        }
+    };
     if request.show_baseband_number
         && source
             .windows
             .iter()
             .all(|window| window.baseband.is_none())
     {
-        return Ok(BandpassPlots {
-            caltable: source.path,
-            measurement_set: source.measurement_set,
-            panels: Vec::new(),
-            statistics: None,
-            polynomial,
-            immediate_combined_overlay: false,
-        });
+        return Ok(empty_plots(
+            source,
+            true,
+            Some("This dataset does not have a BBC_NO column in SPECTRAL_WINDOW.".into()),
+        ));
     }
     let requested_times =
         requested_times(selected.values().flatten().copied(), request, time_count);
@@ -197,8 +199,27 @@ pub(crate) fn prepare_bandpass(
         panels,
         statistics,
         polynomial,
+        returns_none: false,
+        selection_notice: None,
         immediate_combined_overlay: request.overlay.antenna && request.overlay.time,
     })
+}
+
+fn empty_plots(
+    source: Solutions,
+    returns_none: bool,
+    selection_notice: Option<String>,
+) -> BandpassPlots {
+    BandpassPlots {
+        caltable: source.path,
+        measurement_set: source.measurement_set,
+        panels: Vec::new(),
+        statistics: None,
+        polynomial: source.subtype == "BPOLY",
+        returns_none,
+        selection_notice,
+        immediate_combined_overlay: false,
+    }
 }
 
 fn invalid_overlay(
@@ -555,7 +576,7 @@ fn ordinates(source: &Solutions, axis: &str) -> Result<Vec<Ordinate>, String> {
     } else {
         Ordinate::Amplitude
     };
-    if normalized.contains("both") {
+    if normalized.contains("both") || normalized.starts_with("ap") {
         Ok(vec![amplitude, Ordinate::Phase])
     } else if normalized.contains("phase") {
         Ok(vec![Ordinate::Phase])

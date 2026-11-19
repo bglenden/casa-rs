@@ -20,6 +20,7 @@ struct Reply {
     sequential: bool,
     polynomial: bool,
     resample: u32,
+    diagnostics: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -44,6 +45,105 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             );
         }
     };
+    let raw_overlay = task.text("overlay")?.unwrap_or_default();
+    let overlay = overlay(&raw_overlay)?;
+    let y_axis = task.text("yaxis")?.unwrap_or_default();
+    let both = y_axis.starts_with("ap") || y_axis.starts_with("both");
+    let reference_field = selector_numeric_text(task, "showatmfield")?;
+    let image_sideband = task.flag("showimage")?;
+    let show_atmosphere = task.flag("showatm")?;
+    let transmission = show_atmosphere
+        || (!task.flag("showtsky")? && (image_sideband || !reference_field.is_empty()));
+    let sky_temperature = !show_atmosphere && task.flag("showtsky")?;
+    let lo = if image_sideband {
+        match local_oscillator(task)? {
+            Some(lo) => lo,
+            None => {
+                return plain(
+                    CasaValue::None,
+                    false,
+                    "lo1 must be a float (entered as a string or number)",
+                );
+            }
+        }
+    } else {
+        None
+    };
+    if !reference_field.is_empty() && !overlay.time {
+        return plain(
+            CasaValue::None,
+            true,
+            "The showatmfield only has meaning for overlay='time'.",
+        );
+    }
+    if both && (overlay.antenna || overlay.time || overlay.window) {
+        return plain(
+            CasaValue::None,
+            true,
+            "Option 'overlay' is incompatible with yaxis='both'. Pick either amp or phase.",
+        );
+    }
+    let show_fdm = task.flag("showfdm")?;
+    if show_fdm && !frequency_axis {
+        return plain(
+            CasaValue::None,
+            true,
+            "The option showfdm=True requires xaxis='freq'.",
+        );
+    }
+    let Some(layout) = subplot(task)? else {
+        return plain(
+            CasaValue::None,
+            true,
+            "Invalid subplot size. Use 11 through 81, or 22, 32, or 42.",
+        );
+    };
+    let limits = match plot_limits(task)? {
+        Some(limits) => limits,
+        None => {
+            return plain(
+                CasaValue::None,
+                true,
+                "plotrange must be an array: e.g. [0,1,-180,180]",
+            );
+        }
+    };
+    let phase_limits = match phase_limits(task)? {
+        Some(limits) => limits.filter(|_| both),
+        None => {
+            return plain(
+                CasaValue::None,
+                true,
+                "phase must be either '' or 2 values: [x,y]",
+            );
+        }
+    };
+    let channel_range = match channel_range(task, frequency_axis) {
+        Ok(range) if range.is_none() || limits == [0.0; 4] => range,
+        _ => {
+            return plain(
+                CasaValue::None,
+                true,
+                "Use a channel range with xaxis='freq' and default plotrange.",
+            );
+        }
+    };
+    let edge = task.integer("edge")?;
+    let resample = task.integer("resample")?;
+    if edge < 0 || resample < 1 {
+        let message = if edge < 0 {
+            "edge must be >= 0"
+        } else {
+            "resample must be an integer >= 1"
+        };
+        return plain(
+            CasaValue::String {
+                value: String::new(),
+            },
+            false,
+            message,
+        );
+    }
     let polarization = selector(task, "poln")?;
     let polarizations = polarization
         .iter()
@@ -51,25 +151,19 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .filter(|label| !label.is_empty())
         .collect::<Vec<_>>();
     let vis = task.text("vis")?.filter(|name| !name.is_empty());
-    let y_axis = task.text("yaxis")?.unwrap_or_default();
     let caltable2 = task.text("caltable2")?.filter(|name| !name.is_empty());
     let caltable3 = task.text("caltable3")?.filter(|name| !name.is_empty());
+    for path in [&caltable2, &caltable3].into_iter().flatten() {
+        if !Path::new(path).exists() {
+            return plain(
+                CasaValue::None,
+                true,
+                &format!("Could not find companion calibration table {path}"),
+            );
+        }
+    }
     let water = selector_numeric_text(task, "pwv")?;
-    let reference_field = selector_numeric_text(task, "showatmfield")?;
     let parent_ms = task.text("parentms")?.filter(|name| !name.is_empty());
-    let lo =
-        match task.value("lo1") {
-            Some(ParameterValue::String(value)) if value.is_empty() => None,
-            Some(ParameterValue::String(value)) => Some(value.parse::<f64>().map_err(|_| {
-                TaskFailure::validation("lo1 must be a frequency in GHz").at("lo1")
-            })?),
-            Some(ParameterValue::Float(_)) | Some(ParameterValue::Integer(_)) => {
-                return Err(TaskFailure::execution(
-                    "expected string or bytes-like object, got 'float'",
-                ));
-            }
-            _ => None,
-        };
     let request = PlotRequest {
         caltable: &caltable,
         vis: vis.as_deref().map(Path::new),
@@ -85,7 +179,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             scan: selector(task, "scans")?,
             baseband: selector(task, "basebands")?,
         },
-        overlay: overlay(&task.text("overlay")?.unwrap_or_default())?,
+        overlay,
         frequency_axis,
         y_axis: &y_axis,
         polarizations: &polarizations,
@@ -93,26 +187,26 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         show_flagged: task.flag("showflagged")?,
         show_baseband_number: task.flag("showBasebandNumber")?,
         derivative_sigma: numeric(task, "channeldiff")?,
-        edge: unsigned(task, "edge")? as usize,
+        edge: edge as usize,
         resample: unsigned(task, "resample")?,
         platforming_threshold: task.number("platformingThreshold")?,
         platforming_sigma: task.number("platformingSigma")?,
         atmosphere: AtmosphericOptions {
-            transmission: task.flag("showatm")?,
-            sky_temperature: task.flag("showtsky")?,
+            transmission,
+            sky_temperature,
             water: &water,
             reference_field: &reference_field,
-            image_sideband: task.flag("showimage")?,
+            image_sideband,
             lo_ghz: lo,
             parent_ms: parent_ms.as_deref().map(Path::new),
             show_points: task.flag("showatmpoints")?,
         },
-        show_fdm: task.flag("showfdm")?,
+        show_fdm,
         zoom_intersect: task.text("zoom")?.as_deref() == Some("intersect"),
     };
     let figfile = task.text("figfile")?.unwrap_or_default();
     let display = DisplayOptions {
-        layout: subplot(task)?,
+        layout,
         figfile: &figfile,
         sequential_names: task.flag("figfileSequential")?,
         density: unsigned(task, "density")?,
@@ -120,15 +214,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         show_points: automatic_flag(task, "showpoints")?,
         show_lines: automatic_flag(task, "showlines")?,
         interactive: task.flag("interactive")?,
-        limits: task.numbers("plotrange")?.try_into().map_err(|_| {
-            TaskFailure::validation("plotrange must contain four values").at("plotrange")
-        })?,
-        phase_limits: if y_axis.to_ascii_lowercase().contains("both") {
-            phase_limits(task)?
-        } else {
-            None
-        },
-        channel_range: channel_range(task, frequency_axis)?,
+        limits,
+        phase_limits,
+        channel_range,
         limit_channels: task.flag("chanrangeSetXrange")?,
         resample: unsigned(task, "resample")?,
     };
@@ -136,15 +224,11 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     if figfile.is_empty()
         && (build_pdf || (!display.interactive && request.derivative_sigma == 0.0))
     {
-        let reply = Reply {
-            pages: Vec::new(),
-            pdf: None,
-            empty_tuple: true,
-            sequential: display.sequential_names,
-            polynomial: false,
-            resample: display.resample,
-        };
-        return TaskSuccess::new(CasaValue::None, &reply);
+        return plain(
+            CasaValue::None,
+            true,
+            "Specify a figfile when building a PDF or running without display or derivative statistics.",
+        );
     }
     let completed_pages = std::env::var("CASARS_BANDPASS_COMPLETED_PAGES")
         .ok()
@@ -153,7 +237,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .map(|count| count.saturating_mul(display.layout[0] as usize * display.layout[1] as usize));
     let plan = prepare_bandpass(&request, panel_limit).map_err(TaskFailure::execution)?;
     let value = derivative_record(&plan).unwrap_or(CasaValue::None);
-    let empty_tuple = !request.show_baseband_number || !plan.panels.is_empty();
+    let empty_tuple = !plan.returns_none;
     let pdf = if build_pdf {
         Some(PdfOutput {
             output: format!("{figfile}.pdf"),
@@ -167,6 +251,24 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         None
     };
     let polynomial = plan.polynomial;
+    let mut diagnostics = if completed_pages.is_none() && task.flag("debug")? {
+        vec![
+            format!("caltable = {}", plan.caltable.display()),
+            format!(
+                "msName = {}.",
+                plan.measurement_set
+                    .as_deref()
+                    .map_or_else(String::new, |ms| ms.display().to_string())
+            ),
+            format!(
+                "Preparing {} bandpass panels for {y_axis} versus {axis}, overlay={raw_overlay:?}",
+                plan.panels.len()
+            ),
+        ]
+    } else {
+        Vec::new()
+    };
+    diagnostics.extend(plan.selection_notice.iter().cloned());
     let reply = Reply {
         pages: if completed_pages.is_none() {
             pages(plan, &display).map_err(TaskFailure::execution)?
@@ -178,9 +280,48 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         sequential: display.sequential_names,
         polynomial,
         resample: display.resample,
+        diagnostics,
     };
     TaskSuccess::new(value, &reply)
         .map(|success| success.with_note("Use casars.tasks.plotbandpass to render the figures."))
+}
+
+fn plain(value: CasaValue, empty_tuple: bool, message: &str) -> Result<TaskSuccess, TaskFailure> {
+    TaskSuccess::new(
+        value,
+        &Reply {
+            pages: Vec::new(),
+            pdf: None,
+            empty_tuple,
+            sequential: false,
+            polynomial: false,
+            resample: 1,
+            diagnostics: vec![message.to_string()],
+        },
+    )
+}
+
+/// A valid optional oscillator, or no result when CASA declines its spelling.
+fn local_oscillator(task: &TaskInvocation<'_>) -> Result<Option<Option<f64>>, TaskFailure> {
+    match task.value("lo1") {
+        Some(ParameterValue::String(value)) if value.is_empty() => Ok(Some(None)),
+        Some(ParameterValue::String(value)) => {
+            let decimal = value.split_once('.').is_some_and(|(whole, part)| {
+                !whole.is_empty()
+                    && !part.is_empty()
+                    && whole
+                        .bytes()
+                        .chain(part.bytes())
+                        .all(|byte| byte.is_ascii_digit())
+            });
+            let value = decimal.then(|| value.parse::<f64>().ok()).flatten();
+            Ok(value.map(|hz| Some(if hz > 1e6 { hz * 1e-9 } else { hz })))
+        }
+        Some(ParameterValue::Float(_)) | Some(ParameterValue::Integer(_)) => Err(
+            TaskFailure::execution("expected string or bytes-like object, got 'float'"),
+        ),
+        _ => Ok(Some(None)),
+    }
 }
 
 fn selector(task: &TaskInvocation<'_>, name: &str) -> Result<Vec<String>, TaskFailure> {
@@ -234,33 +375,50 @@ fn automatic_flag(task: &TaskInvocation<'_>, name: &str) -> Result<Option<bool>,
     match task.value(name) {
         Some(ParameterValue::Bool(value)) => Ok(Some(*value)),
         Some(ParameterValue::String(value)) if value == "auto" => Ok(None),
+        Some(ParameterValue::String(_)) => Ok(Some(name == "showlines")),
         _ => Err(TaskFailure::validation("expected a Boolean or auto").at(name)),
     }
 }
 
-fn subplot(task: &TaskInvocation<'_>) -> Result<[u32; 2], TaskFailure> {
+fn subplot(task: &TaskInvocation<'_>) -> Result<Option<[u32; 2]>, TaskFailure> {
     let value = selector(task, "subplot")?.join("");
-    let mut size = value.chars().map(|digit| digit.to_digit(10));
-    match (size.next().flatten(), size.next().flatten()) {
-        (Some(rows @ 1..=8), Some(columns @ 1..=2)) => Ok([rows, columns]),
-        _ => Err(TaskFailure::validation("invalid bandpass subplot grid").at("subplot")),
+    let mut size = value.trim().parse::<i32>().map_err(|_| {
+        TaskFailure::execution(format!("invalid literal for int() with base 10: '{value}'"))
+    })?;
+    if size > 100 {
+        if matches!(task.value("subplot"), Some(ParameterValue::String(_))) {
+            return Err(TaskFailure::execution(
+                "unsupported operand type(s) for //=: 'str' and 'int'",
+            ));
+        }
+        size /= 10;
     }
+    Ok(match (size / 10, size % 10) {
+        (rows @ 1..=8, 1) => Some([rows as u32, 1]),
+        (rows @ 2..=4, 2) => Some([rows as u32, 2]),
+        _ => None,
+    })
 }
 
-fn phase_limits(task: &TaskInvocation<'_>) -> Result<Option<[f64; 2]>, TaskFailure> {
-    let values = selector(task, "phase")?;
-    if values.iter().all(String::is_empty) {
-        return Ok(None);
+fn plot_limits(task: &TaskInvocation<'_>) -> Result<Option<[f64; 4]>, TaskFailure> {
+    let values = task.numbers("plotrange")?;
+    if values.is_empty() {
+        return Ok(Some([0.0; 4]));
     }
-    let numbers = values
-        .iter()
-        .flat_map(|value| value.split(',').map(str::trim))
-        .map(str::parse::<f64>)
-        .collect::<Result<Vec<_>, _>>();
-    let limits = numbers.ok().and_then(|values| values.try_into().ok());
-    limits
-        .map(Some)
-        .ok_or_else(|| TaskFailure::validation("phase must provide two limits").at("phase"))
+    Ok(values.get(..4).and_then(|limits| limits.try_into().ok()))
+}
+
+fn phase_limits(task: &TaskInvocation<'_>) -> Result<Option<Option<[f64; 2]>>, TaskFailure> {
+    let values = selector(task, "phase")?;
+    Ok(match values.as_slice() {
+        [value] if value.is_empty() => Some(None),
+        [lower, upper] => lower
+            .parse()
+            .ok()
+            .zip(upper.parse().ok())
+            .map(|(lo, hi)| (lo != 0.0 || hi != 0.0).then_some([lo, hi])),
+        _ => None,
+    })
 }
 
 fn channel_range(
@@ -272,7 +430,6 @@ fn channel_range(
         TaskFailure::validation("chanrange must be a channel pair or a percentage").at("chanrange")
     };
     match values.as_slice() {
-        [] => Ok(None),
         [value] if value.is_empty() => Ok(None),
         [value] if frequency_axis => {
             if let Some(percent) = value.strip_suffix('%') {
@@ -283,12 +440,12 @@ fn channel_range(
             let (start, stop) = value.split_once('~').ok_or_else(error)?;
             let start = start.trim().parse().map_err(|_| error())?;
             let stop = stop.trim().parse().map_err(|_| error())?;
-            Ok(Some(ChannelRange::Indices([start, stop])))
+            Ok(([start, stop] != [0, 0]).then_some(ChannelRange::Indices([start, stop])))
         }
         [start, stop] => {
             let start = start.parse().map_err(|_| error())?;
             let stop = stop.parse().map_err(|_| error())?;
-            Ok(Some(ChannelRange::Indices([start, stop])))
+            Ok(([start, stop] != [0, 0]).then_some(ChannelRange::Indices([start, stop])))
         }
         _ => Err(error()),
     }
