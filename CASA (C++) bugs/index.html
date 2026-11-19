@@ -3823,6 +3823,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#transform-correlation-arrays-can-disagree-with-their-polarization-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transform correlation arrays can disagree with their polarization metadata
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transforming-an-ms-can-omit-defined-flag_category-arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transforming an MS can omit defined FLAG_CATEGORY arrays
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-bare-field-escape-can-silently-change-the-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4295,6 +4317,28 @@
     <span class="md-ellipsis">
       
         exportfits drops characters when wrapping long HISTORY cards
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#imsubimage-aborts-for-an-out-of-range-keepaxes-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imsubimage aborts for an out-of-range keepaxes index
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#imsubimage-permutes-coordinate-labels-after-dropping-transposed-axes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imsubimage permutes coordinate labels after dropping transposed axes
       
     </span>
   </a>
@@ -10275,6 +10319,25 @@ the Python process. The feed grammar builds an array with negative length
 and the uncaught <code>ArrayShapeError</code> terminates the process.</p>
 <p>The native transform checks the range before reading MAIN. It returns a
 feed selector error and leaves the input and output paths untouched (#1614).</p>
+<h2 id="transform-correlation-arrays-can-disagree-with-their-polarization-metadata">Transform correlation arrays can disagree with their polarization metadata<a class="headerlink" href="#transform-correlation-arrays-can-disagree-with-their-polarization-metadata" title="Permanent link">&para;</a></h2>
+<p>On a MeasurementSet with correlations XX, XY, YX and YY, CASA 6.7.6.14
+<code>split(correlation="YY,XX")</code> and <code>mstransform(correlation="YY,XX")</code> write
+visibility and flag arrays in YY, XX order while POLARIZATION labels them
+XX, YY. <code>getCorrMaps</code> sorts the metadata indices, and the visibility
+iterator gets its slices from the parser's original order.</p>
+<p>Selecting XX, XY and YY can leave CORR_TYPE and CORR_PRODUCT undefined in
+an otherwise readable output. <code>fillPolTable</code> returns early for a partial
+selection of more than two products, and the caller continues writing.</p>
+<p>The native transform uses the original stored axis order for both metadata
+and arrays and writes complete metadata for every selected subset (#1614).</p>
+<h2 id="transforming-an-ms-can-omit-defined-flag_category-arrays">Transforming an MS can omit defined FLAG_CATEGORY arrays<a class="headerlink" href="#transforming-an-ms-can-omit-defined-flag_category-arrays" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 <code>split</code> and <code>mstransform</code> leave FLAG_CATEGORY undefined for
+an input with defined cells of shape (four correlations, eight channels,
+two categories). The rank check in
+<code>MSTransformManager::checkFillFlagCategory</code> compares the entire shape with
+the scalar 3.</p>
+<p>The native transform preserves defined category flags and slices their
+correlation and channel axes with the other MAIN arrays (#1614).</p>
 <h2 id="a-bare-field-escape-can-silently-change-the-selection">A bare FIELD escape can silently change the selection<a class="headerlink" href="#a-bare-field-escape-can-silently-change-the-selection" title="Permanent link">&para;</a></h2>
 <p>Outside a quoted pattern or slash regex, the casacore FIELD scanner prints
 the backslash and consumes the next non-newline byte without adding it to
@@ -10874,6 +10937,22 @@ splits at 72 characters on the first card and <code>&gt;</code> plus 71 characte
 continuation card without skipping characters, emitting all 48 cards on
 <code>cube_i.im</code> so both casa-rs and CASA 6.7.6.14 <code>ia.history(list=False)</code> read back
 all 17 original history entries intact (#977).</p>
+<h2 id="imsubimage-aborts-for-an-out-of-range-keepaxes-index">imsubimage aborts for an out-of-range keepaxes index<a class="headerlink" href="#imsubimage-aborts-for-an-out-of-range-keepaxes-index" title="Permanent link">&para;</a></h2>
+<p>On a four-axis image, CASA 6.7.6.14 aborts the process with
+<code>itsAxes(i) &gt;= naxes</code> for <code>imsubimage(dropdeg=True, keepaxes=[4])</code>.
+The check is in casacore's <code>AxesSpecifier::apply</code>. casa-rs returns an
+out-of-range error before creating or replacing the output image. With
+<code>dropdeg=False</code>, CASA and casa-rs ignore <code>keepaxes</code>.</p>
+<h2 id="imsubimage-permutes-coordinate-labels-after-dropping-transposed-axes">imsubimage permutes coordinate labels after dropping transposed axes<a class="headerlink" href="#imsubimage-permutes-coordinate-labels-after-dropping-transposed-axes" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, take a cube in RA, Dec, Stokes, frequency order and
+apply <code>imtrans(order="3012")</code>. Then run
+<code>imsubimage(box="1,2,4,5", chans="2", stokes="Q", dropdeg=True, keepaxes=[0])</code>.
+The resulting shape is <code>[1, 4, 4]</code>, with pixels in frequency, RA, Dec order.
+CASA labels the axes Dec, frequency, RA. In
+<code>CoordinateUtil::dropRemovedAxes</code>, the permutation passed to
+<code>CoordinateSystem::transpose</code> maps from creation order to pixel order,
+while <code>transpose</code> expects the inverse. casa-rs keeps the coordinates on
+their original pixel axes as it removes Stokes.</p>
 <h2 id="plotbandpass-passes-a-fractional-platforming-channel-to-range">plotbandpass passes a fractional platforming channel to range<a class="headerlink" href="#plotbandpass-passes-a-fractional-platforming-channel-to-range" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 raises <code>TypeError</code> while checking a wide bandpass for
 platforming. The check computes the two interior channel offsets with

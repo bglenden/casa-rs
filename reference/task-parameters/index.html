@@ -1748,7 +1748,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 726</li>
+<li>Concepts: 727</li>
 <li>Surfaces: 45 (45 task, 0 session)</li>
 <li>Surface bindings: 1053</li>
 </ul>
@@ -1839,7 +1839,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-mstransform">MSTransform</a><br><code>mstransform</code></td>
 <td>task</td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">8</td>
 <td><code>mstransform</code></td>
 <td style="text-align: right;">55</td>
 <td>Materialize a selected MeasurementSet into a new output MS.</td>
@@ -1847,7 +1847,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-split">Split</a><br><code>split</code></td>
 <td>task</td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">8</td>
 <td><code>mstransform</code></td>
 <td style="text-align: right;">20</td>
 <td>Create a selected MeasurementSet subset, equivalent to CASA split.</td>
@@ -5001,7 +5001,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="mstransform-mstransform">MSTransform (<code>mstransform</code>)<a class="headerlink" href="#mstransform-mstransform" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>7</code></li>
+<li>Contract version: <code>8</code></li>
 <li>Category: MeasurementSet</li>
 <li>Provider family: <code>mstransform</code></li>
 <li>Summary: Materialize a selected MeasurementSet into a new output MS.</li>
@@ -5100,11 +5100,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>correlation</code></td>
-<td><code>ms.selection.correlation@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.correlation@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Correlation selector.</td>
+<td>CASA correlation product selection with optional spectral-window qualifiers.</td>
 </tr>
 <tr>
 <td><code>timerange</code></td>
@@ -5464,7 +5464,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="split-split">Split (<code>split</code>)<a class="headerlink" href="#split-split" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>7</code></li>
+<li>Contract version: <code>8</code></li>
 <li>Category: MeasurementSet</li>
 <li>Provider family: <code>mstransform</code></li>
 <li>Summary: Create a selected MeasurementSet subset, equivalent to CASA split.</li>
@@ -5539,11 +5539,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>correlation</code></td>
-<td><code>ms.selection.correlation@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.correlation@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Correlation selector.</td>
+<td>CASA correlation product selection with optional spectral-window qualifiers.</td>
 </tr>
 <tr>
 <td><code>timerange</code></td>

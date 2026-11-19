@@ -2716,12 +2716,14 @@ CASA's value, with NumPy arrays where CASA returns them. A parameter casa-rs
 does not implement yet is taken only at CASA's default; its docstring names
 the issue. The other wrappers take keyword arguments and return the
 <code>TaskCompletion</code>.</p>
-<p>On a single MeasurementSet, <code>split</code> and <code>mstransform</code> accept named field and
-spectral-window selections, antenna names and baseline expressions, scan
-predicates, and calendar time ranges. Channel selectors can include disjoint
-ranges and strides. The CASA comparison exercises unaveraged copies and
-checks selected visibilities, flags, weights, and remapped metadata. The
-remaining split and transform behaviors are tracked in
+<p>On a single MeasurementSet, <code>split</code> and <code>mstransform</code> accept named fields
+and spectral windows, antenna baselines, scan predicates, calendar times,
+observation IDs and intents, array IDs, UV distances, and feed pairs.
+Channel selectors can include disjoint ranges and strides. Use a
+spectral-window qualifier such as <code>correlation="SPW0:XX,YY"</code> to select
+correlation products within a window. The CASA comparison checks unaveraged
+visibilities, flags, weights, and remapped metadata. Remaining behaviors
+are tracked in
 <a href="https://github.com/bglenden/casa-rs/issues/978">#978</a>.</p>
 <p>A value the contract refuses raises <code>ValueError</code> before anything starts, or
 <code>TypeError</code> for a value of the wrong type. A task that refuses its
@@ -5087,16 +5089,16 @@ generated parameter checker in both cases.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1414</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1410</span>
+<span class="normal">1411</span>
+<span class="normal">1412</span>
+<span class="normal">1413</span>
+<span class="normal">1414</span>
 <span class="normal">1415</span>
 <span class="normal">1416</span>
 <span class="normal">1417</span>
 <span class="normal">1418</span>
-<span class="normal">1419</span>
-<span class="normal">1420</span>
-<span class="normal">1421</span>
-<span class="normal">1422</span>
-<span class="normal">1423</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">calstat</span><span class="p">(</span>
+<span class="normal">1419</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">calstat</span><span class="p">(</span>
     <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">axis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'amplitude'</span><span class="p">,</span>
     <span class="n">datacolumn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'gain'</span><span class="p">,</span>
@@ -5177,7 +5179,11 @@ Accepted only at CASA's default, where CASA reads them, until #939:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1250</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1246</span>
+<span class="normal">1247</span>
+<span class="normal">1248</span>
+<span class="normal">1249</span>
+<span class="normal">1250</span>
 <span class="normal">1251</span>
 <span class="normal">1252</span>
 <span class="normal">1253</span>
@@ -5190,11 +5196,7 @@ Accepted only at CASA's default, where CASA reads them, until #939:
 <span class="normal">1260</span>
 <span class="normal">1261</span>
 <span class="normal">1262</span>
-<span class="normal">1263</span>
-<span class="normal">1264</span>
-<span class="normal">1265</span>
-<span class="normal">1266</span>
-<span class="normal">1267</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">concat</span><span class="p">(</span>
+<span class="normal">1263</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">concat</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
     <span class="n">concatvis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">freqtol</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">object</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -5341,7 +5343,11 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1108</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1104</span>
+<span class="normal">1105</span>
+<span class="normal">1106</span>
+<span class="normal">1107</span>
+<span class="normal">1108</span>
 <span class="normal">1109</span>
 <span class="normal">1110</span>
 <span class="normal">1111</span>
@@ -5353,11 +5359,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1117</span>
 <span class="normal">1118</span>
 <span class="normal">1119</span>
-<span class="normal">1120</span>
-<span class="normal">1121</span>
-<span class="normal">1122</span>
-<span class="normal">1123</span>
-<span class="normal">1124</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">feather</span><span class="p">(</span>
+<span class="normal">1120</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">feather</span><span class="p">(</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">highres</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">lowres</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -5403,9 +5405,8 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <code>flagdimension</code>, <code>usewindowstats</code>, <code>halfwin</code>, <code>winsize</code>,
 <code>antint_ref_antenna</code>, <code>minchanfrac</code>, <code>verbose</code>, <code>growaround</code>,
 <code>flagneartime</code>, <code>flagnearfreq</code>, <code>minrel</code>, <code>maxrel</code>, <code>minabs</code>,
-<code>maxabs</code>, <code>spwchan</code>, <code>spwcorr</code>, <code>basecnt</code>, <code>fieldcnt</code>,
-<code>name</code>, <code>display</code>, <code>savepars</code>, <code>cmdreason</code>, <code>outfile</code>,
-<code>overwrite</code>, <code>writeflags</code>.</p>
+<code>maxabs</code>, <code>basecnt</code>, <code>fieldcnt</code>, <code>display</code>, <code>savepars</code>,
+<code>cmdreason</code>, <code>outfile</code>, <code>overwrite</code>, <code>writeflags</code>.</p>
 
 
             <details class="mkdocstrings-source">
@@ -5504,8 +5505,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="normal">971</span>
 <span class="normal">972</span>
 <span class="normal">973</span>
-<span class="normal">974</span>
-<span class="normal">975</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flagdata</span><span class="p">(</span>
+<span class="normal">974</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flagdata</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">mode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'antint'</span><span class="p">,</span> <span class="s1">'clip'</span><span class="p">,</span> <span class="s1">'elevation'</span><span class="p">,</span> <span class="s1">'extend'</span><span class="p">,</span> <span class="s1">'list'</span><span class="p">,</span> <span class="s1">'manual'</span><span class="p">,</span> <span class="s1">'manualflag'</span><span class="p">,</span> <span class="s1">'quack'</span><span class="p">,</span> <span class="s1">'rflag'</span><span class="p">,</span> <span class="s1">'shadow'</span><span class="p">,</span> <span class="s1">'summary'</span><span class="p">,</span> <span class="s1">'tfcrop'</span><span class="p">,</span> <span class="s1">'unflag'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'manual'</span><span class="p">,</span>
     <span class="n">autocorr</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
@@ -5596,9 +5596,8 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="sd">    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,</span>
 <span class="sd">    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,</span>
 <span class="sd">    ``flagneartime``, ``flagnearfreq``, ``minrel``, ``maxrel``, ``minabs``,</span>
-<span class="sd">    ``maxabs``, ``spwchan``, ``spwcorr``, ``basecnt``, ``fieldcnt``,</span>
-<span class="sd">    ``name``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,</span>
-<span class="sd">    ``overwrite``, ``writeflags``.</span>
+<span class="sd">    ``maxabs``, ``basecnt``, ``fieldcnt``, ``display``, ``savepars``,</span>
+<span class="sd">    ``cmdreason``, ``outfile``, ``overwrite``, ``writeflags``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">flagdata</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -5624,7 +5623,8 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">977</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">976</span>
+<span class="normal">977</span>
 <span class="normal">978</span>
 <span class="normal">979</span>
 <span class="normal">980</span>
@@ -5635,8 +5635,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="normal">985</span>
 <span class="normal">986</span>
 <span class="normal">987</span>
-<span class="normal">988</span>
-<span class="normal">989</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flagmanager</span><span class="p">(</span>
+<span class="normal">988</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flagmanager</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">mode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'delete'</span><span class="p">,</span> <span class="s1">'list'</span><span class="p">,</span> <span class="s1">'rename'</span><span class="p">,</span> <span class="s1">'restore'</span><span class="p">,</span> <span class="s1">'save'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'list'</span><span class="p">,</span>
     <span class="n">versionname</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -6023,7 +6022,11 @@ Accepted only at CASA's default, where CASA reads them, until #979:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1308</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1304</span>
+<span class="normal">1305</span>
+<span class="normal">1306</span>
+<span class="normal">1307</span>
+<span class="normal">1308</span>
 <span class="normal">1309</span>
 <span class="normal">1310</span>
 <span class="normal">1311</span>
@@ -6035,11 +6038,7 @@ Accepted only at CASA's default, where CASA reads them, until #979:
 <span class="normal">1317</span>
 <span class="normal">1318</span>
 <span class="normal">1319</span>
-<span class="normal">1320</span>
-<span class="normal">1321</span>
-<span class="normal">1322</span>
-<span class="normal">1323</span>
-<span class="normal">1324</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">getantposalma</span><span class="p">(</span>
+<span class="normal">1320</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">getantposalma</span><span class="p">(</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">asdm</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -6125,7 +6124,11 @@ Accepted only at CASA's default, where CASA reads them, until #979:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1063</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1059</span>
+<span class="normal">1060</span>
+<span class="normal">1061</span>
+<span class="normal">1062</span>
+<span class="normal">1063</span>
 <span class="normal">1064</span>
 <span class="normal">1065</span>
 <span class="normal">1066</span>
@@ -6144,11 +6147,7 @@ Accepted only at CASA's default, where CASA reads them, until #979:
 <span class="normal">1079</span>
 <span class="normal">1080</span>
 <span class="normal">1081</span>
-<span class="normal">1082</span>
-<span class="normal">1083</span>
-<span class="normal">1084</span>
-<span class="normal">1085</span>
-<span class="normal">1086</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">immath</span><span class="p">(</span>
+<span class="normal">1082</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">immath</span><span class="p">(</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">mode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'evalexpr'</span><span class="p">,</span> <span class="s1">'lpoli'</span><span class="p">,</span> <span class="s1">'pola'</span><span class="p">,</span> <span class="s1">'poli'</span><span class="p">,</span> <span class="s1">'spix'</span><span class="p">,</span> <span class="s1">'tpoli'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'evalexpr'</span><span class="p">,</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">'immath_results.im'</span><span class="p">,</span>
@@ -6267,7 +6266,8 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 991</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 990</span>
+<span class="normal"> 991</span>
 <span class="normal"> 992</span>
 <span class="normal"> 993</span>
 <span class="normal"> 994</span>
@@ -6286,8 +6286,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1007</span>
 <span class="normal">1008</span>
 <span class="normal">1009</span>
-<span class="normal">1010</span>
-<span class="normal">1011</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">impbcor</span><span class="p">(</span>
+<span class="normal">1010</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">impbcor</span><span class="p">(</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">pbimage</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -6334,7 +6333,11 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1126</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1122</span>
+<span class="normal">1123</span>
+<span class="normal">1124</span>
+<span class="normal">1125</span>
+<span class="normal">1126</span>
 <span class="normal">1127</span>
 <span class="normal">1128</span>
 <span class="normal">1129</span>
@@ -6348,11 +6351,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1137</span>
 <span class="normal">1138</span>
 <span class="normal">1139</span>
-<span class="normal">1140</span>
-<span class="normal">1141</span>
-<span class="normal">1142</span>
-<span class="normal">1143</span>
-<span class="normal">1144</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">importfits</span><span class="p">(</span>
+<span class="normal">1140</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">importfits</span><span class="p">(</span>
     <span class="n">fitsimage</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">whichrep</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
@@ -6457,7 +6456,8 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1013</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1012</span>
+<span class="normal">1013</span>
 <span class="normal">1014</span>
 <span class="normal">1015</span>
 <span class="normal">1016</span>
@@ -6481,8 +6481,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1034</span>
 <span class="normal">1035</span>
 <span class="normal">1036</span>
-<span class="normal">1037</span>
-<span class="normal">1038</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">impv</span><span class="p">(</span>
+<span class="normal">1037</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">impv</span><span class="p">(</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">mode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'coords'</span><span class="p">,</span> <span class="s1">'length'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'coords'</span><span class="p">,</span>
@@ -6533,7 +6532,11 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1088</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1084</span>
+<span class="normal">1085</span>
+<span class="normal">1086</span>
+<span class="normal">1087</span>
+<span class="normal">1088</span>
 <span class="normal">1089</span>
 <span class="normal">1090</span>
 <span class="normal">1091</span>
@@ -6547,11 +6550,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1099</span>
 <span class="normal">1100</span>
 <span class="normal">1101</span>
-<span class="normal">1102</span>
-<span class="normal">1103</span>
-<span class="normal">1104</span>
-<span class="normal">1105</span>
-<span class="normal">1106</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imregrid</span><span class="p">(</span>
+<span class="normal">1102</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imregrid</span><span class="p">(</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">template</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">'get'</span><span class="p">,</span>
     <span class="n">output</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -6664,15 +6663,13 @@ Accepted only at CASA's default, where CASA reads them, until #977:
     <div class="doc doc-contents ">
 
         <p>Extract a CASA-style image section</p>
-<p>CASA's <code>imsubimage</code>: its parameters, defaults and return value.
-Accepted only at CASA's default, where CASA reads them, until #977:
-<code>region</code>, <code>stokes</code>, <code>mask</code>, <code>dropdeg</code>, <code>verbose</code>, <code>stretch</code>,
-<code>keepaxes</code>.</p>
+<p>CASA's <code>imsubimage</code>: its parameters, defaults and return value.</p>
 
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1040</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1039</span>
+<span class="normal">1040</span>
 <span class="normal">1041</span>
 <span class="normal">1042</span>
 <span class="normal">1043</span>
@@ -6689,11 +6686,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1054</span>
 <span class="normal">1055</span>
 <span class="normal">1056</span>
-<span class="normal">1057</span>
-<span class="normal">1058</span>
-<span class="normal">1059</span>
-<span class="normal">1060</span>
-<span class="normal">1061</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imsubimage</span><span class="p">(</span>
+<span class="normal">1057</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imsubimage</span><span class="p">(</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">box</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -6710,9 +6703,6 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="w">    </span><span class="sd">"""Extract a CASA-style image section</span>
 
 <span class="sd">    CASA's ``imsubimage``: its parameters, defaults and return value.</span>
-<span class="sd">    Accepted only at CASA's default, where CASA reads them, until #977:</span>
-<span class="sd">    ``region``, ``stokes``, ``mask``, ``dropdeg``, ``verbose``, ``stretch``,</span>
-<span class="sd">    ``keepaxes``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">imsubimage</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -6738,7 +6728,11 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1366</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1362</span>
+<span class="normal">1363</span>
+<span class="normal">1364</span>
+<span class="normal">1365</span>
+<span class="normal">1366</span>
 <span class="normal">1367</span>
 <span class="normal">1368</span>
 <span class="normal">1369</span>
@@ -6747,11 +6741,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1372</span>
 <span class="normal">1373</span>
 <span class="normal">1374</span>
-<span class="normal">1375</span>
-<span class="normal">1376</span>
-<span class="normal">1377</span>
-<span class="normal">1378</span>
-<span class="normal">1379</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">initweights</span><span class="p">(</span>
+<span class="normal">1375</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">initweights</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">wtmode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'delwtsp'</span><span class="p">,</span> <span class="s1">'nyq'</span><span class="p">,</span> <span class="s1">'ones'</span><span class="p">,</span> <span class="s1">'tsys'</span><span class="p">,</span> <span class="s1">'weight'</span><span class="p">,</span> <span class="s1">'tinttsys'</span><span class="p">,</span> <span class="s1">'sigma'</span><span class="p">,</span> <span class="s1">'delsigsp'</span><span class="p">]</span> <span class="o">=</span> <span class="s1">'nyq'</span><span class="p">,</span>
     <span class="n">tsystable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -6788,7 +6778,11 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1425</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1421</span>
+<span class="normal">1422</span>
+<span class="normal">1423</span>
+<span class="normal">1424</span>
+<span class="normal">1425</span>
 <span class="normal">1426</span>
 <span class="normal">1427</span>
 <span class="normal">1428</span>
@@ -6797,11 +6791,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1431</span>
 <span class="normal">1432</span>
 <span class="normal">1433</span>
-<span class="normal">1434</span>
-<span class="normal">1435</span>
-<span class="normal">1436</span>
-<span class="normal">1437</span>
-<span class="normal">1438</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">listcal</span><span class="p">(</span>
+<span class="normal">1434</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">listcal</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -6837,7 +6827,11 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1146</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1142</span>
+<span class="normal">1143</span>
+<span class="normal">1144</span>
+<span class="normal">1145</span>
+<span class="normal">1146</span>
 <span class="normal">1147</span>
 <span class="normal">1148</span>
 <span class="normal">1149</span>
@@ -6848,11 +6842,7 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <span class="normal">1154</span>
 <span class="normal">1155</span>
 <span class="normal">1156</span>
-<span class="normal">1157</span>
-<span class="normal">1158</span>
-<span class="normal">1159</span>
-<span class="normal">1160</span>
-<span class="normal">1161</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">msconvert</span><span class="p">(</span>
+<span class="normal">1157</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">msconvert</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">outputvis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -7052,14 +7042,14 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <p>CASA's <code>mstransform</code>: its parameters, defaults and return value.
 Accepted only at CASA's default, where CASA reads them, until #978:
 <code>createmms</code>, <code>separationaxis</code>, <code>numsubms</code>, <code>tileshape</code>,
-<code>correlation</code>, <code>realmodelcol</code>, <code>usewtspectrum</code>, <code>combinespws</code>,
-<code>hanning</code>, <code>regridms</code>, <code>mode</code>, <code>nchan</code>, <code>start</code>, <code>width</code>,
-<code>nspw</code>, <code>interpolation</code>, <code>phasecenter</code>, <code>restfreq</code>,
-<code>outframe</code>, <code>veltype</code>, <code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>,
-<code>timespan</code>, <code>maxuvwdistance</code>, <code>docallib</code>, <code>callib</code>,
-<code>douvcontsub</code>, <code>fitspw</code>, <code>fitorder</code>, <code>want_cont</code>,
-<code>denoising_lib</code>, <code>nthreads</code>, <code>niter</code>, <code>disableparallel</code>,
-<code>ddistart</code>, <code>monolithic_processing</code>, <code>reindex</code>.</p>
+<code>realmodelcol</code>, <code>usewtspectrum</code>, <code>combinespws</code>, <code>hanning</code>,
+<code>regridms</code>, <code>mode</code>, <code>nchan</code>, <code>start</code>, <code>width</code>, <code>nspw</code>,
+<code>interpolation</code>, <code>phasecenter</code>, <code>restfreq</code>, <code>outframe</code>,
+<code>veltype</code>, <code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>, <code>timespan</code>,
+<code>maxuvwdistance</code>, <code>docallib</code>, <code>callib</code>, <code>douvcontsub</code>,
+<code>fitspw</code>, <code>fitorder</code>, <code>want_cont</code>, <code>denoising_lib</code>,
+<code>nthreads</code>, <code>niter</code>, <code>disableparallel</code>, <code>ddistart</code>,
+<code>monolithic_processing</code>, <code>reindex</code>.</p>
 
 
             <details class="mkdocstrings-source">
@@ -7197,14 +7187,14 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="sd">    CASA's ``mstransform``: its parameters, defaults and return value.</span>
 <span class="sd">    Accepted only at CASA's default, where CASA reads them, until #978:</span>
 <span class="sd">    ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,</span>
-<span class="sd">    ``correlation``, ``realmodelcol``, ``usewtspectrum``, ``combinespws``,</span>
-<span class="sd">    ``hanning``, ``regridms``, ``mode``, ``nchan``, ``start``, ``width``,</span>
-<span class="sd">    ``nspw``, ``interpolation``, ``phasecenter``, ``restfreq``,</span>
-<span class="sd">    ``outframe``, ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``,</span>
-<span class="sd">    ``timespan``, ``maxuvwdistance``, ``docallib``, ``callib``,</span>
-<span class="sd">    ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,</span>
-<span class="sd">    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,</span>
-<span class="sd">    ``ddistart``, ``monolithic_processing``, ``reindex``.</span>
+<span class="sd">    ``realmodelcol``, ``usewtspectrum``, ``combinespws``, ``hanning``,</span>
+<span class="sd">    ``regridms``, ``mode``, ``nchan``, ``start``, ``width``, ``nspw``,</span>
+<span class="sd">    ``interpolation``, ``phasecenter``, ``restfreq``, ``outframe``,</span>
+<span class="sd">    ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,</span>
+<span class="sd">    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,</span>
+<span class="sd">    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,</span>
+<span class="sd">    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,</span>
+<span class="sd">    ``monolithic_processing``, ``reindex``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">mstransform</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -7230,7 +7220,11 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1440</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1436</span>
+<span class="normal">1437</span>
+<span class="normal">1438</span>
+<span class="normal">1439</span>
+<span class="normal">1440</span>
 <span class="normal">1441</span>
 <span class="normal">1442</span>
 <span class="normal">1443</span>
@@ -7281,11 +7275,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="normal">1488</span>
 <span class="normal">1489</span>
 <span class="normal">1490</span>
-<span class="normal">1491</span>
-<span class="normal">1492</span>
-<span class="normal">1493</span>
-<span class="normal">1494</span>
-<span class="normal">1495</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotbandpass</span><span class="p">(</span>
+<span class="normal">1491</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotbandpass</span><span class="p">(</span>
     <span class="n">caltable</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">antenna</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -7527,17 +7517,17 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1354</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1350</span>
+<span class="normal">1351</span>
+<span class="normal">1352</span>
+<span class="normal">1353</span>
+<span class="normal">1354</span>
 <span class="normal">1355</span>
 <span class="normal">1356</span>
 <span class="normal">1357</span>
 <span class="normal">1358</span>
 <span class="normal">1359</span>
-<span class="normal">1360</span>
-<span class="normal">1361</span>
-<span class="normal">1362</span>
-<span class="normal">1363</span>
-<span class="normal">1364</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotweather</span><span class="p">(</span>
+<span class="normal">1360</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotweather</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">seasonal_weight</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
     <span class="n">doPlot</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
@@ -7571,18 +7561,18 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1341</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1337</span>
+<span class="normal">1338</span>
+<span class="normal">1339</span>
+<span class="normal">1340</span>
+<span class="normal">1341</span>
 <span class="normal">1342</span>
 <span class="normal">1343</span>
 <span class="normal">1344</span>
 <span class="normal">1345</span>
 <span class="normal">1346</span>
 <span class="normal">1347</span>
-<span class="normal">1348</span>
-<span class="normal">1349</span>
-<span class="normal">1350</span>
-<span class="normal">1351</span>
-<span class="normal">1352</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">rerefant</span><span class="p">(</span>
+<span class="normal">1348</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">rerefant</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">tablein</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -7673,7 +7663,12 @@ and then raised here.</p>
 <span class="normal">191</span>
 <span class="normal">192</span>
 <span class="normal">193</span>
-<span class="normal">194</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span>
+<span class="normal">194</span>
+<span class="normal">195</span>
+<span class="normal">196</span>
+<span class="normal">197</span>
+<span class="normal">198</span>
+<span class="normal">199</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span>
     <span class="n">task</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">parameters</span><span class="p">:</span> <span class="n">SurfaceParameters</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">/</span><span class="p">,</span>
@@ -7710,6 +7705,11 @@ and then raised here.</p>
         <span class="n">resolved</span> <span class="o">=</span> <span class="n">TaskParameters</span><span class="o">.</span><span class="n">defaults</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="n">resolved_workspace</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">values</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">task</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"split"</span><span class="p">,</span> <span class="s2">"mstransform"</span><span class="p">):</span>
+            <span class="k">if</span> <span class="s2">"correlation"</span> <span class="ow">in</span> <span class="n">values</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">values</span><span class="p">[</span><span class="s2">"correlation"</span><span class="p">]</span> <span class="o">=</span> <span class="n">_ms_transform_correlation</span><span class="p">(</span><span class="n">values</span><span class="p">[</span><span class="s2">"correlation"</span><span class="p">])</span>
+                <span class="k">except</span> <span class="ne">AssertionError</span> <span class="k">as</span> <span class="n">error</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">error</span><span class="p">))</span> <span class="kn">from</span><span class="w"> </span><span class="nn">error</span>
             <span class="k">for</span> <span class="n">selector</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"array"</span><span class="p">,</span> <span class="s2">"uvrange"</span><span class="p">,</span> <span class="s2">"feed"</span><span class="p">):</span>
                 <span class="k">if</span> <span class="n">selector</span> <span class="ow">in</span> <span class="n">values</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">values</span><span class="p">[</span><span class="n">selector</span><span class="p">],</span> <span class="nb">str</span><span class="p">):</span>
                     <span class="k">try</span><span class="p">:</span>
@@ -7741,7 +7741,11 @@ and then raised here.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1269</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1265</span>
+<span class="normal">1266</span>
+<span class="normal">1267</span>
+<span class="normal">1268</span>
+<span class="normal">1269</span>
 <span class="normal">1270</span>
 <span class="normal">1271</span>
 <span class="normal">1272</span>
@@ -7774,11 +7778,7 @@ and then raised here.</p>
 <span class="normal">1299</span>
 <span class="normal">1300</span>
 <span class="normal">1301</span>
-<span class="normal">1302</span>
-<span class="normal">1303</span>
-<span class="normal">1304</span>
-<span class="normal">1305</span>
-<span class="normal">1306</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">simalma</span><span class="p">(</span>
+<span class="normal">1302</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">simalma</span><span class="p">(</span>
     <span class="n">project</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'sim'</span><span class="p">,</span>
     <span class="n">dryrun</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">skymodel</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -7841,7 +7841,11 @@ Accepted only at CASA's default, where CASA reads them, until #980:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1163</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1159</span>
+<span class="normal">1160</span>
+<span class="normal">1161</span>
+<span class="normal">1162</span>
+<span class="normal">1163</span>
 <span class="normal">1164</span>
 <span class="normal">1165</span>
 <span class="normal">1166</span>
@@ -7877,11 +7881,7 @@ Accepted only at CASA's default, where CASA reads them, until #980:
 <span class="normal">1196</span>
 <span class="normal">1197</span>
 <span class="normal">1198</span>
-<span class="normal">1199</span>
-<span class="normal">1200</span>
-<span class="normal">1201</span>
-<span class="normal">1202</span>
-<span class="normal">1203</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">simanalyze</span><span class="p">(</span>
+<span class="normal">1199</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">simanalyze</span><span class="p">(</span>
     <span class="n">project</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'sim'</span><span class="p">,</span>
     <span class="n">image</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'default'</span><span class="p">,</span>
@@ -8057,7 +8057,11 @@ Accepted only at CASA's default, where CASA reads them, until #980:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1326</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1322</span>
+<span class="normal">1323</span>
+<span class="normal">1324</span>
+<span class="normal">1325</span>
+<span class="normal">1326</span>
 <span class="normal">1327</span>
 <span class="normal">1328</span>
 <span class="normal">1329</span>
@@ -8066,11 +8070,7 @@ Accepted only at CASA's default, where CASA reads them, until #980:
 <span class="normal">1332</span>
 <span class="normal">1333</span>
 <span class="normal">1334</span>
-<span class="normal">1335</span>
-<span class="normal">1336</span>
-<span class="normal">1337</span>
-<span class="normal">1338</span>
-<span class="normal">1339</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">smoothcal</span><span class="p">(</span>
+<span class="normal">1335</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">smoothcal</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">tablein</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -8104,7 +8104,7 @@ Accepted only at CASA's default, where CASA reads them, until #980:
         <p>Create a selected MeasurementSet subset, equivalent to CASA split.</p>
 <p>CASA's <code>split</code>: its parameters, defaults and return value.
 Accepted only at CASA's default, where CASA reads them, until #978:
-<code>keepmms</code>, <code>correlation</code>, <code>timebin</code>, <code>combine</code>.</p>
+<code>keepmms</code>, <code>timebin</code>, <code>combine</code>.</p>
 
 
             <details class="mkdocstrings-source">
@@ -8146,7 +8146,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
     <span class="n">spw</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">scan</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">antenna</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
-    <span class="n">correlation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
+    <span class="n">correlation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">timerange</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">intent</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">array</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -8165,7 +8165,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
 <span class="sd">    CASA's ``split``: its parameters, defaults and return value.</span>
 <span class="sd">    Accepted only at CASA's default, where CASA reads them, until #978:</span>
-<span class="sd">    ``keepmms``, ``correlation``, ``timebin``, ``combine``.</span>
+<span class="sd">    ``keepmms``, ``timebin``, ``combine``.</span>
 <span class="sd">    """</span>
     <span class="k">return</span> <span class="n">_call_casa</span><span class="p">(</span><span class="n">split</span><span class="p">,</span> <span class="nb">locals</span><span class="p">())</span>
 </code></pre></div></td></tr></table></div>
@@ -8191,7 +8191,11 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1381</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1377</span>
+<span class="normal">1378</span>
+<span class="normal">1379</span>
+<span class="normal">1380</span>
+<span class="normal">1381</span>
 <span class="normal">1382</span>
 <span class="normal">1383</span>
 <span class="normal">1384</span>
@@ -8218,11 +8222,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="normal">1405</span>
 <span class="normal">1406</span>
 <span class="normal">1407</span>
-<span class="normal">1408</span>
-<span class="normal">1409</span>
-<span class="normal">1410</span>
-<span class="normal">1411</span>
-<span class="normal">1412</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">statwt</span><span class="p">(</span>
+<span class="normal">1408</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">statwt</span><span class="p">(</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">selectdata</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
@@ -8559,7 +8559,11 @@ Accepted only at CASA's default, where CASA reads them, until #938:
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1205</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1201</span>
+<span class="normal">1202</span>
+<span class="normal">1203</span>
+<span class="normal">1204</span>
+<span class="normal">1205</span>
 <span class="normal">1206</span>
 <span class="normal">1207</span>
 <span class="normal">1208</span>
@@ -8598,11 +8602,7 @@ Accepted only at CASA's default, where CASA reads them, until #938:
 <span class="normal">1241</span>
 <span class="normal">1242</span>
 <span class="normal">1243</span>
-<span class="normal">1244</span>
-<span class="normal">1245</span>
-<span class="normal">1246</span>
-<span class="normal">1247</span>
-<span class="normal">1248</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">tsdimaging</span><span class="p">(</span>
+<span class="normal">1244</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">tsdimaging</span><span class="p">(</span>
     <span class="n">infiles</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">[],</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>

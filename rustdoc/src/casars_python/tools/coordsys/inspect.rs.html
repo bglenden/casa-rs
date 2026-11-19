@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a>
 <a href=#58 id=58 data-nosnippet>58</a><span class="kw">fn </span>units(coordinate: <span class="kw-2">&amp;</span>CoordinateModel) -&gt; Vec&lt;String&gt; {
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">match </span>coordinate {
-<a href=#60 id=60 data-nosnippet>60</a>        CoordinateModel::Direction(direction) =&gt; direction.world_units().to_vec(),
+<a href=#60 id=60 data-nosnippet>60</a>        CoordinateModel::Direction(direction) =&gt; direction.visible_world_units(),
 <a href=#61 id=61 data-nosnippet>61</a>        <span class="kw">_ </span>=&gt; coordinate.axis_units(),
 <a href=#62 id=62 data-nosnippet>62</a>    }
 <a href=#63 id=63 data-nosnippet>63</a>}

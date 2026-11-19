@@ -2379,7 +2379,7 @@
 <a href=#2379 id=2379 data-nosnippet>2379</a>    }
 <a href=#2380 id=2380 data-nosnippet>2380</a>}
 <a href=#2381 id=2381 data-nosnippet>2381</a>
-<a href=#2382 id=2382 data-nosnippet>2382</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, T: ImageExprValue + PartialOrd&gt; MaskExprBuilder&lt;<span class="lifetime">'a</span>, T&gt; {
+<a href=#2382 id=2382 data-nosnippet>2382</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, T: ImageExprValue&gt; MaskExprBuilder&lt;<span class="lifetime">'a</span>, T&gt; {
 <a href=#2383 id=2383 data-nosnippet>2383</a>    <span class="doccomment">/// Compiles a borrowed lazy boolean mask into an owned execution form.
 <a href=#2384 id=2384 data-nosnippet>2384</a>    </span><span class="kw">pub fn </span>compile(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;MaskExpression&lt;T&gt;, ImageError&gt; {
 <a href=#2385 id=2385 data-nosnippet>2385</a>        <span class="kw">let </span><span class="kw-2">mut </span>ctx = CompileCtx::default();
