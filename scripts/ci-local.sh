@@ -10,13 +10,13 @@ Local reproduction helper for the minimal GitHub Actions CI environment.
 
 Commands:
   build           Build the local ci-minimal image
-  lint_test       Run the lint_test job commands in the container
+  lint_test       Run broad Rust lint and test commands in the container
   python_package  Run the python_package job commands in the container
   smoke           Run the smoke tag job commands in the container
   suite_install   Run the suite_install job commands in the container (the
                   checkout stays in place; CI moves it aside)
   coverage        Run the coverage tag job commands in the container
-  pr              Run the pull request CI jobs locally
+  pr              Run the broad Rust, Python package and installer jobs locally
   tag             Run the version-tag CI jobs locally
   all             Alias for pr
   shell           Open an interactive shell in the container
