@@ -4,7 +4,7 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{ImageInterface, ImagePixel, image::image_history_rows};
-use casa_types::{RecordValue, Value};
+use casa_types::RecordValue;
 use ndarray::{ArrayD, IxDyn, SliceInfoElem, Zip};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
