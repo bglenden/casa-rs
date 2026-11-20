@@ -470,7 +470,7 @@ def mstransform(
     preaverage: bool = False,
     timeaverage: bool = False,
     timebin: str = '0s',
-    timespan: ParameterData = '',
+    timespan: str | list[str] | tuple[str, ...] = '',
     maxuvwdistance: float = 0.0,
     docallib: bool = False,
     callib: StrPath = '',
@@ -521,7 +521,7 @@ def split(
     keepflags: bool = True,
     width: int | str | list[int] | tuple[int, ...] = 1,
     timebin: str = '0s',
-    combine: ParameterData = '',
+    combine: str | list[str] | tuple[str, ...] = '',
     *,
     msselect: str = '',
 ) -> Any:

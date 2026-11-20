@@ -13537,7 +13537,7 @@
           "projections": {
             "cli": {"flags": ["--timespan"], "metavar": "AXES"},
             "provider": {"field": "timespan"},
-            "python": {"name": "timespan"},
+            "python": {"name": "timespan", "type_hint": "str | list[str] | tuple[str, ...]"},
             "presentation": {"label": "Time Span", "group": "Time", "advanced": true}
           }
         },
@@ -14068,7 +14068,7 @@
           "projections": {
             "cli": {"flags": ["--combine"], "metavar": "AXES"},
             "provider": {"field": "combine"},
-            "python": {"name": "combine"},
+            "python": {"name": "combine", "type_hint": "str | list[str] | tuple[str, ...]"},
             "presentation": {"label": "Combine", "group": "Averaging", "advanced": true}
           }
         },
