@@ -12260,7 +12260,12 @@ impl TiledArrayStorage {
         let data_path = tsm_data_path(table_path, layout.dm_seq_nr, 0);
         let header_path = table_path.join(format!("table.f{}", layout.dm_seq_nr));
         // casacore packs boolean tiles LSB first, padding to a byte boundary.
-        let fill = if value { u8::MAX } else { 0 };
+        // A one-pixel tile is also read as one unpacked Rust bool.
+        let fill = match (value, layout.tile_elements) {
+            (false, _) => 0,
+            (true, 1) => 1,
+            (true, _) => u8::MAX,
+        };
         layout.write_new_data_file(&data_path, fill)?;
         std::fs::write(header_path, &layout.header)?;
         Ok(())
@@ -14240,6 +14245,17 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn uniform_boolean_table_uses_canonical_values_for_single_pixel_tiles() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mask");
+        let layout =
+            TiledArrayStorageLayout::new(&[3], &[1], PrimitiveType::Bool, false, 0, "values", 4)
+                .unwrap();
+        TiledArrayStorage::create_filled_bool_table(&path, &layout, true).unwrap();
+        assert_eq!(std::fs::read(tsm_data_path(&path, 0, 0)).unwrap(), [1; 3]);
     }
 
     #[test]
