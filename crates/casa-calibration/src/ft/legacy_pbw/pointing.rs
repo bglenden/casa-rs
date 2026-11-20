@@ -5,7 +5,7 @@ use std::path::Path;
 
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
-use casa_tables::{Table, TableOptions};
+use casa_tables::{Table, TableOptions, add_directory};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
@@ -19,7 +19,7 @@ pub(crate) struct LegacyEpOffsets {
 }
 
 impl LegacyEpOffsets {
-    pub(super) fn for_selection(
+    pub(in crate::ft) fn for_selection(
         path: &Path,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
@@ -29,15 +29,23 @@ impl LegacyEpOffsets {
             .first()
             .ok_or_else(|| invalid("no rows selected for legacy pointing offsets"))?;
         let offsets = Self::open(path, ms.antenna()?.row_count(), first.spectral_window_id)?;
+        offsets.check_selection(selected)?;
+        Ok(offsets)
+    }
+
+    pub(in crate::ft) fn check_selection(&self, selected: &ResolvedMsSelection) -> MsResult<()> {
+        let Some(first) = selected.selected_rows.first() else {
+            return Ok(());
+        };
         for row in &selected.selected_rows {
             if row.spectral_window_id != first.spectral_window_id {
                 return Err(invalid(
                     "legacy pointing offsets for this spectral-window layout are pending #1520",
                 ));
             }
-            offsets.baseline_offset([row.antenna1_id, row.antenna2_id])?;
+            self.baseline_offset([row.antenna1_id, row.antenna2_id])?;
         }
-        Ok(offsets)
+        Ok(())
     }
 
     fn open(path: &Path, antennas: usize, spw: i32) -> MsResult<Self> {
@@ -49,7 +57,12 @@ impl LegacyEpOffsets {
                 "a legacy EP Jones pointing table with solutions is required",
             ));
         }
-        let description = Table::open(TableOptions::new(path.join("CAL_DESC")))?;
+        let description_name = table
+            .keywords()
+            .get("CAL_DESC")
+            .and_then(Value::as_table_ref)
+            .ok_or_else(|| invalid("legacy EP table has no CAL_DESC table link"))?;
+        let description = Table::open(TableOptions::new(add_directory(description_name, path)))?;
         if description.row_count() != 1 {
             return Err(invalid(
                 "legacy pointing offsets for this spectral-window layout are pending #1520",
@@ -134,6 +147,11 @@ impl LegacyEpOffsets {
                 *slot = Some(offset);
             }
         }
+        if offsets.values.iter().any(Option::is_none) {
+            return Err(invalid(
+                "legacy EP table does not match the MeasurementSet antenna count",
+            ));
+        }
         Ok(offsets)
     }
 
@@ -155,7 +173,7 @@ impl LegacyEpOffsets {
         })
     }
 
-    pub(super) fn save(self, record: &mut RecordValue) {
+    pub(super) fn save(&self, record: &mut RecordValue) {
         let mut packed = ArrayD::zeros(IxDyn(&[3, self.values.len()]).f());
         for (antenna, offset) in self.values.iter().enumerate() {
             if let Some([l, m]) = offset {

@@ -33,11 +33,11 @@ pub(super) fn prepare_model(
     selected: &ResolvedMsSelection,
     path: &Path,
     geometry: &PredictionGeometry,
-    options: (&ImagerLegacyPbWOptions, Option<&Path>),
+    options: (&ImagerLegacyPbWOptions, Option<&LegacyEpOffsets>),
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
-    let (options, pointing_table) = options;
+    let (options, pointing) = options;
     if options.w_planes > 1 {
         return Err(invalid(
             "this legacy pbwproject configuration is pending #1520",
@@ -54,13 +54,6 @@ pub(super) fn prepare_model(
             "legacy pbmosaic prediction with several fields is pending #1520",
         ));
     }
-    let pointing = if options.apply_pointing_offsets {
-        let path = pointing_table
-            .ok_or_else(|| invalid("epjtablename is required to apply legacy pointing offsets"))?;
-        Some(LegacyEpOffsets::for_selection(path, ms, selected)?)
-    } else {
-        None
-    };
     let model = PagedImage::<f32>::open(path).map_err(invalid)?;
     let (shape, increment, coordinates) = model_geometry(&model)?;
     let [side, _, _, _] = shape;

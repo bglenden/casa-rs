@@ -12,9 +12,10 @@ import casatasks
 from casatools import calibrater, imager, table
 import numpy as np
 
+from calibration_ft_oracle import component, coordinates
 from gaincal_oracle import relative_rms
 from imager_legacy_pbw_oracle import (
-    cache_contents, data, ft, make_input, read_virtual, recipe, reject_recipe,
+    cache_contents, configured_imager, data, ft, make_input, read_virtual, recipe, reject_recipe,
 )
 
 
@@ -34,11 +35,13 @@ def solve(dataset, model, cache, output):
     assert reader.done()
 
 
-def scaled_table(source, output, scale, factory):
+def scaled_table(source, output, scale, factory, receptors=slice(None)):
     shutil.copytree(source, output)
     copied = factory()
     assert copied.open(str(output), nomodify=False)
-    assert copied.putcol('GAIN', copied.getcol('GAIN') * scale)
+    gains = copied.getcol('GAIN')
+    gains[receptors] *= scale
+    assert copied.putcol('GAIN', gains)
     assert copied.done()
     assert (output / 'CAL_DESC' / 'table.dat').is_file()
 
@@ -94,6 +97,10 @@ def pair(root, dataset, model, cache, offsets, machine, errors, label, *, rotate
         assert np.any(expected[:, 0] != prior[:, 0])
         np.testing.assert_array_equal(expected[:, 1:], prior[:, 1:])
         np.testing.assert_array_equal(observed[:, 1:], prior[:, 1:])
+        for column in ('DATA', 'FLAG', 'FLAG_ROW', 'WEIGHT'):
+            before = data(dataset, column)
+            np.testing.assert_array_equal(data(pinned, column), before)
+            np.testing.assert_array_equal(data(actual, column), before)
     if rotate:
         compare(observed[..., late], expected[..., late], f'{label}-late', errors)
     return expected, observed
@@ -130,7 +137,7 @@ def saved(root, dataset, model, cache, offsets, machine, expected, errors):
         moved_cache.rename(cache)
 
 
-def refusals(root, dataset, model, cache):
+def refusals(root, dataset, model, cache, baseline):
     from casars.tools import imager as native
 
     for label, factory in (('casa', imager), ('native', native)):
@@ -145,7 +152,94 @@ def refusals(root, dataset, model, cache):
                ep_table=path, accepts=False)
             np.testing.assert_array_equal(data(target, 'MODEL_DATA'), prior)
             shutil.rmtree(target)
+        target = root / f'{label}-ignored-missing.ms'
+        make_input(dataset, target, scratch=True)
+        ft(factory, target, model, cache, scratch=True, pointing=False,
+           ep_table=root / 'missing.EP')
+        np.testing.assert_array_equal(data(target, 'MODEL_DATA'), baseline[label])
+        shutil.rmtree(target)
     print('empty, missing and non-calibration tables preserve MODEL_DATA', flush=True)
+
+
+def review_lifecycle(root, dataset, model, cache, offsets, expected, errors):
+    from casars.tools import imager as native
+
+    point = root / 'component.cl'
+    component(point, coordinates(dataset), 2.)
+    missing = root / 'missing.EP'
+    incomplete = root / 'incomplete.EP'
+    shutil.copytree(offsets, incomplete)
+    editor = table()
+    assert editor.open(str(incomplete), nomodify=False)
+    antennas = editor.getcol('ANTENNA1')
+    assert editor.removerows(np.flatnonzero(antennas == antennas.max())) and editor.done()
+    for engine, factory in (('casa', imager), ('native', native)):
+        for scratch in (True, False):
+            target = root / f'{engine}-preserved-{scratch}.ms'
+            make_input(dataset, target, scratch=scratch)
+            ft(factory, target, model, cache, scratch=scratch)
+            before = data(target, 'MODEL_DATA') if scratch else recipe(target)
+            tool = configured_imager(factory, target, cache, scratch=scratch,
+                                     pointing=True, ep_table=missing)
+            assert not tool.ft(complist=str(point)) and tool.done()
+            after = data(target, 'MODEL_DATA') if scratch else recipe(target)
+            np.testing.assert_equal(after, before)
+            if not scratch:
+                ft(factory, target, model, cache, scratch=False, baseline='0&1',
+                   pointing=True, ep_table=incomplete, accepts=False)
+                np.testing.assert_equal(recipe(target), before)
+            shutil.rmtree(target)
+
+        target = root / f'{engine}-working.ms'
+        make_input(dataset, target, scratch=True)
+        tool = configured_imager(factory, target, cache, scratch=True,
+                                 pointing=True, ep_table=offsets)
+        assert tool.ft(complist=str(point))
+        assert np.abs(data(target, 'MODEL_DATA')).max() > 1.
+        assert tool.ft(str(model))
+        before = data(target, 'MODEL_DATA')
+        moved = offsets.rename(root / 'temporarily-moved.EP')
+        try:
+            assert tool.setvp(dovp=False)
+            assert tool.ft(str(model))
+            np.testing.assert_array_equal(data(target, 'MODEL_DATA'), before)
+            assert tool.selectvis(field=0)
+            assert not tool.ft(str(model))
+            np.testing.assert_array_equal(data(target, 'MODEL_DATA'), before)
+        finally:
+            moved.rename(offsets)
+            assert tool.done()
+        shutil.rmtree(target)
+
+    linked = root / 'linked.EP'
+    shutil.copytree(offsets, linked)
+    assert editor.open(str(linked), nomodify=False)
+    description = (linked / 'CAL_DESC').rename(root / 'separate-cal-description')
+    assert editor.putkeyword('CAL_DESC', f'Table: {description}') and editor.done()
+    observed, _ = pair(root / 'linked', dataset, model, cache, linked, 'pbwproject', errors,
+                       'linked-description')
+    np.testing.assert_array_equal(observed, expected)
+
+    shuffled = root / 'shuffled.EP'
+    assert editor.open(str(offsets))
+    sorted_rows = editor.query('TRUE', sortlist='ANTENNA1 DESC')
+    copied = sorted_rows.copy(str(shuffled), deep=True)
+    assert copied.done() and sorted_rows.done() and editor.done()
+    observed, _ = pair(root / 'shuffled', dataset, model, cache, shuffled, 'pbwproject', errors,
+                       'shuffled-antenna-rows')
+    np.testing.assert_array_equal(observed, expected)
+
+    gapped = root / 'gapped.EP'
+    shutil.copytree(offsets, gapped)
+    assert editor.open(str(gapped), nomodify=False)
+    assert editor.removerows(np.flatnonzero(antennas == 1)) and editor.done()
+    target = root / 'gapped.ms'
+    make_input(dataset, target, scratch=True)
+    ft(native, target, model, cache, scratch=True)
+    prior = data(target, 'MODEL_DATA')
+    ft(native, target, model, cache, scratch=True, pointing=True, ep_table=gapped, accepts=False)
+    np.testing.assert_equal(data(target, 'MODEL_DATA'), prior)
+    print('component refusal, complete antenna coverage and live imager lifetime verified', flush=True)
 
 
 def run(root, dataset, model, imported_cache):
@@ -164,8 +258,10 @@ def run(root, dataset, model, imported_cache):
         solve(training, model, cache, offsets)
         shutil.rmtree(training)
         zero, reduced = work / 'zero.EP', work / 'reduced-native.EP'
+        other_hand = work / 'other-hand-native.EP'
         scaled_table(offsets, zero, 0., table)
         scaled_table(offsets, reduced, .03, native_table)
+        scaled_table(offsets, other_hand, 0., native_table, receptors=[1, 3])
         for label, values, rotate in (
             ('disabled', None, False), ('zero', zero, False),
             ('reduced', reduced, False), ('solved', offsets, False),
@@ -185,16 +281,23 @@ def run(root, dataset, model, imported_cache):
                     errors[f'{label}-change'] = change
                 if label == 'solved':
                     saved(Path(case), dataset, model, cache, offsets, 'pbwproject', expected, errors)
+                    solved, native_solved = expected, observed
 
         with TemporaryDirectory(dir=work) as case:
-            pair(Path(case) / 'channel', dataset, model, cache, offsets, 'pbwproject',
+            case = Path(case)
+            pair(case / 'channel', dataset, model, cache, offsets, 'pbwproject',
                  errors, 'selected-channel', spw='0:0')
+            expected, observed = pair(case / 'other-hand', dataset, model, cache, other_hand,
+                                      'pbwproject', errors, 'unused-receptor')
+            np.testing.assert_array_equal(expected, solved)
+            np.testing.assert_array_equal(observed, native_solved)
         with TemporaryDirectory(dir=work) as case:
             case = Path(case)
             expected, _ = pair(case / 'mosaic', dataset, model, cache, offsets, 'pbmosaic',
                                errors, 'pbmosaic-solved')
             saved(case, dataset, model, cache, offsets, 'pbmosaic', expected, errors)
-        refusals(work, dataset, model, cache)
+        refusals(work, dataset, model, cache, {'casa': baseline, 'native': native_baseline})
+        review_lifecycle(work, dataset, model, cache, offsets, solved, errors)
     (root / 'results.json').write_text(json.dumps(errors, indent=2) + '\n')
 
 
