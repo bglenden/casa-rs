@@ -35,7 +35,7 @@ pub struct CpuBackend {
     norms: Vec<Complex64>,
     /// One grid polarization's gathers by Mueller plane, each summed over
     /// the terms, for the visibility polarizations that share them.
-    gathered: Vec<(u8, Complex64)>,
+    gathered: Vec<(u8, Complex64, Complex64)>,
     residual: Vec<Complex32>,
     /// A block's predictions, or its residual values at native channels.
     batch: Vec<Complex32>,
@@ -369,6 +369,11 @@ impl CpuBackend {
         let origin_shift = u8::from(
             placement.gradient != [0.0; 2] && cf.pointing_origin_shift(placement.cf, false),
         );
+        let rotated_pointing = if placement.gradient == [0.; 2] {
+            None
+        } else {
+            cf.prediction_pointing_rotation(placement.cf)
+        };
         let table = routes[usize::from(w_positive)];
         let plane = layout.planes().local(placement.plane);
         spectral_powers(powers, placement.spectral, terms.len());
@@ -381,33 +386,49 @@ impl CpuBackend {
                 let Some(mueller) = *mueller_plane else {
                     continue;
                 };
+                let (sum, norm) =
+                    if let Some((_, sum, norm)) = gathered.iter().find(|(m, _, _)| *m == mueller) {
+                        (*sum, *norm)
+                    } else {
+                        let mut sum = Complex64::default();
+                        let mut norm = if *divide && rotated_pointing.is_none() {
+                            kernel::norm(&taps, location, mueller, !conjugate)
+                        } else {
+                            Complex64::default()
+                        };
+                        for (power, term) in powers.iter().zip(terms.clone()) {
+                            let offset = layout.block_offset(plane, gpol, term);
+                            let grid = &cells[offset..offset + layout.block_cells()];
+                            if let Some(rotation) = rotated_pointing {
+                                let (value, kernel_sum) = kernel::gather_rotated_pointing::<T>(
+                                    grid,
+                                    layout.tile(),
+                                    location,
+                                    &taps,
+                                    mueller,
+                                    conjugate,
+                                    (placement.gradient, rotation),
+                                );
+                                sum += value * *power;
+                                norm = kernel_sum;
+                            } else {
+                                sum += kernel::gather::<T>(
+                                    grid,
+                                    layout.tile(),
+                                    location,
+                                    &taps,
+                                    mueller,
+                                    conjugate,
+                                    (placement.gradient, origin_shift),
+                                ) * *power;
+                            }
+                        }
+                        gathered.push((mueller, sum, norm));
+                        (sum, norm)
+                    };
                 if *divide {
-                    // `accumulateFromGrid.inc` conjugates the prediction tap
-                    // for w ≤ 0 and sums that same tap into its norm: the
-                    // forward norm carries the opposite conjugation from
-                    // the adjoint's (`w_positive`), as the gather does.
-                    norms[vpol] += kernel::norm(&taps, location, mueller, !conjugate);
+                    norms[vpol] += norm;
                 }
-                let sum = if let Some((_, sum)) = gathered.iter().find(|(m, _)| *m == mueller) {
-                    *sum
-                } else {
-                    let mut sum = Complex64::default();
-                    for (power, term) in powers.iter().zip(terms.clone()) {
-                        let offset = layout.block_offset(plane, gpol, term);
-                        let grid = &cells[offset..offset + layout.block_cells()];
-                        sum += kernel::gather::<T>(
-                            grid,
-                            layout.tile(),
-                            location,
-                            &taps,
-                            mueller,
-                            conjugate,
-                            (placement.gradient, origin_shift),
-                        ) * *power;
-                    }
-                    gathered.push((mueller, sum));
-                    sum
-                };
                 prediction[vpol] += sum;
             }
         }

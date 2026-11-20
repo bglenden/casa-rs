@@ -58,6 +58,10 @@ coordinate.
 Use `cs.setunits(values)` to change the declared units and rescale the
 coordinate values. On a selected linear or tabular coordinate,
 `overwrite=True` relabels units while keeping the numeric values.
+Use `cs.setrestfrequency(values, which=0, append=False)` to choose the active
+spectral rest frequency. Floating-point inputs use the coordinate's unit.
+Pass quantity strings or a quantity record to supply units explicitly.
+With `append=True`, `which` indexes the combined old and new list.
 
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.

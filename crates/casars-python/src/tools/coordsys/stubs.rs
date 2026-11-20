@@ -161,17 +161,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None, which = None, append = None), text_signature = "($self, value=[], which=0, append=False)")]
-    fn setrestfrequency(
-        &self,
-        value: Option<&Bound<'_, PyAny>>,
-        which: Option<&Bound<'_, PyAny>>,
-        append: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setrestfrequency")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (refcode = None, restfreq = None, frequencies = None, doppler = None, velocities = None), text_signature = "($self, refcode='', restfreq=[], frequencies=[], doppler='', velocities=[])")]
     fn setspectral(
         &self,
