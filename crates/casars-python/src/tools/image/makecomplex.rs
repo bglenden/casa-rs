@@ -118,7 +118,7 @@ impl PyImageTool {
                 if !matches!(*real, ImageHandle::Float(_) | ImageHandle::Double(_)) {
                     return Err(raised("The attached image must be float valued"));
                 }
-                attachment.require_lock(&mut real, casa_tables::LockType::Read)?;
+                attachment.require_pixel_read_lock(&mut real)?;
                 let imaginary = ImageHandle::open_read(Path::new(imag)).map_err(raised)?;
                 if !matches!(imaginary, ImageHandle::Float(_) | ImageHandle::Double(_)) {
                     return Err(raised(format!("{imag} does not have supported real valued pixels")));

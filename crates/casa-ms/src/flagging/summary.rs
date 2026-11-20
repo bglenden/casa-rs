@@ -17,8 +17,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ChannelSelection, FlagDataMode, FlagDataReport, FlaggingError, clone_flag_matrix,
-    data_description_spw_map, display_ms_path, load_i32_cells,
+    ChannelSelection, CorrelationSelection, FlagDataMode, FlagDataReport, FlaggingError,
+    clone_flag_matrix, data_description_spw_map, display_ms_path, load_i32_cells,
 };
 use crate::listobs::stokes_name;
 use crate::ms::MeasurementSet;
@@ -166,15 +166,19 @@ impl FlagSummaryBreakdown {
 }
 
 /// The names and windows a row's ids resolve to.
-struct Lookup {
+struct Lookup<'a> {
     antenna: Vec<String>,
     field: Vec<String>,
     ddid_to_spw: BTreeMap<i32, i32>,
     ddid_correlations: BTreeMap<i32, Vec<String>>,
+    correlation_selection: Option<&'a CorrelationSelection>,
 }
 
-impl Lookup {
-    fn read(ms: &MeasurementSet) -> Result<Self, FlaggingError> {
+impl<'a> Lookup<'a> {
+    fn read(
+        ms: &MeasurementSet,
+        correlation_selection: Option<&'a CorrelationSelection>,
+    ) -> Result<Self, FlaggingError> {
         let failed = |what: &str, source: crate::MsError| FlaggingError::MutateFlags {
             path: display_ms_path(ms),
             reason: format!("read {what}: {source}"),
@@ -213,6 +217,7 @@ impl Lookup {
             field,
             ddid_to_spw: data_description_spw_map(ms)?,
             ddid_correlations,
+            correlation_selection,
         })
     }
 
@@ -258,9 +263,14 @@ pub(super) fn report(
     ms: &MeasurementSet,
     rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    correlations: Option<&CorrelationSelection>,
     options: FlagSummaryOptions,
 ) -> Result<FlagDataReport, FlaggingError> {
-    let summary = summarize(ms, rows, channel_selections, options)?;
+    if correlations.is_some_and(|selection| !selection.has_setup()) {
+        // With no matching polarization setup CASA cannot create the agent.
+        return Err(FlaggingError::MissingCorrelationSummary);
+    }
+    let summary = summarize(ms, rows, channel_selections, correlations, options)?;
     let report = FlagDataReport {
         mode: FlagDataMode::Summary,
         selected_rows: rows.len(),
@@ -289,14 +299,18 @@ fn summarize(
     ms: &MeasurementSet,
     rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    correlations: Option<&CorrelationSelection>,
     options: FlagSummaryOptions,
 ) -> Result<FlagSummaryBreakdown, FlaggingError> {
-    let lookup = Lookup::read(ms)?;
+    let lookup = Lookup::read(ms, correlations)?;
     let mut summary = FlagSummaryBreakdown::with_options(options);
     let mut fields = options.fieldcnt.then(BTreeMap::new);
     for block in rows.chunks(BLOCK_ROWS) {
         let ids = BlockIds::read(ms, block)?;
         for (slot, &row) in block.iter().enumerate() {
+            if correlations.is_some_and(|selection| selection.planes(ids.ddid[slot]).is_empty()) {
+                continue;
+            }
             let target = match &mut fields {
                 Some(fields) => fields
                     .entry(lookup.field_name(ms, row, ids.field[slot])?)
@@ -336,7 +350,7 @@ fn summarize(
 
 fn add_row(
     ms: &MeasurementSet,
-    lookup: &Lookup,
+    lookup: &Lookup<'_>,
     ids: &BlockIds,
     slot: usize,
     row: usize,
@@ -360,8 +374,15 @@ fn add_row(
         None => (0..channels).collect(),
     };
     let names = lookup.ddid_correlations.get(&ddid);
+    let planes = lookup
+        .correlation_selection
+        .map(|selection| selection.planes(ddid));
+    let selected_planes = || {
+        (0..correlations)
+            .filter(|plane| planes.is_none_or(|planes| planes.binary_search(plane).is_ok()))
+    };
     let mut row_counts = FlagCounts::default();
-    for correlation in 0..correlations {
+    for correlation in selected_planes() {
         let flagged = selected
             .iter()
             .filter(|&&channel| flags[[correlation, channel]])
@@ -387,9 +408,10 @@ fn add_row(
         row_counts.add(counts);
     }
     if let Some(spw_channel) = &mut summary.spw_channel {
+        let selected_correlation_count = selected_planes().count() as u64;
         // CASA indexes the selected channel vector within each window.
         for (index, &channel) in selected.iter().enumerate() {
-            let flagged = (0..correlations)
+            let flagged = selected_planes()
                 .filter(|&correlation| flags[[correlation, channel]])
                 .count() as u64;
             spw_channel
@@ -397,7 +419,7 @@ fn add_row(
                 .or_default()
                 .add(FlagCounts {
                     flagged,
-                    total: correlations as u64,
+                    total: selected_correlation_count,
                 });
         }
     }
