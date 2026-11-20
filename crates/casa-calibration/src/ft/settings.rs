@@ -98,6 +98,7 @@ impl ImagerTransformOptions {
 #[derive(Clone, Default)]
 pub(super) struct PredictionGeometry {
     pub(super) settings: ImagerTransformOptions,
+    pub(super) native_threads: i32,
     pub(super) facets: usize,
     pub(super) tangent: Option<MDirection>,
     pub(super) phase_centre_time: Option<f64>,

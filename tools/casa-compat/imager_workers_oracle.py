@@ -87,6 +87,31 @@ def predict(factory, source, target, model, threads, *, scratch, observe):
     return workers
 
 
+def faceted_mosaic_limit(root, source, model, factory):
+    tool = image()
+    assert tool.open(str(model))
+    coords = tool.coordsys()
+    assert coords.setincrement(value='-0.3arcsec 0.3arcsec', type='direction')
+    assert tool.setcoordsys(coords.torecord()) and coords.done()
+    pixels = tool.getchunk()
+    pixels[127, 127, 0, :] = .7
+    assert tool.putchunk(pixels) and tool.done()
+
+    target = root / 'faceted-mosaic.ms'
+    copy_input(source, target, False)
+    im = factory()
+    assert im.open(str(target), usescratch=False) and im.selectvis(field='0,1', spw='0')
+    assert im.defineimage(nx=256, ny=256, cellx='.3arcsec', celly='.3arcsec',
+                          phasecenter=0, outframe='TOPO', facets=2)
+    assert im.setoptions(ftmachine='mosaic', numthreads=1)
+    count = observed_workers(lambda: im.ft(str(model)))
+    assert count == 0 and im.done()
+    grids = model_grids(model_recipe(target))
+    assert [grid['name'] for grid in grids] == ['MosaicFT', 'GridFT', 'GridFT', 'GridFT']
+    assert [grid['numthreads'] for grid in grids] == [1, -1, -1, -1]
+    return {'native_background_workers': count, 'facets': len(grids)}
+
+
 def run(root, check_workers):
     from casars.tools import imager as native
 
@@ -123,6 +148,8 @@ def run(root, check_workers):
                 assert all(np.array_equal(a, b) for a, b in zip(observed, serial, strict=True))
             results[f'{scratch}-{threads}'] = {**compare(observed, expected),
                                                'native_background_workers': count}
+    if check_workers:
+        results['faceted_mosaic'] = faceted_mosaic_limit(root, source, model, native)
     return results
 
 

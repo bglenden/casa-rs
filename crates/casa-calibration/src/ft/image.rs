@@ -17,7 +17,7 @@ use casa_imaging_operator::{
     PreparedModelGrids, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount,
     WPlanes, grid_planning_bytes,
 };
-use casa_imaging_runtime::pass::WorkerTeam;
+use casa_imaging_runtime::pass::{WORKER_STACK_BYTES, WorkerTeam};
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{
@@ -733,37 +733,31 @@ impl ImageTransform {
             cache_bytes,
         )
         .map_err(invalid)?;
-        let image_bytes = nx
-            .saturating_mul(ny)
-            .saturating_mul(npol)
-            .saturating_mul(2 * size_of::<f32>());
-        let grid_bytes = gx
-            .saturating_mul(gy)
-            .saturating_mul(grid_pols + 1)
-            .saturating_mul(2 * size_of::<f64>());
-        let work_bytes = (image_bytes.saturating_add(grid_bytes) as u64)
-            .saturating_add(grid_planning_bytes(gx.saturating_mul(gy)));
-        let (workers, _reservation) = model_workers(settings.threads, channels, work_bytes);
-        let team = WorkerTeam::new(workers).map_err(invalid)?;
+        let work_bytes = model_plane_memory([nx, ny], npol, [gx, gy], grid_pols);
+        let (workers, reservation) =
+            model_workers(self.options.native_threads, channels, work_bytes);
+        let (_reservation, team) = match WorkerTeam::new(workers) {
+            Ok(team) => (reservation, team),
+            Err(_) => {
+                drop(reservation);
+                (None, WorkerTeam::new(1).map_err(invalid)?)
+            }
+        };
         tracing::debug!(
-            requested = settings.threads,
+            requested = self.options.native_threads,
             workers = team.workers(),
             channels,
             "preparing imager Fourier model planes"
         );
-        let mut nonzero = false;
-        for first_plane in (0..channels).step_by(workers) {
-            let end = (first_plane + workers).min(channels);
-            let mut planes = Vec::with_capacity(end - first_plane);
-            for plane in first_plane..end {
-                let values = image
+        let nonzero = prepare_model_planes(
+            &team,
+            channels,
+            |plane| {
+                image
                     .get_slice(&[first_x, first_y, 0, plane], &[nx, ny, npol, 1])
-                    .map_err(invalid)?;
-                nonzero |= values.iter().any(|value| *value != 0.0);
-                planes.push((values, None));
-            }
-            team.for_each_mut(&mut planes, |index, (values, grid)| {
-                let plane = first_plane + index;
+                    .map_err(invalid)
+            },
+            |plane, values| {
                 let frequency = self.frequencies[plane];
                 let beam = beam
                     .as_ref()
@@ -784,25 +778,17 @@ impl ImageTransform {
                     first_plane: plane as u32,
                     planes: vec![ModelPlane { images }],
                 };
-                *grid = Some(match &mosaic {
+                match &mosaic {
                     Some(correction) => self.operator.prepare_model_with_correction(
                         &model,
                         ModelPrescale::Unit,
                         correction,
                     ),
                     None => self.operator.prepare_model(&model, ModelPrescale::Unit),
-                }?);
-                Ok::<_, casa_imaging_operator::OperatorError>(())
-            })
-            .map_err(invalid)?;
-            for (index, (_, grid)) in planes.into_iter().enumerate() {
-                self.write_plane(
-                    &mut output,
-                    &grid.expect("the Fourier plane was prepared"),
-                    first_plane + index,
-                )?;
-            }
-        }
+                }
+            },
+            |plane, grid| self.write_plane(&mut output, grid, plane),
+        )?;
         output.save().map_err(invalid)?;
         Ok(nonzero)
     }
@@ -975,6 +961,72 @@ impl ImageTransform {
     }
 }
 
+fn prepare_model_planes(
+    team: &WorkerTeam,
+    channels: usize,
+    mut read: impl FnMut(usize) -> MsResult<ArrayD<f32>>,
+    prepare: impl Fn(
+        usize,
+        &ArrayD<f32>,
+    ) -> Result<PreparedModelGrids, casa_imaging_operator::OperatorError>
+    + Send
+    + Sync,
+    mut write: impl FnMut(usize, &PreparedModelGrids) -> MsResult<()>,
+) -> MsResult<bool> {
+    let mut nonzero = false;
+    let workers = team.workers();
+    for first_plane in (0..channels).step_by(workers) {
+        let end = (first_plane + workers).min(channels);
+        let mut planes = Vec::with_capacity(end - first_plane);
+        for plane in first_plane..end {
+            let values = read(plane)?;
+            nonzero |= values.iter().any(|value| *value != 0.0);
+            planes.push((values, None));
+        }
+        team.for_each_mut(&mut planes, |index, (values, grid)| {
+            *grid = Some(prepare(first_plane + index, values)?);
+            Ok::<_, casa_imaging_operator::OperatorError>(())
+        })
+        .map_err(invalid)?;
+        for (index, (_, grid)) in planes.into_iter().enumerate() {
+            write(
+                first_plane + index,
+                &grid.expect("the Fourier plane was prepared"),
+            )?;
+        }
+    }
+    Ok(nonzero)
+}
+
+fn model_worker_memory(workers: usize, work_bytes: u64) -> u64 {
+    // Match the runtime's other owners of a dedicated worker team.
+    let team_worker_bytes = (WORKER_STACK_BYTES + 65_536) as u64;
+    work_bytes
+        .saturating_add(team_worker_bytes)
+        .saturating_mul(workers as u64)
+}
+
+fn model_plane_memory(
+    [nx, ny]: [usize; 2],
+    image_polarizations: usize,
+    [gx, gy]: [usize; 2],
+    grid_polarizations: usize,
+) -> u64 {
+    let image_bytes = nx
+        .saturating_mul(ny)
+        .saturating_mul(image_polarizations)
+        .saturating_mul(2 * size_of::<f32>());
+    let grid_cells = gx.saturating_mul(gy);
+    let grid_bytes = grid_cells
+        .saturating_mul(grid_polarizations + 1)
+        .saturating_mul(2 * size_of::<f64>());
+    (image_bytes.saturating_add(grid_bytes) as u64).saturating_add(grid_planning_bytes(grid_cells))
+}
+
+#[cfg(test)]
+#[path = "image_worker_tests.rs"]
+mod worker_tests;
+
 fn model_workers(threads: i32, planes: usize, work_bytes: u64) -> (usize, Option<Reservation>) {
     if threads == 1 || planes <= 1 {
         return (1, None);
@@ -993,7 +1045,7 @@ fn model_workers(threads: i32, planes: usize, work_bytes: u64) -> (usize, Option
     let policy = ResourcePolicy::Balanced;
     let demand = Demand {
         phase: "legacy imager model planes",
-        memory: work_bytes.saturating_mul(workers as u64),
+        memory: model_worker_memory(workers, work_bytes),
     };
     match admit(&host, &policy, &demand) {
         Ok(reservation) => (workers, Some(reservation)),
