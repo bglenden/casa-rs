@@ -45,11 +45,15 @@ use crate::{
 };
 use casa_numerics::solve_weighted_least_squares;
 
+mod clip;
+mod clip_columns;
 mod correlation;
 mod extend;
 mod summary;
 
-use correlation::{ClipMetric, CorrelationSelection};
+use clip::{ClipOptions, apply_clip_array};
+use clip_columns::ClipColumns;
+use correlation::{ClipProjection, CorrelationSelection};
 mod version_backup;
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{save_next_flag_backup, save_next_partition_flag_backup};
@@ -69,6 +73,16 @@ pub enum FlagDataColumn {
     CorrectedData,
     /// MAIN.FLOAT_DATA.
     FloatData,
+    /// MAIN.MODEL_DATA.
+    ModelData,
+    /// Corrected visibilities minus the model.
+    Residual,
+    /// Observed visibilities minus the model.
+    ResidualData,
+    /// The stored weight spectrum or channel-repeated scalar weights.
+    Weight,
+    /// MAIN.WEIGHT_SPECTRUM.
+    WeightSpectrum,
 }
 
 impl FlagDataColumn {
@@ -77,7 +91,16 @@ impl FlagDataColumn {
             Self::Data => VisibilityDataColumn::Data.name(),
             Self::CorrectedData => VisibilityDataColumn::CorrectedData.name(),
             Self::FloatData => OptionalMainColumn::FloatData.name(),
+            Self::ModelData => VisibilityDataColumn::ModelData.name(),
+            Self::Residual => "RESIDUAL",
+            Self::ResidualData => "RESIDUAL_DATA",
+            Self::Weight => "WEIGHT",
+            Self::WeightSpectrum => OptionalMainColumn::WeightSpectrum.name(),
         }
+    }
+
+    fn is_real(self) -> bool {
+        matches!(self, Self::FloatData | Self::Weight | Self::WeightSpectrum)
     }
 }
 
@@ -321,6 +344,10 @@ pub enum FlaggingError {
     /// The correlation selector resolved to no polarization setup for a summary.
     #[error("no flagdata summary report for the selected correlations")]
     MissingCorrelationSummary,
+
+    /// A requested clipping column is missing from the MeasurementSet.
+    #[error("Failed to parse parameters for mode clip")]
+    MissingClipColumn,
 
     /// Flag-version management failed.
     #[error("failed to manage flag version for {path}: {reason}")]
@@ -685,23 +712,10 @@ fn selected_rows(
 fn clip_read_plan(
     ms: &MeasurementSet,
     row_count: usize,
-    data_column: FlagDataColumn,
+    primitive_bytes: usize,
     include_data_description: bool,
 ) -> Result<MsReadPlan, FlaggingError> {
     let path = display_ms_path(ms);
-    let primitive_bytes = ms
-        .main_table()
-        .schema()
-        .and_then(|schema| schema.column(data_column.name()))
-        .and_then(|column| column.data_type())
-        .and_then(PrimitiveType::fixed_width_bytes)
-        .ok_or_else(|| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: format!(
-                "{} does not expose a fixed-width numeric array type",
-                data_column.name()
-            ),
-        })?;
     let data_description = ms
         .data_description()
         .map_err(|source| FlaggingError::MutateFlags {
@@ -790,6 +804,13 @@ fn apply_clip_flags(
     correlations: Option<&CorrelationSelection>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
+    let path = display_ms_path(ms);
+    if request.clipoutside.is_some() {
+        clip_columns::require_physical_model(ms, request.data_column, selected_rows, &path)?;
+    }
+    let Some(mut columns) = ClipColumns::bind(ms.main_table(), request.data_column)? else {
+        return Ok(ChangeSet::default());
+    };
     let Some(outside) = request.clipoutside else {
         tracing::warn!("clipoutside must be a scalar Boolean to start the clip agent");
         return Ok(ChangeSet::default());
@@ -801,32 +822,23 @@ fn apply_clip_flags(
             .clipminmax
             .map(|bounds| bounds.map(|limit| f64::from(limit as f32))),
         outside,
-        planes: None,
+        projections: None,
         metric: correlations.and_then(CorrelationSelection::clip_metric),
     };
     // CASA flags non-finite data and, with clipzeros, near-zero samples.
-    let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
     let mut changed = ChangeSet::default();
     let mut flagged_samples = 0usize;
     let mut total_samples = 0usize;
     let mut row_changes = Vec::<(usize, usize)>::new();
-    let include_ddid = channel_selections.is_some() || correlations.is_some();
-    let read_plan = clip_read_plan(ms, selected_rows.len(), request.data_column, include_ddid)?;
+    let include_ddid =
+        channel_selections.is_some() || correlations.is_some() || columns.uses_weight_spectrum();
+    let bytes_per_sample = columns.bytes_per_sample(ms.main_table(), &path)?;
+    let read_plan = clip_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
     for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
         let table = ms.main_table();
         let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
         let mut touched_rows = std::collections::BTreeSet::<usize>::new();
-        let data_cells = table
-            .column_accessor(request.data_column.name())
-            .and_then(|column| column.array_cells_owned(rows))
-            .map_err(|source| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!(
-                    "read selected {} rows: {source}",
-                    request.data_column.name()
-                ),
-            })?;
         let flag_cells = table
             .column_accessor(FLAG_COLUMN)
             .and_then(|column| column.array_cells_owned(rows))
@@ -839,6 +851,7 @@ fn apply_clip_flags(
         } else {
             None
         };
+        let data_cells = columns.read(table, rows, ddids.as_deref(), &ddid_to_spw, &path)?;
         for (row_slot, &row) in rows.iter().enumerate() {
             let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
                 Some(ArrayValue::Bool(values)) => values,
@@ -858,21 +871,21 @@ fn apply_clip_flags(
             total_samples += flags.len();
             flagged_samples += flags.iter().filter(|flag| **flag).count();
             let ddid = ddids.as_ref().map(|values| values[row_slot]);
-            let planes = correlations
+            let projections = correlations
                 .zip(ddid)
-                .map(|(selection, ddid)| selection.clip_planes_for(ddid, &path))
+                .map(|(selection, ddid)| selection.clip_projections_for(ddid, &path))
                 .transpose()?;
-            if planes.is_some_and(|planes| planes.is_empty()) {
+            if projections.is_some_and(|projections| projections.is_empty()) {
                 continue;
             }
             let column = request.data_column.name();
-            let data_value = checked_row_data(data_cells.get(row_slot), flags, row, column, &path)?;
             if flags.ndim() != 2 {
                 return Err(FlaggingError::MutateFlags {
                     path: path.clone(),
                     reason: format!("{column} row {row} is not rank-2"),
                 });
             }
+            let data_value = data_cells.row(row_slot, flags, row, &path)?;
             let nchan = flags.shape()[1];
             let channels =
                 if let Some((selectors, ddid)) = channel_selections.zip(ddid) {
@@ -896,29 +909,45 @@ fn apply_clip_flags(
                 };
             row_changes.clear();
             apply_clip_array(
-                data_value,
+                data_value.as_ref(),
                 flags,
                 channels.as_deref(),
-                ClipOptions { planes, ..options },
+                ClipOptions {
+                    projections,
+                    ..options
+                },
                 &path,
                 row,
                 &mut row_changes,
             )?;
-            let row_changed = row_changes.len();
-            if row_changed > 0 {
+            if !row_changes.is_empty() {
                 let mut updated_flags = flags.clone();
-                {
-                    let mut updated_flags = updated_flags
-                        .view_mut()
-                        .into_dimensionality::<Ix2>()
-                        .map_err(|source| FlaggingError::MutateFlags {
+                let mut flag_planes = updated_flags
+                    .view_mut()
+                    .into_dimensionality::<Ix2>()
+                    .map_err(|source| FlaggingError::MutateFlags {
                         path: path.clone(),
                         reason: format!("FLAG row {row} must be rank-2: {source}"),
                     })?;
+                let may_overlap = projections.is_some_and(|items| {
+                    items.len() > 1
+                        && items
+                            .iter()
+                            .any(|item| matches!(item, ClipProjection::Stokes(..)))
+                });
+                let row_changed = if may_overlap {
+                    row_changes
+                        .iter()
+                        .filter(|&&(corr, chan)| {
+                            !std::mem::replace(&mut flag_planes[(corr, chan)], true)
+                        })
+                        .count()
+                } else {
                     for &(corr, chan) in &row_changes {
-                        updated_flags[(corr, chan)] = true;
+                        flag_planes[(corr, chan)] = true;
                     }
-                }
+                    row_changes.len()
+                };
                 changed.changed_samples += row_changed;
                 flagged_samples += row_changed;
                 updates.insert(row, updated_flags);
@@ -1838,140 +1867,6 @@ fn push_sample(
         ant1: metadata.ant1,
         ant2: metadata.ant2,
     });
-}
-
-/// The unflagged samples of a row's `data`, in `channels` or in every
-/// channel, that clip mode flags with no clip range: CASA's clipping agent
-/// flags a NaN always, and with `zeros` an amplitude at or below
-/// `f32::EPSILON` too.
-#[derive(Debug, Clone, Copy)]
-struct ClipOptions<'a> {
-    zeros: bool,
-    bounds: Option<[f64; 2]>,
-    outside: bool,
-    planes: Option<&'a [usize]>,
-    metric: Option<ClipMetric>,
-}
-
-impl ClipMetric {
-    fn apply32(self, value: Complex32) -> f32 {
-        match self {
-            Self::Amplitude => value.norm(),
-            Self::Real => value.re,
-            Self::Imaginary => value.im,
-            Self::Phase => value.arg(),
-            Self::SquaredMagnitude => value.norm_sqr(),
-        }
-    }
-
-    fn apply64(self, value: Complex64) -> f64 {
-        match self {
-            Self::Amplitude => value.norm(),
-            Self::Real => value.re,
-            Self::Imaginary => value.im,
-            Self::Phase => value.arg(),
-            Self::SquaredMagnitude => value.norm_sqr(),
-        }
-    }
-}
-
-fn apply_clip_array(
-    data: &ArrayValue,
-    flags: &ArrayD<bool>,
-    channels: Option<&[usize]>,
-    options: ClipOptions<'_>,
-    path: &str,
-    row: usize,
-    changed: &mut Vec<(usize, usize)>,
-) -> Result<(), FlaggingError> {
-    let flags = flags
-        .view()
-        .into_dimensionality::<Ix2>()
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.to_string(),
-            reason: format!("FLAG row {row} must be rank-2: {source}"),
-        })?;
-    let ClipOptions {
-        zeros,
-        bounds,
-        outside,
-        planes,
-        metric,
-    } = options;
-    let matches_range = |value: f64, [lower, upper]: [f64; 2]| {
-        if outside {
-            value < lower || value > upper
-        } else {
-            value >= lower && value <= upper
-        }
-    };
-    let clip_scalar = |value: f64| {
-        is_casa_clip(value.abs(), zeros)
-            || bounds.is_some_and(|bounds| matches_range(value, bounds))
-    };
-    match data {
-        ArrayValue::Complex32(values) => {
-            clip_cells(values, flags, channels, planes, changed, |value| {
-                if let Some(metric) = metric {
-                    clip_scalar(f64::from(metric.apply32(value)))
-                } else {
-                    is_casa_clip_complex32(value, zeros)
-                        || bounds
-                            .is_some_and(|bounds| matches_range(f64::from(value.norm()), bounds))
-                }
-            })
-        }
-        ArrayValue::Complex64(values) => {
-            clip_cells(values, flags, channels, planes, changed, |value| {
-                if let Some(metric) = metric {
-                    clip_scalar(metric.apply64(value))
-                } else {
-                    is_casa_clip_complex64(value, zeros)
-                        || bounds.is_some_and(|bounds| matches_range(value.norm(), bounds))
-                }
-            })
-        }
-        ArrayValue::Float32(values) => {
-            clip_cells(values, flags, channels, planes, changed, |value| {
-                clip_scalar(f64::from(value))
-            })
-        }
-        ArrayValue::Float64(values) => {
-            clip_cells(values, flags, channels, planes, changed, clip_scalar)
-        }
-        _ => Ok(()),
-    }
-    .map_err(|source| FlaggingError::MutateFlags {
-        path: path.to_string(),
-        reason: format!("DATA row {row} must be rank-2: {source}"),
-    })
-}
-
-/// Each unflagged `(corr, chan)` of `values` that `clip` flags.
-fn clip_cells<T: Copy>(
-    values: &ArrayD<T>,
-    flags: ndarray::ArrayView2<'_, bool>,
-    channels: Option<&[usize]>,
-    planes: Option<&[usize]>,
-    changed: &mut Vec<(usize, usize)>,
-    clip: impl Fn(T) -> bool,
-) -> Result<(), ndarray::ShapeError> {
-    let values = values.view().into_dimensionality::<Ix2>()?;
-    let mut visit = |corr: usize, chan: usize| {
-        if !flags[(corr, chan)] && clip(values[(corr, chan)]) {
-            changed.push((corr, chan));
-        }
-    };
-    for corr in 0..values.shape()[0] {
-        if planes.is_some_and(|planes| !planes.contains(&corr)) {
-            continue;
-        }
-        match channels {
-            Some(channels) => channels.iter().for_each(|&chan| visit(corr, chan)),
-            None => (0..values.shape()[1]).for_each(|chan| visit(corr, chan)),
-        }
-    }
-    Ok(())
 }
 
 fn summarize_flags(
@@ -3606,7 +3501,7 @@ mod tests {
         zeros: true,
         bounds: None,
         outside: true,
-        planes: None,
+        projections: None,
         metric: None,
     };
 

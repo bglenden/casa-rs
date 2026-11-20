@@ -28,6 +28,11 @@ ia.setbrightnessunit("Jy/pixel")
 ia.done()
 ```
 
+Use `ia.addnoise(seeds=[1, 2])` to add reproducible normal noise. Pass
+`type` and `pars` for another CASA noise distribution, or `zero=True`
+to replace the selected pixels with noise. The region selects the lattice
+section and the image's validity mask is retained.
+
 A coordinate tool returned by `ia.coordsys()` has its own state. Inspect the
 direction axes with `cs.findcoordinate("direction")["pixel"]` or identify the
 coordinate for a particular axis with `cs.findaxis(world=False, axis=0)`.
@@ -66,6 +71,15 @@ one point per column. The rows follow the coordinate system's axis order.
 World values use the units reported by `cs.units()`.
 NumPy `float32`, `float64`, `longdouble`, `longlong`, and `ulonglong`
 matrices are converted to double precision, as in CASA.
+
+Use `ia.toworld(pixels, format="nqsm")` to convert one image position.
+Each format letter requests numeric values, quantities, strings, or
+measures. Pass `dovelocity=False` to omit spectral velocities from the
+measure record. Pass one of these representations to `ia.topixel(world)`
+to obtain the zero-based pixel coordinates in its `numeric` field.
+`ia.coordmeasures(pixel)` returns world measures and the pixel's intensity
+and validity. Pass `dframe` or `sframe` to request specific direction or
+spectral frames.
 
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
@@ -107,6 +121,10 @@ selected coordinate. Virtual modes are tracked in #1749.
 Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
 float or complex image. Use `update=True` to validate the selected native
 pixel mask after replacement.
+Use `ia.set(pixels=3.5)` to fill the attached float image. `pixels` can also
+be a scalar lattice expression. Use `region` to restrict the edit and set
+`pixelmask=0` to invalidate the selected pixels or `pixelmask=1` to validate
+them in the default mask.
 
 Use `ia.calc(pixels=...)` to evaluate a numeric expression into a writable
 float or complex image. An existing default mask limits writes to its valid
@@ -119,6 +137,7 @@ separate image.
 Use `ia.calcmask(...)` to save a Boolean expression as a named native image
 mask. Expressions can combine real, complex, and FITS images and read named
 masks using `mask("image.im:maskname")` where CASA accepts that source type.
+
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
@@ -197,6 +216,13 @@ to keep in `keepaxes`. Region inputs include CRTF text and files, saved region
 references, and unit-stride boxes and polygon records.
 An existing entry inside the input image cannot be replaced, protecting
 the source's history and mask tables.
+
+Use `ia.adddegaxes(stokes="I", spectral=True)` to make a copy with new
+singleton axes. Pass `outfile` to save the copy as a native image. The copy
+preserves the source pixels, existing coordinates, named masks and history.
+Set `silent=True` to skip requested coordinate types that already exist.
+Sources with image attribute groups are tracked in
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
 ### Migrate an existing image reader or writer
 

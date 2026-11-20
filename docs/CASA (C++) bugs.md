@@ -3946,6 +3946,47 @@ casa-rs compares the magnitude to the zero tolerance and uses the
 signed value for any explicit range. The clip operator oracle checks
 both cases against independent expected flags. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Derived Stokes clip expressions can flag the wrong channels
+
+In CASA 6.7.6.14, the clipping visibility mapper computes linear Stokes U
+as `(XY - YX) / 2` and circular Stokes Q as `(RL - LR) / 2`. Equal
+cross-hands with a value of 3 therefore produce zero and are flagged by
+an inside range of −0.5 to 0.5. The corresponding Stokes values are 3.
+Circular Stokes V is divided by `2i`, which gives `REAL_V` zero for
+RR = 4 and LL = 0. The corresponding Stokes V is 2.
+
+casa-rs uses `(XY + YX) / 2`, `(RL + LR) / 2`, and `(RR - LL) / 2`
+for these three products and flags their contributing planes when the
+result meets the clipping criterion. The paired Stokes clip oracle
+reproduces the CASA flags and compares the native flags with independently
+calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+## Weight clipping can ignore defined channel weights
+
+In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="WEIGHT_SPECTRUM")`
+can use scalar WEIGHT for all rows when the first selected row has an
+undefined spectrum. The same behavior occurs with `datacolumn="WEIGHT"`.
+For example, clipping inside 0.9 to 1.1 flags a channel in a later row
+whose spectral weight is 2 because its scalar weight is 1.
+
+casa-rs uses scalar weights for the undefined cells in this case and uses
+the stored spectra where present. The paired test verifies the extra CASA
+flags and the native channel mask independently. It also checks that an
+undefined cell following a defined first spectrum still raises a read
+error. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+## Residual clipping can use the wrong observed column
+
+In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="RESIDUAL_DATA")`
+uses FLOAT_DATA as the observed operand when an MS contains both DATA
+and FLOAT_DATA. On the paired fixture this leaves a DATA residual of 1
+unflagged when clipping inside 0.9 to 1.6.
+
+casa-rs subtracts the complex MODEL_DATA from DATA when both observed
+columns exist. An MS whose only observed column is FLOAT_DATA uses that
+column and keeps the imaginary part of the model in the residual. The
+oracle verifies the masks and original flag backups. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## An overflowing observation selector flags a different observation
 
 In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.
@@ -5555,6 +5596,24 @@ Passing a cyclic `optionalparms` list terminates CASA with SIGSEGV; casa-rs
 rejects the cycle before changing the component.
 CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
 casa-rs rejects a non-finite shape or error before mutation.
+
+## `image.toworld` and `image.topixel` abort on a multidimensional numeric record
+
+Attach a 4 by 4 float image, then call either method with
+`{"numeric": np.array([[1., 2.], [3., 4.]])}`. CASA 6.7.6.14 terminates
+with SIGABRT and `Vector<T>: ndim of other array > 1`. The casa-rs tool
+raises `RuntimeError` because the numeric field must be one-dimensional.
+The direct array form of a pixel position still accepts CASA's flattened
+input.
+
+## `image.topixel` can write outside the world vector for a sliced direction measure
+
+Create a CASA image with shape `[1, 8, 6]`, call `child = ia.subimage(dropdeg=True)`,
+then call `child.topixel(child.toworld([2, 1], "m"))`. CASA 6.7.6.14 aborts with
+`free(): invalid pointer` after assigning the removed longitude through a
+negative world-axis index. casa-rs uses the surviving declination and spectral
+measure and returns `[2, 1]`, consistent with the numeric, quantity, and
+string encodings of the same position.
 
 ## Measures spectral conversions reject or truncate valid vectors
 
@@ -7698,6 +7757,24 @@ casa-rs resolves the operand paths when creating the result and returns 6
 with the original FITS metadata. The FITS handle is opened on the first pixel
 read and retained for subsequent reads. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
 
+## `image.addnoise` can erase pixels or fail to return on unusable input
+
+Fill an image with nonzero pixels and call
+`ia.addnoise("normal", [0, -1], zero=True, seeds=[1, 2])`. CASA 6.7.6.14
+zeros the region before reporting an illegal variance. An unknown
+distribution such as `"bogus"` has the same destructive order. casa-rs
+validates the distribution before writing the existing image.
+Passing `seeds=None` explicitly can also change the image before the Python
+wrapper raises `SystemError`. casa-rs rejects that argument before changing
+pixels.
+
+CASA also fails to return for a one-pixel image with
+`ia.addnoise("geometric", [0], seeds=[1, 2])` or
+`ia.addnoise("poisson", [800], seeds=[1, 2])`. The geometric rejection loop
+cannot draw a uniform zero with those seeds. The Poisson bound underflows to
+zero, leaving its product loop true after the product reaches zero. casa-rs
+returns a Python error for these inputs.
+
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
 With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and
@@ -7865,6 +7942,7 @@ pixels, the same call can terminate the process.
 
 casa-rs averages valid pixels over the requested axes and retains all
 other axes, for every supported image pixel type (#1627).
+
 ## Image statistics can report an extremum outside the sampled pixels
 
 In CASA 6.7.6.14, `ia.statistics(region=...)` on a box starting at
@@ -7883,6 +7961,13 @@ process. casa-rs raises an error for the duplicate axis.
 
 The pinned biweight algorithm can also terminate when every selected
 pixel is masked. casa-rs returns a recoverable error for the empty sample.
+
+## Setting the pixels of a complex image can terminate CASA
+
+On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
+type="c")` followed by `image.set(pixels=2)` terminates Python with SIGSEGV.
+casa-rs raises `RuntimeError` and preserves the complex image. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
 ## `image.insert` aborts for a source that misses along one axis
 

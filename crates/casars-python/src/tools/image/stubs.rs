@@ -15,35 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, direction = None, spectral = None, stokes = None, linear = None, tabular = None, overwrite = None, silent = None), text_signature = "($self, outfile='', direction=False, spectral=False, stokes='', linear=False, tabular=False, overwrite=False, silent=False)")]
-    fn adddegaxes(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        tabular: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        silent: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("adddegaxes")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None, pars = None, region = None, zero = None, seeds = None), text_signature = "($self, type='normal', pars=[0.0, 1.0], region={}, zero=False, seeds=[])")]
-    fn addnoise(
-        &self,
-        r#type: Option<&Bound<'_, PyAny>>,
-        pars: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        zero: Option<&Bound<'_, PyAny>>,
-        seeds: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("addnoise")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None), text_signature = "($self, region={})")]
     fn boundingbox(&self, region: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("boundingbox")
@@ -133,17 +104,6 @@ impl PyImageTool {
         beam: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("convolve2d")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixel = None, dframe = None, sframe = None), text_signature = "($self, pixel=[-1.0], dframe='cl', sframe='cl')")]
-    fn coordmeasures(
-        &self,
-        pixel: Option<&Bound<'_, PyAny>>,
-        dframe: Option<&Bound<'_, PyAny>>,
-        sframe: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("coordmeasures")
     }
 
     /// Not yet implemented in casa-rs.
@@ -611,35 +571,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("sepconvolve")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels = None, pixelmask = None, region = None, list = None), text_signature = "($self, pixels=[], pixelmask=-1, region={}, list=False)")]
-    fn set(
-        &self,
-        pixels: Option<&Bound<'_, PyAny>>,
-        pixelmask: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("set")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
-    fn topixel(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("topixel")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None, format = None, dovelocity = None), text_signature = "($self, value=[], format='n', dovelocity=True)")]
-    fn toworld(
-        &self,
-        value: Option<&Bound<'_, PyAny>>,
-        format: Option<&Bound<'_, PyAny>>,
-        dovelocity: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("toworld")
     }
 
     /// Not yet implemented in casa-rs.
