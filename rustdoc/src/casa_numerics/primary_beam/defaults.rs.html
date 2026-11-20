@@ -228,44 +228,53 @@
 <a href=#228 id=228 data-nosnippet>228</a>    }
 <a href=#229 id=229 data-nosnippet>229</a>}
 <a href=#230 id=230 data-nosnippet>230</a>
-<a href=#231 id=231 data-nosnippet>231</a><span class="doccomment">/// Evaluate the same quantized Float samples without retaining a table per fit.
-<a href=#232 id=232 data-nosnippet>232</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>InverseFit {
-<a href=#233 id=233 data-nosnippet>233</a>    low: [f64; <span class="number">5</span>],
-<a href=#234 id=234 data-nosnippet>234</a>    high: [f64; <span class="number">5</span>],
-<a href=#235 id=235 data-nosnippet>235</a>    weight: f32,
-<a href=#236 id=236 data-nosnippet>236</a>}
-<a href=#237 id=237 data-nosnippet>237</a><span class="kw">impl </span>InverseFit {
-<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>voltage(<span class="kw-2">&amp;</span><span class="self">self</span>, radius: f64) -&gt; f32 {
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">if </span>!radius.is_finite() || !(<span class="number">0. </span>..=<span class="number">53.</span>).contains(<span class="kw-2">&amp;</span>radius) {
-<a href=#240 id=240 data-nosnippet>240</a>            <span class="kw">return </span><span class="number">0.</span>;
-<a href=#241 id=241 data-nosnippet>241</a>        }
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>index = (radius * (<span class="number">9999. </span>/ <span class="number">53.</span>)).floor();
-<a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">let </span>x2 = (index / (<span class="number">9999. </span>/ <span class="number">53.</span>)).powi(<span class="number">2</span>);
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">let </span>sample = |coefficients: <span class="kw-2">&amp;</span>[f64; <span class="number">5</span>]| {
-<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">let </span><span class="kw-2">mut </span>y = <span class="number">1.</span>;
-<a href=#246 id=246 data-nosnippet>246</a>            <span class="kw">let </span><span class="kw-2">mut </span>taper: f64 = <span class="number">0.</span>;
-<a href=#247 id=247 data-nosnippet>247</a>            <span class="kw">for </span>c <span class="kw">in </span>coefficients {
-<a href=#248 id=248 data-nosnippet>248</a>                taper += y * c;
-<a href=#249 id=249 data-nosnippet>249</a>                y <span class="kw-2">*</span>= x2;
-<a href=#250 id=250 data-nosnippet>250</a>            }
-<a href=#251 id=251 data-nosnippet>251</a>            (<span class="number">1. </span>/ taper.sqrt()) <span class="kw">as </span>f32
-<a href=#252 id=252 data-nosnippet>252</a>        };
-<a href=#253 id=253 data-nosnippet>253</a>        sample(<span class="kw-2">&amp;</span><span class="self">self</span>.low) * (<span class="number">1. </span>- <span class="self">self</span>.weight) + sample(<span class="kw-2">&amp;</span><span class="self">self</span>.high) * <span class="self">self</span>.weight
-<a href=#254 id=254 data-nosnippet>254</a>    }
-<a href=#255 id=255 data-nosnippet>255</a>}
-<a href=#256 id=256 data-nosnippet>256</a>
-<a href=#257 id=257 data-nosnippet>257</a><span class="attr">#[cfg(test)]
-<a href=#258 id=258 data-nosnippet>258</a></span><span class="kw">mod </span>tests {
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#260 id=260 data-nosnippet>260</a>
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="attr">#[test]
-<a href=#262 id=262 data-nosnippet>262</a>    </span><span class="kw">fn </span>negative_gbt_fitted_power_is_excluded_from_the_beam() {
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">let </span>beam = DefaultRadial::Gbt.pattern();
-<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">let </span>power = beam.at_frequency(<span class="number">1e9</span>);
-<a href=#265 id=265 data-nosnippet>265</a>        <span class="macro">assert_eq!</span>(power.power(<span class="number">20.39</span>), <span class="number">0.</span>);
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="macro">assert_eq!</span>(power.power(<span class="number">20.4</span>), <span class="number">0.</span>);
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="comment">// The central fitted response exceeds unity slightly; do not renormalize it.
-<a href=#268 id=268 data-nosnippet>268</a>        </span><span class="macro">assert!</span>((f64::from(power.power(<span class="number">0.</span>)) - <span class="number">1.00632057</span>).abs() &lt; <span class="number">1e-6</span>);
-<a href=#269 id=269 data-nosnippet>269</a>    }
-<a href=#270 id=270 data-nosnippet>270</a>}
+<a href=#231 id=231 data-nosnippet>231</a><span class="kw">impl </span>BeamPattern {
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="doccomment">/// CASA's dish-diameter fallback for an unrecognized telescope.
+<a href=#233 id=233 data-nosnippet>233</a>    /// It rescales the default sampled power profile to the dish diameter.
+<a href=#234 id=234 data-nosnippet>234</a>    </span><span class="attr">#[must_use]
+<a href=#235 id=235 data-nosnippet>235</a>    </span><span class="kw">pub fn </span>for_dish_diameter(diameter_m: f64) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="self">Self</span>::numeric(<span class="number">1.1998662 </span>* <span class="number">25. </span>/ diameter_m * <span class="number">43.</span>, <span class="kw-2">&amp;</span>NUMERIC_POWER, <span class="bool-val">false</span>)
+<a href=#237 id=237 data-nosnippet>237</a>    }
+<a href=#238 id=238 data-nosnippet>238</a>}
+<a href=#239 id=239 data-nosnippet>239</a>
+<a href=#240 id=240 data-nosnippet>240</a><span class="doccomment">/// Evaluate the same quantized Float samples without retaining a table per fit.
+<a href=#241 id=241 data-nosnippet>241</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>InverseFit {
+<a href=#242 id=242 data-nosnippet>242</a>    low: [f64; <span class="number">5</span>],
+<a href=#243 id=243 data-nosnippet>243</a>    high: [f64; <span class="number">5</span>],
+<a href=#244 id=244 data-nosnippet>244</a>    weight: f32,
+<a href=#245 id=245 data-nosnippet>245</a>}
+<a href=#246 id=246 data-nosnippet>246</a><span class="kw">impl </span>InverseFit {
+<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>voltage(<span class="kw-2">&amp;</span><span class="self">self</span>, radius: f64) -&gt; f32 {
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">if </span>!radius.is_finite() || !(<span class="number">0. </span>..=<span class="number">53.</span>).contains(<span class="kw-2">&amp;</span>radius) {
+<a href=#249 id=249 data-nosnippet>249</a>            <span class="kw">return </span><span class="number">0.</span>;
+<a href=#250 id=250 data-nosnippet>250</a>        }
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>index = (radius * (<span class="number">9999. </span>/ <span class="number">53.</span>)).floor();
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>x2 = (index / (<span class="number">9999. </span>/ <span class="number">53.</span>)).powi(<span class="number">2</span>);
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>sample = |coefficients: <span class="kw-2">&amp;</span>[f64; <span class="number">5</span>]| {
+<a href=#254 id=254 data-nosnippet>254</a>            <span class="kw">let </span><span class="kw-2">mut </span>y = <span class="number">1.</span>;
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">let </span><span class="kw-2">mut </span>taper: f64 = <span class="number">0.</span>;
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="kw">for </span>c <span class="kw">in </span>coefficients {
+<a href=#257 id=257 data-nosnippet>257</a>                taper += y * c;
+<a href=#258 id=258 data-nosnippet>258</a>                y <span class="kw-2">*</span>= x2;
+<a href=#259 id=259 data-nosnippet>259</a>            }
+<a href=#260 id=260 data-nosnippet>260</a>            (<span class="number">1. </span>/ taper.sqrt()) <span class="kw">as </span>f32
+<a href=#261 id=261 data-nosnippet>261</a>        };
+<a href=#262 id=262 data-nosnippet>262</a>        sample(<span class="kw-2">&amp;</span><span class="self">self</span>.low) * (<span class="number">1. </span>- <span class="self">self</span>.weight) + sample(<span class="kw-2">&amp;</span><span class="self">self</span>.high) * <span class="self">self</span>.weight
+<a href=#263 id=263 data-nosnippet>263</a>    }
+<a href=#264 id=264 data-nosnippet>264</a>}
+<a href=#265 id=265 data-nosnippet>265</a>
+<a href=#266 id=266 data-nosnippet>266</a><span class="attr">#[cfg(test)]
+<a href=#267 id=267 data-nosnippet>267</a></span><span class="kw">mod </span>tests {
+<a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#269 id=269 data-nosnippet>269</a>
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="attr">#[test]
+<a href=#271 id=271 data-nosnippet>271</a>    </span><span class="kw">fn </span>negative_gbt_fitted_power_is_excluded_from_the_beam() {
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="kw">let </span>beam = DefaultRadial::Gbt.pattern();
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">let </span>power = beam.at_frequency(<span class="number">1e9</span>);
+<a href=#274 id=274 data-nosnippet>274</a>        <span class="macro">assert_eq!</span>(power.power(<span class="number">20.39</span>), <span class="number">0.</span>);
+<a href=#275 id=275 data-nosnippet>275</a>        <span class="macro">assert_eq!</span>(power.power(<span class="number">20.4</span>), <span class="number">0.</span>);
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="comment">// The central fitted response exceeds unity slightly; do not renormalize it.
+<a href=#277 id=277 data-nosnippet>277</a>        </span><span class="macro">assert!</span>((f64::from(power.power(<span class="number">0.</span>)) - <span class="number">1.00632057</span>).abs() &lt; <span class="number">1e-6</span>);
+<a href=#278 id=278 data-nosnippet>278</a>    }
+<a href=#279 id=279 data-nosnippet>279</a>}
 </code></pre></div></section></main></body></html>
