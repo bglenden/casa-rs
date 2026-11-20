@@ -23,7 +23,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 40 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
-| [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 5 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
+| [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 6 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
 | [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 8 | <code>mstransform</code> | 55 | Materialize a selected MeasurementSet into a new output MS. |
 | [Split](#surface-split)<br><code>split</code> | task | 8 | <code>mstransform</code> | 20 | Create a selected MeasurementSet subset, equivalent to CASA split. |
@@ -466,7 +466,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Moments (<code>immoments</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Create CASA-style image moment maps
@@ -475,7 +475,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
 | <code>moments</code> | <code>parameter.moments@r2</code> | <code>array&lt;integer&gt;</code> | <code>[0]</code>; optional | Moment | CASA moment numbers: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity |
-| <code>axis</code> | <code>moments.axis@r1</code> | <code>string</code> | <code>"spectral"</code>; optional | Moments | Moment axis: ra, dec, lat, long, spectral or stokes. |
+| <code>axis</code> | <code>moments.axis@r2</code> | <code>variant</code> | <code>"spectral"</code>; optional | Moments | Zero-based moment axis or CASA name such as spectral, RA, Dec or Stokes. |
 | <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
 | <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Pixel box. |
 | <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |

@@ -388,7 +388,7 @@ def imstat(
 def immoments(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     moments: int | list[int] | tuple[int, ...] = [0],
-    axis: str = 'spectral',
+    axis: int | str = 'spectral',
     region: str = '',
     box: str = '',
     chans: str = '',
@@ -404,8 +404,6 @@ def immoments(
     """Create CASA-style image moment maps
 
     CASA's ``immoments``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``axis``, ``region``, ``box``, ``stokes``, ``excludepix``, ``stretch``.
     """
     return _call_casa(immoments, locals())
 

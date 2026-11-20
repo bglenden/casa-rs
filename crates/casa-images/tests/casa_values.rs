@@ -122,16 +122,30 @@ fn immoments_takes_casas_moments_and_includepix() {
         root,
     );
     assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
-    // Several moments in one run are not yet.
-    assert_refused(
-        &run(
-            immoments,
-            &["in.image", "--outfile", "two.mom", "--moments", "0,1"],
-            root,
-        ),
-        "#977",
+    // CASA appends the moment suffixes when the request names several.
+    let output = run(
+        immoments,
+        &["in.image", "--outfile", "two.mom", "--moments", "0,1"],
+        root,
     );
-    assert!(!root.join("two.mom").exists());
+    let summary = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bundle = casa_provider_contracts::builtin_surface_bundle("immoments").unwrap();
+    let products = casa_task_runtime::decode_task_completion(&bundle, &summary, root, &[])
+        .unwrap()
+        .products;
+    assert_eq!(products.len(), 2);
+    for (product, suffix) in products.iter().zip(["integrated", "weighted_coord"]) {
+        assert!(product.exists);
+        assert_eq!(
+            product.path.file_name().unwrap().to_str().unwrap(),
+            format!("two.mom.{suffix}")
+        );
+    }
 }
 
 /// A 4x4 direction image with one channel per value of `spectrum`, the

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! LEL mask evaluation, `image:maskname` resolution, and `stretch` handling
-//! for `imsubimage`.
+//! for image tasks.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -51,7 +51,7 @@ impl Operand {
 
 /// Evaluates an optional `mask` expression over `window` `(start, shape)` of a
 /// parent image of shape `target_shape`.
-pub(super) fn evaluate_subimage_mask(
+pub(super) fn evaluate_mask(
     mask_expr: Option<&str>,
     target_shape: &[usize],
     target_coordinates: &CoordinateSystem,
@@ -72,6 +72,13 @@ pub(super) fn evaluate_subimage_mask(
     {
         // Unquoted path:maskname expression in top-level `mask=` parameter.
         expr = format!("mask(\"{raw}\")");
+    } else if let Some(operator) = raw.find(['<', '>', '=', '!'])
+        && let (name, suffix) = raw.split_at(operator)
+        && Path::new(name.trim()).exists()
+    {
+        // These tasks accept an unquoted image path before a comparison,
+        // including an absolute path that would otherwise lex as division.
+        expr = format!("\"{}\"{suffix}", name.trim());
     }
     let opened = referenced_images(&expr)
         .map_err(mask_parse_error)?

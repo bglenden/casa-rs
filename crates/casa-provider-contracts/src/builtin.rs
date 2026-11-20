@@ -836,8 +836,8 @@ mod tests {
                             RunProductSource::DecodedArtifacts => None,
                         })
                         .collect::<BTreeSet<_>>();
-                    // The imager and simobserve name their products in their
-                    // managed results; the others by their output bindings.
+                    // Some tasks name products in the managed result,
+                    // including the moment images derived from outfile.
                     let decoded = products.iter().any(|product| {
                         matches!(product.source, RunProductSource::DecodedArtifacts)
                     });
@@ -851,6 +851,7 @@ mod tests {
                                 | "simalma"
                                 | "tsdimaging"
                                 | "plotms"
+                                | "immoments"
                         ),
                         "{} product sources",
                         surface.id()

@@ -71,6 +71,17 @@ fn direction_axes(
     Ok((first, direction))
 }
 
+fn require_square_pixels(direction: &DirectionCoordinate) -> Result<(), ImageError> {
+    let increment = direction.increment();
+    let (x, y) = (increment[0].abs(), increment[1].abs());
+    if (x - y).abs() > 1e-13 * x.max(y) {
+        return Err(ImageError::InvalidMetadata(
+            "Pixels must be square, please regrid your image so that they are".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// The sky offsets (east, north), rad, of a pixel step along each axis at
 /// the reference pixel: `[[east per x, east per y], [north per x, north per
 /// y]]`, by central differences of the coordinate's own conversion. It
@@ -239,13 +250,7 @@ pub fn convolve2d(
     beam: &GaussianBeam,
 ) -> Result<Convolved, ImageError> {
     let (axis, direction) = direction_axes(input.coordinates())?;
-    let increment = direction.increment();
-    let (x, y) = (increment[0].abs(), increment[1].abs());
-    if (x - y).abs() > 1e-13 * x.max(y) {
-        return Err(ImageError::InvalidMetadata(
-            "Pixels must be square, please regrid your image so that they are".into(),
-        ));
-    }
+    require_square_pixels(direction)?;
     if !input.units().to_ascii_uppercase().contains("/PIXEL") {
         return Err(ImageError::InvalidMetadata(format!(
             "convolve2d: casa-rs convolves images in Jy/pixel; this one is in {:?}",
@@ -303,6 +308,124 @@ pub fn convolve2d(
             unwrap_position_angle(beam.position_angle),
         ),
     })
+}
+
+/// Homogenize a spectral moment's selected planes to their common beam.
+/// The pixel mask remains on the same positions as the input.
+pub(crate) fn convolve_to_common_beam<T>(
+    data: &mut ArrayD<T>,
+    mask: Option<&ArrayD<bool>>,
+    coordinates: &CoordinateSystem,
+    units: &str,
+    beams: &crate::ImageBeamSet,
+) -> Result<(GaussianBeam, String), ImageError>
+where
+    T: Into<f64> + From<f32> + Copy,
+{
+    let target = beams.common_beam()?;
+    let (axis, direction) = direction_axes(coordinates)?;
+    require_square_pixels(direction)?;
+    let sky = sky_per_pixel(direction)?;
+    let shape = data.shape().to_vec();
+    let plane = [shape[axis], shape[axis + 1]];
+    let beam_axis = |kind| {
+        coordinates.find_coordinate(kind).map(|i| {
+            (0..i)
+                .map(|j| coordinates.coordinate(j).n_pixel_axes())
+                .sum::<usize>()
+        })
+    };
+    let spectral = beam_axis(CoordinateType::Spectral);
+    let stokes = beam_axis(CoordinateType::Stokes);
+    let others: Vec<_> = (0..shape.len())
+        .filter(|&i| i != axis && i != axis + 1)
+        .collect();
+    let count = others.iter().map(|&i| shape[i]).product();
+    let upper_units = units.to_ascii_uppercase();
+    let per_pixel = upper_units.contains("/PIXEL");
+    let per_beam = upper_units.contains("BEAM");
+    let mut units = units.to_owned();
+    let mut index = vec![0; shape.len()];
+    let mut values = vec![0.0; plane[0] * plane[1]];
+    for mut number in 0..count {
+        for &i in &others {
+            index[i] = number % shape[i];
+            number /= shape[i];
+        }
+        let channel = spectral.map_or(0, |i| index[i]);
+        let polarization = stokes.map_or(0, |i| index[i]);
+        let input = *beams.beam(channel, polarization);
+        let Some(smoothing) = target.deconvolving_beam(input)? else {
+            continue;
+        };
+        if smoothing.minor <= 0.0 {
+            return Err(ImageError::InvalidMetadata(
+                "the common-beam convolution requires a positive axial ratio".into(),
+            ));
+        }
+        let (side, mut weights) = kernel(&smoothing, sky);
+        let scale = if per_pixel {
+            // CASA loops over channels within each polarization. The last
+            // plane sets the output unit and keeps the input unit if copied.
+            if channel + 1 == beams.n_channels() && polarization + 1 == beams.n_stokes() {
+                units = "Jy/beam".into();
+            }
+            1.0
+        } else {
+            let (input_side, input_weights) = kernel(&input, sky);
+            let peak = central_gaussian_response(side, &weights, input_side, &input_weights);
+            if per_beam {
+                peak.recip()
+            } else {
+                input.area() / (target.area() * peak)
+            }
+        };
+        for weight in &mut weights {
+            *weight = f64::from((*weight * scale) as f32);
+        }
+        let mut convolver = PlaneConvolver::new(plane, side, &weights)?;
+        for j in 0..plane[1] {
+            index[axis + 1] = j;
+            for i in 0..plane[0] {
+                index[axis] = i;
+                let at = ndarray::IxDyn(&index);
+                values[i + j * plane[0]] = if mask.is_none_or(|mask| mask[at.clone()]) {
+                    data[at].into()
+                } else {
+                    0.0
+                };
+            }
+        }
+        let convolved = convolver.convolve(&values)?;
+        for j in 0..plane[1] {
+            index[axis + 1] = j;
+            for i in 0..plane[0] {
+                index[axis] = i;
+                data[ndarray::IxDyn(&index)] = T::from(convolved[i + j * plane[0]] as f32);
+            }
+        }
+    }
+    Ok((target, units))
+}
+
+fn central_gaussian_response(
+    left_side: usize,
+    left: &[f64],
+    right_side: usize,
+    right: &[f64],
+) -> f64 {
+    // Both odd-sized kernels are centred and even. The peak of their
+    // discrete convolution is their dot product over the central overlap.
+    let width = left_side.min(right_side);
+    let a = (left_side - width) / 2;
+    let b = (right_side - width) / 2;
+    let mut peak = 0.0;
+    for row in 0..width {
+        for col in 0..width {
+            peak += left[(row + a) * left_side + col + a] * right[(row + b) * right_side + col + b];
+        }
+    }
+    peak
 }
 
 /// A position angle in [−90°, 90°], as casacore's `GaussianBeam` keeps it.

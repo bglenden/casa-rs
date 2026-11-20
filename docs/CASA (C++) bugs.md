@@ -7181,6 +7181,15 @@ continuation card without skipping characters, emitting all 48 cards on
 `cube_i.im` so both casa-rs and CASA 6.7.6.14 `ia.history(list=False)` read back
 all 17 original history entries intact (#977).
 
+## Duplicate `immoments` requests can leave a partial set of images
+
+CASA 6.7.6.14 writes the first output directory for a repeated moment
+number before the second occurrence reports that the same directory
+already exists. For example, `moments=[0,0]` leaves the `.integrated`
+directory after a failed task. casa-rs checks the destination names
+before writing and refuses the duplicate without publishing a product
+(#977).
+
 ## imsubimage aborts for an out-of-range keepaxes index
 
 On a four-axis image, CASA 6.7.6.14 aborts the process with

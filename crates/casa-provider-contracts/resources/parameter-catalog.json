@@ -8689,14 +8689,14 @@
     },
     {
       "id": "moments.axis",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "axis",
-      "value_domain": {"kind": "string"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "trim"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Moment axis: ra, dec, lat, long, spectral or stokes.", "details": null, "examples": ["spectral"]},
+      "documentation": {"summary": "Zero-based moment axis or CASA name such as spectral, RA, Dec or Stokes.", "details": null, "examples": ["spectral"]},
       "persistence_class": "profile"
     },
     {

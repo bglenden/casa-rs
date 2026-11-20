@@ -12102,7 +12102,7 @@
     {
       "kind": "task",
       "id": "immoments",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Image Moments",
       "category": "Images",
       "summary": "Create CASA-style image moment maps",
@@ -12111,7 +12111,12 @@
       "execution": {
         "invocation_name": "immoments",
         "fixed_args": [],
-        "managed_output": null,
+        "managed_output": {
+          "decoder": "immoments-run-v1",
+          "stdout_format": "json",
+          "raw_stdout_available": true,
+          "raw_stderr_available": true
+        },
         "products": {
           "kind": "declared",
           "products": [
@@ -12120,10 +12125,9 @@
               "role": "primary",
               "resource_kind": "casa_image",
               "source": {
-                "kind": "parameter",
-                "parameter": "outfile"
+                "kind": "decoded_artifacts"
               },
-              "cardinality": "one",
+              "cardinality": "many",
               "optional": false,
               "probe_supported": true
             }
@@ -12229,7 +12233,7 @@
         },
         {
           "name": "axis",
-          "concept": {"id": "moments.axis", "semantic_revision": 1},
+          "concept": {"id": "moments.axis", "semantic_revision": 2},
           "order": 2,
           "default": {"kind": "literal", "value": {"kind": "string", "value": "spectral"}},
           "required_when": {"kind": "never"},
@@ -12237,10 +12241,9 @@
           "projections": {
             "cli": {"flags": ["--axis"], "metavar": "axis"},
             "provider": {"field": "axis"},
-            "python": {"name": "axis"},
+            "python": {"name": "axis", "type_hint": "int | str"},
             "presentation": {"label": "Moment Axis", "group": "Moments", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "region",
@@ -12252,11 +12255,10 @@
           "context_role": "region_reference",
           "projections": {
             "cli": {"flags": ["--region"], "metavar": "region"},
-            "provider": {"field": "region"},
+            "provider": {"field": "region", "adapter": "omit_none"},
             "python": {"name": "region"},
             "presentation": {"label": "Region", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "box",
@@ -12267,11 +12269,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--box"], "metavar": "x0,y0,x1,y1"},
-            "provider": {"field": "box"},
+            "provider": {"field": "box", "adapter": "omit_none"},
             "python": {"name": "box"},
             "presentation": {"label": "Box", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "stokes",
@@ -12282,11 +12283,10 @@
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--stokes"], "metavar": "stokes"},
-            "provider": {"field": "stokes"},
+            "provider": {"field": "stokes", "adapter": "omit_none"},
             "python": {"name": "stokes"},
             "presentation": {"label": "Stokes", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "excludepix",
@@ -12300,10 +12300,6 @@
             "provider": {"field": "excludepix"},
             "python": {"name": "excludepix"},
             "presentation": {"label": "Exclude Pixels", "group": "Moments", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [{"kind": "array", "value": []}]
           }
         },
         {
@@ -12318,10 +12314,6 @@
             "provider": {"field": "stretch"},
             "python": {"name": "stretch"},
             "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
           }
         },
         {
@@ -12506,7 +12498,7 @@
                 "--mask"
               ],
               "false_flags": [],
-              "metavar": "image>threshold"
+              "metavar": "expression"
             },
             "provider": {
               "field": "mask",

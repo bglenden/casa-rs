@@ -302,24 +302,41 @@ pub enum ImstatOutcome {
 }
 
 /// CASA `immoments` request.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImmomentsRequest {
     /// Input CASA image path.
     pub imagename: PathBuf,
     /// Output CASA image path.
     pub outfile: PathBuf,
-    /// CASA moment number. Supported values are `-1` through `3`.
-    pub moments: i32,
+    /// Requested CASA moments, numbered `-1` through `11`.
+    pub moments: Vec<i32>,
+    /// Collapse axis as a zero-based index, or a CASA axis name.
+    #[serde(default)]
+    pub axis: Option<casa_provider_contracts::ParameterValue>,
+    /// CASA CRTF or saved-image region.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Inclusive direction-plane pixel boxes.
+    #[serde(default, alias = "box")]
+    pub box_pixels: Option<String>,
+    /// Select Stokes planes by label.
+    #[serde(default)]
+    pub stokes: Option<String>,
     /// CASA channel expression, supporting tutorial forms like `4~12`.
     #[serde(default)]
     pub chans: Option<String>,
     /// Inclusive pixel-value range to include.
     #[serde(default)]
     pub includepix: Option<[f64; 2]>,
-    /// CASA image mask expression, supporting tutorial forms like
-    /// `pb.image>0.3`.
+    /// Exclude values strictly between the two limits, as CASA does.
+    #[serde(default)]
+    pub excludepix: Option<[f64; 2]>,
+    /// CASA LEL image mask expression.
     #[serde(default)]
     pub mask: Option<String>,
+    /// Extend a conforming mask over singleton or missing axes.
+    #[serde(default)]
+    pub stretch: bool,
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
@@ -1040,13 +1057,20 @@ pub struct ImageStatisticsSummary {
 pub struct MomentMapSummary {
     /// Input CASA image path.
     pub imagename: String,
+    /// Shape shared by all collapsed images.
+    pub shape: Vec<usize>,
+    /// Output images in the order requested by the caller.
+    pub products: Vec<MomentImageSummary>,
+}
+
+/// One product of a CASA `immoments` task.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MomentImageSummary {
     /// Output CASA image path.
     pub outfile: String,
-    /// Moment number generated.
+    /// CASA moment number.
     pub moment: i32,
-    /// Output image shape.
-    pub shape: Vec<usize>,
-    /// Output image units.
+    /// Output brightness units.
     pub units: String,
     /// Number of valid collapsed profiles.
     pub valid_profiles: usize,

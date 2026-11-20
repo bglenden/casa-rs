@@ -3,9 +3,8 @@
 //! types, FITS/CASA inputs, full spatial/spectral/Stokes/mask selection, and
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
-mod coords;
-mod mask;
-mod region;
+pub(super) mod coords;
+pub(super) mod region;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -24,9 +23,9 @@ use crate::{
 };
 
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
-use self::mask::evaluate_subimage_mask;
 use self::region::SubimageSelection;
 use super::axes::stokes_for_axis;
+use super::lel_mask::evaluate_mask;
 
 /// A region as CASA text, a region filename, or a casacore region record.
 pub enum SubimageRegion<'a> {
@@ -178,7 +177,7 @@ impl SubimagePlan {
         let mut mask =
             image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
         selection.apply_selection_masks(&mut mask);
-        if let Some(expression) = evaluate_subimage_mask(
+        if let Some(expression) = evaluate_mask(
             mask_expression,
             image.shape(),
             image.coordinates(),
