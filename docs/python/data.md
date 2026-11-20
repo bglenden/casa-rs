@@ -55,6 +55,9 @@ Use `cs.setreferencevalue(values)` and `cs.setincrement(values)` to edit
 the coordinate record. Numeric values use the declared world-axis units.
 Quantity strings can specify their own units, and `type` selects one
 coordinate.
+Use `cs.setreferencelocation(pixel, world, mask)` to set pixel and world
+references together. A full-length boolean mask can limit the edit to
+specific axes. Stokes references stay fixed.
 Use `cs.setunits(values)` to change the declared units and rescale the
 coordinate values. On a selected linear or tabular coordinate,
 `overwrite=True` relabels units while keeping the numeric values.

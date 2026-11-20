@@ -326,7 +326,7 @@ const METHODS: &[Method] = &[
             param("mask", K::Bools, Bools(&[false])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setreferencepixel",
