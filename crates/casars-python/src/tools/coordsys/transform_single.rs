@@ -88,22 +88,32 @@ pub(in crate::tools) fn image_pixel_argument(
     py: Python<'_>,
     value: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Vec<f64>> {
+    pixel_argument(
+        py,
+        value,
+        "Unsupported record type for value",
+        "Unsupported data type for value",
+    )
+}
+
+fn pixel_argument(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+    record_error: &str,
+    type_error: &str,
+) -> PyResult<Vec<f64>> {
     let Some(value) = value.filter(|value| !value.is_none()) else {
         return Ok(Vec::new());
     };
     if let Ok(dict) = value.cast::<PyDict>() {
         let record = casa_record(py, Some(dict))?;
-        return numeric_record_value(
-            record
-                .get("numeric")
-                .ok_or_else(|| raised("Unsupported record type for value"))?,
-        );
+        return numeric_record_value(record.get("numeric").ok_or_else(|| raised(record_error))?);
     }
     if let Some(empty) = bool_vector(value)? {
         return if empty {
             Ok(Vec::new())
         } else {
-            Err(raised("Unsupported data type for value"))
+            Err(raised(type_error))
         };
     }
     if let Ok(array) = value.cast::<PyUntypedArray>()
@@ -115,7 +125,7 @@ pub(in crate::tools) fn image_pixel_argument(
     match value.extract::<Variant>()? {
         Variant::Numbers(values) | Variant::Array { values, .. } => Ok(values),
         Variant::Empty => Ok(Vec::new()),
-        _ => Err(raised("Unsupported data type for value")),
+        _ => Err(raised(type_error)),
     }
 }
 
@@ -561,6 +571,32 @@ impl PyCoordsys {
             ("pw_type", CasaValue::Text("pixel".into())),
             ("ar_type", CasaValue::Text("absolute".into())),
         ]))
+    }
+}
+
+#[pymethods]
+impl PyCoordsys {
+    #[pyo3(signature = (value=None), text_signature = "($self, value=[])")]
+    fn topixel(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
+        let world = WorldArgument::capture(py, value)?;
+        py.detach(|| self.image_pixel(world))?.into_python(py)
+    }
+
+    #[pyo3(signature = (value=None, format="n"), text_signature = "($self, value=[], format='n')")]
+    fn toworld(
+        &self,
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+        format: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let pixel = pixel_argument(
+            py,
+            value,
+            "unsupported record type for pixel",
+            "unsupported data type for pixel",
+        )?;
+        py.detach(|| self.image_world(pixel, format, true))?
+            .into_python(py)
     }
 }
 

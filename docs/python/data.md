@@ -76,6 +76,9 @@ Use `cs.setobserver(name)` and `cs.settelescope(name)` to update observation
 metadata. An unknown telescope name is stored and the setter returns
 `False`. The record retains the last known telescope position.
 
+Use `cs.toworld(pixel)` and `cs.topixel(world)` for a single absolute
+coordinate. `toworld` supports the same numeric, quantity, string, and
+measure format letters as `referencevalue`.
 Use `cs.toworldmany(pixels)["numeric"]` and
 `cs.topixelmany(world)["numeric"]` to convert a floating-point matrix with
 one point per column. The rows follow the coordinate system's axis order.
