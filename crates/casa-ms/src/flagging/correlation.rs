@@ -53,6 +53,40 @@ pub(super) struct CorrelationSelection {
     by_description: Vec<SelectedCorrelations>,
     clip_metric: Option<ClipMetric>,
     unknown_clip_expression: Option<(String, Vec<bool>)>,
+    decorated_stored_products: bool,
+}
+
+fn clip_visibility_operator(text: &str) -> Option<(ClipMetric, String)> {
+    CLIP_OPERATORS.iter().find_map(|(name, metric)| {
+        let (prefix, suffix) = text.split_once(*name)?;
+        // The operator can appear on either side of the product.
+        // Separate the pieces to preserve stored product boundaries.
+        let products = format!("{prefix} {suffix}");
+        (!CLIP_OPERATORS
+            .iter()
+            .any(|(name, _)| products.contains(*name)))
+        .then_some((*metric, products))
+    })
+}
+
+fn stored_products_with_operator(mut text: String) -> Option<String> {
+    // Manual and quack use stored flags. Keep the explicitly requested
+    // planes after peeling the visibility metric from the expression.
+    for (operator, _) in CLIP_OPERATORS {
+        text = text.replace(operator, " ");
+    }
+    let mut products = Vec::new();
+    for product in text.split(|ch: char| !ch.is_ascii_alphanumeric()) {
+        match product {
+            "ALL" => return None,
+            "WVR" => products.push("I"),
+            _ if RECEPTOR_PRODUCTS.contains(&product) || STOKES_PRODUCTS.contains(&product) => {
+                products.push(product);
+            }
+            _ => {}
+        }
+    }
+    Some(products.join(","))
 }
 
 impl CorrelationSelection {
@@ -67,8 +101,7 @@ impl CorrelationSelection {
             .next()
             .unwrap_or_default()
             .to_uppercase();
-        let default_clip = mode == FlagDataMode::Clip && text.is_empty();
-        if default_clip {
+        if mode == FlagDataMode::Clip && text.is_empty() {
             text.push_str(if data_column.is_real() {
                 "REAL_ALL"
             } else {
@@ -84,20 +117,9 @@ impl CorrelationSelection {
             ),
         };
         let has_operator = CLIP_OPERATORS.iter().any(|(name, _)| text.contains(*name));
-        let clip_operator = if mode == FlagDataMode::Clip {
-            CLIP_OPERATORS.iter().find_map(|(name, metric)| {
-                let (prefix, suffix) = text.split_once(*name)?;
-                // The operator can appear on either side of the product.
-                // Separate the pieces to preserve stored product boundaries.
-                let products = format!("{prefix} {suffix}");
-                (!CLIP_OPERATORS
-                    .iter()
-                    .any(|(name, _)| products.contains(*name)))
-                .then_some((*metric, products))
-            })
-        } else {
-            None
-        };
+        let clip_operator = (mode == FlagDataMode::Clip)
+            .then(|| clip_visibility_operator(&text))
+            .flatten();
         // The summary agent reads stored flags and does not evaluate
         // visibility expressions. CASA leaves its planes unfiltered here.
         if mode == FlagDataMode::Summary && has_operator {
@@ -107,10 +129,17 @@ impl CorrelationSelection {
             && (!matches!(
                 mode,
                 FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Clip
-            ) || (has_operator && clip_operator.is_none())
-                || (mode != FlagDataMode::Clip && text.contains("WVR")))
+            ) || (mode == FlagDataMode::Clip && has_operator && clip_operator.is_none()))
         {
             return Err(unsupported());
+        }
+        let decorated_stored_products =
+            has_operator && matches!(mode, FlagDataMode::Manual | FlagDataMode::Quack);
+        if decorated_stored_products {
+            let Some(products) = stored_products_with_operator(text) else {
+                return Ok(None);
+            };
+            text = products;
         }
 
         let failed = |source: MsError| FlaggingError::MutateFlags {
@@ -134,7 +163,9 @@ impl CorrelationSelection {
             .copied()
             .filter(|name| {
                 clip_operator.is_none()
-                    && (RECEPTOR_PRODUCTS.contains(name) || *name == "I")
+                    && (RECEPTOR_PRODUCTS.contains(name)
+                        || *name == "I"
+                        || (decorated_stored_products && STOKES_PRODUCTS.contains(name)))
                     && text.contains(*name)
             })
             .collect();
@@ -279,7 +310,12 @@ impl CorrelationSelection {
                 .map(|(metric, _)| metric)
                 .or((mode == FlagDataMode::Clip).then_some(ClipMetric::Amplitude)),
             unknown_clip_expression,
+            decorated_stored_products,
         }))
+    }
+
+    pub(super) fn decorated_stored_products(&self) -> bool {
+        self.decorated_stored_products
     }
 
     pub(super) fn planes(&self, ddid: i32) -> &[usize] {

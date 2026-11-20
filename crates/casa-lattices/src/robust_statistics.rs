@@ -155,6 +155,8 @@ pub struct RobustSampleStats {
     /// The effective-sample maximum's position, when it is a real point
     /// of the caller's sample.
     pub maxpos: Option<u64>,
+    /// CASA's reported Chauvenet iteration count, capped by `maxiter`.
+    pub chauvenet_iterations: Option<usize>,
 }
 
 /// The outcome of one robust computation.
@@ -278,6 +280,7 @@ pub fn compute_robust_stats(
             let max_iterations = if *maxiter < 0 { 1000 } else { *maxiter };
             let mut kept: Vec<SamplePoint> = sample.to_vec();
             let mut previous_npts: Option<f64> = None;
+            let mut reductions = 0;
             for iteration in 0..=max_iterations {
                 let stats = classical_stats(&kept);
                 if iteration > 0 && previous_npts == Some(stats.npts) {
@@ -291,9 +294,14 @@ pub fn compute_robust_stats(
                 let low = stats.mean - z * stats.sigma;
                 let high = stats.mean + z * stats.sigma;
                 kept.retain(|point| low <= point.value && point.value <= high);
+                if kept.len() < stats.npts as usize {
+                    reductions += 1;
+                }
                 previous_npts = Some(stats.npts);
             }
-            Ok(RobustStats::Sample(classical_stats(&kept)))
+            let mut stats = classical_stats(&kept);
+            stats.chauvenet_iterations = Some(reductions.min(max_iterations as usize));
+            Ok(RobustStats::Sample(stats))
         }
         StatisticsAlgorithm::FitToHalf { center, upper } => {
             let center_value = match center {
@@ -427,6 +435,7 @@ fn classical_stats_of_values(values: &[f64]) -> RobustSampleStats {
         quartile: q3 - q1,
         minpos: None,
         maxpos: None,
+        chauvenet_iterations: None,
     }
 }
 
