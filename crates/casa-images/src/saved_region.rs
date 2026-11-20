@@ -129,6 +129,11 @@ struct PlaneSelection {
     inside: Array2<bool>,
 }
 
+pub(crate) struct PolygonBounds {
+    pub(crate) start: Vec<usize>,
+    pub(crate) shape: Vec<usize>,
+}
+
 impl PolygonRegion {
     /// Creates an empty region on `pixel_axes`, taking the vertex units from
     /// the world axes of `coords`.
@@ -198,6 +203,45 @@ impl PolygonRegion {
             Ok(())
         })?;
         Ok(mask)
+    }
+
+    /// The bounds of selected pixels, computed one spatial plane at a time.
+    pub(crate) fn bounds(
+        &self,
+        coords: &CoordinateSystem,
+        shape: &[usize],
+    ) -> Result<Option<PolygonBounds>, ImageError> {
+        let [x_axis, y_axis] = self.pixel_axes;
+        let mut lower = shape.to_vec();
+        let mut upper = vec![0; shape.len()];
+        self.visit_planes(coords, shape, |plane| {
+            for ((x, y), &selected) in plane.inside.indexed_iter() {
+                if selected {
+                    for (axis, offset) in [(x_axis, x), (y_axis, y)] {
+                        let position = plane.start[axis] + offset;
+                        lower[axis] = lower[axis].min(position);
+                        upper[axis] = upper[axis].max(position + 1);
+                    }
+                }
+            }
+            for axis in (0..shape.len()).filter(|&axis| axis != x_axis && axis != y_axis) {
+                lower[axis] = lower[axis].min(plane.start[axis]);
+                upper[axis] = upper[axis].max(plane.start[axis] + 1);
+            }
+            Ok(())
+        })?;
+        if upper[x_axis] == 0 {
+            return Ok(None);
+        }
+        let count = upper
+            .iter()
+            .zip(&lower)
+            .map(|(end, start)| end - start)
+            .collect();
+        Ok(Some(PolygonBounds {
+            start: lower,
+            shape: count,
+        }))
     }
 
     fn check_axes(&self, coords: &CoordinateSystem) -> Result<(), ImageError> {

@@ -4,7 +4,10 @@
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
 pub(super) mod coords;
+mod noise;
 pub(super) mod region;
+
+pub use noise::ImageNoise;
 
 use std::collections::BTreeSet;
 use std::fs;

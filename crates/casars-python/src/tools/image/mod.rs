@@ -19,6 +19,7 @@ mod makecomplex;
 mod mask_expression;
 mod masks;
 mod metadata;
+mod noise;
 mod pixels;
 mod point;
 mod records;

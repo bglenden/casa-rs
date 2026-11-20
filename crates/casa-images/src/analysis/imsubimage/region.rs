@@ -7,16 +7,16 @@ use std::fs;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
-use casa_types::ArrayD;
 use casa_types::quanta::Quantity;
 use casa_types::quanta::casacore::mvangle_radians;
+use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, Axis, IxDyn, Zip};
 
 use crate::analysis::axes::{direction_plane_axes, stokes_for_axis};
 use crate::analysis::{
     PixelRegion, parse_box_region, parse_image_channel_selection, parse_stokes_selection,
 };
-use crate::{ImageError, ImageInterface, ImagePixel};
+use crate::{ImageError, ImageInterface, ImagePixel, PolygonRegion};
 
 use super::SubimageRegion;
 
@@ -67,6 +67,101 @@ struct PlaneSelection {
 struct QualifiedShape {
     spatial: SpatialShape,
     planes: PlaneSelection,
+}
+
+pub(super) struct StridedSection {
+    pub(super) start: Vec<usize>,
+    pub(super) count: Vec<usize>,
+    pub(super) stride: Vec<usize>,
+}
+
+impl StridedSection {
+    pub(super) fn resolve<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        region: Option<SubimageRegion<'_>>,
+    ) -> Result<Self, ImageError> {
+        if let Some(SubimageRegion::Record(record)) = region {
+            match record.get("name") {
+                Some(Value::Scalar(ScalarValue::String(name))) if name == "WCPolygon" => {
+                    let polygon =
+                        PolygonRegion::from_record("region", record, image.coordinates())?;
+                    let bounds = polygon
+                        .bounds(image.coordinates(), image.shape())?
+                        .ok_or_else(empty_section)?;
+                    return Ok(Self {
+                        start: bounds.start,
+                        count: bounds.shape,
+                        stride: vec![1; image.ndim()],
+                    });
+                }
+                Some(Value::Scalar(ScalarValue::String(name))) if name == "WCUnion" => {
+                    return Self::union(image, record);
+                }
+                _ => {}
+            }
+            if let Some(section) =
+                saved::strided_lc_slicer(record, image.coordinates(), image.shape())?
+            {
+                return Ok(section);
+            }
+        }
+        let selection = SubimageSelection::resolve(image, None, region, None, None)?;
+        Ok(Self {
+            start: selection.start,
+            count: selection.shape,
+            stride: vec![1; image.ndim()],
+        })
+    }
+
+    fn union<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        record: &RecordValue,
+    ) -> Result<Self, ImageError> {
+        let Some(Value::Record(members)) = record.get("regions") else {
+            return Err(ImageError::InvalidMetadata(
+                "WCUnion is missing its regions".into(),
+            ));
+        };
+        let mut start = image.shape().to_vec();
+        let mut end = vec![0; image.ndim()];
+        for member in members.fields().iter().filter(|field| field.name != "nr") {
+            let Value::Record(child) = &member.value else {
+                return Err(ImageError::InvalidMetadata(
+                    "WCUnion member is missing its region record".into(),
+                ));
+            };
+            let section = match Self::resolve(image, Some(SubimageRegion::Record(child))) {
+                Ok(section) => section,
+                Err(ImageError::CasaSelection(message)) if message == EMPTY_SECTION => continue,
+                Err(error) => return Err(error),
+            };
+            for axis in 0..image.ndim() {
+                start[axis] = start[axis].min(section.start[axis]);
+                end[axis] = end[axis].max(
+                    section.start[axis] + (section.count[axis] - 1) * section.stride[axis] + 1,
+                );
+            }
+        }
+        if end.contains(&0) {
+            return Err(empty_section());
+        }
+        let count = end
+            .into_iter()
+            .zip(&start)
+            .map(|(end, start)| end - start)
+            .collect();
+        Ok(Self {
+            start,
+            count,
+            stride: vec![1; image.ndim()],
+        })
+    }
+}
+
+const EMPTY_SECTION: &str = "selected region contains no pixels inside the image";
+
+fn empty_section() -> ImageError {
+    ImageError::CasaSelection(EMPTY_SECTION.into())
 }
 
 impl From<SpatialShape> for QualifiedShape {
@@ -1070,9 +1165,7 @@ fn resolve_spatial_and_saved_bounds(
     }
 
     if !any_pixel {
-        return Err(ImageError::CasaSelection(
-            "selected region contains no pixels inside the image".into(),
-        ));
+        return Err(empty_section());
     }
 
     if saved_polygon_mask.is_some() {

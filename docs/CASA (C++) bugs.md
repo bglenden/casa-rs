@@ -7413,6 +7413,24 @@ the old name and can abort while closing that stale handle. casa-rs refuses
 the move before changing either path while another tool holds the image.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+## `image.addnoise` can erase pixels or fail to return on unusable input
+
+Fill an image with nonzero pixels and call
+`ia.addnoise("normal", [0, -1], zero=True, seeds=[1, 2])`. CASA 6.7.6.14
+zeros the region before reporting an illegal variance. An unknown
+distribution such as `"bogus"` has the same destructive order. casa-rs
+validates the distribution before writing the existing image.
+Passing `seeds=None` explicitly can also change the image before the Python
+wrapper raises `SystemError`. casa-rs rejects that argument before changing
+pixels.
+
+CASA also fails to return for a one-pixel image with
+`ia.addnoise("geometric", [0], seeds=[1, 2])` or
+`ia.addnoise("poisson", [800], seeds=[1, 2])`. The geometric rejection loop
+cannot draw a uniform zero with those seeds. The Poisson bound underflows to
+zero, leaving its product loop true after the product reaches zero. casa-rs
+returns a Python error for these inputs.
+
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
 With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and

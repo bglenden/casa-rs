@@ -31,19 +31,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None, pars = None, region = None, zero = None, seeds = None), text_signature = "($self, type='normal', pars=[0.0, 1.0], region={}, zero=False, seeds=[])")]
-    fn addnoise(
-        &self,
-        r#type: Option<&Bound<'_, PyAny>>,
-        pars: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        zero: Option<&Bound<'_, PyAny>>,
-        seeds: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("addnoise")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (source = None, convolved = None), text_signature = "($self, source=[], convolved=[])")]
     fn beamforconvolvedsize(
         &self,

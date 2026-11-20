@@ -30,6 +30,11 @@ ia.setbrightnessunit("Jy/pixel")
 ia.done()
 ```
 
+Use `ia.addnoise(seeds=[1, 2])` to add reproducible normal noise. Pass
+`type` and `pars` for another CASA noise distribution, or `zero=True`
+to replace the selected pixels with noise. The region selects the lattice
+section and the image's validity mask is retained.
+
 A coordinate tool returned by `ia.coordsys()` has its own state. Inspect the
 direction axes with `cs.findcoordinate("direction")["pixel"]` or identify the
 coordinate for a particular axis with `cs.findaxis(world=False, axis=0)`.

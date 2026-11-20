@@ -51,6 +51,7 @@ use self::axes::direction_plane_axes;
 pub use self::exportfits::{ImageFitsHeader, image_fits_header};
 pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
+pub use self::imsubimage::ImageNoise;
 pub use self::list_log::imhead_list_log;
 #[cfg(casa_prebuilt_image_provider)]
 pub(crate) use self::schema::schema_maps_preserve_order;
