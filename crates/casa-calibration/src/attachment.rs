@@ -90,11 +90,20 @@ pub enum AttachmentError {
     #[error("no MeasurementSet is attached")]
     Unattached,
     /// The requested selection matched no MAIN rows.
-    #[error("selection matches no rows")]
+    #[error("Selection is empty: you may want to review this MSs selection")]
     EmptySelection,
+    /// An explicit selection was rejected and needs a successful replacement.
+    #[error("the current visibility selection was rejected")]
+    RejectedSelection,
+    /// A direct open has no selected spectral windows for a UV cut.
+    #[error("uvrange requires a configured visibility selection")]
+    UvRangeRequiresSelection,
     /// The named attachment was opened read-only.
     #[error("Please make sure MS is writable when using Imager::ft")]
     ReadOnly,
+    /// The active Multi-MS iterator includes an earlier read-only dataset.
+    #[error("an active MeasurementSet is read-only")]
+    ReadOnlyInput,
     /// The supplied UV interval is outside CASA's accepted domain.
     #[error("Invalid uvmin and uvmax: {0}, {1}")]
     InvalidUvRange(f64, f64),
@@ -112,6 +121,13 @@ impl From<TableError> for AttachmentError {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectionState {
+    Initial,
+    Selected,
+    Rejected,
+}
+
 /// Canonical path and selector inputs retained between calibration calls.
 ///
 /// Physical row ids and channel mappings are resolved on the reopened
@@ -122,6 +138,7 @@ pub struct CalibrationAttachment {
     mode: AttachmentMode,
     options: AttachmentOptions,
     selection: MsSelection,
+    state: SelectionState,
     uv_ranges: Vec<[f64; 2]>,
 }
 
@@ -143,6 +160,10 @@ impl CalibrationAttachment {
             mode,
             options,
             selection,
+            state: match mode {
+                AttachmentMode::Open => SelectionState::Initial,
+                AttachmentMode::Selection => SelectionState::Selected,
+            },
             uv_ranges: Vec::new(),
         };
         if options.write_access && options.use_scratch {
@@ -195,20 +216,28 @@ impl CalibrationAttachment {
 
     /// Replace the selection on this attachment and reset prior UV narrowing.
     ///
-    /// The return value indicates whether the new selection contained rows.
+    /// An empty or invalid selector disables mutations until the next
+    /// successful selection, matching CASA's direct-open state.
     ///
     /// # Errors
     ///
     /// Returns an error if the table or selection cannot be read.
     pub fn replace_selection(&mut self, selection: MsSelection) -> Result<bool, AttachmentError> {
         let ms = MeasurementSet::open(&self.path)?;
-        let selected = resolve_casa_calibration_selection(&ms, &selection)?;
-        if selected.selected_rows.is_empty() {
-            return Ok(false);
-        }
-        self.selection = selection;
+        self.state = SelectionState::Rejected;
         self.uv_ranges.clear();
-        Ok(true)
+        match resolve_casa_calibration_selection(&ms, &selection) {
+            Ok(selected) if !selected.selected_rows.is_empty() => {
+                self.selection = selection;
+                self.state = SelectionState::Selected;
+                Ok(true)
+            }
+            Ok(_)
+            | Err(MsSelectionError::Domain(
+                casa_ms::MsError::InvalidInput(_) | casa_ms::MsError::VersionError(_),
+            )) => Ok(false),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Narrow the current selection using strict wavelength bounds.
@@ -223,6 +252,11 @@ impl CalibrationAttachment {
         let maximum = if maximum <= 0.0 { 1e10 } else { maximum };
         if !(minimum >= 0.0 && maximum > minimum && maximum.is_finite()) {
             return Err(AttachmentError::InvalidUvRange(minimum, maximum));
+        }
+        match self.state {
+            SelectionState::Initial => return Err(AttachmentError::UvRangeRequiresSelection),
+            SelectionState::Rejected => return Err(AttachmentError::RejectedSelection),
+            SelectionState::Selected => {}
         }
         let ms = MeasurementSet::open(&self.path)?;
         let mut ranges = self.uv_ranges.clone();
@@ -252,6 +286,9 @@ impl CalibrationAttachment {
         if !self.options.write_access {
             return Err(AttachmentError::ReadOnly);
         }
+        if self.state == SelectionState::Rejected {
+            return Err(AttachmentError::RejectedSelection);
+        }
         let mut opened = OpenedMs::open(&self.path)?;
         let selected = self.resolve_holding(&opened.measurement_set, &self.uv_ranges);
         let result = selected.and_then(|selected| {
@@ -269,6 +306,9 @@ impl CalibrationAttachment {
         ms: &MeasurementSet,
         uv_ranges: &[[f64; 2]],
     ) -> Result<ResolvedMsSelection, AttachmentError> {
+        if self.state == SelectionState::Rejected {
+            return Err(AttachmentError::RejectedSelection);
+        }
         if uv_ranges.is_empty() {
             return Ok(resolve_casa_calibration_selection(ms, &self.selection)?);
         }
@@ -302,6 +342,7 @@ impl CalibrationAttachment {
 #[derive(Debug, Default)]
 pub struct ImagerAttachments {
     inputs: Vec<CalibrationAttachment>,
+    current_only: bool,
 }
 
 impl ImagerAttachments {
@@ -318,6 +359,7 @@ impl ImagerAttachments {
             MsSelection::default(),
         )?;
         self.inputs = vec![input];
+        self.current_only = false;
         Ok(())
     }
 
@@ -341,11 +383,15 @@ impl ImagerAttachments {
             return input.replace_selection(selection);
         }
         let path = path.ok_or(AttachmentError::Unattached)?;
-        match CalibrationAttachment::attach(path, AttachmentMode::Selection, options, selection) {
-            Ok(input) => self.inputs.push(input),
-            Err(AttachmentError::EmptySelection) => return Ok(false),
-            Err(error) => return Err(error),
+        let input =
+            CalibrationAttachment::attach(path, AttachmentMode::Selection, options, selection)?;
+        if self.current_only
+            && let Some(previous) = self.inputs.last_mut()
+        {
+            previous.uv_ranges.clear();
         }
+        self.inputs.push(input);
+        self.current_only = false;
         Ok(true)
     }
 
@@ -354,21 +400,56 @@ impl ImagerAttachments {
         &self.inputs
     }
 
+    /// Inputs currently used by the visibility iterator.
+    pub fn active_inputs(&self) -> &[CalibrationAttachment] {
+        if self.current_only {
+            &self.inputs[self.inputs.len().saturating_sub(1)..]
+        } else {
+            &self.inputs
+        }
+    }
+
+    /// Validate the active group before prediction writes to any input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inputs are absent, read-only, or rejected.
+    pub fn writable_inputs(&self) -> Result<&[CalibrationAttachment], AttachmentError> {
+        let active = self.active_inputs();
+        let current = active.last().ok_or(AttachmentError::Unattached)?;
+        if !current.options.write_access {
+            return Err(AttachmentError::ReadOnly);
+        }
+        if active.iter().any(|input| !input.options.write_access) {
+            return Err(AttachmentError::ReadOnlyInput);
+        }
+        if active
+            .iter()
+            .any(|input| input.state == SelectionState::Rejected)
+        {
+            return Err(AttachmentError::RejectedSelection);
+        }
+        Ok(active)
+    }
+
     /// Narrow the currently selected input.
     ///
     /// # Errors
     ///
     /// Returns an error for an unattached imager or a failed UV-range selection.
     pub fn narrow_uvrange(&mut self, minimum: f64, maximum: f64) -> Result<(), AttachmentError> {
-        self.inputs
-            .last_mut()
-            .ok_or(AttachmentError::Unattached)?
-            .narrow_uvrange(minimum, maximum)
+        let current = self.inputs.last_mut().ok_or(AttachmentError::Unattached)?;
+        current.narrow_uvrange(minimum, maximum)?;
+        // The legacy iterator is rebuilt over the current input, including
+        // when the UV predicate matched no rows and retained its selection.
+        self.current_only = current.mode == AttachmentMode::Selection;
+        Ok(())
     }
 
     /// Release the stored table associations and per-input selectors.
     pub fn close(&mut self) {
         self.inputs.clear();
+        self.current_only = false;
     }
 }
 

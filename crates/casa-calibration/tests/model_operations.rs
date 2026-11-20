@@ -188,7 +188,7 @@ fn a_write_lock_on_another_ms_cannot_clear_models() {
 
 #[test]
 fn imager_attachment_keeps_the_opened_ms_and_replaces_uv_selection() {
-    use casa_calibration::{AttachmentMode, AttachmentOptions, ImagerAttachments};
+    use casa_calibration::{AttachmentError, AttachmentMode, AttachmentOptions, ImagerAttachments};
 
     let temp = TempDir::new().unwrap();
     let first = temp.path().join("first");
@@ -201,6 +201,18 @@ fn imager_attachment_keeps_the_opened_ms_and_replaces_uv_selection() {
 
     let mut object = ImagerAttachments::default();
     object.open(&first, AttachmentOptions::default()).unwrap();
+    assert!(matches!(
+        object.narrow_uvrange(0.0, 1.0),
+        Err(AttachmentError::UvRangeRequiresSelection)
+    ));
+    assert_eq!(
+        object.inputs()[0]
+            .resolve()
+            .unwrap()
+            .row_indices()
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
     let selected = MsSelection {
         spw: Some("0:0~1^2,1:0~1^2".into()),
         ..MsSelection::default()
@@ -264,6 +276,45 @@ fn imager_attachment_keeps_the_opened_ms_and_replaces_uv_selection() {
             .collect::<Vec<_>>(),
         [1]
     );
+    for rejected in [
+        MsSelection {
+            field: Some("1".into()),
+            spw: Some("0".into()),
+            ..MsSelection::default()
+        },
+        MsSelection {
+            field: Some("unknown-field".into()),
+            ..MsSelection::default()
+        },
+    ] {
+        assert!(
+            !object
+                .select(None, AttachmentOptions::default(), rejected)
+                .unwrap()
+        );
+        let input = &object.inputs()[0];
+        assert!(matches!(
+            input.resolve(),
+            Err(AttachmentError::RejectedSelection)
+        ));
+        assert!(matches!(
+            input.with_write::<()>(|_, _, _| panic!("stale selection write")),
+            Err(AttachmentError::RejectedSelection)
+        ));
+        let valid = MsSelection {
+            field: Some("0".into()),
+            spw: Some("0:1".into()),
+            ..MsSelection::default()
+        };
+        assert!(
+            object
+                .select(Some(&second), AttachmentOptions::default(), valid)
+                .unwrap()
+        );
+        let recovered = object.inputs()[0].resolve().unwrap();
+        assert_eq!(recovered.row_indices().collect::<Vec<_>>(), [0]);
+        assert_eq!(recovered.channel_selections[&0].indices(2).unwrap(), [1]);
+    }
     object.close();
     assert!(object.inputs().is_empty());
     object.open(&second, AttachmentOptions::default()).unwrap();
@@ -320,6 +371,21 @@ fn selection_attachments_keep_each_input_and_its_access_flags() {
             .select(Some(&second), readonly, second_selection)
             .unwrap()
     );
+    let empty = MsSelection {
+        field: Some("1".into()),
+        spw: Some("0".into()),
+        ..MsSelection::default()
+    };
+    let mut unattached = ImagerAttachments::default();
+    assert!(matches!(
+        unattached.select(Some(&second), readonly, empty.clone()),
+        Err(AttachmentError::EmptySelection)
+    ));
+    assert!(unattached.inputs().is_empty());
+    assert!(matches!(
+        object.select(Some(&second), readonly, empty),
+        Err(AttachmentError::EmptySelection)
+    ));
     let [first_input, second_input] = object.inputs() else {
         panic!("two selected inputs");
     };
@@ -351,8 +417,92 @@ fn selection_attachments_keep_each_input_and_its_access_flags() {
         second_input.with_write::<()>(|_, _, _| panic!("readonly write")),
         Err(AttachmentError::ReadOnly)
     ));
+    assert!(matches!(
+        object.writable_inputs(),
+        Err(AttachmentError::ReadOnly)
+    ));
+    let mut reversed = ImagerAttachments::default();
+    assert!(
+        reversed
+            .select(Some(&second), readonly, MsSelection::default())
+            .unwrap()
+    );
+    assert!(
+        reversed
+            .select(Some(&first), writable, MsSelection::default())
+            .unwrap()
+    );
+    assert!(matches!(
+        reversed.writable_inputs(),
+        Err(AttachmentError::ReadOnlyInput)
+    ));
+
     let reopened = MeasurementSet::open(&second).unwrap();
     assert!(virtual_model(&reopened, 0).unwrap().is_some());
+}
+
+#[test]
+fn multi_ms_uvrange_switches_the_active_iterator_and_the_next_selection_restores_it() {
+    use casa_calibration::{AttachmentOptions, ImagerAttachments};
+
+    let temp = TempDir::new().unwrap();
+    let inputs = ["first", "second", "third"].map(|name| {
+        let folder = temp.path().join(name);
+        std::fs::create_dir(&folder).unwrap();
+        common::create_apply_fixture_ms(&folder, true)
+    });
+    set_fixture_uv_distances(&inputs[1]);
+    let mut object = ImagerAttachments::default();
+    let options = AttachmentOptions::default();
+    for path in &inputs[..2] {
+        assert!(
+            object
+                .select(Some(path), options, MsSelection::default())
+                .unwrap()
+        );
+    }
+    assert_eq!(object.writable_inputs().unwrap().len(), 2);
+
+    // A valid empty cut changes the active MS, with its original rows.
+    object.narrow_uvrange(1e9, 1e10).unwrap();
+    assert_eq!(object.inputs().len(), 2);
+    let [current] = object.writable_inputs().unwrap() else {
+        panic!("current MS iterator");
+    };
+    assert_eq!(
+        current.path(),
+        casa_tables::table_cache_name(&inputs[1]).unwrap()
+    );
+    assert_eq!(
+        current.resolve().unwrap().row_indices().collect::<Vec<_>>(),
+        [0, 1]
+    );
+
+    // 170 wavelengths retains the 10 m row and removes the 100 m row.
+    object.narrow_uvrange(0.0, 170.0).unwrap();
+    assert_eq!(
+        object.writable_inputs().unwrap()[0]
+            .resolve()
+            .unwrap()
+            .row_indices()
+            .collect::<Vec<_>>(),
+        [0]
+    );
+
+    assert!(
+        object
+            .select(Some(&inputs[2]), options, MsSelection::default())
+            .unwrap()
+    );
+    assert_eq!(object.writable_inputs().unwrap().len(), 3);
+    assert_eq!(
+        object.writable_inputs().unwrap()[1]
+            .resolve()
+            .unwrap()
+            .row_indices()
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
 }
 
 #[cfg(unix)]
