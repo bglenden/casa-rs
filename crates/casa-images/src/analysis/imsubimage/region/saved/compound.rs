@@ -5,10 +5,11 @@ use casa_coordinates::CoordinateSystem;
 use casa_types::{RecordValue, Value};
 use ndarray::{Array2, ArrayD, Dimension, IxDyn};
 
+use crate::ImageError;
 use crate::saved_region::{compound_children, native_region_kind};
-use crate::{ImageError, PolygonRegion};
 
 use super::super::{ParsedRegion, SavedRegionMask, resolve_spatial_and_saved_bounds};
+use super::relative::polygon_plane;
 use super::{decode_wc_box, decode_wc_box_axes, parse_saved_region, wc_pixel_axes};
 
 #[derive(Clone, Copy)]
@@ -87,19 +88,13 @@ fn compile(
         "WCExtension" => return compile_extension(name, record, coords, full_shape, plane),
         "WCConcatenation" => return compile_concatenation(name, record, coords, full_shape, plane),
         "WCPolygon" => {
-            let polygon = PolygonRegion::from_record(name, record, coords)?;
-            let [x, y] = polygon.pixel_axes;
-            let local = polygon.lattice_plane(coords, full_shape)?.ok_or_else(|| {
-                ImageError::CasaSelection(format!(
-                    "saved region '{name}' selects no pixels in image"
-                ))
-            })?;
-            let mut start = vec![0; full_shape.len()];
-            start[x] = local.start[0];
-            start[y] = local.start[1];
-            let mut end = full_shape.to_vec();
-            end[x] = start[x] + local.mask.nrows();
-            end[y] = start[y] + local.mask.ncols();
+            let ([x, y], local) = polygon_plane(name, record, coords, full_shape)?;
+            let (start, shape) = local.section(full_shape, [x, y]);
+            let end = start
+                .iter()
+                .zip(shape)
+                .map(|(&start, size)| start + size)
+                .collect();
             let mut axes = vec![x, y];
             axes.sort_unstable();
             return Ok(Region {
