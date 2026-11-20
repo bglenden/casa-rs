@@ -45,6 +45,7 @@ echo "==> Building the task executables the end-to-end tests run"
 cargo build -q -p casa-ms --bin flagmanager --bin flagdata -p casa-calibration --bin calibrate
 cargo build -q -p casa-images --bin immath --bin exportfits --bin imsubimage --bin importfits --bin impv
 cargo build -q -p casars-imexplore --bin imexplore
+cargo build -q -p casa-images --bin imregrid
 cargo build -q -p casars-msconvert --bin msconvert
 cargo build -q -p casars-simulation --bin simobserve --bin simanalyze --bin simalma
 cargo build -q -p casa-images --bin immoments --bin impbcor

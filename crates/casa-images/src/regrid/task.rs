@@ -1,0 +1,619 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Coordinate and shape selection for the CASA `imregrid` task.
+
+mod frame;
+
+pub(crate) use frame::{frame_from_template, regrid_direction_frame};
+
+use casa_coordinates::{
+    Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, SpectralCoordinate,
+    StokesCoordinate,
+};
+use casa_types::ArrayD;
+use casa_types::measures::{
+    MeasFrame,
+    doppler::{DopplerRef, MDoppler},
+    frequency::MFrequency,
+};
+use ndarray::{Axis, IxDyn, NdFloat, ShapeBuilder};
+
+use super::{
+    DirectionSampling, Plane, RegridMethod, RegridTemplate, Regridded, jy_per_pixel_scale,
+    positions, same_axes, sample_direction_planes, spectral::SpectralPlan,
+};
+use crate::{ImageError, ImageInterface, ImagePixel};
+
+pub(crate) struct TaskRegridOptions<'a> {
+    pub(crate) axes: &'a [i64],
+    pub(crate) shape: &'a [i64],
+    pub(crate) as_velocity: bool,
+    pub(crate) decimate: i64,
+    pub(crate) replicate: bool,
+    pub(crate) method: RegridMethod,
+}
+
+pub(crate) fn regrid_task<T: ImagePixel + NdFloat>(
+    input: &impl ImageInterface<T>,
+    template: &RegridTemplate,
+    options: TaskRegridOptions<'_>,
+) -> Result<Regridded<T>, ImageError> {
+    let input_shape = input.shape();
+    let frame = frame::observation_frame(input.coordinates());
+    let all_axes = options.axes.first().is_none_or(|&axis| axis < 0);
+    let chosen = requested_axes(options.axes, all_axes, input_shape.len())?;
+    let resized = requested_shape(options.shape, input_shape)?;
+    let mut shape = resized.clone().unwrap_or_else(|| input_shape.to_vec());
+    let ordered = index_coordinates(input.coordinates());
+    let target_order = index_coordinates(&template.coordinates);
+    let after_singleton = match options.axes {
+        [axis] if *axis >= 0 => ordered.iter().any(|&(first, coordinate)| {
+            first == *axis as usize
+                && input_shape[first] == 1
+                && coordinate.coordinate_type() == CoordinateType::Spectral
+                && shape[first] > 1
+        }),
+        _ => false,
+    };
+    let mut result = Regridded {
+        data: input.get()?,
+        mask: input
+            .default_mask()?
+            .unwrap_or_else(|| ArrayD::from_elem(IxDyn(input_shape).f(), true)),
+        coordinates: input.coordinates().clone(),
+        template_coordinates: false,
+        scale: 1.0,
+    };
+    if !result.mask.iter().any(|&bit| bit) {
+        return Err(invalid("All selected pixels are masked"));
+    }
+    let mut found = false;
+    for (index, &(first, ours)) in ordered.iter().enumerate() {
+        let n_axes = ours.n_pixel_axes();
+        let axes = first..first + n_axes;
+        let target = target_order.iter().find(|&&(_, model)| {
+            model.coordinate_type() == ours.coordinate_type() && model.n_pixel_axes() == n_axes
+        });
+        let Some(&(other, theirs)) = target else {
+            if shape[axes.clone()] != input_shape[axes] {
+                return Err(invalid(
+                    "an axis missing from the template must keep its input length",
+                ));
+            }
+            continue;
+        };
+        let input_lengths = &input_shape[axes.clone()];
+        let target_lengths = &template.shape[other..other + n_axes];
+        if let (CoordinateModel::Stokes(ours), CoordinateModel::Stokes(theirs)) = (ours, theirs) {
+            if (all_axes || chosen[first]) && ours.stokes().len() > 1 && theirs.stokes().len() > 1 {
+                select_stokes(
+                    &mut result,
+                    index,
+                    first,
+                    ours,
+                    theirs,
+                    resized.as_ref().map(|s| s[first]),
+                )?;
+                shape[first] = result.data.shape()[first];
+            } else if shape[first] != input_shape[first] || (!all_axes && chosen[first]) {
+                return Err(invalid(
+                    "an unchanged Stokes axis must keep its input length",
+                ));
+            }
+            continue;
+        }
+        let selected: Vec<_> = axes
+            .clone()
+            .enumerate()
+            .map(|(i, axis)| {
+                if all_axes
+                    || (after_singleton && ours.coordinate_type() != CoordinateType::Spectral)
+                {
+                    input_lengths[i] > 1 && target_lengths[i] > 1
+                } else {
+                    chosen[axis]
+                }
+            })
+            .collect();
+        if resized.is_none() {
+            for (i, axis) in axes.clone().enumerate() {
+                if selected[i]
+                    && !(ours.coordinate_type() == CoordinateType::Spectral
+                        && target_lengths[i] == 1)
+                {
+                    shape[axis] = target_lengths[i];
+                }
+            }
+        }
+        if !selected.contains(&true) {
+            if shape[axes.clone()] != *input_lengths {
+                return Err(invalid(
+                    "an axis not being regridded must keep its input length",
+                ));
+            }
+            continue;
+        }
+        found = true;
+        let lengths = &shape[axes];
+        let coordinate = match (ours, theirs) {
+            (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
+                if n_axes == 2 =>
+            {
+                let dimensions = [lengths[0], lengths[1]];
+                let old_dimensions = [input_lengths[0], input_lengths[1]];
+                validate_decimation(
+                    options.decimate,
+                    dimensions,
+                    &selected,
+                    all_axes || after_singleton,
+                )?;
+                if old_dimensions != dimensions || !same_direction_grid(ours, theirs) {
+                    apply_direction(
+                        &mut result,
+                        first,
+                        input.units(),
+                        (ours, theirs),
+                        dimensions,
+                        &options,
+                        &frame,
+                    )?;
+                }
+                CoordinateModel::Direction(theirs.clone())
+            }
+            (CoordinateModel::Spectral(ours), CoordinateModel::Spectral(theirs)) => {
+                if lengths[0] == 1 && input_lengths[0] == 1 {
+                    CoordinateModel::Spectral(ours.clone())
+                } else if lengths[0] == 1 {
+                    return Err(invalid(
+                        "a spectral interpolation requires multiple output channels",
+                    ));
+                } else {
+                    if input.image_info()?.beam_set.is_multi() {
+                        return Err(invalid(
+                            "an image with multiple beams cannot be regridded along the spectral axis",
+                        ));
+                    }
+                    let dimensions = [input_lengths[0], lengths[0]];
+                    let (coordinate, velocity) = if options.as_velocity && input_lengths[0] > 1 {
+                        let (coordinate, grids) = velocity_regrid(ours, theirs, dimensions)?;
+                        (coordinate, Some(grids))
+                    } else {
+                        (theirs.as_ref().clone(), None)
+                    };
+                    let coordinate = CoordinateModel::Spectral(Box::new(coordinate));
+                    if input_lengths != lengths
+                        || !same_axes(
+                            &CoordinateModel::Spectral(ours.clone()),
+                            &coordinate,
+                            lengths,
+                        )
+                        || ours.world_frequency_ref() != theirs.world_frequency_ref()
+                    {
+                        let CoordinateModel::Spectral(target) = &coordinate else {
+                            unreachable!()
+                        };
+                        let positions = spectral_positions(
+                            (ours, target),
+                            dimensions,
+                            options.replicate,
+                            velocity,
+                            &frame,
+                        )?;
+                        apply_one_axis(&mut result, first, lengths[0], positions, options.method);
+                    }
+                    coordinate
+                }
+            }
+            _ if n_axes == 1 => {
+                let coordinates = (0..lengths[0])
+                    .map(|p| {
+                        if options.replicate {
+                            Some(replicated_position(p, input_lengths[0], lengths[0]))
+                        } else {
+                            theirs
+                                .to_world(&[p as f64])
+                                .and_then(|world| ours.to_pixel(&world))
+                                .ok()
+                                .and_then(|pixel| pixel.first().copied())
+                                .filter(|pixel| pixel.is_finite())
+                        }
+                    })
+                    .collect();
+                apply_one_axis(&mut result, first, lengths[0], coordinates, options.method);
+                theirs.clone()
+            }
+            _ => {
+                return Err(invalid(
+                    "regridding this multi-axis coordinate is unsupported (#977)",
+                ));
+            }
+        };
+        result.coordinates.replace_coordinate(index, coordinate);
+    }
+    if all_axes && !found {
+        return Err(invalid("Found no axes to regrid"));
+    }
+    if !result.mask.iter().any(|&bit| bit) {
+        return Err(invalid("All output pixels are masked"));
+    }
+    Ok(result)
+}
+
+fn same_direction_grid(input: &DirectionCoordinate, output: &DirectionCoordinate) -> bool {
+    input.direction_ref() == output.direction_ref()
+        && input.conversion_direction_ref() == output.conversion_direction_ref()
+        && input.projection() == output.projection()
+        && input.pc_matrix() == output.pc_matrix()
+        && input.reference_pixel() == output.reference_pixel()
+        && input.reference_value() == output.reference_value()
+        && input.increment() == output.increment()
+        && input.longpole() == output.longpole()
+        && input.native_pole() == output.native_pole()
+}
+
+fn index_coordinates(
+    system: &casa_coordinates::CoordinateSystem,
+) -> Vec<(usize, &CoordinateModel)> {
+    let mut first = 0;
+    (0..system.n_coordinates())
+        .map(|index| {
+            let coordinate = system.coordinate(index);
+            let axis = first;
+            first += coordinate.n_pixel_axes();
+            (axis, coordinate)
+        })
+        .collect()
+}
+
+fn requested_axes(axes: &[i64], all: bool, ndim: usize) -> Result<Vec<bool>, ImageError> {
+    let mut mask = vec![all; ndim];
+    if !all {
+        for &axis in axes {
+            let axis = usize::try_from(axis)
+                .ok()
+                .and_then(|i| mask.get_mut(i))
+                .ok_or_else(|| invalid("regridding axis is outside the input image"))?;
+            *axis = true;
+        }
+    }
+    Ok(mask)
+}
+
+fn requested_shape(shape: &[i64], input: &[usize]) -> Result<Option<Vec<usize>>, ImageError> {
+    if shape.is_empty() {
+        return Ok(Some(input.to_vec()));
+    }
+    if shape == [-1] {
+        return Ok(None);
+    }
+    if shape.len() != input.len() {
+        return Err(invalid(
+            "output shape must have the same number of axes as the input image",
+        ));
+    }
+    shape
+        .iter()
+        .map(|&length| {
+            usize::try_from(length)
+                .ok()
+                .filter(|&n| n > 0)
+                .ok_or_else(|| invalid("output shape lengths must be positive"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn select_stokes<T: ImagePixel + Copy>(
+    result: &mut Regridded<T>,
+    index: usize,
+    axis: usize,
+    input: &StokesCoordinate,
+    template: &StokesCoordinate,
+    expected: Option<usize>,
+) -> Result<(), ImageError> {
+    let (indices, stokes): (Vec<_>, Vec<_>) = input
+        .stokes()
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, value)| template.stokes().contains(value))
+        .unzip();
+    if stokes.is_empty() || expected.is_some_and(|n| n != stokes.len()) {
+        return Err(invalid(
+            "output Stokes length must match the common input and template Stokes",
+        ));
+    }
+    if stokes.len() != input.stokes().len() {
+        result.data = result.data.select(Axis(axis), &indices);
+        result.mask = result.mask.select(Axis(axis), &indices);
+        result
+            .coordinates
+            .replace_coordinate(index, StokesCoordinate::new(stokes));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct VelocityGrid {
+    reference: f64,
+    increment: f64,
+    reference_pixel: f64,
+}
+
+fn velocity_regrid(
+    input: &SpectralCoordinate,
+    template: &SpectralCoordinate,
+    dimensions: [usize; 2],
+) -> Result<(SpectralCoordinate, [VelocityGrid; 2]), ImageError> {
+    if input.world_frequency_ref() != template.world_frequency_ref() {
+        return Err(invalid(
+            "velocity regridding requires matching spectral reference frames",
+        ));
+    }
+    let measure_frame = MeasFrame::new();
+    let grid = |coordinate: &SpectralCoordinate, count: usize| -> Result<_, ImageError> {
+        let rest = coordinate.rest_frequency_hz()?;
+        if rest == 0.0 {
+            return Err(invalid(
+                "velocity regridding requires nonzero rest frequencies",
+            ));
+        }
+        let velocity = |pixel| -> Result<f64, ImageError> {
+            let ratio = coordinate.world_frequency_hz(pixel)? / rest;
+            MDoppler::new(ratio, DopplerRef::RATIO)
+                .convert_to(coordinate.velocity_convention(), &measure_frame)
+                .map(|value| value.value())
+                .map_err(|error| invalid(error.to_string()))
+        };
+        let reference_pixel = coordinate.reference_pixel()[0];
+        let first = velocity(0.0)?;
+        let last = velocity((count - 1) as f64)?;
+        let grid = VelocityGrid {
+            reference: velocity(reference_pixel)?,
+            increment: velocity(1.0)? - first,
+            reference_pixel,
+        };
+        Ok((grid, [first.min(last), first.max(last)]))
+    };
+    let (source, input_extent) = grid(input, dimensions[0])?;
+    let (target, output_extent) = grid(template, dimensions[1])?;
+    if !overlapping_ranges(input_extent, output_extent) {
+        return Err(invalid(
+            "input and output velocity coordinates do not overlap",
+        ));
+    }
+    let rest = input.rest_frequency_hz()?;
+    let convention = input.velocity_convention();
+    let frequency = |velocity| MDoppler::new(velocity, convention).shift_frequency_hz(rest);
+    let reference = frequency(target.reference);
+    let increment = frequency(target.reference + target.increment) - reference;
+    let coordinate = SpectralCoordinate::new(
+        input.world_frequency_ref(),
+        reference,
+        increment,
+        target.reference_pixel,
+        rest,
+    )
+    .with_velocity_convention(convention);
+    Ok((coordinate, [source, target]))
+}
+
+fn overlapping_ranges([lo_in, hi_in]: [f64; 2], [lo_out, hi_out]: [f64; 2]) -> bool {
+    let separated = |high: f64, low: f64| low - high > 1e-13 * high.abs().max(low.abs());
+    !separated(hi_in, lo_out) && !separated(hi_out, lo_in)
+}
+
+fn spectral_positions(
+    (input, target): (&SpectralCoordinate, &SpectralCoordinate),
+    [input_count, output_count]: [usize; 2],
+    replicate: bool,
+    velocity: Option<[VelocityGrid; 2]>,
+    frame: &MeasFrame,
+) -> Result<Vec<Option<f64>>, ImageError> {
+    if input_count > 1 && velocity.is_none() {
+        let bounds = |coordinate: &SpectralCoordinate, count: usize| {
+            let first = coordinate.world_frequency_hz(0.0)?;
+            let last = coordinate.world_frequency_hz((count - 1) as f64)?;
+            Ok::<_, ImageError>([first.min(last), first.max(last)])
+        };
+        if !overlapping_ranges(bounds(input, input_count)?, bounds(target, output_count)?) {
+            return Err(invalid(
+                "input and output spectral coordinates do not overlap",
+            ));
+        }
+    }
+    (0..output_count)
+        .map(|channel| {
+            if input_count == 1 {
+                return Ok(Some(0.0));
+            }
+            if replicate {
+                return Ok(Some(replicated_position(
+                    channel,
+                    input_count,
+                    output_count,
+                )));
+            }
+            if let Some([source, target]) = velocity {
+                let value =
+                    target.reference + (channel as f64 - target.reference_pixel) * target.increment;
+                let pixel = source.reference_pixel + (value - source.reference) / source.increment;
+                return Ok(pixel.is_finite().then_some(pixel));
+            }
+            let frequency = target.world_frequency_hz(channel as f64)?;
+            let input_frequency = MFrequency::new(frequency, target.world_frequency_ref())
+                .convert_to(input.world_frequency_ref(), frame)
+                .map_err(|error| invalid(error.to_string()))?
+                .hz();
+            Ok(input
+                .pixel_at_frequency_hz(input_frequency)
+                .ok()
+                .filter(|pixel| pixel.is_finite()))
+        })
+        .collect()
+}
+
+fn apply_one_axis<T: ImagePixel + NdFloat>(
+    result: &mut Regridded<T>,
+    axis: usize,
+    length: usize,
+    positions: Vec<Option<f64>>,
+    method: RegridMethod,
+) {
+    let mut shape = result.data.shape().to_vec();
+    shape[axis] = length;
+    let plan = SpectralPlan::from_positions(axis, positions, method);
+    (result.data, result.mask) = plan.apply_precise(&result.data, &result.mask, &shape);
+}
+
+fn validate_decimation(
+    decimate: i64,
+    shape: [usize; 2],
+    selected: &[bool],
+    all: bool,
+) -> Result<(), ImageError> {
+    if decimate < 0 {
+        return Err(invalid("decimate must be nonnegative"));
+    }
+    if decimate > 1 && !all {
+        for (axis, length) in shape.into_iter().enumerate() {
+            if selected[axis] && length / 3 < decimate as usize {
+                return Err(invalid(format!(
+                    "maximum decimate for an axis of length {length} is {}",
+                    length / 3
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn replicated_position(output: usize, input_count: usize, output_count: usize) -> f64 {
+    (output as f64 + 0.5) * (input_count as f64 / output_count as f64) - 0.5
+}
+
+fn apply_direction<T: ImagePixel + NdFloat>(
+    result: &mut Regridded<T>,
+    axis: usize,
+    units: &str,
+    (input, target): (&DirectionCoordinate, &DirectionCoordinate),
+    shape: [usize; 2],
+    options: &TaskRegridOptions<'_>,
+    frame: &MeasFrame,
+) -> Result<(), ImageError> {
+    let scale = jy_per_pixel_scale(units, input, target);
+    let input_shape = [result.data.shape()[axis], result.data.shape()[axis + 1]];
+    let grid = if options.replicate {
+        (0..shape[1])
+            .flat_map(|y| {
+                (0..shape[0]).map(move |x| {
+                    Some([
+                        replicated_position(x, input_shape[0], shape[0]),
+                        replicated_position(y, input_shape[1], shape[1]),
+                    ])
+                })
+            })
+            .collect()
+    } else {
+        let from = target.conversion_direction_ref();
+        let to = input.conversion_direction_ref();
+        let decimate = options.decimate.max(0) as usize;
+        let project = |pixel| {
+            let world = target.pixel_to_world(pixel).ok()?;
+            let world = frame::convert_angles(world, from, to, frame).ok()?;
+            input
+                .world_to_pixel(world)
+                .ok()
+                .filter(|p| p.iter().all(|x| x.is_finite()))
+        };
+        if decimate <= 1 && from == to {
+            positions(input, target, shape)
+        } else {
+            // Report a missing measures frame before treating per-pixel projection failures as masks.
+            let world = target.reference_value();
+            frame::convert_angles([world[0], world[1]], from, to, frame)?;
+            coarse_positions(shape, decimate, project)
+        }
+    };
+    let sampling = DirectionSampling {
+        axes: [axis; 2],
+        shape,
+        positions: &grid,
+        method: options.method,
+        scale,
+    };
+    (result.data, result.mask) = sample_direction_planes(
+        &result.data,
+        Some(&result.mask),
+        sampling,
+        |value: T| value.to_f64().expect("image pixel converts to double"),
+        |value| T::from(value).unwrap_or_else(T::nan),
+    );
+    result.scale = scale;
+    Ok(())
+}
+
+fn coarse_positions(
+    shape: [usize; 2],
+    decimate: usize,
+    project: impl Fn([f64; 2]) -> Option<[f64; 2]>,
+) -> Vec<Option<[f64; 2]>> {
+    let step = if decimate <= 1 {
+        [1, 1]
+    } else {
+        shape
+            .map(|length| {
+                let samples = length / decimate;
+                length
+                    / if samples > 1 {
+                        samples - 1
+                    } else {
+                        length.saturating_sub(1).max(1)
+                    }
+            })
+            .map(|step| step.max(1))
+    };
+    if step == [1, 1] {
+        return (0..shape[1])
+            .flat_map(|y| (0..shape[0]).map(move |x| [x as f64, y as f64]))
+            .map(project)
+            .collect();
+    }
+    let sparse = [shape[0].div_ceil(step[0]), shape[1].div_ceil(step[1])];
+    let mut projected_x = Vec::with_capacity(sparse[0] * sparse[1]);
+    let mut projected_y = Vec::with_capacity(projected_x.capacity());
+    let mut valid = Vec::with_capacity(projected_x.capacity());
+    for y in (0..shape[1]).step_by(step[1]) {
+        for x in (0..shape[0]).step_by(step[0]) {
+            let pixel = project([x as f64, y as f64]);
+            valid.push(pixel.is_some());
+            let [x, y] = pixel.unwrap_or([0.0, 0.0]);
+            projected_x.push(x);
+            projected_y.push(y);
+        }
+    }
+    let x = Plane {
+        data: &projected_x,
+        mask: Some(&valid),
+        shape: sparse,
+    };
+    let y = Plane {
+        data: &projected_y,
+        mask: Some(&valid),
+        shape: sparse,
+    };
+    (0..shape[1])
+        .flat_map(|j| {
+            (0..shape[0]).map(move |i| [i as f64 / step[0] as f64, j as f64 / step[1] as f64])
+        })
+        .map(|p| {
+            Some([
+                x.sample(RegridMethod::Linear, p)?,
+                y.sample(RegridMethod::Linear, p)?,
+            ])
+        })
+        .collect()
+}
+
+fn invalid(message: impl Into<String>) -> ImageError {
+    ImageError::InvalidMetadata(message.into())
+}

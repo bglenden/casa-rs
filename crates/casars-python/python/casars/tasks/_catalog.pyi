@@ -973,12 +973,12 @@ def immath(
 
 def imregrid(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    template: StrPath = ...,
+    template: StrPath | Mapping[str, ParameterData] = ...,
     output: StrPath = ...,
     asvelocity: bool = ...,
     axes: int | list[int] | tuple[int, ...] = ...,
     shape: int | list[int] | tuple[int, ...] = ...,
-    interpolation: Literal['linear', 'nearest'] = ...,
+    interpolation: Literal['linear', 'nearest', 'cubic'] = ...,
     decimate: int = ...,
     replicate: bool = ...,
     overwrite: bool = ...,
