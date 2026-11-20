@@ -4,7 +4,16 @@
 use super::antenna_expr::regex::FieldRegex;
 use crate::{MsError, MsResult};
 
-pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>> {
+pub(super) fn resolve(
+    text: &str,
+    rows: &[(String, bool)],
+    ignore_unmatched_terms: bool,
+) -> MsResult<Vec<i32>> {
+    let text = if ignore_unmatched_terms {
+        flagdata_prefix(text)
+    } else {
+        text
+    };
     let text = if let Some(inner) = text.strip_prefix('(') {
         inner.strip_suffix(')').ok_or_else(|| invalid(text))?
     } else {
@@ -26,9 +35,13 @@ pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>>
         for atom in atoms {
             let mask = atom_mask(atom, rows)?;
             if !mask.iter().any(|value| *value) && !numeric_reference(atom) {
-                return Err(MsError::VersionError(format!(
-                    "intent selector {atom:?} did not match any STATE rows"
-                )));
+                if ignore_unmatched_terms {
+                    tracing::warn!("State Expression: No match found for {atom:?}");
+                } else {
+                    return Err(MsError::VersionError(format!(
+                        "intent selector {atom:?} did not match any STATE rows"
+                    )));
+                }
             }
             for (value, included) in matching.iter_mut().zip(mask) {
                 *value &= included;
@@ -37,15 +50,24 @@ pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>>
         // MSStateGram checks combined bounds before adding other union terms;
         // numeric ID lists alone may ignore unavailable IDs.
         if bounded && !matching.iter().any(|value| *value) {
-            return Err(MsError::VersionError(format!(
-                "intent bounds {term:?} did not match any STATE rows"
-            )));
+            if ignore_unmatched_terms {
+                tracing::warn!("State Expression: No state found for bounds {term:?}");
+            } else {
+                return Err(MsError::VersionError(format!(
+                    "intent bounds {term:?} did not match any STATE rows"
+                )));
+            }
         }
         for (value, included) in selected.iter_mut().zip(matching) {
             *value |= included;
         }
     }
     if !selected.iter().any(|value| *value) {
+        if ignore_unmatched_terms {
+            return Err(MsError::VersionError(format!(
+                "No match found for state expression: {text}"
+            )));
+        }
         return Err(MsError::VersionError(format!(
             "intent selector {text:?} did not match any STATE rows"
         )));
@@ -55,6 +77,20 @@ pub(super) fn resolve(text: &str, rows: &[(String, bool)]) -> MsResult<Vec<i32>>
         .enumerate()
         .filter_map(|(index, selected)| selected.then_some(index as i32))
         .collect())
+}
+
+/// The STATE lexer accepts UTF-8 bytes inside quoted patterns and regexes.
+fn flagdata_prefix(text: &str) -> &str {
+    let mut delimiter = None;
+    for (index, character) in text.char_indices() {
+        match delimiter {
+            Some(close) if character == close => delimiter = None,
+            None if matches!(character, '"' | '/') => delimiter = Some(character),
+            None if !character.is_ascii() => return &text[..index],
+            _ => {}
+        }
+    }
+    text
 }
 
 /// List and intersection separators inside quoted patterns/regexes are data.
@@ -207,7 +243,7 @@ mod tests {
             "/CALIBRATE_(PHASE|WVR)#ON_SOURCE/",
             "CALIBRATE_PHASE*&*WVR*",
         ] {
-            assert_eq!(resolve(text, &rows).unwrap(), [0], "{text}");
+            assert_eq!(resolve(text, &rows, false).unwrap(), [0], "{text}");
         }
         for (text, expected) in [
             ("2", vec![2]),
@@ -218,7 +254,7 @@ mod tests {
             ("<3", vec![0, 1]),
             (">0", vec![1]),
         ] {
-            assert_eq!(resolve(text, &rows).unwrap(), expected, "{text}");
+            assert_eq!(resolve(text, &rows, false).unwrap(), expected, "{text}");
         }
         for text in [
             "NO_SUCH_INTENT",
@@ -228,14 +264,14 @@ mod tests {
             "999",
             "CALIBRATE_PHASE#ON_SOURCE, OBSERVE_TARGET#ON_SOURCE",
         ] {
-            assert!(resolve(text, &rows).is_err(), "{text}");
+            assert!(resolve(text, &rows, false).is_err(), "{text}");
         }
     }
 
     #[test]
     fn empty_combined_bound_rejects_even_with_a_matching_union_member() {
         let rows = vec![("A".into(), false), ("B".into(), false)];
-        assert!(resolve(">0&<1,0", &rows).is_err());
-        assert_eq!(resolve(">0&<2,0", &rows).unwrap(), [0, 1]);
+        assert!(resolve(">0&<1,0", &rows, false).is_err());
+        assert_eq!(resolve(">0&<2,0", &rows, false).unwrap(), [0, 1]);
     }
 }
