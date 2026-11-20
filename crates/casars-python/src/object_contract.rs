@@ -462,7 +462,8 @@ mod tests {
                 "table",
                 "msmetadata",
                 "ms",
-                "calibrater"
+                "calibrater",
+                "imager"
             ]
         );
         let annotated = bundle.annotations["python"]["objects"]
