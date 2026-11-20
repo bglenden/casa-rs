@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from casars import tools
+from test_image_fits import _hdu
 from test_image_workflow import _assert_value
 
 
@@ -86,6 +87,48 @@ def test_statistics_reads_persisted_masks_and_region(casa, tmp_path):
     _assert_value(actual["sigma"], np.array([selected.std(ddof=1)]))
     for image in rust, oracle:
         assert image.done()
+
+
+@pytest.mark.parametrize("bitpix,blank", [(16, -999), (-32, np.nan)])
+def test_statistics_on_attached_fits_matches_casa_and_excludes_blanks(casa, tmp_path, bitpix, blank):
+    path = tmp_path / "masked.fits"
+    content = _hdu(True, [1, blank, 3, 4], bitpix=bitpix)
+    path.write_bytes(content)
+    rust, oracle = tools.image(), casa.image()
+    assert rust.open(str(path)) and oracle.open(str(path))
+    for arguments in (
+        {},
+        {"axes": [0], "robust": True},
+        {"region": casa.regionmanager().box([0, 1], [1, 1]), "includepix": [3, 4]},
+        {"mask": f'"{path}" > 2'},
+    ):
+        _assert_value(rust.statistics(**arguments), oracle.statistics(**arguments))
+    full = rust.statistics()
+    _assert_value(full["npts"], np.array([3.0]))
+    _assert_value(full["sum"], np.array([8.0]))
+    _assert_value(full["maxpos"], np.array([1, 1]))
+    assert rust.done() and oracle.done()
+    assert path.read_bytes() == content
+
+
+def test_fits_expression_preserves_blank_validity_on_an_unmasked_target(casa, tmp_path):
+    target = tmp_path / "unmasked.im"
+    input_path = tmp_path / "unmasked.fits"
+    operand = tmp_path / "mask.fits"
+    input_path.write_bytes(_hdu(True, [1, 2, 3, 4]))
+    operand.write_bytes(_hdu(True, [5, -999, 7, 8]))
+    writer = casa.image()
+    assert writer.fromfits(str(target), str(input_path)) and writer.done()
+    region = casa.regionmanager().box([0, 0], [1, 0])
+    rust, oracle = tools.image(), casa.image()
+    for tool in (rust, oracle):
+        assert tool.open(str(target))
+    arguments = {"mask": f'mask("{operand}")', "region": region}
+    result = rust.statistics(**arguments)
+    _assert_value(result, oracle.statistics(**arguments))
+    _assert_value(result["npts"], np.array([1.0]))
+    _assert_value(result["sum"], np.array([1.0]))
+    assert rust.done() and oracle.done()
 
 
 def test_statistics_strided_extrema_are_absolute_image_pixels(casa):

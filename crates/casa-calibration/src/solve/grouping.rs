@@ -5,6 +5,7 @@ mod inputs;
 pub(crate) mod polynomial;
 mod samples;
 mod time;
+mod visibility_models;
 mod weights;
 
 use std::borrow::Cow;
@@ -13,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use casa_ms::ChannelSelection;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
-use casa_ms::{MsError, ResolvedMsSelectionRow, VirtualModelEntry, scratch_columns};
+use casa_ms::{MsError, ResolvedMsSelectionRow};
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, ArrayView2};
 
@@ -35,6 +36,7 @@ use samples::{
     two_dimensional,
 };
 use time::{AveragedBaseline, FirstTBuffer, WeightedTime, bucketed_rows, first_t_buffers};
+pub(crate) use visibility_models::VisibilityModels;
 pub(super) use weights::VisibilityBuffer;
 use weights::{SpectralWeights, solve_weights};
 
@@ -360,110 +362,6 @@ fn selected_solve_row(
         scan_number: get_i32(ms.main_table(), row.row_index, "SCAN_NUMBER")?,
         flag_row: row.flag_row,
     })
-}
-
-/// The MODEL_DATA or virtual model visible to the old visibility iterator.
-pub(crate) struct VisibilityModels {
-    rows: BTreeMap<usize, SelectedSolveRow>,
-    models: super::model::ModelInputs,
-}
-
-impl VisibilityModels {
-    pub(crate) fn new(
-        ms: &MeasurementSet,
-        rows: &[ResolvedMsSelectionRow],
-    ) -> Result<Self, GainSolveError> {
-        let virtual_fields = scratch_columns::virtual_model_fields(ms);
-        let rows = rows
-            .iter()
-            .filter(|row| virtual_fields.contains(&row.field_id))
-            .map(|row| selected_solve_row(ms, row, None))
-            .collect::<Result<Vec<_>, _>>()?;
-        let models =
-            super::model::ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?;
-        Self::with_models(ms, rows, models)
-    }
-
-    pub(crate) fn from_entries(
-        ms: &MeasurementSet,
-        rows: &[ResolvedMsSelectionRow],
-        entries: &[VirtualModelEntry],
-    ) -> Result<Self, GainSolveError> {
-        let rows = rows
-            .iter()
-            .map(|row| selected_solve_row(ms, row, None))
-            .collect::<Result<Vec<_>, _>>()?;
-        let models = super::model::ModelInputs::from_entries(ms, &rows, entries)?;
-        Self::with_models(ms, rows, models)
-    }
-
-    fn with_models(
-        ms: &MeasurementSet,
-        rows: Vec<SelectedSolveRow>,
-        mut models: super::model::ModelInputs,
-    ) -> Result<Self, GainSolveError> {
-        let combine = GainSolveCombine {
-            scans: true,
-            observations: true,
-            ..GainSolveCombine::default()
-        };
-        // VisBuffer chooses the first physical row at a timestamp. Solves
-        // order tied timestamps by interval, which can choose a different state.
-        let mut ordered: Vec<_> = rows
-            .iter()
-            .map(|row| {
-                (
-                    row,
-                    SolveBaseKey::for_row(row, combine),
-                    SolveBucketKey::Infinite,
-                )
-            })
-            .collect();
-        ordered.sort_unstable_by_key(|(row, _, _)| row.row_index);
-        models.bind_buffers(ms, &ordered, combine)?;
-        models.phase_times = weights::chunk_phase_times(&ordered, combine, models.dynamic_fields());
-        Ok(Self {
-            rows: rows.into_iter().map(|row| (row.row_index, row)).collect(),
-            models,
-        })
-    }
-
-    pub(crate) fn reads_column(&self, field: i32) -> bool {
-        self.models.reads_column(field)
-    }
-
-    pub(crate) fn uses_fourier(&self, field: i32) -> bool {
-        self.models.uses_fourier(field)
-    }
-
-    pub(crate) fn predict(
-        &self,
-        ms: &MeasurementSet,
-        row: usize,
-        correlations: &[i32],
-        flags: &ArrayD<bool>,
-    ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
-        match self.rows.get(&row) {
-            Some(row) => self.models.predict(ms, row, correlations, flags),
-            None => Ok(None),
-        }
-    }
-
-    pub(crate) fn predict_scratch(
-        &self,
-        ms: &MeasurementSet,
-        row: usize,
-        correlations: &[i32],
-        flags: &ArrayD<bool>,
-        previous: Option<ArrayD<Complex32>>,
-    ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
-        match self.rows.get(&row) {
-            Some(row) => self
-                .models
-                .predict_model(ms, row, correlations, (flags, previous), true),
-            None => Ok(None),
-        }
-    }
 }
 
 pub(crate) fn correlation_types_for_ddid(

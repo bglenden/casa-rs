@@ -69,6 +69,7 @@ pub struct TempImage<T: ImagePixel> {
     image_info_record: Option<RecordValue>,
     masks: Vec<(String, ArrayD<bool>)>,
     default_mask: Option<String>,
+    anonymous_mask: Option<ArrayD<bool>>,
     history: Vec<ImageHistoryRow>,
 }
 
@@ -97,6 +98,7 @@ impl<T: ImagePixel> TempImage<T> {
             image_info_record: None,
             masks: Vec::new(),
             default_mask: None,
+            anonymous_mask: None,
             history: Vec::new(),
         })
     }
@@ -362,12 +364,33 @@ impl<T: ImagePixel> TempImage<T> {
         <Self as ImageInterface<T>>::get_mask(self)
     }
 
+    /// Set the active pixel mask without registering a named mask.
+    ///
+    /// # Errors
+    /// Returns an error for read-only storage or a mask of the wrong shape.
+    pub fn set_anonymous_mask(&mut self, mask: ArrayD<bool>) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
+        if mask.shape() != self.shape() {
+            return Err(ImageError::ShapeMismatch {
+                expected: self.shape().to_vec(),
+                got: mask.shape().to_vec(),
+            });
+        }
+        self.default_mask = None;
+        self.anonymous_mask = Some(mask);
+        Ok(())
+    }
+
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
+        self.find_named_mask(name).cloned()
+    }
+
+    fn find_named_mask(&self, name: &str) -> Result<&ArrayD<bool>, ImageError> {
         self.masks
             .iter()
             .find(|(candidate, _)| candidate == name)
-            .map(|(_, mask)| mask.clone())
+            .map(|(_, mask)| mask)
             .ok_or_else(|| ImageError::MaskNotFound(name.to_string()))
     }
 
@@ -389,6 +412,37 @@ impl<T: ImagePixel> TempImage<T> {
         } else {
             self.masks.push((name.to_owned(), data.clone()));
         }
+        Ok(())
+    }
+
+    /// Copies a rectangular block into a named mask, allocating an all-false
+    /// mask if this is the first write for that name.
+    ///
+    /// # Errors
+    /// Returns an error for read-only storage or a block outside the image shape.
+    pub fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
+        if name.is_empty()
+            && let Some(mask) = self.anonymous_mask.as_mut()
+        {
+            return assign_mask_slice(mask, data, start);
+        }
+        if let Some((_, mask)) = self
+            .masks
+            .iter_mut()
+            .find(|(candidate, _)| candidate == name)
+        {
+            return assign_mask_slice(mask, data, start);
+        }
+        validate_mask_slice_write(self.shape(), data.shape(), start)?;
+        let mut mask = ArrayD::from_elem(IxDyn(self.shape()), false);
+        assign_mask_slice(&mut mask, data, start)?;
+        self.masks.push((name.to_owned(), mask));
         Ok(())
     }
 
@@ -434,12 +488,14 @@ impl<T: ImagePixel> TempImage<T> {
             return Err(ImageError::MaskNotFound(name.to_string()));
         }
         self.default_mask = Some(name.to_string());
+        self.anonymous_mask = None;
         Ok(())
     }
 
     /// Unsets the default mask.
     pub fn unset_default_mask(&mut self) -> Result<(), ImageError> {
         self.default_mask = None;
+        self.anonymous_mask = None;
         Ok(())
     }
 
@@ -575,7 +631,14 @@ impl<T: ImagePixel> TempImage<T> {
         for (name, mask_data) in &self.masks {
             paged.put_mask(name, mask_data)?;
         }
-        if let Some(ref default) = self.default_mask {
+        if let Some(mask) = &self.anonymous_mask {
+            let name = (0..)
+                .map(|n| format!("mask{n}"))
+                .find(|name| self.masks.iter().all(|(stored, _)| stored != name))
+                .expect("a free name exists");
+            paged.put_mask(&name, mask)?;
+            paged.set_default_mask(&name)?;
+        } else if let Some(ref default) = self.default_mask {
             paged.set_default_mask(default)?;
         }
         paged.append_history_entries(&self.history)?;
@@ -796,12 +859,7 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
-        let (_, mask) = self
-            .masks
-            .iter()
-            .find(|(stored, _)| stored == name)
-            .ok_or_else(|| ImageError::MaskNotFound(name.to_owned()))?;
-        slice_mask_array(mask, start, shape, stride)
+        slice_mask_array(self.find_named_mask(name)?, start, shape, stride)
     }
 
     fn history(&self) -> Result<Vec<String>, ImageError> {
@@ -812,18 +870,17 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         if let Some(expression) = &self.expression {
             return expression.source.default_mask();
         }
-        match TempImage::default_mask_name(self) {
-            Some(name) => Ok(Some(TempImage::get_named_mask(self, &name)?)),
-            None => Ok(None),
+        match self.default_mask.as_deref() {
+            Some(name) => Ok(Some(self.get_named_mask(name)?)),
+            None => Ok(self.anonymous_mask.clone()),
         }
     }
 
     fn has_pixel_mask(&self) -> bool {
-        self.expression
-            .as_ref()
-            .map_or(self.default_mask.is_some(), |expression| {
-                expression.has_mask
-            })
+        self.expression.as_ref().map_or(
+            self.default_mask.is_some() || self.anonymous_mask.is_some(),
+            |expression| expression.has_mask,
+        )
     }
 
     fn get_mask_slice(
@@ -835,10 +892,14 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         if let Some(expression) = &self.expression {
             return expression.source.get_mask_slice(start, shape, stride);
         }
-        self.default_mask
-            .as_deref()
-            .map(|name| self.get_named_mask_slice(name, start, shape, stride))
-            .transpose()
+        match self.default_mask.as_deref() {
+            Some(name) => Ok(Some(self.get_named_mask_slice(name, start, shape, stride)?)),
+            None => self
+                .anonymous_mask
+                .as_ref()
+                .map(|mask| slice_mask_array(mask, start, shape, stride))
+                .transpose(),
+        }
     }
 }
 
@@ -869,20 +930,18 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
         data: &ArrayD<bool>,
         start: &[usize],
     ) -> Result<(), ImageError> {
-        self.require_writable_pixels()?;
-        validate_mask_slice_write(self.shape(), data.shape(), start)?;
-        let index = self
-            .masks
-            .iter()
-            .position(|(existing, _)| existing == name)
-            .unwrap_or_else(|| {
-                self.masks.push((
-                    name.to_owned(),
-                    ArrayD::from_elem(IxDyn(self.shape()), false),
-                ));
-                self.masks.len() - 1
-            });
-        assign_mask_slice(&mut self.masks[index].1, data, start)
+        TempImage::put_mask_slice(self, name, data, start)
+    }
+
+    fn active_pixel_mask_name(&self) -> Option<String> {
+        self.default_mask
+            .clone()
+            .or_else(|| self.anonymous_mask.as_ref().map(|_| String::new()))
+    }
+
+    fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
+        Ok((name.is_empty() && self.anonymous_mask.is_some())
+            || self.masks.iter().any(|(stored, _)| stored == name))
     }
 
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
@@ -1082,6 +1141,24 @@ mod tests {
 
         img.unset_default_mask().unwrap();
         assert!(img.default_mask_name().is_none());
+    }
+
+    #[test]
+    fn named_mask_blocks_preserve_strided_boundary_values() {
+        let mut image = TempImage::<f32>::new(vec![5, 3], cs(), TempStoragePolicy::Memory).unwrap();
+        let block = ArrayD::from_elem(IxDyn(&[3, 1]), true);
+        assert!(image.put_mask_slice("mask", &block, &[3, 0]).is_err());
+        assert!(image.mask_names().is_empty());
+        image.put_mask_slice("mask", &block, &[2, 1]).unwrap();
+        let row = image
+            .get_named_mask_slice("mask", &[0, 1], &[3, 1], &[2, 1])
+            .unwrap();
+        assert_eq!(row.as_slice().unwrap(), &[false, true, true]);
+        assert!(
+            image
+                .get_named_mask_slice("mask", &[0, 1], &[3, 1], &[0, 1])
+                .is_err()
+        );
     }
 
     #[test]

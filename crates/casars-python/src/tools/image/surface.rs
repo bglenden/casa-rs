@@ -36,7 +36,7 @@ const METHODS: &[Method] = &[
             param("silent", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "addnoise",
@@ -48,7 +48,7 @@ const METHODS: &[Method] = &[
             param("seeds", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "beamarea",
@@ -66,13 +66,13 @@ const METHODS: &[Method] = &[
             param("convolved", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "boundingbox",
         &[param("region", K::Record, EmptyRecord)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "boxcar",
@@ -199,7 +199,7 @@ const METHODS: &[Method] = &[
             param("sframe", K::Text, Text("cl")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "coordsys",
@@ -222,7 +222,7 @@ const METHODS: &[Method] = &[
             param("wantreturn", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "decimate",
@@ -237,7 +237,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "decompose",
@@ -273,7 +273,7 @@ const METHODS: &[Method] = &[
         "deconvolvefrombeam",
         &[param("source", K::Any, Empty), param("beam", K::Any, Empty)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "deviation",
@@ -644,7 +644,7 @@ const METHODS: &[Method] = &[
             param("verbose", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "isconform",
@@ -902,7 +902,7 @@ const METHODS: &[Method] = &[
             param("replicate", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "pv",
@@ -1053,8 +1053,8 @@ const METHODS: &[Method] = &[
             param("region", K::Record, EmptyRecord),
             param("list", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "setbrightnessunit",
@@ -1179,7 +1179,7 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
+    method("topixel", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("torecord", &[], R::Any, Yes),
     method(
         "toworld",
@@ -1189,7 +1189,7 @@ const METHODS: &[Method] = &[
             param("dovelocity", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "transpose",

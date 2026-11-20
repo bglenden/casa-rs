@@ -5,15 +5,22 @@
 
 mod axis_labels;
 mod construction;
-pub(super) use construction::validate_coordinate_indices;
+pub(super) use construction::{append_coordinate, validate_coordinate_indices};
+mod doppler;
 mod frame_metadata;
 mod inspect;
 mod observation;
 mod reference;
+mod rest_frequency;
 mod stubs;
 pub(crate) mod surface;
 mod transform_many;
+mod transform_relative;
 pub(super) mod world_reference;
+
+mod transform_single;
+mod world_edits;
+pub(super) use transform_single::{WorldArgument, image_pixel_argument};
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

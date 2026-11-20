@@ -28,6 +28,11 @@ ia.setbrightnessunit("Jy/pixel")
 ia.done()
 ```
 
+Use `ia.addnoise(seeds=[1, 2])` to add reproducible normal noise. Pass
+`type` and `pars` for another CASA noise distribution, or `zero=True`
+to replace the selected pixels with noise. The region selects the lattice
+section and the image's validity mask is retained.
+
 A coordinate tool returned by `ia.coordsys()` has its own state. Inspect the
 direction axes with `cs.findcoordinate("direction")["pixel"]` or identify the
 coordinate for a particular axis with `cs.findaxis(world=False, axis=0)`.
@@ -46,6 +51,26 @@ Use `cs.referencevalue()` and `cs.increment()` to read the world-axis
 reference values and spacing. Pass `type` to select a coordinate, or combine
 `n`, `q`, `s`, and `m` in `format` to request numbers, quantities, display
 strings, and CASA measures.
+Use `cs.setreferencevalue(values)` and `cs.setincrement(values)` to edit
+the coordinate record. Numeric values use the declared world-axis units.
+Quantity strings can specify their own units, and `type` selects one
+coordinate.
+Use `cs.setreferencelocation(pixel, world, mask)` to set pixel and world
+references together. A full-length boolean mask can limit the edit to
+specific axes. Stokes references stay fixed.
+Use `cs.setunits(values)` to change the declared units and rescale the
+coordinate values. On a selected linear or tabular coordinate,
+`overwrite=True` relabels units while keeping the numeric values.
+Use `cs.setrestfrequency(values, which=0, append=False)` to choose the active
+spectral rest frequency. Floating-point inputs use the coordinate's unit.
+Pass quantity strings or a quantity record to supply units explicitly.
+With `append=True`, `which` indexes the combined old and new list.
+Use `cs.frequencytovelocity(values)` and `cs.velocitytofrequency(values)`
+to convert relative to the active rest frequency. The default convention is
+radio Doppler and the default velocity unit is `km/s`. Pass `doppler`,
+`velunit`, or `frequnit` to choose other conventions or units.
+Use `cs.frequencytofrequency(values, velocity="10km/s")` to shift a vector
+by a velocity. A dimensionless `velocity` is a fraction of the speed of light.
 
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
@@ -60,6 +85,9 @@ Use `cs.setobserver(name)` and `cs.settelescope(name)` to update observation
 metadata. An unknown telescope name is stored and the setter returns
 `False`. The record retains the last known telescope position.
 
+Use `cs.toworld(pixel)` and `cs.topixel(world)` for a single absolute
+coordinate. `toworld` supports the same numeric, quantity, string, and
+measure format letters as `referencevalue`.
 Use `cs.toworldmany(pixels)["numeric"]` and
 `cs.topixelmany(world)["numeric"]` to convert a floating-point matrix with
 one point per column. The rows follow the coordinate system's axis order.
@@ -67,11 +95,30 @@ World values use the units reported by `cs.units()`.
 NumPy `float32`, `float64`, `longdouble`, `longlong`, and `ulonglong`
 matrices are converted to double precision, as in CASA.
 
+Use `cs.torel(value, isworld=1)` for world offsets from the reference and
+`cs.toabs` to recover absolute positions. Use `isworld=0` for pixels, or
+pass the tagged record from a coordinate conversion. The corresponding
+`torelmany` and `toabsmany` methods take matrices with one coordinate per
+column.
+
+Use `ia.toworld(pixels, format="nqsm")` to convert one image position.
+Each format letter requests numeric values, quantities, strings, or
+measures. Pass `dovelocity=False` to omit spectral velocities from the
+measure record. Pass one of these representations to `ia.topixel(world)`
+to obtain the zero-based pixel coordinates in its `numeric` field.
+`ia.coordmeasures(pixel)` returns world measures and the pixel's intensity
+and validity. Pass `dframe` or `sframe` to request specific direction or
+spectral frames.
+
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.beamforconvolvedsize(source, convolved)` to calculate the Gaussian
+beam needed to reach a target resolution. Use `ia.deconvolvefrombeam(source,
+beam)` to recover a fitted source size and see whether the source is resolved.
+Pass the major axis, minor axis and position angle as angular quantity strings.
 Use `ia.rotatebeam("15deg")` to rotate all stored restoring beams. On a
 directly opened FITS image, the rotation applies only to the open tool.
 Each open tool keeps its own view of the restoring beams. Reopen a native
@@ -103,6 +150,10 @@ selected coordinate. Virtual modes are tracked in #1749.
 Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
 float or complex image. Use `update=True` to validate the selected native
 pixel mask after replacement.
+Use `ia.set(pixels=3.5)` to fill the attached float image. `pixels` can also
+be a scalar lattice expression. Use `region` to restrict the edit and set
+`pixelmask=0` to invalidate the selected pixels or `pixelmask=1` to validate
+them in the default mask.
 
 Use `ia.calc(pixels=...)` to evaluate a numeric expression into a writable
 float or complex image. An existing default mask limits writes to its valid
@@ -115,6 +166,7 @@ separate image.
 Use `ia.calcmask(...)` to save a Boolean expression as a named native image
 mask. Expressions can combine real, complex, and FITS images and read named
 masks using `mask("image.im:maskname")` where CASA accepts that source type.
+
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
@@ -129,12 +181,28 @@ without waiting. `ia.unlock()` flushes pending changes and releases the
 lock. `putchunk` normally releases the lock after writing. Pass
 `locking=False` to keep it while making several updates.
 
+Use `ia.putregion(pixels, pixelmask, region)` to edit pixels and validity in
+the same region. The default `usemask=True` skips masked pixels after applying
+the supplied mask. Pass `replicate=True` to fill omitted axes and use the
+region's stride.
+
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
+Use `ia.subimage(...)` on that attachment for a temporary or native
+section with its WCS and validity mask. With `wantreturn=False`
+and an output path, the tool publishes the section and returns a detached
+image tool.
 Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
 reopens the moved file and reads its stored metadata again.
+
+Use `ia.insert("source.im")` to place a source image by aligning reference
+pixels, or supply `locate` to set the lower corner. A region record may
+select a strided section. CRTF text uses the attached destination's
+coordinates before applying the selection to the source. An existing writable
+destination mask receives the source validity over the inserted section.
+
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
-writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
+writable native CASA image for pixel edits. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.
 `zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
@@ -155,13 +223,22 @@ forms are tracked in #1625.
 Use `ia.getregion(region=...)` to read that same selection. Pass
 `getmask=True` to read validity, `mask` to apply a lattice expression,
 or `axes` to average the valid pixels along selected axes.
+Use `ia.boundingbox(region=...)` to inspect the inclusive pixel corners,
+stride, sampled shape and world coordinates of the corners.
+Use `ia.crop(axes=...)` to trim fully masked edge planes along the selected
+axes. The method applies the region and optional mask expression before
+finding the crop bounds. Pass `region=[]` when using `box`, `chans`, or
+`stokes` separately.
+Use `ia.decimate(axis=..., factor=..., method="copy")` to keep every nth
+plane. With `method="mean"`, it averages valid samples in each complete
+group and drops the trailing partial group.
 
-`ia.statistics()` returns statistics over a real native CASA or
-temporary image. Pass `axes` for per-plane results, `region` or `mask` to
-select pixels, and `robust=True` for the median, quartiles, and median absolute
-deviation. The tool supports classical, biweight, Chauvenet, fit-to-half and
-hinges-and-fences statistics. FITS statistics, disk storage, logfile output,
-and flux for per-plane beams are tracked in
+`ia.statistics()` returns statistics over a real native CASA image, an
+attached FITS image, or a temporary image. Pass `axes` for per-plane results,
+`region` or `mask` to select pixels, and `robust=True` for the median,
+quartiles, and median absolute deviation. The tool supports classical,
+biweight, Chauvenet, fit-to-half and hinges-and-fences statistics. Disk
+storage, logfile output, and flux for per-plane beams are tracked in
 [#1627](https://github.com/bglenden/casa-rs/issues/1627).
 
 The remaining CASA image and coordinate operations are tracked in
@@ -186,6 +263,13 @@ to keep in `keepaxes`. Region inputs include CRTF text and files, saved region
 references, and unit-stride boxes and polygon records.
 An existing entry inside the input image cannot be replaced, protecting
 the source's history and mask tables.
+
+Use `ia.adddegaxes(stokes="I", spectral=True)` to make a copy with new
+singleton axes. Pass `outfile` to save the copy as a native image. The copy
+preserves the source pixels, existing coordinates, named masks and history.
+Set `silent=True` to skip requested coordinate types that already exist.
+Sources with image attribute groups are tracked in
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
 ### Migrate an existing image reader or writer
 

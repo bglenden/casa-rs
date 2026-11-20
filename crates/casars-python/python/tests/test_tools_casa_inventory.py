@@ -48,24 +48,33 @@ PARTIAL = {
 }
 
 IMPLEMENTED["coordsys"] = {
+    "frequencytofrequency", "frequencytovelocity", "velocitytofrequency",
     "increment", "referencevalue",
     "addcoordinate", "axesmap", "axiscoordinatetypes", "conversiontype", "coordinatetype", "copy", "done", "epoch",
     "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "getconversiontype", "lineartransform",
     "names", "naxes", "ncoordinates", "newcoordsys",
     "observer", "parentname", "projection", "referencecode", "referencepixel", "restfrequency",
-    "setepoch",
-    "setnames", "setobserver", "setparentname", "setstokes",
-    "setreferencepixel", "settelescope",
-    "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
+    "setepoch", "setincrement", "setreferencevalue",
+    "setnames", "setobserver", "setparentname", "setstokes", "setunits",
+    "setreferencelocation", "setreferencepixel", "setrestfrequency", "settelescope",
+    "stokes", "telescope", "toabs", "toabsmany", "topixel", "topixelmany", "torecord", "torel",
+    "torelmany", "toworld", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
+    "crop",
+    "decimate",
+    "boundingbox",
+    "insert",
+    "addnoise",
+    "coordmeasures", "topixel", "toworld",
+    "adddegaxes",
     "statistics",
-    "beamarea", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
+    "beamarea", "beamforconvolvedsize", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "deconvolvefrombeam", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
     "getchunk", "getregion", "haslock", "history", "imagecalc", "isconform", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
     "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",
     "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "rotatebeam", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
-    "summary", "tofits",
+    "summary", "set", "tofits", "putregion",
 }
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",

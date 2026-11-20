@@ -155,6 +155,10 @@ pub(crate) struct TaylorTerm {
 /// The image spectral coordinate determines the default Taylor frequency.
 pub(crate) fn reference_frequency(path: &Path) -> MsResult<f64> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
+    image_reference_frequency(&image)
+}
+
+pub(super) fn image_reference_frequency(image: &PagedImage<f32>) -> MsResult<f64> {
     let index = coordinate_index(image.coordinates(), CoordinateType::Spectral)?;
     let CoordinateModel::Spectral(spectral) = image.coordinates().coordinate(index) else {
         unreachable!("a spectral coordinate index names a spectral coordinate")
@@ -171,10 +175,11 @@ pub(crate) fn prepare_image(
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
+    let image = PagedImage::<f32>::open(path).map_err(invalid)?;
     prepare_configured_images(
         ms,
         selected,
-        path,
+        &image,
         taylor,
         keep_zero,
         scratch,
@@ -186,13 +191,12 @@ pub(crate) fn prepare_image(
 pub(super) fn prepare_configured_images(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
-    path: &Path,
+    image: &PagedImage<f32>,
     taylor: Option<TaylorTerm>,
     keep_zero: bool,
     scratch: bool,
     options: &mut PredictionGeometry,
 ) -> MsResult<Vec<ImageModel>> {
-    let image = PagedImage::<f32>::open(path).map_err(invalid)?;
     let [nx, ny, _, _] = *image.shape() else {
         return Err(invalid(
             "ft requires four direction, Stokes and spectral image axes",
@@ -213,9 +217,9 @@ pub(super) fn prepare_configured_images(
                 shape,
             };
             let layout =
-                ImageTransform::new(ms, selected, &image, scratch, options.clone(), window)?;
+                ImageTransform::new(ms, selected, image, scratch, options.clone(), window)?;
             outputs.extend(write_model_grid(
-                ms, selected, &image, taylor, keep_zero, scratch, layout,
+                ms, selected, image, taylor, keep_zero, scratch, layout,
             )?);
             if facets > 1 && matches!(options.settings.gridder, ImagerGridder::Mosaic) {
                 // CubeSkyEquation assigns the first image to MosaicFT and
@@ -571,6 +575,32 @@ impl ImageTransform {
                 "the model image's Stokes axis does not match its planes",
             ));
         }
+        if npol > 1
+            && options
+                .voltage_pattern
+                .as_ref()
+                .is_some_and(|beam| beam.has_squint())
+        {
+            let polarization = ms.polarization()?;
+            let layouts: BTreeSet<_> = selected
+                .selected_rows
+                .iter()
+                .map(|row| row.polarization_id)
+                .collect();
+            for layout in layouts {
+                let codes = polarization.corr_type(usize::try_from(layout).map_err(invalid)?)?;
+                if codes.iter().any(|&code| {
+                    !matches!(
+                        Correlation::from_casacore_code(code),
+                        Some(Correlation::RR | Correlation::RL | Correlation::LR | Correlation::LL)
+                    )
+                }) {
+                    return Err(invalid(
+                        "legacy voltage-pattern squint for noncircular correlations is pending #1520",
+                    ));
+                }
+            }
+        }
         let correlations = first_correlations(ms, selected)?
             .into_iter()
             .map(|code| {
@@ -713,12 +743,24 @@ impl ImageTransform {
                 let CoordinateModel::Direction(direction) = coords.coordinate(index) else {
                     unreachable!("direction coordinate");
                 };
-                Ok::<_, casa_ms::MsError>((
-                    beam.pattern(),
-                    beam.separations(&self.window.direction(direction), [nx, ny])?,
-                ))
+                let direction = self.window.direction(direction);
+                let separations = beam.model_separations(&direction, [nx, ny])?;
+                Ok::<_, casa_ms::MsError>((beam, direction, separations))
             })
             .transpose()?;
+        let squint = beam.as_ref().is_some_and(|(beam, _, _)| beam.has_squint());
+        if squint {
+            let index = coordinate_index(image.coordinates(), CoordinateType::Stokes)?;
+            let CoordinateModel::Stokes(stokes) = image.coordinates().coordinate(index) else {
+                unreachable!("Stokes coordinate");
+            };
+            use StokesType::{I, Q, U, V};
+            if !matches!(stokes.stokes(), [I] | [I, Q, U, V]) {
+                return Err(invalid(
+                    "legacy voltage-pattern squint for these Stokes axes is pending #1520",
+                ));
+            }
+        }
         let grid_pols = self.operator.polarization().grid_pols();
         let settings = self.options.settings;
         let plane_bytes = gx.saturating_mul(gy).saturating_mul(8);
@@ -770,22 +812,18 @@ impl ImageTransform {
                     .map_err(invalid)
             },
             |plane, values| {
-                let frequency = self.frequencies[plane];
-                let beam = beam
-                    .as_ref()
-                    .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
-                let images = (0..npol)
-                    .map(|pol| {
-                        Array2::from_shape_fn((ny, nx), |(y, x)| {
-                            let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
-                                let radius =
-                                    separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
-                                pattern.power(radius)
-                            });
-                            values[[x, y, pol, 0]] * scale
-                        })
-                    })
-                    .collect();
+                let images = if let Some((beam, direction, separation)) = &beam {
+                    beam.model_plane(
+                        direction,
+                        separation.as_ref(),
+                        values,
+                        self.frequencies[plane],
+                    )?
+                } else {
+                    (0..npol)
+                        .map(|pol| Array2::from_shape_fn((ny, nx), |(y, x)| values[[x, y, pol, 0]]))
+                        .collect()
+                };
                 let model = ModelImages {
                     first_plane: plane as u32,
                     planes: vec![ModelPlane { images }],
@@ -798,6 +836,7 @@ impl ImageTransform {
                     ),
                     None => self.operator.prepare_model(&model, ModelPrescale::Unit),
                 }
+                .map_err(invalid)
             },
             |plane, grid| self.write_plane(&mut output, grid, plane),
         )?;
@@ -977,12 +1016,7 @@ fn prepare_model_planes(
     team: &WorkerTeam,
     channels: usize,
     mut read: impl FnMut(usize) -> MsResult<ArrayD<f32>>,
-    prepare: impl Fn(
-        usize,
-        &ArrayD<f32>,
-    ) -> Result<PreparedModelGrids, casa_imaging_operator::OperatorError>
-    + Send
-    + Sync,
+    prepare: impl Fn(usize, &ArrayD<f32>) -> MsResult<PreparedModelGrids> + Send + Sync,
     mut write: impl FnMut(usize, &PreparedModelGrids) -> MsResult<()>,
 ) -> MsResult<bool> {
     let mut nonzero = false;
@@ -997,9 +1031,8 @@ fn prepare_model_planes(
         }
         team.for_each_mut(&mut planes, |index, (values, grid)| {
             *grid = Some(prepare(first_plane + index, values)?);
-            Ok::<_, casa_imaging_operator::OperatorError>(())
-        })
-        .map_err(invalid)?;
+            Ok::<_, casa_ms::MsError>(())
+        })?;
         for (index, (_, grid)) in planes.into_iter().enumerate() {
             write(
                 first_plane + index,

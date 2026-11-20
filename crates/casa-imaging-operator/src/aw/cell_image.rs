@@ -195,6 +195,7 @@ pub(super) fn load_group(
     group: &Group,
     sampling: u16,
     rotation_rad: f64,
+    legacy_prediction_origin: bool,
 ) -> Result<Loaded, AwCatalogError> {
     let rotation = (rotation_rad != 0.0).then(|| pixel_rotation(rotation_rad));
     let build = |select: fn(&CellFiles) -> &CellHeader,
@@ -212,7 +213,12 @@ pub(super) fn load_group(
             }
             planes.push((plane, header.shape, header.support));
         }
-        Ok(Arc::new(dense_cell_padded(&planes, half, sampling)))
+        Ok(Arc::new(dense_cell_padded(
+            &planes,
+            half,
+            sampling,
+            legacy_prediction_origin,
+        )))
     };
     Ok(Loaded {
         imaging: build(|cell| &cell.imaging, group.imaging_half_support)?,
@@ -243,6 +249,7 @@ pub(super) fn dense_cell_padded(
     planes: &[(Vec<Complex32>, [usize; 2], [u16; 2])],
     half: [u16; 2],
     sampling: u16,
+    legacy_prediction_origin: bool,
 ) -> DenseCell {
     let support = [2 * half[0] + 1, 2 * half[1] + 1];
     let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
@@ -254,7 +261,11 @@ pub(super) fn dense_cell_padded(
         for ox in 0..rows {
             let off_x = ox as i64 - fine_half;
             for (plane, shape, plane_half) in planes {
-                let origin = convolution_origin(*shape);
+                let origin = if legacy_prediction_origin {
+                    shape.map(|extent| (extent / 2) as i64 - 1)
+                } else {
+                    convolution_origin(*shape)
+                };
                 for iy in 0..sy {
                     let ky = iy as i64 - i64::from(half[1]);
                     let y = origin[1] + ky * i64::from(sampling) + off_y;

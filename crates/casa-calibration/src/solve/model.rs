@@ -32,6 +32,7 @@ use single_dish::{PointingQuery, SingleDishModel};
 pub(super) struct ModelInputs {
     read_column: bool,
     virtual_models: BTreeMap<i32, Arc<[Entry]>>,
+    virtual_refusals: BTreeMap<i32, String>,
     frequencies: BTreeMap<i32, (Vec<f64>, FrequencyRef)>,
     geometry: Option<MsCalEngine>,
     dynamic_fields: BTreeSet<i32>,
@@ -87,6 +88,24 @@ impl ModelInputs {
         rows: &[SelectedSolveRow],
         source: GainSolveModelSource,
     ) -> Result<Self, GainSolveError> {
+        Self::load(ms, rows, source, false)
+    }
+
+    /// Subtraction reports a malformed recipe when its first selected
+    /// buffer is reached, after writing any preceding valid predictions.
+    pub(super) fn for_uvsub(
+        ms: &MeasurementSet,
+        rows: &[SelectedSolveRow],
+    ) -> Result<Self, GainSolveError> {
+        Self::load(ms, rows, GainSolveModelSource::FromMeasurementSet, true)
+    }
+
+    fn load(
+        ms: &MeasurementSet,
+        rows: &[SelectedSolveRow],
+        source: GainSolveModelSource,
+        defer_refusals: bool,
+    ) -> Result<Self, GainSolveError> {
         let read_column = source == GainSolveModelSource::ModelColumn
             || (source == GainSolveModelSource::FromMeasurementSet
                 && ms
@@ -106,7 +125,15 @@ impl ModelInputs {
                 let entries = match records.entry(record.key) {
                     std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
-                        entry.insert(decode_entries(&record.record)?.into())
+                        let decoded = match decode_entries(&record.record) {
+                            Ok(decoded) => decoded,
+                            Err(GainSolveError::VirtualModel(error)) if defer_refusals => {
+                                inputs.virtual_refusals.insert(field, error);
+                                continue;
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        entry.insert(decoded.into())
                     }
                 };
                 inputs.virtual_models.insert(field, Arc::clone(entries));
@@ -151,6 +178,7 @@ impl ModelInputs {
         Self {
             read_column,
             virtual_models: BTreeMap::new(),
+            virtual_refusals: BTreeMap::new(),
             frequencies: BTreeMap::new(),
             geometry: None,
             dynamic_fields: BTreeSet::new(),
@@ -213,7 +241,20 @@ impl ModelInputs {
     }
 
     pub(super) fn reads_column(&self, field: i32) -> bool {
-        self.read_column && !self.virtual_models.contains_key(&field)
+        self.read_column
+            && !self.virtual_models.contains_key(&field)
+            && !self.virtual_refusals.contains_key(&field)
+    }
+
+    pub(super) fn has_virtual_refusals(&self) -> bool {
+        !self.virtual_refusals.is_empty()
+    }
+
+    pub(super) fn virtual_refusal(&self, field: i32) -> Option<GainSolveError> {
+        self.virtual_refusals
+            .get(&field)
+            .cloned()
+            .map(GainSolveError::VirtualModel)
     }
 
     pub(super) fn dynamic_fields(&self) -> &BTreeSet<i32> {
@@ -406,6 +447,9 @@ impl ModelInputs {
         (raw_flags, previous): (&ArrayD<bool>, Option<ArrayD<Complex32>>),
         scratch_model: bool,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
+        if let Some(error) = self.virtual_refusal(row.field_id) {
+            return Err(error);
+        }
         let Some(entries) = self.virtual_models.get(&row.field_id) else {
             return Ok(None);
         };
@@ -603,9 +647,11 @@ fn decode_entries(record: &RecordValue) -> Result<Vec<Entry>, GainSolveError> {
                 // The SDGrid span also controls its single-channel bypass.
                 let saved_span = match entry.container.get("name") {
                     Some(Value::Scalar(ScalarValue::String(name))) => {
-                        matches!(name.as_str(), "nPBWProjectFT" | "PBMosaicFT")
-                            || (name == "SDGrid"
-                                && entry.container.get("casars_live_image_frequency").is_some())
+                        matches!(
+                            name.as_str(),
+                            "nPBWProjectFT" | "PBMosaicFT" | crate::ft::legacy_aw::MACHINE
+                        ) || (name == "SDGrid"
+                            && entry.container.get("casars_live_image_frequency").is_some())
                     }
                     _ => false,
                 };

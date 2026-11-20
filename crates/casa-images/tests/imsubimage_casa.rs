@@ -393,7 +393,14 @@ fn subimage_matches_casa_6_7_6_14() {
                 }
                 "saved_relative_disjoint" => "does not intersect the image",
                 "saved_relative_wide" => "SIN deproject: point outside unit circle",
+                "saved_relative_ellipse_far_side_invalid" => {
+                    "SIN project: point outside visible hemisphere"
+                }
+                "saved_relative_polygon_default_invalid" => "default units are not allowed",
                 "saved_compound_nonoverlap" => "regions do not overlap",
+                "saved_axis_stretch_invalid" => "a stretch axis does not have length 1",
+                "saved_axis_concat_invalid" => "number of regions has to match the range",
+                "saved_axis_concat_frame_invalid" => "region axis is unknown or inconsistent",
                 "drop_all" => "cannot drop all axes",
                 "empty" => "outfile must be specified",
                 unexpected => panic!("no assertion for error case {unexpected}"),

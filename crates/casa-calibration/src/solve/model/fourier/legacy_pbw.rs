@@ -35,6 +35,7 @@ pub(super) fn load(
     row: &FourierRow<'_>,
     geometry: &GridGeometry,
     polarization: &PolarizationRouting,
+    pointing: bool,
 ) -> Result<(LegacyPbWConvolution, Reservation), GainSolveError> {
     let dimension = |field| {
         let value = match record.get(field) {
@@ -78,7 +79,8 @@ pub(super) fn load(
         polarization.pol_map(),
         angle,
     )
-    .map_err(model_error)?;
+    .map_err(model_error)?
+    .with_antenna_pointing(pointing);
     Ok((terms, memory))
 }
 

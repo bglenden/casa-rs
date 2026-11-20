@@ -11,7 +11,7 @@ fn casa_routes_the_selected_cell_to_its_visibility_or_grid_hand() {
     let parallel = [C::RR, C::LL];
     let pol = PolarizationRouting::compile(&parallel, &[P::CircularRr, P::CircularLl])
         .expect("parallel hands");
-    let routes = routing(&[0, 15], &pol).expect("routes");
+    let routes = routing(&[0, 15], &pol, false).expect("routes");
     let diagonal = vec![vec![Some(0), None], vec![None, Some(1)]];
     // `DataToGrid` reads the visibility of the selected cell's hand
     // (`muellerElement % nDataPol`), `GridToData` the model grid of
@@ -26,6 +26,12 @@ fn casa_routes_the_selected_cell_to_its_visibility_or_grid_hand() {
         routes.table(true, true),
         &[vec![None, Some(0)], vec![Some(1), None]]
     );
+    let legacy = routing(&[0, 15], &pol, true).expect("legacy routes");
+    assert_eq!(legacy.table(true, true), routes.table(true, true));
+    assert_eq!(
+        legacy.table(false, true),
+        &[vec![None, Some(1)], vec![Some(0), None]]
+    );
 
     // PolOuterProduct::makeConjPol2CFMat: an inactive partner leaves
     // the direct mapping in place, even if the cache has both cells.
@@ -35,7 +41,7 @@ fn casa_routes_the_selected_cell_to_its_visibility_or_grid_hand() {
         (P::CircularRr, vec![0], vec![Some(0), None]),
     ] {
         let pol = PolarizationRouting::compile(&parallel, &[requested]).expect("one hand");
-        let routes = routing(&cells, &pol).expect("one-hand routes");
+        let routes = routing(&cells, &pol, false).expect("one-hand routes");
         for positive in [false, true] {
             for forward in [false, true] {
                 assert_eq!(
@@ -52,7 +58,7 @@ fn casa_routes_the_selected_cell_to_its_visibility_or_grid_hand() {
         &[P::CircularRr, P::CircularRl, P::CircularLr, P::CircularLl],
     )
     .expect("four hands");
-    let routes = routing(&[0, 5, 10, 15], &pol).expect("four-hand routes");
+    let routes = routing(&[0, 5, 10, 15], &pol, false).expect("four-hand routes");
     for gpol in 0..4 {
         for vpol in 0..4 {
             assert_eq!(
@@ -76,7 +82,7 @@ fn casa_routes_the_selected_cell_to_its_visibility_or_grid_hand() {
     let pol = PolarizationRouting::compile(&[C::RR, C::RL, C::LL], &[P::StokesI])
         .expect("three correlations");
     assert!(
-        routing(&[0, 15], &pol).is_none(),
+        routing(&[0, 15], &pol, false).is_none(),
         "do not overwrite colliding routes"
     );
 }
@@ -120,6 +126,7 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
         root: PathBuf::new(),
         prediction_frequency_scale: 1.0,
         prediction_uses_native_frequency: false,
+        legacy_prediction_origin: false,
         indexing: AwIndexing {
             conjugate_beams: false,
             image_reference_hz: 1.0e9,
@@ -420,6 +427,7 @@ fn padded_cells_read_the_oversampled_plane_and_zero_outside() {
         &[(values, [side, side], [1, 1]), (small, [4, 4], [1, 1])],
         [1, 1],
         2,
+        false,
     );
     assert_eq!(cell.support(), [3, 3]);
     assert_eq!(cell.mueller_planes(), 2);
@@ -443,15 +451,17 @@ fn an_odd_cell_is_read_about_casas_origin() {
     let values = (0..side * side)
         .map(|index| Complex32::new((index % side) as f32, (index / side) as f32))
         .collect::<Vec<_>>();
-    let cell = dense_cell_padded(&[(values, [side, side], [1, 1])], [1, 1], 2);
+    let cell = dense_cell_padded(&[(values.clone(), [side, side], [1, 1])], [1, 1], 2, false);
     let tile = 9;
     // Row (ox, oy) = (1, 1): no fine offset; tap (1, 1) is the origin,
     // pixel (9/2 + 1, 9/2 + 1) = (5, 5).
     let row = (3 + 1) * tile;
     assert_eq!(cell.data()[row + 4], Complex32::new(5.0, 5.0));
+    let legacy = dense_cell_padded(&[(values, [side, side], [1, 1])], [1, 1], 2, true);
+    assert_eq!(legacy.data()[row + 4], Complex32::new(3.0, 3.0));
     // One extent odd moves both axes.
     let values = vec![Complex32::new(1.0, 0.0); 9 * 8];
-    let cell = dense_cell_padded(&[(values, [9, 8], [1, 1])], [1, 1], 2);
+    let cell = dense_cell_padded(&[(values, [9, 8], [1, 1])], [1, 1], 2, false);
     assert_eq!(cell.support(), [3, 3]);
     assert_eq!(convolution_origin([9, 8]), [5, 5]);
     assert_eq!(convolution_origin([8, 8]), [4, 4]);
@@ -498,7 +508,7 @@ fn an_odd_sampled_aw_cell_imports_both_endpoint_tap_rows() {
         weight: header,
     };
     let group = Group::new(std::slice::from_ref(&files), [false; 2]);
-    let loaded = load_group(std::slice::from_ref(&files), &group, 5, 0.0).unwrap();
+    let loaded = load_group(std::slice::from_ref(&files), &group, 5, 0.0, false).unwrap();
     let cell = &loaded.imaging;
     assert_eq!(loaded.weight.data(), cell.data());
     // CASA's endpoints are three fine pixels on each side at sampling 5.

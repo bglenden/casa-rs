@@ -135,7 +135,8 @@ pub fn parse_parameter_cli_overrides(
             // archives; any other value takes its last occurrence.
             let value = match (patch.values.remove(&binding.name), value) {
                 (Some(ParameterValue::Array(mut earlier)), ParameterValue::Array(more))
-                    if is_open_list_domain(&concept.value_domain) =>
+                    if is_open_list_domain(&concept.value_domain)
+                        || flagdata_channel_bins(bundle, binding) =>
                 {
                     earlier.extend(more);
                     checked_value(bundle, binding, &ParameterValue::Array(earlier))?
@@ -292,11 +293,31 @@ fn validated_cli_value(
                         ParameterValue::Float,
                     )
             })
+    } else if flagdata_channel_bins(bundle, binding) {
+        // The CLI keeps its integer and comma-separated spellings. The
+        // provider additionally transports Python's typed CASA variants.
+        parse_parameter_text(
+            text,
+            &ParameterType::Array {
+                element: Box::new(ParameterType::Integer),
+                min_items: 0,
+                max_items: None,
+                allow_scalar: true,
+            },
+        )
+        .map_err(|error| format!("parameter {:?}: {error}", binding.name))?
     } else {
         parse_parameter_text(text, &concept.value_domain)
             .map_err(|error| format!("parameter {:?}: {error}", binding.name))?
     };
     checked_value(bundle, binding, &parsed)
+}
+
+fn flagdata_channel_bins(
+    bundle: &SurfaceContractBundle,
+    binding: &SurfaceParameterBinding,
+) -> bool {
+    bundle.surface.id() == "flagdata" && binding.name == "chanbin"
 }
 
 /// Whether `domain` is a list of text that one text also gives.

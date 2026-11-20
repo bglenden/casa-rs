@@ -2,17 +2,17 @@
 
 use std::path::Path;
 
-use casa_images::ImagePixel;
 use casa_images::analysis::{
     SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
 };
 use casa_images::image::image_history_rows;
+use casa_images::{ImageInterface, ImagePixel};
 use casa_types::{RecordValue, ScalarValue, Value};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
 use crate::convert::{IntList, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented_in, table::casa_record};
+use crate::tools::{LogLine, emit, table::casa_record};
 
 use super::PyImageTool;
 use super::create::publish_image;
@@ -29,20 +29,26 @@ impl Region {
         value: Option<&Bound<'_, PyAny>>,
         method: &str,
     ) -> PyResult<Option<Self>> {
+        let region = Self::capture(py, value)?;
+        if let Some(Self::Record(record)) = &region
+            && !matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name)))
+                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"))
+        {
+            return Err(super::stub(method).unwrap_err());
+        }
+        Ok(region)
+    }
+
+    pub(super) fn capture(
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<Self>> {
         let Some(value) = value else {
             return Ok(None);
         };
         if let Ok(record) = value.cast::<PyDict>() {
             let record = casa_record(py, Some(record))?;
-            if record.is_empty() {
-                return Ok(None);
-            }
-            if !matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name)))
-                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"))
-            {
-                return Err(super::stub(method).unwrap_err());
-            }
-            return Ok(Some(Self::Record(record)));
+            return Ok((!record.is_empty()).then_some(Self::Record(record)));
         }
         if let Ok(text) = value.cast::<PyString>() {
             let text = text.to_str()?;
@@ -104,6 +110,44 @@ struct Request<'a> {
 }
 
 impl Request<'_> {
+    fn copy_selection<T: ImagePixel + Copy>(
+        &self,
+        source: &dyn ImageInterface<T>,
+        coordinates: Option<RecordValue>,
+        path: Option<&Path>,
+        logs: &mut Vec<LogLine>,
+    ) -> PyResult<Storage<T>> {
+        let options = SubimageOptions {
+            region: self.region.as_ref().map(Region::as_region),
+            dropdeg: self.dropdeg,
+            keepaxes: &self.keepaxes,
+        };
+        let plan = SubimagePlan::new(source, coordinates, options).map_err(raised)?;
+        if self.list {
+            let (blc, trc) = plan.bounds();
+            logs.push(LogLine::info(format!(
+                "Selected bounding box {blc:?} to {trc:?}"
+            )));
+        }
+        let mut result = Storage::create(plan.shape.clone(), plan.coordinates.clone(), path, None)
+            .map_err(raised)?;
+        let expression = (!self.mask.is_empty()).then_some(self.mask.as_str());
+        with_storage!(&mut result, copy =>
+            plan.copy_to(source, copy.as_mut(), expression, self.stretch)
+        )
+        .map_err(raised)?;
+        if let Some(record) = plan.coordinate_record {
+            match &mut result {
+                Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised)?,
+                Storage::Temp {
+                    record: coordinates,
+                    ..
+                } => *coordinates = record,
+            }
+        }
+        Ok(result)
+    }
+
     fn build<T: ImagePixel + Copy>(
         &self,
         source: &Storage<T>,
@@ -117,37 +161,9 @@ impl Request<'_> {
             },
             Storage::Temp { record, .. } => Some(record.clone()),
         };
-        let options = SubimageOptions {
-            region: self.region.as_ref().map(Region::as_region),
-            dropdeg: self.dropdeg,
-            keepaxes: &self.keepaxes,
-        };
-        let plan = with_storage!(source, image =>
-            SubimagePlan::new(image.as_ref(), coordinates, options)
-        )
-        .map_err(raised)?;
-        if self.list {
-            let (blc, trc) = plan.bounds();
-            logs.push(LogLine::info(format!(
-                "Selected bounding box {blc:?} to {trc:?}"
-            )));
-        }
-        let mut result = Storage::create(plan.shape.clone(), plan.coordinates.clone(), path, None)
-            .map_err(raised)?;
-        let expression = (!self.mask.is_empty()).then_some(self.mask.as_str());
-        with_storage!(source, original => with_storage!(&mut result, copy =>
-            plan.copy_to(original.as_ref(), copy.as_mut(), expression, self.stretch)
-        ))
-        .map_err(raised)?;
-        if let Some(record) = plan.coordinate_record {
-            match &mut result {
-                Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised)?,
-                Storage::Temp {
-                    record: coordinates,
-                    ..
-                } => *coordinates = record,
-            }
-        }
+        let mut result = with_storage!(
+            source, image => self.copy_selection(image.as_ref(), coordinates, path, logs)
+        )?;
         let rows = match source {
             Storage::Paged(image) => {
                 image_history_rows(image.name().expect("persistent image")).map_err(raised)?
@@ -193,7 +209,7 @@ impl PyImageTool {
         stretch: bool,
         wantreturn: bool,
         keepaxes: Option<IntList>,
-    ) -> PyResult<Option<Py<Self>>> {
+    ) -> PyResult<Py<Self>> {
         let request = Request {
             outfile,
             region: Region::argument(py, region, "subimage")?,
@@ -215,14 +231,19 @@ impl PyImageTool {
             publish_image(outfile, overwrite, |path| {
                 // Release the source handle before publication takes the image registry lock.
                 let mut original = attached.lock();
-                if original.fits().is_some() {
-                    return not_yet_implemented_in("image", "subimage", 1627);
-                }
                 attached.require_pixel_read_lock(&mut original)?;
                 if !outfile.is_empty() && let Some(source) = original.path() {
                     ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
                 }
                 let mut copy = match &*original {
+                    ImageHandle::Float(Storage::Temp { image, record, fits: Some(fits) }) => {
+                        let source = fits.image_view(image);
+                        let mut storage = request.copy_selection(&source, Some(record.clone()), path, &mut logs)?;
+                        with_storage!(&mut storage, product =>
+                            product.append_history_entries(image.history_rows())
+                        ).map_err(raised)?;
+                        ImageHandle::Float(storage)
+                    }
                     ImageHandle::Float(source) => ImageHandle::Float(request.build(source, path, &mut logs)?),
                     ImageHandle::Double(source) => ImageHandle::Double(request.build(source, path, &mut logs)?),
                     ImageHandle::Complex(source) => ImageHandle::Complex(request.build(source, path, &mut logs)?),
@@ -238,10 +259,10 @@ impl PyImageTool {
         emit(py, "casars.tools.image", &logs)?;
         let result = result?;
         if wantreturn {
-            Py::new(py, Self::attached(result)).map(Some)
+            Py::new(py, Self::attached(result))
         } else {
             py.detach(|| drop(result));
-            Ok(None)
+            Py::new(py, Self::new())
         }
     }
 }

@@ -18,7 +18,7 @@
 //! | Z (OPTICAL)| z = Δf/f | ratio = 1/(1 + z) |
 //! | RATIO | f/f₀ | identity |
 //! | BETA (RELATIVISTIC) | v/c (relativistic) | ratio = √((1−β)/(1+β)) |
-//! | GAMMA | Lorentz factor γ | β = √(1−1/γ²), then as BETA |
+//! | GAMMA | Lorentz factor γ | ratio = γ(1 − √(1−1/γ²)) |
 
 use std::fmt;
 use std::str::FromStr;
@@ -241,10 +241,7 @@ fn to_ratio(value: f64, from: DopplerRef) -> f64 {
         DopplerRef::RADIO => 1.0 - value,
         DopplerRef::Z => 1.0 / (1.0 + value),
         DopplerRef::BETA => ((1.0 - value) / (1.0 + value)).sqrt(),
-        DopplerRef::GAMMA => {
-            let beta = (1.0 - 1.0 / (value * value)).sqrt();
-            ((1.0 - beta) / (1.0 + beta)).sqrt()
-        }
+        DopplerRef::GAMMA => value * (1.0 - (1.0 - 1.0 / value / value).sqrt()),
     }
 }
 
@@ -258,11 +255,7 @@ fn from_ratio(ratio: f64, to: DopplerRef) -> f64 {
             let r2 = ratio * ratio;
             (1.0 - r2) / (1.0 + r2)
         }
-        DopplerRef::GAMMA => {
-            let r2 = ratio * ratio;
-            let beta = (1.0 - r2) / (1.0 + r2);
-            1.0 / (1.0 - beta * beta).sqrt()
-        }
+        DopplerRef::GAMMA => (1.0 + ratio * ratio) / 2.0 / ratio,
     }
 }
 
