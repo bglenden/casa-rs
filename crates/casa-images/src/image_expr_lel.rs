@@ -499,8 +499,15 @@ pub(crate) fn rebin_coordinates(
         return Ok(());
     }
     let mut record = coords.to_record();
-    let placed = CoordinateSystem::record_coordinates(&record)?;
-    let mut updated = coords.clone();
+    *coords = rebin_coordinate_record(&mut record, factors)?;
+    Ok(())
+}
+
+pub(crate) fn rebin_coordinate_record(
+    record: &mut RecordValue,
+    factors: &[usize],
+) -> Result<CoordinateSystem, ImageError> {
+    let placed = CoordinateSystem::record_coordinates(record)?;
     for coord in placed {
         if coord.field.starts_with("stokes") {
             continue;
@@ -519,20 +526,15 @@ pub(crate) fn rebin_coordinates(
             let ff = f as f64;
             if let Some(old_crpix) = record_axis_scalar(&coord_record, "crpix", local_axis) {
                 let new_crpix = (old_crpix - 0.5 * (ff - 1.0)) / ff;
-                let (sys, _) =
-                    CoordinateSystem::set_reference_pixel_in_record(&mut record, axis, new_crpix)?;
-                updated = sys;
+                CoordinateSystem::set_reference_pixel_in_record(record, axis, new_crpix)?;
             }
             if let Some(old_cdelt) = record_axis_scalar(&coord_record, "cdelt", local_axis) {
                 let new_cdelt = old_cdelt * ff;
-                let (sys, _) =
-                    CoordinateSystem::set_increment_in_record(&mut record, axis, new_cdelt)?;
-                updated = sys;
+                CoordinateSystem::set_increment_in_record(record, axis, new_cdelt)?;
             }
         }
     }
-    *coords = updated;
-    Ok(())
+    CoordinateSystem::from_record(record).map_err(ImageError::from)
 }
 
 /// Maps a requested rebinned slice `(start, shape, stride)` to the contiguous
@@ -582,7 +584,7 @@ fn accumulate_rebin_block<T: ImageExprValue>(
     sum: &mut T,
     count: &mut usize,
 ) {
-    if axis == los.len() {
+    if axis == 0 {
         let valid = mask.is_none_or(|m| m[base]);
         if valid {
             if *count == 0 {
@@ -594,10 +596,11 @@ fn accumulate_rebin_block<T: ImageExprValue>(
         }
         return;
     }
+    let axis = axis - 1;
     let stride = in_strides[axis];
     for coord in los[axis]..his[axis] {
         accumulate_rebin_block(
-            axis + 1,
+            axis,
             base + coord * stride,
             los,
             his,
@@ -655,7 +658,7 @@ pub(crate) fn rebin_reduce_slice<T: ImageExprValue>(
         let mut sum = T::default_value();
         let mut count = 0usize;
         accumulate_rebin_block(
-            0,
+            ndim,
             0,
             &los,
             &his,

@@ -115,15 +115,7 @@ impl ImageCrop {
 
     /// Source planes corresponding to the output for a beam-grid axis.
     pub fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
-        let Some(axis) = axis.filter(|_| planes > 1) else {
-            return vec![0];
-        };
-        let selected = &self.section.selection;
-        let start = selected.start[axis];
-        let step = selected.stride.as_ref().map_or(1, |stride| stride[axis]);
-        (0..self.section.shape[axis])
-            .map(|index| start + index * step)
-            .collect()
+        self.section.beam_planes(axis, planes)
     }
 
     /// Copy the resolved pixels, metadata and mask into an allocated image.
