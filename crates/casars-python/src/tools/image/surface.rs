@@ -155,7 +155,7 @@ const METHODS: &[Method] = &[
             param("polarization", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "convolve",
