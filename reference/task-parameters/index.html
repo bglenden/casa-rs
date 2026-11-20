@@ -1823,7 +1823,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-immoments">Image Moments</a><br><code>immoments</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>image_analysis</code></td>
 <td style="text-align: right;">13</td>
 <td>Create CASA-style image moment maps</td>
@@ -4755,7 +4755,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="image-moments-immoments">Image Moments (<code>immoments</code>)<a class="headerlink" href="#image-moments-immoments" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Create CASA-style image moment maps</li>
@@ -4790,11 +4790,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>axis</code></td>
-<td><code>moments.axis@r1</code></td>
-<td><code>string</code></td>
+<td><code>moments.axis@r2</code></td>
+<td><code>variant</code></td>
 <td><code>"spectral"</code>; optional</td>
 <td>Moments</td>
-<td>Moment axis: ra, dec, lat, long, spectral or stokes.</td>
+<td>Zero-based moment axis or CASA name such as spectral, RA, Dec or Stokes.</td>
 </tr>
 <tr>
 <td><code>region</code></td>

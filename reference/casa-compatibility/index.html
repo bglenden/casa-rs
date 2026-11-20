@@ -2004,6 +2004,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#calibration-selection-diagnostics-proposed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        calibration-selection-diagnostics: Proposed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2048,6 +2059,17 @@
     <span class="md-ellipsis">
       
         atmosphere
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#selectors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        selectors
       
     </span>
   </a>
@@ -8931,6 +8953,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#calibration-selection-diagnostics-proposed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        calibration-selection-diagnostics: Proposed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -8975,6 +9008,17 @@
     <span class="md-ellipsis">
       
         atmosphere
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#selectors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        selectors
       
     </span>
   </a>
@@ -14219,7 +14263,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">12</td>
 <td style="text-align: right;">12</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">6</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: right;">1</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -15635,7 +15679,6 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the imagename parameter must be a path that exists ('' does not exist)</li>
 <li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
-<li>Accepted only at CASA's default until #977: <code>axis</code>, <code>region</code>, <code>box</code>, <code>stokes</code>, <code>excludepix</code>, <code>stretch</code></li>
 <li>casa-rs parameters CASA lacks: <code>overwrite</code></li>
 <li>Shared parameters: 12, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
@@ -16588,7 +16631,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h4 id="plotms-parameter-implementation">plotms parameter implementation<a class="headerlink" href="#plotms-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>e775bd07a6e5b9ebfbb4b812844564b063dc78e9</code>. Status counts: Default only: 14, Implemented: 23, Not implemented: 11, Partial: 54, Unassessed: 0.</p>
+<p>Audit baseline: <code>e775bd07a6e5b9ebfbb4b812844564b063dc78e9</code>. Status counts: Default only: 14, Implemented: 24, Not implemented: 2, Partial: 62, Unassessed: 0.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -16766,9 +16809,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>uvrange</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>uvrange</code> → <code>uvrange</code></td>
-<td>Not implemented</td>
-<td>UV range (blank for all) <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>UV range (blank for all). Modern calibration tables reject this selector. <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
@@ -16806,17 +16849,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>antpos</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>antpos</code> → <code>antpos</code></td>
-<td>Not implemented</td>
-<td>Antenna positions (blank for all) <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Implemented</td>
+<td>Display XYZ components of an antenna-position calibration, or select an ordered component subset. Preserve the requested selector in text metadata for other calibration types. <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#plotms-evidence-selectors">selectors</a></td>
 </tr>
 <tr>
 <td><code>array</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>array</code> → <code>array</code></td>
-<td>Not implemented</td>
-<td>(Sub)array numbers (blank for all) <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>(Sub)array numbers (blank for all). Modern calibration tables reject this selector. <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>observation</code></td>
@@ -16830,25 +16873,25 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>intent</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>intent</code> → <code>intent</code></td>
-<td>Not implemented</td>
-<td>Observing intent (blank for all) <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Observing intent (blank for all). Modern calibration tables reject this selector. <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>feed</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>feed</code> → <code>feed</code></td>
-<td>Not implemented</td>
-<td>Feed numbers (blank for all) <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Feed numbers (blank for all). Modern calibration tables reject this selector. <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>msselect</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>msselect</code> → <code>msselect</code></td>
-<td>Not implemented</td>
-<td>MSSelection TaQL string (blank for none) <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Apply a TaQL row expression to a modern calibration table. Refuse a selection with no solutions. <a href="#plotms-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#plotms-evidence-selectors">selectors</a></td>
 </tr>
 <tr>
 <td><code>averagedata</code></td>
@@ -16926,25 +16969,25 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>transform</code></td>
 <td><code>True</code></td>
 <td><code>True</code>; <code>transform</code> → <code>transform</code></td>
-<td>Not implemented</td>
-<td>Enable data transformations <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>bool</code></td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Disable the frequency controls when false. Additional active calibration transforms remain open. <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>bool</code></td>
+<td><a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>freqframe</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>freqframe</code> → <code>freqframe</code></td>
-<td>Not implemented</td>
-<td>The frame in which to render frequency and velocity axes <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>LSRK</code>, <code>CMB</code>, <code>GALACTO</code>, <code>GEO</code>, <code>TOPO</code>, <code>LSRD</code>, <code>LGROUP</code>, <code>BARY</code>, ``</td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Ignore the requested frequency frame when transform is false. Active frequency conversion remains open for calibration tables. <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>LSRK</code>, <code>CMB</code>, <code>GALACTO</code>, <code>GEO</code>, <code>TOPO</code>, <code>LSRD</code>, <code>LGROUP</code>, <code>BARY</code>, ``</td>
+<td><a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>restfreq</code></td>
 <td><code>''</code></td>
 <td><code>''</code>; <code>restfreq</code> → <code>restfreq</code></td>
-<td>Not implemented</td>
-<td>Rest frequency to use for velocity conversions <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>CASA leaves modern calibration-table coordinates unchanged for supplied rest-frequency values. Frequency and velocity transforms for other inputs remain separately tracked. <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>veldef</code></td>
@@ -17428,14 +17471,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p>Evidence: <a href="#plotms-evidence-paired">paired</a>.</p>
 <p><a id="plotms-behavior-selection"></a></p>
 <h5 id="select-solution-samples">Select solution samples<a class="headerlink" href="#select-solution-samples" title="Permanent link">&para;</a></h5>
-<p><strong>Partial</strong> — Apply metadata selections for field, channel and window, time, antenna, scan, observation and polarization, including receptor ratios.</p>
-<p>TaQL and the remaining calibration selection expressions are open.</p>
-<p>Evidence: <a href="#plotms-evidence-paired">paired</a>.</p>
+<p><strong>Partial</strong> — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors.</p>
+<p>Further legacy formats and MS plotting paths remain open.</p>
+<p>Evidence: <a href="#plotms-evidence-paired">paired</a>, <a href="#plotms-evidence-selectors">selectors</a>.</p>
 <p><a id="plotms-behavior-coordinates"></a></p>
 <h5 id="project-axes-and-flags">Project axes and flags<a class="headerlink" href="#project-axes-and-flags" title="Permanent link">&para;</a></h5>
-<p><strong>Partial</strong> — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing.</p>
+<p><strong>Partial</strong> — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.</p>
 <p>Pointing-coordinate axes and advanced per-axis MS data columns are open.</p>
-<p>Evidence: <a href="#plotms-evidence-paired">paired</a>.</p>
+<p>Evidence: <a href="#plotms-evidence-paired">paired</a>, <a href="#plotms-evidence-selectors">selectors</a>.</p>
 <p><a id="plotms-behavior-averaging"></a></p>
 <h5 id="average-solution-points">Average solution points<a class="headerlink" href="#average-solution-points" title="Permanent link">&para;</a></h5>
 <p><strong>Implemented</strong> — Apply weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache.</p>
@@ -17457,9 +17500,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p>Evidence: <a href="#plotms-evidence-paired">paired</a>.</p>
 <p><a id="plotms-behavior-advanced"></a></p>
 <h5 id="advanced-calibration-plotting-controls">Advanced calibration plotting controls<a class="headerlink" href="#advanced-calibration-plotting-controls" title="Permanent link">&para;</a></h5>
-<p><strong>Partial</strong> — Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.</p>
+<p><strong>Partial</strong> — Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet callibrary, overlays, transforms and interactive flag controls.</p>
 <p>The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.</p>
-<p>Evidence: <a href="#plotms-evidence-atmosphere">atmosphere</a>, <a href="#plotms-evidence-remaining">remaining</a>.</p>
+<p>Evidence: <a href="#plotms-evidence-atmosphere">atmosphere</a>, <a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a>.</p>
 <h4 id="plotms-deviations-and-unfinished-work">plotms deviations and unfinished work<a class="headerlink" href="#plotms-deviations-and-unfinished-work" title="Permanent link">&para;</a></h4>
 <h5 id="disable-selection-proposed">disable-selection: Proposed<a class="headerlink" href="#disable-selection-proposed" title="Permanent link">&para;</a></h5>
 <ul>
@@ -17471,6 +17514,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>User impact: The native request produces all 160 available points in the paired fixture.</li>
 <li>Owner decision: Pending; not an accepted deviation.</li>
 <li>Evidence: <a href="#plotms-evidence-paired">paired</a>.</li>
+</ul>
+<h5 id="calibration-selection-diagnostics-proposed">calibration-selection-diagnostics: Proposed<a class="headerlink" href="#calibration-selection-diagnostics-proposed" title="Permanent link">&para;</a></h5>
+<ul>
+<li>Inputs: Modern calibration input with an unsupported selector, invalid antenna-position selector or empty TaQL selection.</li>
+<li>CASA: Refuses the plot with an RPC failure whose details say plot parameters failed.</li>
+<li>casa-rs: Refuses the plot with a task parameter error describing the selector or empty row set.</li>
+<li>Rationale: Give the caller the cause using the native task error contract.</li>
+<li>User impact: Both workflows preserve an absent export on selection failure.</li>
+<li>Owner decision: Pending; not an accepted deviation.</li>
+<li>Evidence: <a href="#plotms-evidence-selectors">selectors</a>.</li>
 </ul>
 <h4 id="plotms-evidence">plotms evidence<a class="headerlink" href="#plotms-evidence" title="Permanent link">&para;</a></h4>
 <p>Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.</p>
@@ -17494,6 +17547,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>12d08ef332634591a6ad4611408f4cc178f601c5</code>; CASA: <code>6.7.6.14</code>.</li>
 <li>Command: <code>casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work &lt;new-dir&gt; --native-bin &lt;msexplore&gt;</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/plotms-atmosphere-20261119.json</code>.</li>
+</ul>
+<p><a id="plotms-evidence-selectors"></a></p>
+<h5 id="selectors">selectors<a class="headerlink" href="#selectors" title="Permanent link">&para;</a></h5>
+<p><strong>Same-input PlotMS calibration types and selectors — passed.</strong> 56 text exports, 1,688 points, 14 exact errors, six paired refusals and 32 rendered coordinates matched. Scan, baseline, time and antenna-position page exports used the same filenames. CASA 6.7.6.14 with casaplotms 2.9.1 on identical modern calibration tables, including Tsys and antenna position.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py">https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py</a></li>
+<li>Revision: <code>d3571932be189f719e83e2626ba7fab982d23d33</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>casa-python tools/casa-compat/plotms_calibration_oracle.py --work &lt;new-dir&gt; --native-bin &lt;msexplore&gt;</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/plotms-calibration-selectors-20261119.json</code>.</li>
 </ul>
 <h3 id="plotweather">plotweather<a class="headerlink" href="#plotweather" title="Permanent link">&para;</a></h3>
 <ul>

@@ -4390,6 +4390,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#duplicate-immoments-requests-can-leave-a-partial-set-of-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Duplicate immoments requests can leave a partial set of images
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#imsubimage-aborts-for-an-out-of-range-keepaxes-index" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10956,8 +10967,12 @@ SOURCE records can name the same Fourier image. Replacing the model on the
 first partition removes that image. A subsequent <code>uvsub</code> on the other
 partition fails to open the image its record names.</p>
 <p>casa-rs gives independent SOURCE or MAIN records their own Fourier grids.
-Replacing one record deletes the old grid that record owned. The other
-partition's recipe still opens in CASA and casa-rs. The standalone
+Replacing one record leaves the other partition's grid and recipe
+readable in CASA and casa-rs. Replacement also preserves retired grids
+in SOURCE. SOURCE does not identify every MAIN that can still name an
+older grid, including a MAIN with stale metadata after a failed write.
+A replacement can remove a retired grid in its own MAIN directory after
+checking the current model records. The standalone
 <code>calibration_ft_oracle.py</code> fixture exercises the replacement sequence.</p>
 <h2 id="taql-derived-geometry-treats-an-ephemeris-field-offset-as-a-direction">TaQL derived geometry treats an ephemeris field offset as a direction<a class="headerlink" href="#taql-derived-geometry-treats-an-ephemeris-field-offset-as-a-direction" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 <code>msmetadata.phasecenter(field, epoch)</code> follows the attached
@@ -11134,6 +11149,13 @@ splits at 72 characters on the first card and <code>&gt;</code> plus 71 characte
 continuation card without skipping characters, emitting all 48 cards on
 <code>cube_i.im</code> so both casa-rs and CASA 6.7.6.14 <code>ia.history(list=False)</code> read back
 all 17 original history entries intact (#977).</p>
+<h2 id="duplicate-immoments-requests-can-leave-a-partial-set-of-images">Duplicate <code>immoments</code> requests can leave a partial set of images<a class="headerlink" href="#duplicate-immoments-requests-can-leave-a-partial-set-of-images" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 writes the first output directory for a repeated moment
+number before the second occurrence reports that the same directory
+already exists. For example, <code>moments=[0,0]</code> leaves the <code>.integrated</code>
+directory after a failed task. casa-rs checks the destination names
+before writing and refuses the duplicate without publishing a product
+(#977).</p>
 <h2 id="imsubimage-aborts-for-an-out-of-range-keepaxes-index">imsubimage aborts for an out-of-range keepaxes index<a class="headerlink" href="#imsubimage-aborts-for-an-out-of-range-keepaxes-index" title="Permanent link">&para;</a></h2>
 <p>On a four-axis image, CASA 6.7.6.14 aborts the process with
 <code>itsAxes(i) &gt;= naxes</code> for <code>imsubimage(dropdeg=True, keepaxes=[4])</code>.
