@@ -143,7 +143,7 @@ pub struct FlagDataRequest {
     pub casa_row_selection: bool,
     /// CASA-style SPW/channel selector.
     pub spw: Option<String>,
-    /// CASA agent correlation selection for manual and quack edits.
+    /// CASA agent correlation selection for manual and quack edits and summaries.
     pub correlation: Option<String>,
     /// Mode to execute.
     pub mode: FlagDataMode,
@@ -318,6 +318,10 @@ pub enum FlaggingError {
         reason: String,
     },
 
+    /// The correlation selector resolved to no polarization setup for a summary.
+    #[error("no flagdata summary report for the selected correlations")]
+    MissingCorrelationSummary,
+
     /// Flag-version management failed.
     #[error("failed to manage flag version for {path}: {reason}")]
     FlagVersion {
@@ -397,6 +401,7 @@ fn flagdata_with_persistence(
             ms,
             &selected_rows,
             channel_selections.as_ref(),
+            correlations.as_ref(),
             request.summary_options,
         );
     }
