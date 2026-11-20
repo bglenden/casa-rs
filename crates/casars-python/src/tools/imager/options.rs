@@ -8,7 +8,6 @@ use casa_types::measures::position::PositionRef;
 use pyo3::prelude::*;
 
 use crate::convert::{Variant, measures::position};
-use crate::tools::not_yet_implemented_in;
 
 use super::runtime_error;
 
@@ -55,13 +54,8 @@ impl TransformArguments<'_> {
         previous.gridder = match machine.as_str() {
             "wproject" => ImagerGridder::w_project(self.planes),
             "mosaic" => ImagerGridder::Mosaic,
-            "sd" | "both" | "pbwproject" | "pbmosaic" => ImagerGridder::Spheroidal,
-            "awproject" | "mawproject" => {
-                return not_yet_implemented_in(
-                    "imager",
-                    "setoptions for this Fourier machine",
-                    1520,
-                );
+            "sd" | "both" | "pbwproject" | "pbmosaic" | "awproject" | "mawproject" => {
+                ImagerGridder::Spheroidal
             }
             // CASA's rGridFT (nift) and GridFT give the same predictions.
             _ => match convolution.as_str() {

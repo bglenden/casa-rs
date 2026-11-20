@@ -28,6 +28,11 @@ ia.setbrightnessunit("Jy/pixel")
 ia.done()
 ```
 
+Use `ia.addnoise(seeds=[1, 2])` to add reproducible normal noise. Pass
+`type` and `pars` for another CASA noise distribution, or `zero=True`
+to replace the selected pixels with noise. The region selects the lattice
+section and the image's validity mask is retained.
+
 A coordinate tool returned by `ia.coordsys()` has its own state. Inspect the
 direction axes with `cs.findcoordinate("direction")["pixel"]` or identify the
 coordinate for a particular axis with `cs.findaxis(world=False, axis=0)`.
@@ -116,6 +121,10 @@ selected coordinate. Virtual modes are tracked in #1749.
 Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
 float or complex image. Use `update=True` to validate the selected native
 pixel mask after replacement.
+Use `ia.set(pixels=3.5)` to fill the attached float image. `pixels` can also
+be a scalar lattice expression. Use `region` to restrict the edit and set
+`pixelmask=0` to invalidate the selected pixels or `pixelmask=1` to validate
+them in the default mask.
 
 Use `ia.calc(pixels=...)` to evaluate a numeric expression into a writable
 float or complex image. An existing default mask limits writes to its valid
@@ -128,6 +137,7 @@ separate image.
 Use `ia.calcmask(...)` to save a Boolean expression as a named native image
 mask. Expressions can combine real, complex, and FITS images and read named
 masks using `mask("image.im:maskname")` where CASA accepts that source type.
+
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
@@ -146,6 +156,13 @@ Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
 Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
 reopens the moved file and reads its stored metadata again.
+
+Use `ia.insert("source.im")` to place a source image by aligning reference
+pixels, or supply `locate` to set the lower corner. A region record may
+select a strided section. CRTF text uses the attached destination's
+coordinates before applying the selection to the source. An existing writable
+destination mask receives the source validity over the inserted section.
+
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
 writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.

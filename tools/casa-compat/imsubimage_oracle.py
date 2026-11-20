@@ -138,6 +138,7 @@ def make_inputs():
     assert rg.tofile("box.rgn", region)
     make_compound_regions(ia, cs.torecord(), rg)
     make_extended_regions(ia, cs.torecord(), rg)
+    make_relative_shapes(cs.torecord(), rg)
     for name, lower, upper, stride in [
         ("stride", [0, 1, 0, 0], [5, 5, 3, 3], [2, 2, 1, 2]),
         ("stride_degenerate", [0, 1, 1, 0], [5, 5, 2, 1], [2, 2, 3, 4]),
@@ -235,6 +236,51 @@ def make_extended_regions(ia, coords, rg):
         ("nested_relative", nested),
     ]:
         assert rg.tofile(f"saved_axis_{name}.rgn", region)
+
+
+def make_relative_shapes(coords, rg):
+    polygon = rg.wpolygon(
+        x=["0arcmin", "-2.1arcmin", "-1.2arcmin"],
+        y=["0arcmin", "0arcmin", "2arcmin"],
+        pixelaxes=[0, 1], csys=coords, absrel="relref",
+    )
+    assert rg.tofile("saved_relative_polygon_ref.rgn", polygon)
+    extent = rg.wbox(blc=["1pix", "2pix"], trc=["2pix", "2pix"], pixelaxes=[3, 2], csys=coords)
+    extended = {"name": "WCExtension", "isRegion": 2, "comment": "",
+                "regions": {"*1": polygon, "*2": extent, "nr": 2}}
+    assert rg.tofile("saved_relative_polygon_extended.rgn", extended)
+    # The tool refuses to serialize a polygon with a default axis unit.
+    # Replace an equal-length unit spelling to test reading that record.
+    invalid = Path("saved_relative_polygon_default_invalid.rgn")
+    polygon["x"]["unit"] = "arcmin1"
+    assert rg.tofile(str(invalid), polygon)
+    record = invalid.read_bytes()
+    assert record.count(b"arcmin1") == 1
+    invalid.write_bytes(record.replace(b"arcmin1", b"default"))
+
+    sky = casatools.image()
+    assert sky.open("relative_sky.im")
+    cs = sky.coordsys()
+    coords = cs.torecord()
+    relative = rg.wpolygon(
+        x=["0.9deg", "-1.4deg", "0.3deg"], y=["-0.8deg", "-0.6deg", "1.1deg"],
+        pixelaxes=[0, 1], csys=coords, absrel="relcen",
+    )
+    assert rg.tofile("saved_relative_polygon_center.rgn", relative)
+    ellipse = rg.fromtext("circle[[2pix,2pix],1.7pix]", sky.shape(), coords)
+    ellipse["absrel"] = 3
+    for field, value in zip(ellipse["center"], (0.4, -0.2)):
+        ellipse["center"][field].update(unit="deg", value=value)
+    assert rg.tofile("saved_relative_ellipse_center.rgn", ellipse)
+    ellipse["absrel"] = 2
+    ellipse["pixelAxes"] = ellipse["pixelAxes"][::-1].copy()
+    assert rg.tofile("saved_relative_ellipse_reversed.rgn", ellipse)
+    ellipse["pixelAxes"] = ellipse["pixelAxes"][::-1].copy()
+    for field in ellipse["center"].values():
+        field["unit"] = "pix"
+    assert rg.tofile("saved_relative_ellipse_far_side_invalid.rgn", ellipse)
+    cs.done()
+    sky.done()
 
 
 def history_marker(image):
@@ -357,6 +403,14 @@ def capture_cases(output):
         name = "saved_axis_" + label
         capture(name, region=name + ".rgn", error=label.endswith("_invalid"))
     capture("saved_axis_nested_relative", "relative_sky.im", region="saved_axis_nested_relative.rgn")
+    for label in ("polygon_ref", "polygon_extended", "polygon_center", "ellipse_center"):
+        name = "saved_relative_" + label
+        image = "relative_sky.im" if label.endswith("_center") else "cube.im"
+        capture(name, image, region=name + ".rgn")
+    capture("saved_relative_polygon_default_invalid", region="saved_relative_polygon_default_invalid.rgn", error=True)
+    for label in ("ellipse_reversed", "ellipse_far_side_invalid"):
+        name = "saved_relative_" + label
+        capture(name, "relative_sky.im", region=name + ".rgn", error=label.endswith("_invalid"))
     capture("saved_box_conflict", "plane.im", region="saved.rgn", box="0,0,4,4", error=True)
     capture("saved_chans_conflict", region="box.rgn", chans="1", error=True)
     capture("saved_stokes_conflict", region="box.rgn", stokes="Q", error=True)

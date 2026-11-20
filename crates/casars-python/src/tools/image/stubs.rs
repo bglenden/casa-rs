@@ -15,19 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None, pars = None, region = None, zero = None, seeds = None), text_signature = "($self, type='normal', pars=[0.0, 1.0], region={}, zero=False, seeds=[])")]
-    fn addnoise(
-        &self,
-        r#type: Option<&Bound<'_, PyAny>>,
-        pars: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        zero: Option<&Bound<'_, PyAny>>,
-        seeds: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("addnoise")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None), text_signature = "($self, region={})")]
     fn boundingbox(&self, region: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("boundingbox")
@@ -396,18 +383,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (infile = None, region = None, locate = None, verbose = None), text_signature = "($self, infile='', region={}, locate=[-1.0], verbose=False)")]
-    fn insert(
-        &self,
-        infile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        locate: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("insert")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None, point = None, width = None, negfind = None, list = None), text_signature = "($self, region={}, point=True, width=5, negfind=False, list=True)")]
     fn maxfit(
         &self,
@@ -596,18 +571,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("sepconvolve")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels = None, pixelmask = None, region = None, list = None), text_signature = "($self, pixels=[], pixelmask=-1, region={}, list=False)")]
-    fn set(
-        &self,
-        pixels: Option<&Bound<'_, PyAny>>,
-        pixelmask: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("set")
     }
 
     /// Not yet implemented in casa-rs.

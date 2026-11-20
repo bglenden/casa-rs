@@ -675,6 +675,7 @@ struct Parser<'a, 's, T: ImageExprValue + PartialOrd + ExprValueConvert, R: Imag
     resolver: &'s R,
     complex_resolver: Option<&'s dyn ImageResolver<'a, Complex64>>,
     casa_scalar_literals: bool,
+    fill_empty_reductions: bool,
     integer_array_argument: bool,
     single_precision_sources: Option<&'s dyn Fn(&str) -> bool>,
     _marker: std::marker::PhantomData<&'a T>,
@@ -695,6 +696,7 @@ where
             resolver,
             complex_resolver: None,
             casa_scalar_literals: false,
+            fill_empty_reductions: false,
             integer_array_argument: false,
             single_precision_sources: None,
             _marker: std::marker::PhantomData,
@@ -1296,7 +1298,7 @@ where
         pos: usize,
     ) -> Result<ExprNode<'a, T>, ExprParseError> {
         let single = arg.single_precision();
-        let empty_value = self.casa_scalar_literals.then(|| {
+        let empty_value = self.fill_empty_reductions.then(|| {
             let value = if matches!(
                 op,
                 ReductionOp::Min | ReductionOp::Max | ReductionOp::Mean | ReductionOp::Median
@@ -1967,11 +1969,17 @@ where
     })
 }
 
+enum EmptyReductions {
+    Fill,
+    PreserveValidity,
+}
+
 fn parse_casa_pixel_expression<'a, R>(
     expression: &str,
     real: &R,
     complex: &dyn ImageResolver<'a, Complex64>,
     single_precision: &dyn Fn(&str) -> bool,
+    empty_reductions: EmptyReductions,
 ) -> Result<ExprNode<'a, f64>, ExprParseError>
 where
     R: ImageResolver<'a, f64>,
@@ -1979,6 +1987,7 @@ where
     let mut parser = Parser::new(expression, real)?;
     parser.complex_resolver = Some(complex);
     parser.casa_scalar_literals = true;
+    parser.fill_empty_reductions = matches!(empty_reductions, EmptyReductions::Fill);
     parser.single_precision_sources = Some(single_precision);
     let result = parser.parse_expression()?;
     parser.expect(&Token::Eof)?;
@@ -1994,8 +2003,14 @@ pub(crate) fn parse_image_tool_mask<'a, R>(
 where
     R: ImageResolver<'a, f64>,
 {
-    let result = parse_casa_pixel_expression(expression, real, complex, single_precision)
-        .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
+    let result = parse_casa_pixel_expression(
+        expression,
+        real,
+        complex,
+        single_precision,
+        EmptyReductions::Fill,
+    )
+    .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
     let ExprNode::Mask(mask) = result else {
         return Err(ImageError::CasaSelection(
             "Exception: The expression type must be Boolean.".into(),
@@ -2023,8 +2038,14 @@ pub(crate) fn compile_image_tool_pixels<'a, R>(
 where
     R: ImageResolver<'a, f64>,
 {
-    let parsed = parse_casa_pixel_expression(expression, real, complex, single_precision)
-        .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
+    let parsed = parse_casa_pixel_expression(
+        expression,
+        real,
+        complex,
+        single_precision,
+        EmptyReductions::Fill,
+    )
+    .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
     match parsed {
         ExprNode::Scalar(scalar) => ImageExprBuilder::scalar(scalar.value)
             .compile()
@@ -2079,7 +2100,13 @@ where
             ndarray::Array1::from_vec(values).into_dyn(),
         ));
     }
-    let result = parse_casa_pixel_expression(expression, real, complex, single_precision)?;
+    let result = parse_casa_pixel_expression(
+        expression,
+        real,
+        complex,
+        single_precision,
+        EmptyReductions::Fill,
+    )?;
     match result {
         ExprNode::Scalar(literal) => Ok(ReplacementPixels::Real(
             ndarray::arr0(literal.value).into_dyn(),
@@ -2102,6 +2129,50 @@ where
             if want_complex { "Complex" } else { "Float" },
             if want_complex { "Complex" } else { "Float" },
         ))),
+    }
+}
+
+pub(crate) fn evaluate_real_scalar<'a, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+    single_precision: &dyn Fn(&str) -> bool,
+) -> Result<f64, ImageError>
+where
+    R: ImageResolver<'a, f64>,
+{
+    // Preserve scalar validity so set can reject a reduction with no valid samples.
+    let result = parse_casa_pixel_expression(
+        expression,
+        real,
+        complex,
+        single_precision,
+        EmptyReductions::PreserveValidity,
+    )?;
+    let cannot_convert = || {
+        ImageError::CasaSelection(
+            "LatticeExprNode::makeFloat - conversion to Float not possible".into(),
+        )
+    };
+    match result {
+        ExprNode::Scalar(value) => Ok(value.value),
+        ExprNode::Numeric(builder, _) if builder.shape().is_empty() => {
+            let compiled = builder.compile()?;
+            if compiled
+                .get_mask_slice(&[], &[])?
+                .is_some_and(|mask| !mask[ndarray::IxDyn(&[])])
+            {
+                return Err(ImageError::CasaSelection(
+                    "The scalar pixels expression is invalid".into(),
+                ));
+            }
+            compiled.get_at(&[])
+        }
+        ExprNode::Mask(builder) if builder.shape().is_empty() => Err(cannot_convert()),
+        ExprNode::Complex(builder, _) if builder.shape().is_empty() => Err(cannot_convert()),
+        _ => Err(ImageError::CasaSelection(
+            "The pixels expression must be scalar".into(),
+        )),
     }
 }
 
