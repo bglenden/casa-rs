@@ -38,20 +38,40 @@ impl State {
             ));
             self.release().map_err(ConvertError::runtime)?;
         }
-        self.import_record(record, lines)?;
+        self.import_record(record, lines, |e| records::import_error(e, false))?;
         Ok(true)
     }
     fn import_record(
         &mut self,
         record: &RecordValue,
         lines: &mut Vec<LogLine>,
+        error_context: impl Fn(String) -> ConvertError,
     ) -> ConvertResult<()> {
         for index in 0..records::count(record)? {
-            let component = records::decode(records::item(record, index)?, lines)
-                .map_err(|e| records::import_error(e, false))?;
+            let component =
+                records::decode(records::item(record, index)?, lines).map_err(&error_context)?;
             self.append_record_component(component);
         }
         Ok(())
+    }
+
+    /// Decode the list for image.deconvolvecomponentlist, which invokes
+    /// casacore directly and reports record failures in its own context.
+    pub(crate) fn image_components(
+        record: &RecordValue,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<Self> {
+        let mut source = Self::default();
+        source.import_record(record, lines, |e| {
+            if records::is_direct_import_error(&e) {
+                ConvertError::runtime(e)
+            } else {
+                ConvertError::runtime(format!(
+                    "Exception: Input dictionary is not a valid component list: {e}."
+                ))
+            }
+        })?;
+        Ok(source)
     }
     pub(crate) fn concatenate_record(
         &mut self,
@@ -61,7 +81,7 @@ impl State {
         lines: &mut Vec<LogLine>,
     ) -> ConvertResult<bool> {
         let mut source = Self::default();
-        source.import_record(record, lines)?;
+        source.import_record(record, lines, |e| records::import_error(e, false))?;
         if source.list.is_empty() {
             lines.push(LogLine::warning("Empty componentlist"));
             return Ok(false);

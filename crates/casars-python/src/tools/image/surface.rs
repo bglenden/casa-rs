@@ -262,12 +262,12 @@ const METHODS: &[Method] = &[
     method(
         "deconvolvecomponentlist",
         &[
-            param("complist", K::Any, Required),
+            param("complist", K::Record, Required),
             param("channel", K::Int, Int(-1)),
             param("polarization", K::Int, Int(-1)),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Yes,
     ),
     method(
         "deconvolvefrombeam",

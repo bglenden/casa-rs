@@ -86,6 +86,10 @@ shape and compatible coordinates as a native float or complex image.
 Use `ia.convertflux(value, major, minor)` to convert a Gaussian's integrated
 flux to peak brightness. Pass `topeak=False` for the reverse conversion and
 select the channel and polarization for an image with per-plane beams.
+Use `ia.deconvolvecomponentlist(cl.torecord())` to remove the restoring beam
+from Gaussian components on an attached float or complex image. Point
+components are returned intact. For a per-plane beam grid, select the
+channel and polarization on each nondegenerate axis.
 Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
 float or complex image. Use `update=True` to validate the selected native
 pixel mask after replacement.
