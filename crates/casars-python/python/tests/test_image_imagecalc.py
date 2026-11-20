@@ -80,6 +80,40 @@ assert source.done()
             assert result.done()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_lazy_imagecalc_metadata_preserves_native_input_lock_state(product_sources):
+    casa, _, _ = product_sources
+    for backend in (casa, tools):
+        name = backend.__name__
+        source, creator = backend.image(), backend.image()
+        assert source.fromshape(f"{name}.im", [3, 4])
+        result = creator.imagecalc(pixels=f'"{name}.im" + 1')
+        try:
+            assert result.unlock()
+            assert result.setmiscinfo({"source": "expression"})
+            assert result.setbrightnessunit("Jy")
+            assert result.setrestoringbeam("3arcsec", "2arcsec", "12deg")
+            assert result.summary(list=False)["unit"] == "Jy"
+            assert result.pixelvalue([99, 1]) == {}
+            with pytest.raises(RuntimeError, match="ImageExpr is not writable"):
+                result.putchunk(np.zeros((3, 4)))
+            np.testing.assert_array_equal(result.haslock(), [False, False])
+            np.testing.assert_array_equal(source.haslock(), [False, False])
+
+            assert result.pixelvalue([1, 1])["value"]["value"] == 1
+            np.testing.assert_array_equal(result.haslock(), [True, False])
+            np.testing.assert_array_equal(source.haslock(), [True, False])
+            assert result.unlock()
+            assert result.subimage().done()
+            np.testing.assert_array_equal(result.haslock(), [True, False])
+            assert result.unlock()
+            assert result.torecord()
+            np.testing.assert_array_equal(result.haslock(), [True, False])
+        finally:
+            assert result.done()
+            assert source.done()
+
+
 @pytest.mark.parametrize(
     "source,prec,kind", [("real", "FLOAT", "float"), ("real", "d", "double"),
                          ("complex", "f", "complex"), ("complex", "DoUbLe", "dcomplex")],

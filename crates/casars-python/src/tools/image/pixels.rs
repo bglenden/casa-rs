@@ -415,7 +415,7 @@ impl PyImageTool {
                 return Ok(CasaValue::Bools { shape: vec![0], values: Vec::new() });
             };
             let mut image = attachment.lock();
-            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
+            attachment.require_pixel_read_lock(&mut image)?;
             let shape = image.shape();
             if image.coordinates().n_pixel_axes() != shape.len() {
                 return Err(raised("LCSlicer::makeComplete - referencePixel and newLatticeShape vectors do not have same length"));

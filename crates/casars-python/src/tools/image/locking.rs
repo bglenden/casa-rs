@@ -88,10 +88,19 @@ impl AttachedImage {
     }
 
     pub(super) fn require_lock(&self, handle: &mut ImageHandle, kind: LockType) -> PyResult<()> {
-        if self.lock_with_inputs(handle, kind, 0)? {
+        self.check_bound_name(handle)?;
+        if handle.lock_storage(kind, 0)? {
             Ok(())
         } else {
             Err(raised(format!("Could not acquire the image {kind:?} lock")))
+        }
+    }
+
+    pub(super) fn require_pixel_read_lock(&self, handle: &mut ImageHandle) -> PyResult<()> {
+        if self.lock_with_inputs(handle, LockType::Read, 0)? {
+            Ok(())
+        } else {
+            Err(raised("Could not acquire the image Read lock"))
         }
     }
 
