@@ -17,7 +17,6 @@ use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::lifecycle::open_image;
-use super::mask_expression::evaluate;
 use super::{PyImageTool, stub};
 
 struct CopyImage<'a> {
@@ -212,7 +211,10 @@ impl CopyImage<'_> {
         let mask = if self.mask.is_empty() {
             None
         } else {
-            Some(evaluate(&self.mask, original.shape())?)
+            Some(
+                casa_images::analysis::evaluate_image_tool_mask(&self.mask, original.shape())
+                    .map_err(raised)?,
+            )
         };
         macro_rules! copy_native {
             ($storage:expr, $variant:ident) => {

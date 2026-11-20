@@ -691,7 +691,7 @@ pub enum ReductionOp {
 }
 
 #[derive(Clone)]
-struct ImageExprMeta {
+pub(crate) struct ImageExprMeta {
     shape: Vec<usize>,
     coords: CoordinateSystem,
     units: String,
@@ -702,7 +702,9 @@ struct ImageExprMeta {
 }
 
 impl ImageExprMeta {
-    fn from_image<T: ImageExprValue>(image: &dyn ImageInterface<T>) -> Result<Self, ImageError> {
+    pub(crate) fn from_image<T: ImageExprValue>(
+        image: &dyn ImageInterface<T>,
+    ) -> Result<Self, ImageError> {
         let legacy_coords = image.as_any().and_then(|any| {
             if let Some(paged) = any.downcast_ref::<PagedImage<T>>() {
                 paged
@@ -730,6 +732,21 @@ impl ImageExprMeta {
             legacy_coords,
         })
     }
+
+    pub(crate) fn from_fits(
+        fits: &crate::fits_read::FitsToolImport,
+        path: &Path,
+    ) -> Result<Self, ImageError> {
+        Ok(Self {
+            shape: fits.shape().to_vec(),
+            coords: fits.coordinates().clone(),
+            units: fits.units.clone(),
+            misc_info: fits.misc_info.clone(),
+            image_info: ImageInfo::from_record(&fits.image_info)?,
+            name: Some(path.to_path_buf()),
+            legacy_coords: Some(fits.coordinate_record.clone()),
+        })
+    }
 }
 
 /// Boxed slice-evaluation closure for type-erased mask/bridge operations.
@@ -740,13 +757,26 @@ impl ImageExprMeta {
 /// not `Send + Sync` because `ImageInterface` references are not thread-safe.
 type SliceEvalFn<'a, T> =
     Arc<dyn Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<T>, LatticeError> + 'a>;
-type SliceMaskFn<'a> =
-    Arc<dyn Fn(&[usize], &[usize]) -> Result<Option<ArrayD<bool>>, LatticeError> + 'a>;
+
+type OwnedSliceReader<T> =
+    Arc<dyn Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<T>, ImageError> + Send + Sync>;
+pub(crate) type OwnedMaskReader = Arc<
+    dyn Fn(&[usize], &[usize], &[usize]) -> Result<Option<ArrayD<bool>>, ImageError> + Send + Sync,
+>;
+
+#[derive(Clone)]
+struct SectionSource<T> {
+    shape: Vec<usize>,
+    read: OwnedSliceReader<T>,
+    mask: Option<OwnedMaskReader>,
+}
 
 #[derive(Clone)]
 #[allow(clippy::arc_with_non_send_sync)]
 enum NumericExprNode<'a, T: ImageExprValue> {
     Source(&'a dyn ImageInterface<T>),
+    Sections(SectionSource<T>),
+    Vector(Arc<ArrayD<T>>),
     Scalar(T),
     UnaryOp {
         op: ImageExprUnaryOp,
@@ -773,6 +803,7 @@ enum NumericExprNode<'a, T: ImageExprValue> {
         op: ReductionOp,
         child: Box<NumericExprNode<'a, T>>,
         child_shape: Vec<usize>,
+        empty_value: Option<T>,
     },
     /// Fractile (quantile) of the full child array — real types only.
     Fractile {
@@ -803,12 +834,11 @@ enum NumericExprNode<'a, T: ImageExprValue> {
     Replace {
         primary: Box<NumericExprNode<'a, T>>,
         replacement: Box<NumericExprNode<'a, T>>,
-        mask: ArrayD<bool>,
+        mask: Option<ArrayD<bool>>,
     },
     /// Type bridge: an opaque evaluation closure for cross-type operations.
     TypeBridge {
         eval_fn: SliceEvalFn<'a, T>,
-        mask_fn: Option<SliceMaskFn<'a>>,
     },
     /// Strip mask: `value(expr)` keeps values and clears pixel masks.
     StripMask {
@@ -841,6 +871,8 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
     fn contains_conditional(&self) -> bool {
         match self {
             Self::Source(_)
+            | Self::Sections(_)
+            | Self::Vector(_)
             | Self::Scalar(_)
             | Self::StripMask { .. }
             | Self::TypeBridge { .. } => false,
@@ -865,6 +897,8 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
     fn try_shape(&self) -> Option<Vec<usize>> {
         match self {
             Self::Source(image) => Some(image.shape().to_vec()),
+            Self::Sections(source) => Some(source.shape.clone()),
+            Self::Vector(values) => Some(values.shape().to_vec()),
             Self::Scalar(_) => Some(vec![]),
             Self::UnaryOp { child, .. }
             | Self::CustomUnary { child, .. }
@@ -901,7 +935,14 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
     fn propagated_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
         match self {
             Self::Source(image) => image.default_mask(),
-            Self::Scalar(_) | Self::StripMask { .. } => Ok(None),
+            Self::Sections(source) => match &source.mask {
+                Some(mask) => {
+                    let ndim = source.shape.len();
+                    mask(&vec![0; ndim], &source.shape, &vec![1; ndim])
+                }
+                None => Ok(None),
+            },
+            Self::Scalar(_) | Self::Vector(_) | Self::StripMask { .. } => Ok(None),
             Self::UnaryOp { child, .. } | Self::CustomUnary { child, .. } => {
                 child.propagated_mask()
             }
@@ -945,7 +986,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
 
     fn kind_name(&self) -> &'static str {
         match self {
-            Self::Source(_) => "source",
+            Self::Source(_) | Self::Sections(_) | Self::Vector(_) => "source",
             Self::Scalar(_) => "scalar",
             Self::UnaryOp { .. } => "unary-op",
             Self::BinaryOp { .. } => "binary-op",
@@ -992,7 +1033,14 @@ enum MaskExprNode<'a, T: ImageExprValue> {
     IsNan {
         child: Box<NumericExprNode<'a, T>>,
     },
-    /// A constant boolean mask (e.g. from `mask(image)`).
+    /// Exposes the default pixel validity as Boolean values: `mask(expr)`.
+    Validity {
+        child: Box<NumericExprNode<'a, T>>,
+    },
+    BooleanValidity {
+        child: Box<MaskExprNode<'a, T>>,
+    },
+    /// A constant boolean mask.
     ConstantMask {
         mask: ArrayD<bool>,
     },
@@ -1016,25 +1064,28 @@ enum MaskExprNode<'a, T: ImageExprValue> {
 impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
     fn contains_conditional(&self) -> bool {
         match self {
-            Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => {
-                expr.contains_conditional()
-            }
+            Self::CompareScalar { expr, .. }
+            | Self::IsNan { child: expr }
+            | Self::Validity { child: expr } => expr.contains_conditional(),
             Self::CompareExpr { lhs, rhs, .. } => {
                 lhs.contains_conditional() || rhs.contains_conditional()
             }
             Self::Logical { lhs, rhs, .. } => {
                 lhs.contains_conditional() || rhs.contains_conditional()
             }
-            Self::Not { child } | Self::AllReduce { child, .. } | Self::AnyReduce { child, .. } => {
-                child.contains_conditional()
-            }
+            Self::Not { child }
+            | Self::BooleanValidity { child }
+            | Self::AllReduce { child, .. }
+            | Self::AnyReduce { child, .. } => child.contains_conditional(),
             Self::ConstantMask { .. } | Self::IndexIn { .. } => false,
         }
     }
 
     fn try_shape(&self) -> Option<Vec<usize>> {
         match self {
-            Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => expr.try_shape(),
+            Self::CompareScalar { expr, .. }
+            | Self::IsNan { child: expr }
+            | Self::Validity { child: expr } => expr.try_shape(),
             Self::CompareExpr { lhs, rhs, .. } => {
                 let lhs_shape = lhs.try_shape()?;
                 let rhs_shape = rhs.try_shape()?;
@@ -1045,7 +1096,7 @@ impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
                 let rhs_shape = rhs.try_shape()?;
                 broadcast_shapes(&lhs_shape, &rhs_shape).ok()
             }
-            Self::Not { child } => child.try_shape(),
+            Self::Not { child } | Self::BooleanValidity { child } => child.try_shape(),
             Self::ConstantMask { mask } => Some(mask.shape().to_vec()),
             Self::AllReduce { .. } | Self::AnyReduce { .. } | Self::IndexIn { .. } => Some(vec![]),
         }
@@ -1071,6 +1122,8 @@ impl<'a, T: ImageExprValue> MaskExprNode<'a, T> {
             }
             Self::Not { child } => child.propagated_mask(),
             Self::ConstantMask { .. }
+            | Self::Validity { .. }
+            | Self::BooleanValidity { .. }
             | Self::AllReduce { .. }
             | Self::AnyReduce { .. }
             | Self::IndexIn { .. } => Ok(None),
@@ -1285,6 +1338,16 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         })
     }
 
+    pub(crate) fn from_vector(values: Vec<T>) -> Self {
+        let mut meta = Self::scalar(T::default_value()).meta;
+        meta.shape = vec![values.len()];
+        Self {
+            node: NumericExprNode::Vector(Arc::new(ndarray::Array1::from_vec(values).into_dyn())),
+            meta,
+            expr_string: None,
+        }
+    }
+
     pub(crate) fn custom_unary(
         self,
         name: &'static str,
@@ -1341,27 +1404,44 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// Convert a typed expression window without changing its geometry.
     pub(crate) fn map_pixel_type<U: ImageExprValue>(
         self,
-        convert: impl Fn(T) -> U + Copy + 'static,
+        convert: impl Fn(T) -> U + Copy + Send + Sync + 'static,
     ) -> Result<ImageExprBuilder<'a, U>, ImageError> {
         let compiled = Arc::new(self.compile()?);
-        let mask_source = Arc::clone(&compiled);
-        Ok(ImageExprBuilder {
-            node: NumericExprNode::TypeBridge {
-                mask_fn: Some(Arc::new(move |start, shape| {
-                    mask_source
-                        .get_mask_slice(start, shape)
-                        .map_err(|error| LatticeError::Table(error.to_string()))
-                })),
-                eval_fn: Arc::new(move |start, shape, stride| {
-                    compiled
-                        .get_slice_with_stride(start, shape, stride)
-                        .map(|pixels| pixels.mapv(convert))
-                        .map_err(|error| LatticeError::Table(error.to_string()))
-                }),
-            },
-            meta: self.meta,
+        let mask = if compiled.may_have_mask() {
+            let source = Arc::clone(&compiled);
+            Some(
+                Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
+                    ImageInterface::get_mask_slice(source.as_ref(), start, shape, stride)
+                }) as OwnedMaskReader,
+            )
+        } else {
+            None
+        };
+        Ok(ImageExprBuilder::from_section_readers(
+            self.meta,
+            Arc::new(move |start, shape, stride| {
+                compiled
+                    .get_slice_with_stride(start, shape, stride)
+                    .map(|pixels| pixels.mapv(convert))
+            }),
+            mask,
+        ))
+    }
+
+    pub(crate) fn from_section_readers(
+        meta: ImageExprMeta,
+        read: OwnedSliceReader<T>,
+        mask: Option<OwnedMaskReader>,
+    ) -> Self {
+        Self {
+            node: NumericExprNode::Sections(SectionSource {
+                shape: meta.shape.clone(),
+                read,
+                mask,
+            }),
+            meta,
             expr_string: None,
-        })
+        }
     }
 
     /// Negates the expression lazily.
@@ -1811,6 +1891,15 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         }
     }
 
+    pub(crate) fn validity(self) -> MaskExprBuilder<'a, T> {
+        MaskExprBuilder {
+            shape: self.meta.shape,
+            node: MaskExprNode::Validity {
+                child: Box::new(self.node),
+            },
+        }
+    }
+
     /// Returns the propagated default pixel mask when it can be derived from
     /// the numeric DAG.
     ///
@@ -1909,6 +1998,14 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     }
 
     pub(crate) fn make_reduction(self, op: ReductionOp) -> Self {
+        self.make_reduction_with_empty_value(op, None)
+    }
+
+    pub(crate) fn make_reduction_with_empty_value(
+        self,
+        op: ReductionOp,
+        empty_value: Option<T>,
+    ) -> Self {
         let child_shape = self.meta.shape.clone();
         let mut meta = self.meta;
         meta.shape = vec![];
@@ -1917,6 +2014,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 op,
                 child: Box::new(self.node),
                 child_shape,
+                empty_value,
             },
             meta,
             expr_string: None,
@@ -2048,6 +2146,18 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// `replacement` may be same-shaped or scalar; scalar replacements
     /// broadcast across the primary expression.
     pub fn replace(self, replacement: Self, mask: ArrayD<bool>) -> Result<Self, ImageError> {
+        self.replace_with_mask(replacement, Some(mask))
+    }
+
+    pub(crate) fn replace_invalid(self, replacement: Self) -> Result<Self, ImageError> {
+        self.replace_with_mask(replacement, None)
+    }
+
+    fn replace_with_mask(
+        self,
+        replacement: Self,
+        mask: Option<ArrayD<bool>>,
+    ) -> Result<Self, ImageError> {
         if !can_broadcast_to(&replacement.meta.shape, &self.meta.shape) {
             return Err(ImageError::ShapeMismatch {
                 expected: self.meta.shape.clone(),
@@ -2205,7 +2315,6 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
-                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2236,7 +2345,6 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
-                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2267,7 +2375,6 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
-                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2298,7 +2405,6 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
-                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2327,7 +2433,6 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
-                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2356,7 +2461,6 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
-                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2394,7 +2498,6 @@ impl<'a> ImageExprBuilder<'a, f32> {
         let meta = self.meta;
         Ok(ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
-                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let re = real_compiled
                         .as_ref()
@@ -2437,7 +2540,6 @@ impl<'a> ImageExprBuilder<'a, f64> {
         let meta = self.meta;
         Ok(ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
-                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let re = real_compiled
                         .as_ref()
@@ -2492,6 +2594,15 @@ impl<'a, T: ImageExprValue> fmt::Debug for MaskExprBuilder<'a, T> {
 }
 
 impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
+    pub(crate) fn validity(self) -> Self {
+        Self {
+            shape: self.shape,
+            node: MaskExprNode::BooleanValidity {
+                child: Box::new(self.node),
+            },
+        }
+    }
+
     /// Returns the shape that the canonical mask expression will produce.
     pub fn shape(&self) -> &[usize] {
         &self.shape
