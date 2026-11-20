@@ -1875,6 +1875,22 @@ the defect. Its independent reference for these two cases is the sum of
 the separate CASA predictions, with the usual 0.001 normalized RMS limit;
 the limit is not relaxed to admit the defective joint output.
 
+## Legacy MosaicFT can crash with nonzero FEED beam offsets
+
+On CASA 6.7.6.14, a two-field heterogeneous ALMA MeasurementSet with
+nonzero receptor-zero `FEED.BEAM_OFFSET` caused the public legacy
+`imager.ft` call to exit with signal 11. The fixture has an ALT-AZ mount,
+explicit POINTING rows and the `mosaic` Fourier machine. casa-rs applies
+the first antenna's rotated feed offset to the buffer pointing and
+predicts the scratch and virtual models normally.
+
+The paired control calculates the rotation from the pinned CASA measures
+and writes the shifted directions into POINTING with zero feed offsets.
+The native scratch and virtual predictions matched this CASA control
+within 1.84e-6 normalized RMS. The fixture is in
+`tools/casa-compat/imager_mosaic_oracle.py`.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
 ## The simulator's mosaic machine is not tclean's
 
 - Date noted: 2026-10-23

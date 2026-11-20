@@ -98,13 +98,18 @@ pub(crate) fn write_model_scratch(
     entries: &[VirtualModelEntry],
     incremental: bool,
     clear_virtual: bool,
+    prepared: Option<VisibilityModels>,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     if entries.is_empty() || selected.selected_rows.is_empty() {
         return Ok(());
     }
-    let models =
-        VisibilityModels::from_entries(ms, &selected.selected_rows, entries).map_err(invalid)?;
+    let models = match prepared {
+        Some(models) => models,
+        None => {
+            VisibilityModels::from_entries(ms, &selected.selected_rows, entries).map_err(invalid)?
+        }
+    };
     let polarizations = ms.polarization()?;
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
@@ -142,6 +147,38 @@ pub(crate) fn write_model_scratch(
     })
     .map_err(invalid)?;
     Ok(())
+}
+
+fn prepare_mosaic_models(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    entries: &[VirtualModelEntry],
+    scratch: bool,
+) -> MsResult<VisibilityModels> {
+    let models =
+        VisibilityModels::from_entries(ms, &selected.selected_rows, entries).map_err(invalid)?;
+    let polarizations = ms.polarization()?;
+    let flags = ms.main_table().column_accessor("FLAG")?;
+    let mut layouts = BTreeSet::new();
+    for row in &selected.selected_rows {
+        if layouts.insert((row.field_id, row.data_desc_id)) {
+            let correlations = polarizations.corr_type(row.polarization_id as usize)?;
+            let Some(ArrayValue::Bool(flags)) = flags
+                .array_cells_owned_uncached(&[row.row_index])?
+                .pop()
+                .flatten()
+            else {
+                return Err(invalid("FLAG is not a defined Bool array"));
+            };
+            if scratch {
+                models.predict_scratch(ms, row.row_index, &correlations, &flags, None)
+            } else {
+                models.predict(ms, row.row_index, &correlations, &flags)
+            }
+            .map_err(invalid)?;
+        }
+    }
+    Ok(models)
 }
 
 struct Prediction<'a> {

@@ -13,6 +13,8 @@ pub enum ImagerGridder {
     Spheroidal,
     /// Nearest-cell Boxcar convolution.
     Boxcar,
+    /// The legacy heterogeneous-array MosaicFT convolution.
+    Mosaic,
     /// W projection and its fixed, automatic or restored plane policy.
     WProject(WPlaneCount),
     /// Measure W over the active visibility selection before choosing planes.

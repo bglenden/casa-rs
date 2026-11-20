@@ -12,12 +12,14 @@ use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
-    GridPrecision, ImageExtent, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale,
-    PaddingFactor, PolarizationRouting, SpectralAxis, SpectralKernel, SpectralResampler,
-    Spheroidal, WPlaneCount, WPlanes,
+    GridPrecision, ImageCorrection, ImageExtent, MOSAIC_OVERSAMPLING, MeasurementOperator,
+    ModelImages, ModelPlane, ModelPrescale, PaddingFactor, PolarizationRouting, SpectralAxis,
+    SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral, legacy_multi_term};
+use casa_ms::virtual_model::ft_record::{
+    FirstBuffer, GridFt, casa_spectral, legacy_mosaic, legacy_multi_term,
+};
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     convert_frequency_to_frame_with_frame, virtual_model_image_path,
@@ -162,6 +164,7 @@ struct ImageTransform {
     options: PredictionGeometry,
     distance_m: Option<f64>,
     w_record: Option<WRecord>,
+    mosaic_stokes: Option<String>,
 }
 
 struct WRecord {
@@ -261,6 +264,7 @@ fn effective_padding(options: &PredictionGeometry) -> MsResult<GridPadding> {
     let factor = match options.settings.gridder {
         ImagerGridder::WProject(_) | ImagerGridder::AutoWProject => options.settings.padding,
         ImagerGridder::Spheroidal | ImagerGridder::Boxcar => 1.0,
+        ImagerGridder::Mosaic => return Ok(GridPadding::None),
     };
     Ok(GridPadding::CasaComposite(
         PaddingFactor::new(factor).map_err(invalid)?,
@@ -497,7 +501,9 @@ impl ImageTransform {
         let mut w_record = None;
         let kernels: Box<dyn ConvolutionFunctionSet> = match options.settings.gridder {
             ImagerGridder::Spheroidal => Box::new(Spheroidal::new(&geometry, &routing)),
-            ImagerGridder::Boxcar => Box::new(Boxcar::new(&geometry, &routing)),
+            ImagerGridder::Boxcar | ImagerGridder::Mosaic => {
+                Box::new(Boxcar::new(&geometry, &routing))
+            }
             gridder => {
                 let planes = match gridder {
                     ImagerGridder::WProject(planes) => planes,
@@ -530,6 +536,8 @@ impl ImageTransform {
             increment,
             phase_center,
             frame: direction.direction_ref().as_str().to_owned(),
+            mosaic_stokes: matches!(options.settings.gridder, ImagerGridder::Mosaic)
+                .then(|| stokes.stokes().iter().map(|stokes| stokes.name()).collect()),
             options,
             distance_m,
             w_record,
@@ -541,6 +549,10 @@ impl ImageTransform {
             unreachable!()
         };
         let [gx, gy] = self.operator.geometry().grid_shape();
+        let mosaic = self
+            .mosaic_stokes
+            .is_some()
+            .then(|| ImageCorrection::mosaic_sinc([gx, gy], MOSAIC_OVERSAMPLING));
         let beam = self
             .options
             .voltage_pattern
@@ -605,10 +617,15 @@ impl ImageTransform {
                 first_plane: plane as u32,
                 planes: vec![ModelPlane { images }],
             };
-            let grid = self
-                .operator
-                .prepare_model(&model, ModelPrescale::Unit)
-                .map_err(invalid)?;
+            let grid = match &mosaic {
+                Some(correction) => self.operator.prepare_model_with_correction(
+                    &model,
+                    ModelPrescale::Unit,
+                    correction,
+                ),
+                None => self.operator.prepare_model(&model, ModelPrescale::Unit),
+            }
+            .map_err(invalid)?;
             for pol in 0..grid_pols {
                 let shape = IxDyn(&[gx, gy, 1, 1]).f();
                 let values = match self.operator.precision() {
@@ -737,12 +754,33 @@ impl ImageTransform {
         if let Some(w_record) = &self.w_record {
             w_record.save(&mut record, scratch, self.operator.geometry());
         }
+        if let Some(stokes) = &self.mosaic_stokes {
+            let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
+            let beam_class = legacy_mosaic_beam_class(&telescope)?;
+            legacy_mosaic(&mut record, stokes, beam_class, MOSAIC_OVERSAMPLING);
+        }
         record.upsert(
             "spwchanselflag",
             Value::Array(ArrayValue::Int32(selection_mask(ms, selected)?)),
         );
         record_selection(&mut record, ms, selected, axis, self.frequencies.len())?;
         Ok(record)
+    }
+}
+
+fn legacy_mosaic_beam_class(telescope: &str) -> MsResult<i32> {
+    // CASA enumerates these names before selecting SimplePBConvFunc.
+    match telescope {
+        "EVLA" => Ok(1),
+        "DEFAULT" | "ATCA_L1" | "ATCA_L2" | "ATCA_L3" | "ATCA_16" | "ATCA_S" | "ATCA_C"
+        | "ATCA_C_RI" | "ATCA" | "ATCA_X" | "ATCA_K" | "ATCA_Q" | "ATCA_W" | "HATCREEK"
+        | "BIMA" | "NGVLA" | "VLA" | "VLA_INVERSE" | "VLA_NVSS" | "VLA_2NULL" | "VLA_4"
+        | "VLA_P" | "VLA_L" | "VLA_C" | "VLA_X" | "VLA_U" | "VLA_K" | "VLA_Q" | "WSRT"
+        | "WSRT_LOW" | "GBT" | "GMRT" | "NRAO12M" | "IRAMPDB" | "IRAM30M" | "NRAO140FT"
+        | "ALMASD" | "SMA" | "ATA" | "NONE" => Err(invalid(
+            "legacy mosaic common primary-beam convolution is pending in #1520",
+        )),
+        _ => Ok(2),
     }
 }
 
