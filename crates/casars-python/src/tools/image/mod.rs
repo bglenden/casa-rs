@@ -25,6 +25,7 @@ mod pixels;
 mod point;
 mod records;
 mod replace_masked;
+mod serialization;
 mod stubs;
 mod subimage;
 mod summary;

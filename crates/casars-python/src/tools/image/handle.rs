@@ -175,6 +175,10 @@ impl ImageHandle {
         with_pixels!(self, storage => with_storage!(storage, image => image.shape()))
     }
 
+    pub(super) fn coordinates(&self) -> &CoordinateSystem {
+        with_pixels!(self, storage => with_storage!(storage, image => image.coordinates()))
+    }
+
     pub(super) fn path(&self) -> Option<&Path> {
         if let Some(fits) = self.fits() {
             return Some(&fits.path);

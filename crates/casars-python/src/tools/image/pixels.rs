@@ -416,6 +416,9 @@ impl PyImageTool {
             };
             let image = image.lock();
             let shape = image.shape();
+            if image.coordinates().n_pixel_axes() != shape.len() {
+                return Err(raised("LCSlicer::makeComplete - referencePixel and newLatticeShape vectors do not have same length"));
+            }
             let chunk = Chunk::read(shape, &blc.map_or_else(Vec::new, |arg| arg.0), &trc.map_or_else(Vec::new, |arg| arg.0), &inc.map_or_else(Vec::new, |arg| arg.0))?;
             let axes = axes.map_or_else(Vec::new, |arg| arg.0);
             let axes = if matches!(axes.as_slice(), [only] if *only < 0) { &[][..] } else { axes.as_slice() };
