@@ -146,7 +146,10 @@ def test_beam_consumers_preserve_each_open_tools_view(casa, tmp_path):
             assert beam == tool.restoringbeam()
             flux = tool.convertflux("3Jy", "12arcsec", "9arcsec")
             deconvolved = tool.deconvolvecomponentlist(source)["component0"]["shape"]
-            records.append((beam, flux, deconvolved))
+            header = tool.fitsheader()
+            beam_cards = {key: header[key] for key in ("BMAJ", "BMIN", "BPA")}
+            assert beam_cards["BMAJ"] == pytest.approx(major / 3600)
+            records.append((beam, flux, deconvolved, beam_cards))
             tool.done()
         assert records[0][1] != records[1][1]
         assert records[0][2] != records[1][2]
@@ -154,6 +157,30 @@ def test_beam_consumers_preserve_each_open_tools_view(casa, tmp_path):
     for actual, expected in zip(observations[1], observations[0], strict=True):
         for actual_record, expected_record in zip(actual, expected, strict=True):
             _assert_value(actual_record, expected_record)
+
+
+@pytest.mark.parametrize(
+    ("metadata", "message"),
+    [(1, "imageinfo is not a record"), ({"imagetype": 1}, "imageinfo.imagetype")],
+)
+def test_beam_consumers_reject_malformed_native_metadata(tmp_path, metadata, message):
+    path = str(tmp_path / "malformed.im")
+    image = tools.image()
+    assert image.fromshape(path, [3, 4])
+    assert image.setbrightnessunit("Jy/beam")
+    assert image.done()
+    table = tools.table()
+    assert table.open(path, nomodify=False)
+    assert table.putkeyword("imageinfo", metadata)
+    assert table.done()
+    assert image.open(path)
+    with pytest.raises(RuntimeError, match="Major axis must have angular units"):
+        image.convertflux("3Jy", "1s", "2arcsec")
+    with pytest.raises(RuntimeError, match=message):
+        image.convertflux("3Jy", "4arcsec", "2arcsec")
+    with pytest.raises(RuntimeError, match=message):
+        image.deconvolvecomponentlist({})
+    assert image.done()
 
 
 def test_rotatebeam_resets_empty_view_on_rename(casa, tmp_path):

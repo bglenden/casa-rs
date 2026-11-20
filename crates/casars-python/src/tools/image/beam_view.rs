@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::sync::Arc;
+
 use casa_images::{ImageBeamSet, ImageError, ImageInfo};
 use casa_types::RecordValue;
 
 use super::beams::{image_info, image_info_record};
 use super::handle::ImageHandle;
 
-const BEAM_FIELDS: [&str; 2] = ["restoringbeam", "perplanebeams"];
+const BEAM_INFO_FIELDS: [&str; 3] = ["restoringbeam", "perplanebeams", "imagetype"];
 
 /// PagedImage's cached beam metadata belongs to one open CASA image.
 /// Pixels and the native table lock remain shared across local attachments.
 #[derive(Clone, Default)]
 pub(super) struct BeamView {
     record: RecordValue,
+    invalid_info: Option<Arc<ImageError>>,
     extrema: [usize; 2],
     pub(super) empty_angle_degrees: f64,
 }
@@ -22,8 +25,11 @@ impl BeamView {
         let mut view = Self::default();
         if let Some(info) = image_info_record(image) {
             view.capture(info);
-        } else if let Ok(info) = image_info(image) {
-            view.capture(&info.to_record());
+        } else {
+            match image_info(image) {
+                Ok(info) => view.capture(&info.to_record()),
+                Err(error) => view.invalid_info = Some(Arc::new(error)),
+            }
         }
         view
     }
@@ -32,8 +38,13 @@ impl BeamView {
         &self.record
     }
 
-    pub(super) fn beam_set(&self) -> Result<ImageBeamSet, ImageError> {
-        ImageInfo::from_record(&self.record).map(|info| info.beam_set)
+    pub(super) fn beam_set(&self) -> Result<ImageBeamSet, Arc<ImageError>> {
+        if let Some(error) = &self.invalid_info {
+            return Err(Arc::clone(error));
+        }
+        ImageInfo::from_record(&self.record)
+            .map(|info| info.beam_set)
+            .map_err(Arc::new)
     }
 
     pub(super) fn extrema(&self) -> [usize; 2] {
@@ -41,7 +52,8 @@ impl BeamView {
     }
 
     pub(super) fn capture(&mut self, info: &RecordValue) {
-        for field in BEAM_FIELDS {
+        self.invalid_info = None;
+        for field in BEAM_INFO_FIELDS {
             if let Some(beam) = info.get(field) {
                 self.record.upsert(field, beam.clone());
             } else {

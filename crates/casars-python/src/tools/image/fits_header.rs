@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::image_fits_header;
+use casa_images::analysis::image_fits_header_with_beams;
 use casa_images::image::image_history_entries;
 use casa_types::{ArrayValue, RecordValue, Value};
 use pyo3::exceptions::PyTypeError;
@@ -90,8 +90,11 @@ impl PyImageTool {
             } else {
                 Vec::new()
             };
+            let beams = attachment.beam_view();
             let header = with_storage!(storage, image =>
-                image_fits_header(image.as_ref(), handle.shape(), &name, &history)
+                image_fits_header_with_beams(
+                    image.as_ref(), handle.shape(), &name, &history, Some(beams.record())
+                )
             )
             .map_err(raised)?;
             Ok(if retstr {
