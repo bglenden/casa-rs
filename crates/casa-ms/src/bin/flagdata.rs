@@ -55,7 +55,10 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
     };
     let request = flagdata_request(task).or_else(|error| {
-        if error.parameter.as_deref() == Some("datacolumn") {
+        if matches!(
+            error.parameter.as_deref(),
+            Some("datacolumn" | "channelavg" | "chanbin")
+        ) {
             backup_before_failed_apply(task, &action)?;
         }
         Err(error)
@@ -80,6 +83,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         FlaggingError::MissingClipColumn => {
             TaskFailure::validation(error.to_string()).at("datacolumn")
+        }
+        FlaggingError::InvalidClipChannelBins => {
+            TaskFailure::execution(error.to_string()).at("chanbin")
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
@@ -173,6 +179,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         clipzeros: task.flag("clipzeros")?,
         clipminmax,
         clipoutside,
+        clip_channel_bins: clip_channel_bins(task, mode)?,
         quackinterval,
         quackmode,
         quackincrement,
@@ -189,6 +196,47 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         growtime: task.number("growtime")?,
         growfreq: task.number("growfreq")?,
     })
+}
+
+fn clip_channel_bins(
+    task: &TaskInvocation<'_>,
+    mode: FlagDataMode,
+) -> Result<Option<Vec<u32>>, TaskFailure> {
+    if mode != FlagDataMode::Clip {
+        return Ok(None);
+    }
+    match task.value("channelavg") {
+        Some(ParameterValue::Bool(false)) => return Ok(None),
+        Some(ParameterValue::Bool(true)) => {}
+        Some(ParameterValue::Array(_)) => {
+            return Err(
+                TaskFailure::execution("RecordInterface::asBool - invalid data type")
+                    .at("channelavg"),
+            );
+        }
+        _ => {
+            return Err(
+                TaskFailure::validation("channelavg must be a Boolean or Boolean vector")
+                    .at("channelavg"),
+            );
+        }
+    }
+    let width = |value: &ParameterValue| match value {
+        // CASA's parameter bridge casts the input to a 32-bit Int, then its
+        // channel iterator compares that value as an unsigned width.
+        ParameterValue::Integer(value) => Ok(*value as u32),
+        _ => Err(
+            TaskFailure::validation("chanbin must be an integer or integer vector").at("chanbin"),
+        ),
+    };
+    let widths = match task.value("chanbin") {
+        Some(ParameterValue::Array(values)) => {
+            values.iter().map(width).collect::<Result<_, _>>()?
+        }
+        Some(value) => vec![width(value)?],
+        None => vec![1],
+    };
+    Ok(Some(widths))
 }
 
 /// The row and channel selection passed to the flagging engine.

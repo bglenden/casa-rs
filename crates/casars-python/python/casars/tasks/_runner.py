@@ -339,6 +339,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
                 if completion.message == "no flagdata summary report for the selected correlations":
                     raise KeyError("nreport") from error
+            if completion.parameter in ("channelavg", "chanbin"):
+                raise RuntimeError(completion.message) from error
             raise
     return run(name, **values).value
 
@@ -497,7 +499,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
                 values["observation"] = str(value)
         else:
             errors["observation"] = ["must be of cStr type", "must be of cInt type"]
-    for parameter, default in (("clipoutside", True), ("quackincrement", False)):
+    for parameter, default in (("clipoutside", True), ("quackincrement", False), ("channelavg", False)):
         if parameter not in values:
             continue
         value = values[parameter]
@@ -510,6 +512,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
             else:
                 values[parameter] = converted
     _coerce_flagdata_quack_options(values, errors, cfloat, cint)
+    _coerce_flagdata_channel_bins(values, errors, cint)
     for parameter, expected, casa_type in (
         ("autocorr", bool, "cBool"),
         ("spwchan", bool, "cBool"),
@@ -584,6 +587,36 @@ def _flagdata_bool_option(value: Any, *, numpy_default: bool) -> bool | list[boo
         if all(isinstance(item, (bool, np.bool_)) for item in items):
             return [bool(item) for item in items]
     return None
+
+
+def _coerce_flagdata_channel_bins(
+    values: dict[str, Any], errors: dict[str, list[str]], integer: tuple[type, ...],
+) -> None:
+    import numpy as np
+
+    if "chanbin" not in values:
+        return
+    value = values["chanbin"]
+    if value is None:
+        errors["chanbin"] = ["null value not allowed"] * 3
+        return
+    if isinstance(value, (bool, np.int32, np.int64)):
+        # CASA accepts these scalars but uses the default width.
+        values["chanbin"] = 1
+        return
+    if isinstance(value, int):
+        return
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        if value.dtype.type in integer:
+            # The binding passes the zero-dimensional array as an empty integer vector.
+            values["chanbin"] = []
+            return
+    elif isinstance(value, Iterable) and not isinstance(value, str):
+        items = list(value)
+        if all(isinstance(item, integer) for item in items):
+            values["chanbin"] = 1 if not items or all(isinstance(item, bool) for item in items) else [int(item) for item in items]
+            return
+    errors["chanbin"] = ["must be of cInt type", "must be of cIntVec type"]
 
 
 def _coerce_flagdata_quack_options(

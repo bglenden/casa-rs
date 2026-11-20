@@ -3957,6 +3957,16 @@ result meets the clipping criterion. The paired Stokes clip oracle
 reproduces the CASA flags and compares the native flags with independently
 calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Clip channel averaging can abort on a strided selection
+
+In CASA 6.7.6.14, `flagdata(mode="clip", channelavg=True, chanbin=2,
+spw="0:0~3^2", correlation="XX")` aborts with `ArraySlicerError` on a
+four-channel spectral window. The equivalent explicit selection `0:0;2`
+works. Native flagdata groups the actual selected channels, averages the
+two samples and sets new flags on channels 0 and 2 when the bin meets the
+clip range. The channel clip oracle checks the mask independently from
+the input samples and from CASA with the equivalent explicit selection.
+
 ## Weight clipping can ignore defined channel weights
 
 In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="WEIGHT_SPECTRUM")`
