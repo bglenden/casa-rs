@@ -176,12 +176,13 @@ def test_noop_write_lock_preserves_native_generation(casa, tmp_path):
 
 
 @pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+@pytest.mark.parametrize("operation", ["open", "imageconcat"])
 @pytest.mark.parametrize("backend", ["casars.tools", "casatools"])
-def test_native_image_open_waits_for_external_writer(casa, tmp_path, backend):
+def test_native_image_read_waits_for_external_writer(casa, tmp_path, backend, operation):
     path = tmp_path / "wait-open.im"
     ready = tmp_path / "opening"
     owner = tools.image()
-    assert owner.fromshape(str(path), [2, 2])
+    assert owner.fromshape(str(path), [2, 2], linear=True)
     child = subprocess.Popen(
         [sys.executable, "-c", """
 import sys
@@ -189,10 +190,15 @@ from importlib import import_module
 from pathlib import Path
 image = import_module(sys.argv[3]).image()
 Path(sys.argv[2]).touch()
-assert image.open(sys.argv[1])
-assert image.haslock().tolist() == [True, False]
+if sys.argv[4] == "open":
+    assert image.open(sys.argv[1])
+    assert image.haslock().tolist() == [True, False]
+else:
+    product = image.imageconcat(infiles=[sys.argv[1], sys.argv[1]], axis=0, relax=True)
+    assert product.shape().tolist() == [4, 2]
+    assert product.done()
 assert image.done()
-""", str(path), str(ready), backend],
+""", str(path), str(ready), backend, operation],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
     try:
@@ -209,6 +215,52 @@ assert image.done()
             child.kill()
         child.communicate(timeout=5)
         owner.done()
+
+
+@pytest.mark.parametrize(
+    "operation,read,write",
+    [
+        ("modify", True, True),
+        ("replacemaskedpixels", True, True),
+        ("subimage", True, False),
+        ("makecomplex", True, False),
+        ("summary", True, False),
+        ("isconform_self", True, False),
+        ("isconform_other", False, False),
+    ],
+)
+def test_image_operation_locks_after_unlock(casa, tmp_path, operation, read, write):
+    model = casa.componentlist()
+    assert model.addcomponent(flux=1.0, dir="J2000 00h00m00s 00d00m00s")
+    components = model.torecord()
+    assert model.done()
+    other = str(tmp_path / "other.im")
+    peer = casa.image()
+    assert peer.fromshape(other, [7, 7])
+    assert peer.done()
+
+    for backend in (casa, tools):
+        path = str(tmp_path / f"{backend.__name__}.im")
+        instance = backend.image()
+        assert instance.fromshape(path, [7, 7])
+        if operation == "replacemaskedpixels":
+            assert instance.calcmask("F", "invalid")
+        assert instance.unlock()
+        assert_locks(instance, False, False)
+        if operation == "modify":
+            assert instance.modify(components, subtract=False)
+        elif operation == "replacemaskedpixels":
+            assert instance.replacemaskedpixels(2.0)
+        elif operation == "subimage":
+            assert instance.subimage().done()
+        elif operation == "makecomplex":
+            assert instance.makecomplex(str(tmp_path / f"complex-{backend.__name__}.im"), other)
+        elif operation == "summary":
+            assert instance.summary(list=False)
+        else:
+            assert instance.isconform(path if operation == "isconform_self" else other)
+        assert_locks(instance, read, write)
+        assert instance.done()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")

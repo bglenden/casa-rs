@@ -214,10 +214,11 @@ impl PyImageTool {
             }
             publish_image(outfile, overwrite, |path| {
                 // Release the source handle before publication takes the image registry lock.
-                let original = attached.lock();
+                let mut original = attached.lock();
                 if original.fits().is_some() {
                     return not_yet_implemented_in("image", "subimage", 1627);
                 }
+                attached.require_lock(&mut original, casa_tables::LockType::Read)?;
                 if !outfile.is_empty() && let Some(source) = original.path() {
                     ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
                 }

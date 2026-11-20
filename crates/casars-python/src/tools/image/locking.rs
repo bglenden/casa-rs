@@ -22,6 +22,14 @@ fn attempts(value: &Bound<'_, PyAny>) -> PyResult<i32> {
 }
 
 impl ImageHandle {
+    pub(super) fn require_storage_lock(&mut self, kind: LockType) -> PyResult<()> {
+        if self.lock_storage(kind, 0)? {
+            Ok(())
+        } else {
+            Err(raised(format!("Could not acquire the image {kind:?} lock")))
+        }
+    }
+
     pub(super) fn lock_storage(&mut self, kind: LockType, attempts: u32) -> PyResult<bool> {
         #[cfg(unix)]
         return with_pixels!(self, storage => match storage {
@@ -72,11 +80,7 @@ impl ImageHandle {
 impl AttachedImage {
     pub(super) fn require_lock(&self, handle: &mut ImageHandle, kind: LockType) -> PyResult<()> {
         self.check_bound_name(handle)?;
-        if handle.lock_storage(kind, 0)? {
-            Ok(())
-        } else {
-            Err(raised(format!("Could not acquire the image {kind:?} lock")))
-        }
+        handle.require_storage_lock(kind)
     }
 }
 

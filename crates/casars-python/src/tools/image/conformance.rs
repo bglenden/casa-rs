@@ -13,8 +13,9 @@ use pyo3::prelude::*;
 use crate::tools::coordsys::validate_coordinate_indices;
 
 use super::PyImageTool;
+use super::attachment::AttachedImage;
 use super::beams::subrecord;
-use super::handle::{ImageHandle, raised};
+use super::handle::raised;
 
 const TOLERANCE: f64 = 1e-6;
 const WCS_TOLERANCE: f64 = 1e-13;
@@ -340,8 +341,9 @@ impl PyImageTool {
             if !path.exists() {
                 return Err(raised(format!("Exception: File {other} does not exist..")));
             }
-            let other = ImageHandle::open(path)
+            let other = AttachedImage::open(path)
                 .map_err(|_| raised(format!("Exception: Unable to open image {other}.")))?;
+            let other = other.lock();
             if !matches!(
                 other.kind(),
                 ImagePixelType::Float32 | ImagePixelType::Complex32
