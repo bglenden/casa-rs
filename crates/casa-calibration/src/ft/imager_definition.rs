@@ -19,6 +19,29 @@ use casa_types::measures::position::MPosition;
 
 use super::{ImagerImageDefinition, invalid};
 
+/// CASA's `Imager::makeEmptyImage` fits square direction tiles to the
+/// first axis, with at most four Stokes and 32 spectral planes per tile.
+pub(super) fn model_tile_shape([nx, ny, npol, nchan]: [usize; 4], volume: i32) -> [usize; 4] {
+    let pol = npol.min(4);
+    let chan = nchan.min(32);
+    let volume = volume.checked_abs().unwrap_or_default() as usize;
+    let mut side = 32;
+    if volume > 0 {
+        let area = volume / pol.max(1) / chan.max(1);
+        let floor = area.isqrt();
+        let preferred = floor + usize::from(floor * floor < area);
+        side = if preferred > nx.min(ny) {
+            nx.min(ny)
+        } else if preferred > 0 {
+            nx / (nx / preferred)
+        } else {
+            0
+        };
+        side = side.max(10);
+    }
+    [side.min(nx), side.min(ny), pol, chan]
+}
+
 /// Direction of the pixel at the centre of the model image.
 pub enum ImagerPhaseCentre {
     /// Use a phase direction from FIELD.

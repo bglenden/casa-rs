@@ -205,7 +205,7 @@ impl PyImager {
         rotpastep: f64,
         pastep: f64,
         pblimit: f64,
-        imagetilevol: i64,
+        imagetilevol: i32,
         singleprecisiononly: bool,
         numthreads: i32,
         psterm: bool,
@@ -216,7 +216,7 @@ impl PyImager {
     ) -> PyResult<bool> {
         // The A/W controls are consumed by their Fourier machines. Ordinary
         // GridFT and WProjectFT do not use them.
-        let _ = (imagetilevol, psterm, aterm, mterm, wbawp);
+        let _ = (psterm, aterm, mterm, wbawp);
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -270,6 +270,7 @@ impl PyImager {
                 state.prediction.configure_transform(settings)
             }
             .map_err(runtime_error)?;
+            state.prediction.set_image_tile_volume(imagetilevol);
             Ok(true)
         })
     }
