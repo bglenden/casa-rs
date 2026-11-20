@@ -48,7 +48,7 @@ const METHODS: &[Method] = &[
             param("seeds", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "beamarea",
@@ -644,7 +644,7 @@ const METHODS: &[Method] = &[
             param("verbose", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "isconform",
@@ -1053,8 +1053,8 @@ const METHODS: &[Method] = &[
             param("region", K::Record, EmptyRecord),
             param("list", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "setbrightnessunit",

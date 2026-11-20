@@ -3478,16 +3478,65 @@ impl ParallacticAngleState {
     }
 }
 
-fn feed_row_distance(row: &FeedAngleRow, time_seconds: f64) -> f64 {
-    if row.interval_seconds > 0.0 {
-        let half = row.interval_seconds / 2.0;
-        let start = row.time_seconds - half;
-        let end = row.time_seconds + half;
+fn interval_distance(epoch: f64, interval: f64, time_seconds: f64) -> f64 {
+    if interval > 0.0 {
+        let half = interval / 2.0;
+        let start = epoch - half;
+        let end = epoch + half;
         if (start..=end).contains(&time_seconds) {
             return 0.0;
         }
     }
-    (row.time_seconds - time_seconds).abs()
+    (epoch - time_seconds).abs()
+}
+
+fn feed_row_distance(row: &FeedAngleRow, time_seconds: f64) -> f64 {
+    interval_distance(row.time_seconds, row.interval_seconds, time_seconds)
+}
+
+fn receptor0_angle(value: &ArrayValue) -> f64 {
+    match value {
+        ArrayValue::Float64(values) if !values.is_empty() => values[[0]],
+        ArrayValue::Float32(values) if !values.is_empty() => f64::from(values[[0]]),
+        _ => 0.0,
+    }
+}
+
+/// Find one feed angle without retaining a table-wide index. Exact spectral
+/// windows precede wildcard rows, then the nearest interval wins.
+pub(crate) fn single_receptor_angle(
+    ms: &MeasurementSet,
+    antenna: i32,
+    feed_id: i32,
+    spw: i32,
+    time: f64,
+) -> MsResult<f64> {
+    let Ok(feed) = ms.feed() else {
+        return Ok(0.0);
+    };
+    let mut best = None;
+    for row in 0..feed.row_count() {
+        if feed.i32(row, "ANTENNA_ID")? != antenna || feed.i32(row, "FEED_ID")? != feed_id {
+            continue;
+        }
+        let window = feed.i32(row, "SPECTRAL_WINDOW_ID")?;
+        if window != spw && window >= 0 {
+            continue;
+        }
+        let wildcard = window != spw;
+        let distance = interval_distance(feed.f64(row, "TIME")?, feed.f64(row, "INTERVAL")?, time);
+        if best.is_none_or(|(old_wildcard, old_distance, _)| {
+            wildcard
+                .cmp(&old_wildcard)
+                .then_with(|| distance.total_cmp(&old_distance))
+                .is_lt()
+        }) {
+            best = Some((wildcard, distance, row));
+        }
+    }
+    best.map_or(Ok(0.0), |(_, _, row)| {
+        feed.array(row, "RECEPTOR_ANGLE").map(receptor0_angle)
+    })
 }
 
 pub(crate) fn load_parallactic_angle_state(ms: &MeasurementSet) -> MsResult<ParallacticAngleState> {
@@ -3500,11 +3549,7 @@ pub(crate) fn load_parallactic_angle_state(ms: &MeasurementSet) -> MsResult<Para
             let spectral_window_id = feed.i32(row_index, "SPECTRAL_WINDOW_ID")?;
             let time_seconds = feed.f64(row_index, "TIME")?;
             let interval_seconds = feed.f64(row_index, "INTERVAL")?;
-            let receptor0_angle_rad = match feed.array(row_index, "RECEPTOR_ANGLE")? {
-                ArrayValue::Float64(values) if !values.is_empty() => values[[0]],
-                ArrayValue::Float32(values) if !values.is_empty() => f64::from(values[[0]]),
-                _ => 0.0,
-            };
+            let receptor0_angle_rad = receptor0_angle(feed.array(row_index, "RECEPTOR_ANGLE")?);
             feed_rows
                 .entry((antenna_id, feed_id))
                 .or_default()

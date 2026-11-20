@@ -53,7 +53,7 @@ mod visibility_columns;
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
-pub use task_history::TransformTaskHistory;
+pub use task_history::{TransformTaskHistory, append_task_history};
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
 
@@ -2259,7 +2259,7 @@ fn is_visibility_column(column: &str) -> bool {
     )
 }
 
-fn open_staged_subtable_for_write(path: &Path) -> Result<Table, TableError> {
+pub(crate) fn open_staged_subtable_for_write(path: &Path) -> Result<Table, TableError> {
     let options = TableOptions::new(path);
     #[cfg(unix)]
     return Table::open_with_lock(

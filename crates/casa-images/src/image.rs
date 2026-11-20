@@ -640,6 +640,11 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
     /// Replaces a named mask.
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError>;
 
+    /// Whether an existing named mask accepts writes.
+    fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
+        Ok(self.mask_names().iter().any(|entry| entry == name))
+    }
+
     /// Write a unit-stride section of a named mask. New masks start false.
     fn put_mask_slice(
         &mut self,
@@ -2948,6 +2953,60 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
 
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
         PagedImage::put_mask(self, name, data)
+    }
+
+    fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
+        let Some(Value::Record(masks)) = self.table.keywords().get(MASKS_KEYWORD) else {
+            return Ok(false);
+        };
+        match masks.get(name) {
+            Some(Value::Array(ArrayValue::Bool(mask))) => {
+                if mask.shape() != self.shape() {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: self.shape.clone(),
+                        got: mask.shape().to_vec(),
+                    });
+                }
+                Ok(true)
+            }
+            Some(Value::Record(_)) if self.path.is_none() => Ok(self.temp_masks.contains_key(name)),
+            Some(Value::Record(record)) => {
+                let reference = Self::persistent_mask_relative_path(record)?;
+                let path = casa_tables::add_directory(
+                    &reference,
+                    self.path.as_deref().ok_or(ImageError::NotPersistent)?,
+                );
+                match casa_tables::publication::check_write_access(&path.join("table.dat")) {
+                    Ok(()) => self.with_persistent_mask(name, record, |mask| {
+                        if mask.shape() == self.shape() {
+                            Ok(true)
+                        } else {
+                            Err(ImageError::ShapeMismatch {
+                                expected: self.shape.clone(),
+                                got: mask.shape().to_vec(),
+                            })
+                        }
+                    }),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::PermissionDenied
+                                | std::io::ErrorKind::ReadOnlyFilesystem
+                        ) =>
+                    {
+                        Ok(false)
+                    }
+                    Err(error) => Err(ImageError::Io(format!(
+                        "open mask {}: {error}",
+                        path.display()
+                    ))),
+                }
+            }
+            Some(_) => Err(ImageError::InvalidMetadata(
+                "mask keyword is neither a bool array nor a paged-mask record".into(),
+            )),
+            None => Ok(false),
+        }
     }
 
     fn put_mask_slice(

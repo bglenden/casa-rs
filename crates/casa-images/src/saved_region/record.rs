@@ -349,7 +349,7 @@ pub(crate) fn native_region_kind<'a>(
     }
 }
 
-fn parse_quantum_vector_field(
+pub(crate) fn parse_quantum_vector_field(
     record: &RecordValue,
     field_name: &str,
     saved_name: &str,

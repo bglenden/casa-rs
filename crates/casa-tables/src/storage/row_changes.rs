@@ -23,6 +23,10 @@ pub(crate) enum Rows<'a> {
         count: usize,
         defaults: &'a RecordValue,
     },
+    AppendRecords {
+        records: &'a [RecordValue],
+        defaults: &'a RecordValue,
+    },
     Keep(&'a [usize]),
 }
 
@@ -31,6 +35,9 @@ impl Rows<'_> {
         match *self {
             Rows::Append { count, .. } => old
                 .checked_add(count as u64)
+                .ok_or_else(|| StorageError::FormatMismatch("table row count overflow".into())),
+            Rows::AppendRecords { records, .. } => old
+                .checked_add(records.len() as u64)
                 .ok_or_else(|| StorageError::FormatMismatch("table row count overflow".into())),
             Rows::Keep(rows) => Ok(rows.len() as u64),
         }
@@ -53,6 +60,7 @@ pub(crate) struct StagedEdit<'a> {
     pub(super) table: &'a Path,
     pub(super) staged: tempfile::TempDir,
     extensions: Vec<Extension>,
+    preserve_file_identity: bool,
 }
 
 impl<'a> StagedEdit<'a> {
@@ -64,6 +72,7 @@ impl<'a> StagedEdit<'a> {
     ) -> Result<Self, StorageError> {
         let new_rows = rows.len(old_rows)?;
         let mut edit = Self::new(table)?;
+        edit.preserve_file_identity = matches!(rows, Rows::AppendRecords { .. });
         let order = if dat.big_endian {
             ByteOrder::BigEndian
         } else {
@@ -101,6 +110,7 @@ impl<'a> StagedEdit<'a> {
                 .prefix(".casa-rs-edit-")
                 .tempdir_in(table)?,
             extensions: Vec::new(),
+            preserve_file_identity: false,
         })
     }
 
@@ -126,8 +136,12 @@ impl<'a> StagedEdit<'a> {
         let name = format!("table.f{}", manager.seq_nr);
         let original = self.table.join(&name);
         let destination = self.staged.path().join(&name);
+        let append = matches!(rows, Rows::Append { .. } | Rows::AppendRecords { .. });
+        let defined = matches!(rows, Rows::AppendRecords { records, .. } if records.iter().any(|record| {
+            columns.iter().any(|column| record.get(&column.col_name).is_some())
+        }));
         match manager.type_name.as_str() {
-            "IncrementalStMan" if matches!(rows, Rows::Append { .. }) && old_rows > 0 => {
+            "IncrementalStMan" if append && !defined && old_rows > 0 => {
                 let (offset, bytes) =
                     incremental_stman::appended_ism_index(&original, old_rows, new_rows)?;
                 self.extensions.push(Extension::Index {
@@ -137,18 +151,19 @@ impl<'a> StagedEdit<'a> {
                 });
             }
             "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
-                if matches!(rows, Rows::Append { .. }) =>
+                if append =>
             {
                 let fixed = columns
                     .iter()
                     .any(|column| column.is_array && !column.shape.is_empty());
-                if fixed
-                    && matches!(
-                        manager.type_name.as_str(),
-                        "TiledShapeStMan" | "TiledCellStMan"
-                    )
+                if defined
+                    || (fixed
+                        && matches!(
+                            manager.type_name.as_str(),
+                            "TiledShapeStMan" | "TiledCellStMan"
+                        ))
                 {
-                    let values = self.manager_rows(columns, rows, old_rows)?;
+                    let values = self.manager_rows(columns, rows, old_rows, false)?;
                     let tile = tiled_stman::tiled_tile_shape(self.table, manager.seq_nr)?;
                     let name = tiled_stman::append::manager_name(&original)?;
                     tiled_stman::save_tiled_columns(
@@ -179,8 +194,8 @@ impl<'a> StagedEdit<'a> {
                     self.extensions.push(Extension::Payload { path, len });
                 }
             }
-            "IncrementalStMan" if matches!(rows, Rows::Append { .. }) => {
-                let values = self.manager_rows(columns, rows, old_rows)?;
+            "IncrementalStMan" if append => {
+                let values = self.manager_rows(columns, rows, old_rows, true)?;
                 let (endian, size, cache) = incremental_stman::ism_layout(&original)?;
                 incremental_stman::write_ism_with_layout(
                     &destination,
@@ -191,8 +206,22 @@ impl<'a> StagedEdit<'a> {
                     cache,
                 )?;
             }
+            "StandardStMan" if matches!(rows, Rows::AppendRecords { .. }) => {
+                let Rows::AppendRecords { records, defaults } = rows else {
+                    unreachable!()
+                };
+                standard_stman::stage_records(
+                    &original,
+                    &destination,
+                    columns,
+                    &manager.data,
+                    old_rows,
+                    records,
+                    defaults,
+                )?;
+            }
             "StandardStMan" | "StManAipsIO" => {
-                let values = self.manager_rows(columns, rows, old_rows)?;
+                let values = self.manager_rows(columns, rows, old_rows, false)?;
                 if manager.type_name == "StandardStMan" {
                     let name = standard_stman::dm_name_from_blob(&manager.data).unwrap_or_default();
                     manager.data = standard_stman::rewrite_ssm_rows(
@@ -226,6 +255,7 @@ impl<'a> StagedEdit<'a> {
         columns: &[ColumnDescContents],
         rows: &Rows<'_>,
         old_rows: u64,
+        inherit_previous: bool,
     ) -> Result<Vec<RecordValue>, StorageError> {
         let names: Vec<_> = columns
             .iter()
@@ -234,19 +264,33 @@ impl<'a> StagedEdit<'a> {
         let mut existing = CompositeStorage
             .load_selected_columns_with_row_hint(self.table, &names, Some(old_rows))?
             .rows;
+        let project = |record: &RecordValue, defaults: &RecordValue| {
+            RecordValue::new(
+                names
+                    .iter()
+                    .filter_map(|name| {
+                        record
+                            .get(name)
+                            .or_else(|| defaults.get(name))
+                            .map(|value| RecordField::new(*name, value.clone()))
+                    })
+                    .collect(),
+            )
+        };
         match *rows {
             Rows::Append { count, defaults } => {
-                let row = RecordValue::new(
-                    names
-                        .iter()
-                        .filter_map(|name| {
-                            defaults
-                                .get(name)
-                                .map(|value| RecordField::new(*name, value.clone()))
-                        })
-                        .collect(),
-                );
-                existing.extend(std::iter::repeat_n(row, count));
+                existing.extend(std::iter::repeat_n(project(defaults, defaults), count));
+                Ok(existing)
+            }
+            Rows::AppendRecords { records, defaults } => {
+                for record in records {
+                    let base = if inherit_previous {
+                        existing.last().unwrap_or(defaults)
+                    } else {
+                        defaults
+                    };
+                    existing.push(project(record, base));
+                }
                 Ok(existing)
             }
             Rows::Keep(kept) => {

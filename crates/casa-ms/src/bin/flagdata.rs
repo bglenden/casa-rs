@@ -4,16 +4,21 @@
 //! returns (#931): the summary dictionary in summary mode, `{}` otherwise.
 //! The CASA values it does not implement yet are refused naming #978.
 
+use std::io::{ErrorKind, Write};
+use std::path::Path;
 use std::process::ExitCode;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
-    FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, calculate_flagdata_path,
-    flagdata_empty_record, flagdata_named_summary_record, flagdata_path,
-    flagdata_task_schema_bundle, ms_task_success, save_next_flag_backup, task_selection_text,
+    FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
+    append_flag_command, append_task_history, calculate_flagdata_path, flagdata_empty_record,
+    flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
+    save_next_flag_backup, task_selection_text,
 };
-use casa_provider_contracts::{NumpyScalarType, ParameterValue, TaskFailureKind, python_repr};
+use casa_provider_contracts::{
+    DefaultSpec, NumpyScalarType, ParameterValue, TaskFailureKind, python_repr,
+};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -38,12 +43,26 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     check_correlation_argument(task, &action)?;
+    let mode = task.required_text("mode")?;
+    let save_parameters = task.flag("savepars")? && mode != "summary";
+    let channel_bins = channel_bin_widths(task)?;
     let calculate = match action.as_str() {
         "apply" => false,
         "calculate" => true,
         "" | "none" => {
-            // CASA saves parameters for these actions when savepars is set.
-            tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
+            if save_parameters {
+                let path = task.path("vis")?;
+                MeasurementSet::open(&path).map_err(|_| {
+                    TaskFailure::validation(format!(
+                        "Cannot open MeasurementSet {}",
+                        path.display()
+                    ))
+                    .at("vis")
+                })?;
+                save_flag_parameters(task, &path, &mode, &action)?;
+            } else {
+                tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
+            }
             return ms_task_success(flagdata_empty_record(), &None::<FlagDataReport>);
         }
         _ => {
@@ -54,7 +73,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             ));
         }
     };
-    let request = flagdata_request(task).or_else(|error| {
+    let request = flagdata_request(task, channel_bins).or_else(|error| {
         let parameter = error.parameter.as_deref();
         if parameter == Some("datacolumn")
             || (matches!(parameter, Some("channelavg" | "timeavg"))
@@ -74,9 +93,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         ) {
             return Err(not_yet("action", &action));
         }
-        calculate_flagdata_path(path, &request)
+        calculate_flagdata_path(&path, &request)
     } else {
-        flagdata_path(path, &request)
+        flagdata_path(&path, &request)
     }
     .map_err(|error| match error {
         FlaggingError::MissingCorrelationSummary => {
@@ -90,11 +109,243 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
+    if save_parameters {
+        save_flag_parameters(task, &path, &mode, &action)?;
+    }
+    if !calculate
+        && request.mode != FlagDataMode::Summary
+        && let Err(error) = append_task_history(&path, &flagdata_history(task))
+    {
+        tracing::error!(%error, "updating flagdata HISTORY");
+    }
     let value = match &report.summary {
         Some(summary) => flagdata_named_summary_record(summary, &task.required_text("name")?),
         None => flagdata_empty_record(),
     };
     ms_task_success(value, &Some(report))
+}
+
+fn save_flag_parameters(
+    task: &TaskInvocation<'_>,
+    vis: &Path,
+    mode: &str,
+    action: &str,
+) -> Result<(), TaskFailure> {
+    let mut arguments = Vec::new();
+    for name in [
+        "field",
+        "spw",
+        "array",
+        "feed",
+        "scan",
+        "antenna",
+        "uvrange",
+        "timerange",
+        "intent",
+    ] {
+        if let Some(text) = task.argument_text(name) {
+            arguments.push(format!("{name}={text}"));
+            continue;
+        }
+        let text = if let Some(ParameterValue::String(value)) = task.session().given(name) {
+            value.clone()
+        } else {
+            task_selection_text(task, name)?
+        };
+        push_command_argument(&mut arguments, name, &ParameterValue::String(text));
+    }
+    if let Some(observation) = observation_text(task)? {
+        push_command_argument(
+            &mut arguments,
+            "observation",
+            &ParameterValue::String(observation),
+        );
+    }
+    let mode = match mode {
+        "" | "manualflag" => "manual",
+        mode => mode,
+    };
+    let fields: &[&str] = match mode {
+        "manual" => &["autocorr"],
+        "unflag" => &[],
+        "clip" => &[
+            "datacolumn",
+            "clipoutside",
+            "channelavg",
+            "chanbin",
+            "timeavg",
+            "timebin",
+            "clipzeros",
+        ],
+        "quack" => &["quackmode", "quackinterval", "quackincrement"],
+        _ => return Err(not_yet("savepars", mode)),
+    };
+    for &field in fields {
+        if let Some(text) = task.argument_text(field) {
+            arguments.push(format!("{field}={text}"));
+        } else if field == "datacolumn" {
+            let column = task.required_text(field)?.to_ascii_uppercase();
+            push_command_argument(&mut arguments, field, &ParameterValue::String(column));
+        } else {
+            let value = if field == "chanbin" {
+                task.session()
+                    .given(field)
+                    .unwrap_or(&ParameterValue::Integer(1))
+            } else {
+                task.value(field)
+                    .expect("flagdata has a literal default for the agent parameter")
+            };
+            push_command_argument(&mut arguments, field, value);
+        }
+    }
+    if mode == "clip" {
+        if let Some(text) = task.argument_text("clipminmax") {
+            arguments.push(format!("clipminmax={text}"));
+        } else if let [minimum, maximum] = task.numbers("clipminmax")?.as_slice() {
+            push_command_argument(
+                &mut arguments,
+                "clipminmax",
+                &ParameterValue::Array(vec![
+                    ParameterValue::Float(*minimum),
+                    ParameterValue::Float(*maximum),
+                ]),
+            );
+        }
+    }
+    push_command_argument(
+        &mut arguments,
+        "mode",
+        &ParameterValue::String(mode.to_owned()),
+    );
+    let correlation = task_selection_text(task, "correlation")?.to_ascii_uppercase();
+    push_command_argument(
+        &mut arguments,
+        "correlation",
+        &ParameterValue::String(correlation),
+    );
+
+    let reason = task.required_text("cmdreason")?;
+    let outfile = task.required_text("outfile")?;
+    if outfile.is_empty() {
+        return append_flag_command(vis, &arguments.join(" "), &reason, action == "apply")
+            .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"));
+    }
+    push_command_argument(&mut arguments, "reason", &ParameterValue::String(reason));
+    let content = arguments.join(" ");
+    let overwrite = task.flag("overwrite")?;
+    let path = Path::new(&outfile);
+    let parent = path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let save = || -> std::io::Result<()> {
+        let mut builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o666));
+        }
+        let mut pending = builder.tempfile_in(parent)?;
+        writeln!(pending, "{content}")?;
+        if overwrite {
+            pending.persist(path)?;
+        } else {
+            pending.persist_noclobber(path)?;
+        }
+        Ok(())
+    };
+    save().map_err(|error| {
+        if !overwrite && error.kind() == ErrorKind::AlreadyExists {
+            let message = format!(
+                "You have set overwrite to False. Remove {outfile} before saving the flag commands"
+            );
+            if matches!(action, "none" | "") {
+                return TaskFailure::validation(message).at("outfile");
+            }
+            return TaskFailure::execution(message).at("outfile");
+        }
+        let parameter = if error.kind() == ErrorKind::NotFound {
+            "outfile.not_found"
+        } else {
+            "outfile"
+        };
+        TaskFailure::execution(format!("Error writing flag commands to {outfile}: {error}"))
+            .at(parameter)
+    })
+}
+
+fn push_command_argument(arguments: &mut Vec<String>, name: &str, value: &ParameterValue) {
+    let text = match value {
+        ParameterValue::String(text) if text.is_empty() => return,
+        ParameterValue::String(text) => format!("'{}'", text.trim_matches('\'')),
+        ParameterValue::NumpyScalar { value, .. } => python_repr(value),
+        value => python_repr(value),
+    };
+    arguments.push(format!("{name}={text}"));
+}
+
+fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
+    let rflag = matches!(task.value("mode"), Some(ParameterValue::String(mode)) if mode == "rflag");
+    let mut bindings = task
+        .session()
+        .bundle()
+        .surface
+        .bindings()
+        .iter()
+        .filter(|binding| binding.projections.python.is_some())
+        .collect::<Vec<_>>();
+    bindings.sort_by_key(|binding| binding.order);
+    let parameters = bindings
+        .into_iter()
+        .filter_map(|binding| {
+            let name = binding.name.as_str();
+            let default = match &binding.default {
+                DefaultSpec::Literal { value } => Some(value),
+                DefaultSpec::Conditional { fallback, .. } => Some(fallback),
+                DefaultSpec::Required => None,
+            };
+            let given = task.session().given(name);
+            let value = if matches!(
+                name,
+                "vis" | "spw" | "chanbin" | "timedev" | "freqdev" | "outfile"
+            ) {
+                given.or(default).or_else(|| task.value(name))
+            } else {
+                task.value(name).or(default)
+            }?;
+            let text = match (name, value) {
+                ("writeflags", _) => "True".to_string(),
+                ("flagbackup", _) => "False".to_string(),
+                ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
+                    "\"\"".to_string()
+                }
+                ("timedev" | "freqdev", ParameterValue::String(value))
+                    if rflag && value.is_empty() =>
+                {
+                    "[]".to_string()
+                }
+                (
+                    "chanbin",
+                    ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value),
+                ) => python_repr(value),
+                ("vis", ParameterValue::Array(paths))
+                    if let [ParameterValue::String(path)] = paths.as_slice() =>
+                {
+                    format!("\"{path}\"")
+                }
+                ("mode", ParameterValue::String(value)) if value == "manualflag" => {
+                    "\"manual\"".to_string()
+                }
+                (_, ParameterValue::String(value)) => format!("\"{value}\""),
+                (_, value) => python_repr(value),
+            };
+            Some((binding.name.clone(), text))
+        })
+        .collect();
+    TransformTaskHistory {
+        task: "flagdata".to_string(),
+        parameters,
+    }
 }
 
 fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
@@ -129,7 +380,10 @@ fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result
 
 /// The resolved run as a [`FlagDataRequest`]; the parameters the surface
 /// does not carry keep their defaults.
-fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFailure> {
+fn flagdata_request(
+    task: &TaskInvocation<'_>,
+    channel_bins: Vec<u32>,
+) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
     let spw = task_selection_text(task, "spw")?;
     let correlation = task_selection_text(task, "correlation")?;
@@ -180,7 +434,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         clipzeros: task.flag("clipzeros")?,
         clipminmax,
         clipoutside,
-        clip_channel_bins: clip_channel_bins(task, mode)?,
+        clip_channel_bins: clip_channel_bins(task, mode, channel_bins)?,
         clip_time_bin: clip_time_bin(task, mode)?,
         quackinterval,
         quackmode,
@@ -226,6 +480,7 @@ fn clip_time_bin(
 fn clip_channel_bins(
     task: &TaskInvocation<'_>,
     mode: FlagDataMode,
+    channel_bins: Vec<u32>,
 ) -> Result<Option<Vec<u32>>, TaskFailure> {
     if mode != FlagDataMode::Clip {
         return Ok(None);
@@ -250,22 +505,47 @@ fn clip_channel_bins(
             );
         }
     }
+    Ok(Some(channel_bins))
+}
+
+fn channel_bin_widths(task: &TaskInvocation<'_>) -> Result<Vec<u32>, TaskFailure> {
+    let invalid =
+        || TaskFailure::validation("chanbin must be an integer or integer vector").at("chanbin");
     let width = |value: &ParameterValue| match value {
         // Negative widths and oversized positive widths both cover the
         // selected window. Avoid wraparound into smaller, active widths.
         ParameterValue::Integer(value) => Ok(u32::try_from(*value).unwrap_or(u32::MAX)),
-        _ => Err(
-            TaskFailure::validation("chanbin must be an integer or integer vector").at("chanbin"),
-        ),
+        ParameterValue::Bool(value) => Ok(u32::from(*value)),
+        _ => Err(invalid()),
     };
-    let widths = match task.value("chanbin") {
-        Some(ParameterValue::Array(values)) => {
-            values.iter().map(width).collect::<Result<_, _>>()?
+    match task.value("chanbin") {
+        None | Some(ParameterValue::Bool(_)) => Ok(vec![1]),
+        Some(ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            ..
+        }) => Ok(vec![1]),
+        Some(ParameterValue::ScalarArray(value))
+            if matches!(
+                value.as_ref(),
+                ParameterValue::Integer(_)
+                    | ParameterValue::NumpyScalar {
+                        dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+                        ..
+                    }
+            ) =>
+        {
+            Ok(Vec::new())
         }
-        Some(value) => vec![width(value)?],
-        None => vec![1],
-    };
-    Ok(Some(widths))
+        Some(ParameterValue::Array(values))
+            if values
+                .iter()
+                .all(|value| matches!(value, ParameterValue::Bool(_))) =>
+        {
+            Ok(vec![1])
+        }
+        Some(ParameterValue::Array(values)) => values.iter().map(width).collect(),
+        Some(value) => Ok(vec![width(value)?]),
+    }
 }
 
 /// The row and channel selection passed to the flagging engine.
@@ -491,7 +771,9 @@ mod tests {
 
     /// The request a `flagdata` command line resolves to.
     fn request_for(args: &[&str]) -> Result<FlagDataRequest, TaskFailure> {
-        read(args, flagdata_request)
+        read(args, |task| {
+            flagdata_request(task, channel_bin_widths(task)?)
+        })
     }
 
     #[test]

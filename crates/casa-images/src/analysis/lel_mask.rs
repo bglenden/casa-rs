@@ -17,7 +17,8 @@ use crate::analysis::axes::StridedSection;
 use crate::analysis::mask_error_wording;
 use crate::expr_parser::{
     HashMapResolver, ImageToolPixelExpression, ReplacementPixels, compile_image_tool_pixels,
-    evaluate_replacement, parse_image_tool_mask, parse_subimage_mask_expr, referenced_images,
+    evaluate_real_scalar, evaluate_replacement, parse_image_tool_mask, parse_subimage_mask_expr,
+    referenced_images,
 };
 use crate::fits_read::{FitsToolImport, SharedFitsSectionReader};
 use crate::image_expr::{ImageExprMeta, ImageExprValue, bounded_read_cursor};
@@ -190,6 +191,16 @@ pub(super) fn evaluate_replacement_pixels(
         selected_shape,
         want_complex,
     )
+}
+
+/// Evaluate a scalar LEL expression used to fill the selected image pixels.
+pub fn evaluate_pixel_expression(expression: &str) -> Result<f32, ImageError> {
+    let opened = image_operands(expression)?;
+    let (real, complex) = operand_resolvers(&opened);
+    evaluate_real_scalar(expression, &real, &complex, &|name| {
+        is_single_precision(&opened, name)
+    })
+    .map(|number| number as f32)
 }
 
 fn image_operands(expression: &str) -> Result<Vec<(String, Operand)>, ImageError> {

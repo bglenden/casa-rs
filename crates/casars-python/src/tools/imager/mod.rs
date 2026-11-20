@@ -10,8 +10,8 @@ use std::sync::Mutex;
 
 use casa_calibration::{
     AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerLegacyPbWOptions, ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup,
-    ImagerVoltagePattern,
+    ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerPrediction, ImagerPredictionModel,
+    ImagerSingleDishSetup, ImagerVoltagePattern,
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -216,17 +216,7 @@ impl PyImager {
     ) -> PyResult<bool> {
         // The A/W controls are consumed by their Fourier machines. Ordinary
         // GridFT and WProjectFT do not use them.
-        let _ = (
-            epjtablename,
-            rotpastep,
-            pastep,
-            imagetilevol,
-            psterm,
-            aterm,
-            mterm,
-            wbawp,
-            conjbeams,
-        );
+        let _ = (epjtablename, imagetilevol, psterm, aterm, mterm, wbawp);
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -255,6 +245,23 @@ impl PyImager {
                         apply_pointing_offsets: applypointingoffsets,
                         correct_primary_beam: dopbgriddingcorrections,
                         primary_beam_limit: pblimit,
+                    },
+                )
+            } else if matches!(
+                ftmachine.to_ascii_lowercase().as_str(),
+                "awproject" | "mawproject"
+            ) {
+                state.prediction.configure_legacy_aw(
+                    settings,
+                    ImagerLegacyAwOptions {
+                        cache_directory: PathBuf::from(cfcachedirname),
+                        w_planes: wprojplanes,
+                        apply_pointing_offsets: applypointingoffsets,
+                        correct_primary_beam: dopbgriddingcorrections,
+                        primary_beam_limit: pblimit,
+                        pa_step_deg: pastep,
+                        rotation_step_deg: rotpastep,
+                        conjugate_beams: conjbeams,
                     },
                 )
             } else {
@@ -328,12 +335,8 @@ impl PyImager {
         };
         let parallactic = angle(&parangleinc, 360.)?;
         let threshold = angle(&skyposthreshold, 180.)?;
-        if dovp && (dosquint || (parallactic, threshold) != (360., 180.)) {
-            return not_yet_implemented_in(
-                "imager",
-                "setvp for varying or squinted voltage patterns",
-                1520,
-            );
+        if dovp && (parallactic, threshold) != (360., 180.) {
+            return not_yet_implemented_in("imager", "setvp for varying voltage patterns", 1520);
         }
         // SkyEquation chooses its default pattern from the attached observation.
         let _ = telescope;
@@ -343,7 +346,7 @@ impl PyImager {
             });
             state
                 .prediction
-                .configure_voltage_pattern_application(pattern, dovp)
+                .configure_voltage_pattern_squint(pattern, dovp, dosquint)
                 .map_err(runtime_error)?;
             state.model_in_sky_equation = false;
             Ok(())
@@ -358,6 +361,14 @@ impl PyImager {
             } else {
                 format!("Using user defined voltage patterns in Table {vptable}")
             }));
+            if dosquint {
+                lines.push(LogLine::info(
+                    "Beam Squint will be included in the VP model",
+                ));
+                lines.push(LogLine::info(format!(
+                    "and the Parallactic Angle increment is {parallactic} degrees"
+                )));
+            }
         }
         emit(py, LOGGER, &lines)?;
         Ok(true)

@@ -362,6 +362,18 @@ fn project_sin(phi: f64, theta: f64, params: &[f64]) -> Result<(f64, f64), Coord
     let xi = params.first().copied().unwrap_or(0.0);
     let eta = params.get(1).copied().unwrap_or(0.0);
 
+    // WCSLIB accepts only the near side of the orthographic or slant projection.
+    let horizon = if xi == 0.0 && eta == 0.0 {
+        0.0
+    } else {
+        -(xi * sin_phi - eta * cos_phi).atan()
+    };
+    if theta < horizon {
+        return Err(CoordinateError::ConversionFailed(
+            "SIN project: point outside visible hemisphere".into(),
+        ));
+    }
+
     let sin_theta = theta.sin();
     let x = cos_theta * sin_phi + xi * (1.0 - sin_theta);
     let y = -cos_theta * cos_phi + eta * (1.0 - sin_theta);
@@ -1027,6 +1039,8 @@ mod tests {
         roundtrip(&proj, 0.1, 1.2);
         roundtrip(&proj, 0.0, FRAC_PI_2);
         roundtrip(&proj, -0.3, 1.0);
+        assert!(proj.project(0.0, 0.0).is_ok());
+        assert!(proj.project(0.0, -0.1).is_err());
     }
 
     #[test]
@@ -1348,6 +1362,9 @@ mod tests {
     #[test]
     fn generalised_sin_roundtrip() {
         let proj = Projection::with_parameters(ProjectionType::SIN, vec![0.1, 0.2]);
+        assert!(proj.project(FRAC_PI_2, -0.05).is_ok());
+        assert!(proj.project(FRAC_PI_2, -0.2).is_err());
+        assert!(proj.project(0.0, 0.1).is_err());
         let phi = 0.1;
         let theta = 1.2;
         let (x, y) = proj.project(phi, theta).unwrap();
