@@ -144,6 +144,11 @@ def compare_invalid():
         ("quackinterval", None), ("quackinterval", "10"), ("quackinterval", np.array(10.0)),
         ("quackinterval", np.bool_(True)), ("quackinterval", [1, "2"]),
         ("quackincrement", None), ("quackincrement", 1), ("quackincrement", [1]),
+        ("quackmode", np.array("beg", dtype=object)),
+        ("quackinterval", np.array(10, dtype=object)),
+        ("quackinterval", np.array(10.0, dtype=object)),
+        ("quackincrement", np.array(True, dtype=object)),
+        ("clipoutside", np.array(True, dtype=object)),
     )
     original, auxiliary = snapshot("source.ms"), auxiliary_content("source.ms")
     for parameter, value in cases:
@@ -160,6 +165,26 @@ def compare_invalid():
     return len(cases)
 
 
+def compare_provider_options():
+    reference, native = "provider-reference.ms", "provider-native.ms"
+    for vis in (reference, native):
+        copytree("source.ms", vis)
+    args = {"mode": "quack", "quackinterval": True, "flagbackup": False}
+    assert casatasks.flagdata(vis=reference, **args) == {}
+    assert tasks.run("flagdata", vis=native, **args).value == {}
+    assert_equal(reference, native)
+
+    before, auxiliary = snapshot("source.ms"), auxiliary_content("source.ms")
+    for parameter, value in (("quackinterval", "typo"), ("quackmode", 42), ("quackincrement", 1)):
+        try:
+            tasks.run("flagdata", vis="source.ms", mode="quack", **{parameter: value})
+        except tasks.TaskParameterError as error:
+            assert error.completion.parameter == parameter, str(error)
+        else:
+            raise AssertionError(f"native provider accepted {parameter}={value!r}")
+        assert_preserved("source.ms", before, auxiliary)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="flagdata-quack-") as root, chdir(root):
@@ -167,7 +192,9 @@ def main():
         count = compare_apply()
         compare_repeated_and_preview()
         rejected = compare_invalid()
+        compare_provider_options()
     print(f"{count} scan-edge products, three successive previews and applies, and {rejected} rejections compared with CASA")
+    print("Native provider checked against CASA for Boolean intervals and for three pre-write type refusals")
 
 
 if __name__ == "__main__":

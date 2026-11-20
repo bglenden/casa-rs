@@ -488,7 +488,9 @@ def _flagdata_bool_option(value: Any, *, numpy_default: bool) -> bool | list[boo
     if isinstance(value, np.bool_):
         return numpy_default
     if isinstance(value, np.ndarray) and value.ndim == 0:
-        value = (value.item(),)
+        if value.dtype.type is not np.bool_:
+            return None
+        value = (value[()],)
     if isinstance(value, Iterable) and not isinstance(value, str):
         items = list(value)
         if all(isinstance(item, (bool, np.bool_)) for item in items):
@@ -512,8 +514,9 @@ def _coerce_flagdata_quack_options(
             errors["quackmode"] = ["null value not allowed"] * 3
         else:
             if isinstance(mode, np.ndarray) and mode.ndim == 0:
-                mode = (mode[()],)
-            options = list(mode) if isinstance(mode, Iterable) else None
+                options = [mode[()]] if mode.dtype.type is np.str_ else None
+            else:
+                options = list(mode) if isinstance(mode, Iterable) else None
             if options is not None and all(isinstance(item, str) for item in options):
                 values["quackmode"] = [str(item) for item in options]
             else:
@@ -531,10 +534,10 @@ def _coerce_flagdata_quack_options(
 
     messages = [f"must be of {kind} type" for kind in ("cFloat", "cFloatVec", "cInt", "cIntVec")]
     if isinstance(interval, np.ndarray) and interval.ndim == 0:
-        if isinstance(interval[()], integer):
+        if interval.dtype.type in integer:
             interval = (interval[()],)
         else:
-            if isinstance(interval[()], numeric):
+            if interval.dtype.type in numeric:
                 messages[1] = "field 'quackinterval' cannot be coerced: iteration over a 0-d array"
             errors["quackinterval"] = messages
             return
