@@ -23104,11 +23104,7 @@
             "provider": {"field": "autocorr"},
             "python": {"name": "autocorr"},
             "presentation": {"label": "Autocorrelations", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manual"}},
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "manualflag"}}
-          ]}}
+          }
         },
         {
           "name": "inpfile",

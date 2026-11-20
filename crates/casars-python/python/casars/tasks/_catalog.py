@@ -1001,14 +1001,14 @@ def flagdata(
 
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``autocorr``, ``inpfile``, ``reason``, ``tbuff``, ``correlation``,
-    ``channelavg``, ``chanbin``, ``timeavg``, ``timebin``, ``tolerance``,
-    ``addantenna``, ``lowerlimit``, ``upperlimit``, ``ntime``,
-    ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
-    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
-    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
-    ``flagneartime``, ``flagnearfreq``, ``display``, ``savepars``,
-    ``cmdreason``, ``outfile``, ``overwrite``.
+    ``inpfile``, ``reason``, ``tbuff``, ``correlation``, ``channelavg``,
+    ``chanbin``, ``timeavg``, ``timebin``, ``tolerance``, ``addantenna``,
+    ``lowerlimit``, ``upperlimit``, ``ntime``, ``combinescans``,
+    ``timefit``, ``freqfit``, ``maxnpieces``, ``flagdimension``,
+    ``usewindowstats``, ``halfwin``, ``winsize``, ``antint_ref_antenna``,
+    ``minchanfrac``, ``verbose``, ``growaround``, ``flagneartime``,
+    ``flagnearfreq``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,
+    ``overwrite``.
     """
     return _call_casa(flagdata, locals())
 

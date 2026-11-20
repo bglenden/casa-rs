@@ -111,6 +111,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         spw: (!spw.is_empty()).then_some(spw),
         mode,
         action,
+        autocorr: task.flag("autocorr")?,
         data_column: data_column(&task.required_text("datacolumn")?, mode)?,
         flagbackup: task.flag("flagbackup")?,
         summary_options: FlagSummaryOptions {

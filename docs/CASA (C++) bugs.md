@@ -3959,6 +3959,17 @@ The paired oracle reproduces the extra writes in CASA and verifies the
 native row selection against CASA `split` and the explicit feed pairs.
 [Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## A NumPy autocorrelation switch can flag cross-correlations
+
+CASA 6.7.6.14 accepts `flagdata(autocorr=numpy.bool_(True))`. Its manual flag
+agent uses the default false switch and writes flags on cross-correlations.
+A Python `True` restricts the same call to autocorrelations.
+
+casa-rs honors the true value in both scalar forms. The paired oracle
+reproduces the extra writes and checks the native mask against CASA's
+Python-Boolean product and the stored antenna pairs.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## `flagdata`'s summary aborts on a correlation it cannot name
 
 - Date noted: 2026-10-29
