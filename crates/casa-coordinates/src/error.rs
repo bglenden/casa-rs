@@ -27,6 +27,10 @@ pub enum CoordinateError {
     #[error("conversion failed: {0}")]
     ConversionFailed(String),
 
+    /// The requested direction is outside the forward projection's domain.
+    #[error("conversion failed: {0}")]
+    OutsideProjectionDomain(&'static str),
+
     /// A coordinate's linear transformation has no inverse.
     #[error("conversion failed: {0}")]
     SingularTransform(&'static str),

@@ -131,6 +131,28 @@ def test_direction_disk_and_spectral_index(casa, shape, direction, spectral):
         assert np.count_nonzero(results[0]) == 0
 
 
+def test_point_beyond_sin_horizon_does_not_block_visible_component(casa, tmp_path):
+    cl = casa.componentlist()
+    assert cl.addcomponent(flux=100.0, dir="J2000 12h00m00s +00d00m00s")
+    assert cl.addcomponent(flux=2.0, dir="J2000 00h00m00s +00d00m00s")
+    record = cl.torecord()
+    cl.done()
+    expected = np.zeros((7, 7), dtype=np.float32)
+    expected[3, 3] = 2.0
+    for index, writer in enumerate((tools, casa)):
+        path = str(tmp_path / f"modified-{index}.im")
+        image = writer.image()
+        assert image.fromshape(path, [7, 7])
+        assert image.setbrightnessunit("Jy/pixel")
+        assert image.modify(record, subtract=False)
+        assert image.done()
+        for reader in (tools, casa):
+            image = reader.image()
+            assert image.open(path)
+            np.testing.assert_array_equal(image.getchunk(), expected)
+            assert image.done()
+
+
 def test_region_bounds_and_mask_validation(casa, tmp_path):
     region = casa.regionmanager().box([2, 2], [5, 5])
     mask_path = str(tmp_path / "mask.im")

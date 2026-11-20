@@ -369,8 +369,8 @@ fn project_sin(phi: f64, theta: f64, params: &[f64]) -> Result<(f64, f64), Coord
         -(xi * sin_phi - eta * cos_phi).atan()
     };
     if theta < horizon {
-        return Err(CoordinateError::ConversionFailed(
-            "SIN project: point outside visible hemisphere".into(),
+        return Err(CoordinateError::OutsideProjectionDomain(
+            "SIN project: point outside visible hemisphere",
         ));
     }
 
