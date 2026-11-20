@@ -54,12 +54,20 @@ pub(crate) fn selection_from_options(
         selection = selection.array(&parse_numeric_id_selector(array, "array")?);
     }
     if let Some(intent) = options.intent.as_deref() {
-        selection = apply_intent_selector(ms, selection, intent)?;
+        let intent = if flagdata {
+            super::row_grammar::flagdata_c_string(intent)
+        } else {
+            intent
+        };
+        if !flagdata || !intent.is_empty() {
+            selection = apply_intent_selector(ms, selection, intent, flagdata)?;
+        }
     }
     if let Some(correlation) = options.correlation.as_deref() {
         selection = apply_correlation_selector(ms, selection, correlation)?;
     }
     if grammar != RowGrammar::Transform
+        && !flagdata
         && let Some(uvrange) = options.uvrange.as_deref()
     {
         selection = apply_uvrange_selector(ms, selection, uvrange)?;
@@ -517,8 +525,9 @@ fn apply_intent_selector(
     ms: &MeasurementSet,
     mut selection: CompiledMsSelection,
     value: &str,
+    flagdata: bool,
 ) -> MsResult<CompiledMsSelection> {
-    let state_ids = parse_state_selector(ms, value)?;
+    let state_ids = parse_state_selector_impl(ms, value, flagdata)?;
     if state_ids.is_empty() {
         return Err(MsError::VersionError(format!(
             "intent selector {value:?} did not match any STATE rows"
@@ -986,11 +995,19 @@ fn parse_two_or_four_digit_year(value: &str, original: &str) -> MsResult<i32> {
 }
 
 pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
+    parse_state_selector_impl(ms, value, false)
+}
+
+fn parse_state_selector_impl(
+    ms: &MeasurementSet,
+    value: &str,
+    flagdata: bool,
+) -> MsResult<Vec<i32>> {
     let state = ms.state()?;
     let modes = (0..state.row_count())
         .map(|row| Ok((state.string(row, "OBS_MODE")?, state.bool(row, "FLAG_ROW")?)))
         .collect::<MsResult<Vec<_>>>()?;
-    super::intent::resolve(value, &modes)
+    super::intent::resolve(value, &modes, flagdata)
 }
 
 pub(crate) fn parse_correlation_selector(value: &str) -> MsResult<Vec<i32>> {

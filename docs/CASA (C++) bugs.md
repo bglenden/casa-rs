@@ -3908,6 +3908,10 @@ A leading nonbreaking space in an ARRAY selector triggers the same
 decoding failure. The array oracle checks both the CASA failure and the
 readable native refusal, with flags and visibility data unchanged.
 
+The same decoding failure occurs for a leading nonbreaking space in
+`intent` and `uvrange`. The paired checks cover both refusals and verify
+that quoted intent patterns still match valid UTF-8 text in STATE.
+
 ## `flagdata` can choose the wrong samples when FLOAT_DATA is present
 
 CASA 6.7.6.14 can evaluate the magnitude of `FLOAT_DATA` when

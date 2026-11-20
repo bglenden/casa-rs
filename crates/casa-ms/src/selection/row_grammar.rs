@@ -82,7 +82,7 @@ pub(super) fn apply(
         };
         if let Some(text) = text.filter(|text| !text.is_empty()) {
             let text = if flagdata {
-                numeric_lexer_prefix(text)
+                flagdata_lexer_prefix(text)
             } else {
                 text
             };
@@ -100,8 +100,8 @@ pub(super) fn flagdata_c_string(text: &str) -> &str {
     text.split_once('\0').map_or(text, |(prefix, _)| prefix)
 }
 
-/// The numeric CASA row lexers stop at the first non-ASCII byte.
-fn numeric_lexer_prefix(text: &str) -> &str {
+/// CASA's flagdata row lexers stop at the first non-ASCII byte.
+pub(super) fn flagdata_lexer_prefix(text: &str) -> &str {
     text.split_once(|character: char| !character.is_ascii())
         .map_or(text, |(prefix, _)| prefix)
 }
@@ -121,7 +121,7 @@ pub(super) fn apply_array_feed_uv(
     if let Some(text) = array.filter(|text| !text.is_empty()) {
         let ranges = if flagdata {
             // Flagging preserves the stored ARRAY_IDs and needs only their row predicate.
-            parse_numeric_row_id_ranges(numeric_lexer_prefix(text), "array")?
+            parse_numeric_row_id_ranges(flagdata_lexer_prefix(text), "array")?
         } else {
             ArraySelection::parse(text)?.ranges
         };
@@ -135,7 +135,18 @@ pub(super) fn apply_array_feed_uv(
         compiled.casa_taql_exprs.push(selection.to_taql());
         compiled.casa_feed = Some(selection);
     }
-    if !flagdata && let Some(text) = options.uvrange.as_deref().filter(|text| !text.is_empty()) {
+    let uvrange = options.uvrange.as_deref();
+    let uvrange = if flagdata {
+        uvrange.map(flagdata_c_string)
+    } else {
+        uvrange
+    };
+    if let Some(text) = uvrange.filter(|text| !text.is_empty()) {
+        let text = if flagdata {
+            flagdata_lexer_prefix(text)
+        } else {
+            text
+        };
         let selection = UvDistanceSelection::parse(ms, text)?;
         compiled.casa_taql_exprs.push(selection.to_taql());
         compiled.casa_uv = Some(selection);

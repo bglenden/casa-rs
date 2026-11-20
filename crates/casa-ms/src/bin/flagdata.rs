@@ -173,6 +173,8 @@ fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFa
         observation: observation_text(task)?,
         array: selector("array")?,
         feed: selector("feed")?,
+        intent: selector("intent")?,
+        uvrange: selector("uvrange")?,
         ..MsSelection::default()
     };
     if !spw.is_empty() {
