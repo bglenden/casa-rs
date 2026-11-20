@@ -22,6 +22,7 @@ CASA behaviours casa-rs does not follow:
 [a non-finite rest frequency](#coordsyssetrestfrequency-can-store-an-infinite-frequency),
 [a whitespace-only rest-frequency string](#coordsyssetrestfrequency-can-crash-on-a-whitespace-only-string),
 [a masked coordinate reference-location edit](#coordsyssetreferencelocation-can-crash-when-an-axis-is-masked),
+[empty input to the spectral velocity conversions](#coordsys-spectral-velocity-conversions-can-crash-on-missing-input),
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
@@ -8107,3 +8108,12 @@ failure can occur with a Stokes axis because the method excludes Stokes
 from the edit. casa-rs changes both reference values on each enabled
 non-Stokes axis and preserves both values on the other axes. It publishes
 the updated coordinate state only after the complete edit succeeds.
+
+## Coordsys spectral velocity conversions can crash on missing input
+
+In CASA 6.7.6.14, calling `frequencytovelocity` or `velocitytofrequency`
+with an empty vector on a spectral coordinate exits with `SIGSEGV`.
+Calling `velocitytofrequency([1.0])` without a spectral coordinate also
+exits with `SIGSEGV` when it looks up the default frequency unit. casa-rs
+returns an empty `float64` array for empty vectors on a spectral coordinate
+and raises `RuntimeError` when the spectral coordinate is missing.

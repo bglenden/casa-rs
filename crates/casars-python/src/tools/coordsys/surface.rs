@@ -133,7 +133,7 @@ const METHODS: &[Method] = &[
             param("velocity", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "frequencytovelocity",
@@ -144,7 +144,7 @@ const METHODS: &[Method] = &[
             param("velunit", K::Text, Text("km/s")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromrecord",
@@ -482,7 +482,7 @@ const METHODS: &[Method] = &[
             param("velunit", K::Text, Text("km/s")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
 ];
 
