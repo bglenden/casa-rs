@@ -219,7 +219,13 @@ impl LegacyEpOffsets {
     }
 
     pub(crate) fn from_record(record: &RecordValue, antennas: usize) -> MsResult<Option<Self>> {
+        let recorded_epochs = record.get(EPOCHS);
         let Some(packed) = record.get(OFFSETS) else {
+            if recorded_epochs.is_some() {
+                return Err(invalid(
+                    "saved legacy EP solution times have no pointing offsets",
+                ));
+            }
             return Ok(None);
         };
         let Value::Array(ArrayValue::Float32(packed)) = packed else {
@@ -228,9 +234,16 @@ impl LegacyEpOffsets {
             ));
         };
         let epochs = match packed.shape() {
-            [3, count] if *count == antennas => None,
+            [3, count] if *count == antennas => {
+                if recorded_epochs.is_some() {
+                    return Err(invalid(
+                        "single-slot saved legacy EP offsets have solution times",
+                    ));
+                }
+                None
+            }
             [3, count, slots] if *count == antennas && *slots > 1 => {
-                let Some(Value::Array(ArrayValue::Float64(epochs))) = record.get(EPOCHS) else {
+                let Some(Value::Array(ArrayValue::Float64(epochs))) = recorded_epochs else {
                     return Err(invalid("saved legacy EP offsets have no solution times"));
                 };
                 if epochs.shape() != [*slots]
@@ -263,7 +276,7 @@ impl LegacyEpOffsets {
                 packed[IxDyn(&indices[..packed.ndim()])]
             });
             match ok {
-                0. => {}
+                0. if epochs.is_none() => {}
                 1. if l.is_finite() && m.is_finite() => *slot = Some([f64::from(l), f64::from(m)]),
                 _ => {
                     return Err(invalid(

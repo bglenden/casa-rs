@@ -13,7 +13,11 @@ from casatools import calibrater, imager, table
 import numpy as np
 
 from gaincal_oracle import relative_rms
-from imager_legacy_pbw_oracle import data, ft, make_input, read_virtual, recipe
+from imager_legacy_pbw_oracle import data, ft, make_input, read_virtual, recipe, reject_recipe
+
+
+OFFSETS = 'casars_legacy_pbw_ep_offsets'
+EPOCHS = 'casars_legacy_pbw_ep_epochs'
 
 
 def solve(dataset, model, cache, offsets):
@@ -97,8 +101,52 @@ def nearest_controls(root, original, model, cache, offsets, epochs, native, resu
                 assert relative_rms(control[..., kept], expected[..., kept]) > .01
 
 
+def saved_offsets(dataset, offsets, epochs):
+    record = recipe(dataset)
+    times = record[EPOCHS]
+    packed = record[OFFSETS]
+    assert times.dtype == np.float64 and packed.dtype == np.float32
+    np.testing.assert_array_equal(times, epochs)
+    assert packed.shape == (3, 28, 3)
+    order = np.lexsort((data(offsets, 'ANTENNA1'), data(offsets, 'TIME')))
+    gain = data(offsets, 'GAIN')[:, 0, order].astype(np.float32)
+    np.testing.assert_array_equal(packed[0], np.ones((28, 3), dtype=np.float32))
+    np.testing.assert_array_equal(packed[1], gain[0].reshape((3, 28)).T)
+    np.testing.assert_array_equal(packed[2], gain[2].reshape((3, 28)).T)
+
+
+def bad_records(root, dataset, native_ms):
+    for label, message in (
+        ('no-offsets', 'solution times have no pointing offsets'),
+        ('legacy-offsets-with-times', 'single-slot saved legacy EP offsets have solution times'),
+        ('no-times', 'saved legacy EP offsets have no solution times'),
+        ('reversed-times', 'saved legacy EP solution times are invalid'),
+        ('missing-antenna', 'saved legacy EP offsets contain an invalid antenna entry'),
+    ):
+        with TemporaryDirectory(dir=root) as attempt:
+            target = Path(attempt) / f'{label}.ms'
+            shutil.copytree(dataset, target)
+            writer = table()
+            assert writer.open(str(target / 'SOURCE'), nomodify=False)
+            row = writer.getkeyword(writer.getkeyword('definedmodel_field_0'))
+            source = writer.getcell('SOURCE_MODEL', row)
+            corrupted = source['ft_0']['container']
+            if label == 'no-offsets':
+                del corrupted[OFFSETS]
+            elif label == 'legacy-offsets-with-times':
+                corrupted[OFFSETS] = corrupted[OFFSETS][:, :, 0].copy()
+            elif label == 'no-times':
+                del corrupted[EPOCHS]
+            elif label == 'reversed-times':
+                corrupted[EPOCHS] = corrupted[EPOCHS][::-1].copy()
+            else:
+                corrupted[OFFSETS][0, 0, -1] = 0.
+            assert writer.putcell('SOURCE_MODEL', row, source) and writer.done()
+            reject_recipe(native_ms, target, message)
+
+
 def run(root, original, model, cached):
-    from casars.tools import imager as native
+    from casars.tools import imager as native, ms as native_ms
 
     assert casatasks.version_string() == '6.7.6.14'
     root.mkdir(parents=True)
@@ -124,9 +172,8 @@ def run(root, original, model, cached):
                 make_input(original, saved, scratch=False)
                 ft(native, saved, model, cache, scratch=False, machine=machine,
                    pointing=True, ep_table=offsets)
-                record = recipe(saved)
-                np.testing.assert_array_equal(record['casars_legacy_pbw_ep_epochs'], epochs)
-                assert record['casars_legacy_pbw_ep_offsets'].shape == (3, 28, 3)
+                saved_offsets(saved, offsets, epochs)
+                bad_records(case, saved, native_ms)
                 moved = offsets.rename(work / 'unavailable.EP')
                 try:
                     name = 'PBMosaicFT' if machine == 'pbmosaic' else 'nPBWProjectFT'
