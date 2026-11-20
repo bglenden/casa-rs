@@ -262,14 +262,15 @@ fn read_primary_fits_header(
         );
     }
     for key in [
-        "RADESYS", "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER",
+        "RADESYS", "RADECSYS", "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER",
     ] {
         if let Some(value) = read_optional_key::<String>(fits, hdu, key)? {
             header.set(key, FitsValue::String(value.trim_end().to_string()));
         }
     }
     for key in [
-        "EQUINOX", "RESTFRQ", "RESTFREQ", "BMAJ", "BMIN", "BPA", "LONPOLE", "LATPOLE", "CROTA2",
+        "EQUINOX", "EPOCH", "RESTFRQ", "RESTFREQ", "BMAJ", "BMIN", "BPA", "LONPOLE", "LATPOLE",
+        "CROTA2",
     ] {
         if let Some(value) = read_optional_key::<f64>(fits, hdu, key)? {
             header.set(key, FitsValue::Float(value));

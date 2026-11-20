@@ -129,7 +129,10 @@ impl FitsToolImport {
         if header.get("RADESYS").is_none() {
             let system = match header.get_string("RADECSYS") {
                 Some(system) => system,
-                None => match header.get_float("EQUINOX") {
+                None => match header
+                    .get_float("EQUINOX")
+                    .or_else(|| header.get_float("EPOCH"))
+                {
                     Some(epoch) if epoch < 1984.0 => "FK4",
                     Some(_) => "FK5",
                     None => "ICRS",
@@ -858,6 +861,7 @@ fn wcs_key(name: &str) -> bool {
             | "RADESYS"
             | "RADECSYS"
             | "EQUINOX"
+            | "EPOCH"
             | "SPECSYS"
             | "SSYSOBS"
             | "LONPOLE"

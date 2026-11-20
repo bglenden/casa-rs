@@ -766,6 +766,67 @@ fn exportfits_cli_flags_and_json_run() {
 }
 
 #[test]
+fn exportfits_preserves_b1950_vla_in_the_fits_image() {
+    use casa_coordinates::{CoordinateModel, CoordinateType};
+
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("b1950-vla.im");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::B1950Vla,
+        Projection::new(ProjectionType::SIN),
+        [1.0, 0.5],
+        [-1e-5, 1e-5],
+        [1.0, 1.0],
+    ));
+    let mut image = PagedImage::<f32>::create(vec![3, 3], coordinates, &source).unwrap();
+    image.save().unwrap();
+    drop(image);
+    let destination = temp.path().join("b1950-vla.fits");
+    exportfits(&ExportFitsRequest {
+        imagename: source,
+        fitsimage: destination.clone(),
+        ..ExportFitsRequest::default()
+    })
+    .unwrap();
+    let (header, _, _) = parse_fits_cards_and_raw_i16(&destination);
+    assert_eq!(header.get_string("RADESYS"), Some("FK4"));
+    assert_eq!(header.get_float("EQUINOX"), Some(1979.9));
+    let restored = casa_images::read_fits_image(destination).unwrap();
+    let index = restored
+        .coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .unwrap();
+    let CoordinateModel::Direction(direction) = restored.coordinates.coordinate(index) else {
+        panic!("expected direction coordinate");
+    };
+    assert_eq!(direction.direction_ref(), DirectionRef::B1950Vla);
+
+    // Older casacore writers spell the FITS equinox card EPOCH.
+    let mut bytes = fs::read(temp.path().join("b1950-vla.fits")).unwrap();
+    let card = bytes
+        .as_chunks_mut::<80>()
+        .0
+        .iter_mut()
+        .find(|card| &card[..8] == b"EQUINOX ")
+        .unwrap();
+    card[..8].copy_from_slice(b"EPOCH   ");
+    let legacy = temp.path().join("b1950-vla-legacy.fits");
+    fs::write(&legacy, bytes).unwrap();
+    let converted = temp.path().join("b1950-vla-legacy.im");
+    import_fits(&legacy, &converted, false).unwrap();
+    let image = PagedImage::<f32>::open(converted).unwrap();
+    let index = image
+        .coordinates()
+        .find_coordinate(CoordinateType::Direction)
+        .unwrap();
+    let CoordinateModel::Direction(direction) = image.coordinates().coordinate(index) else {
+        panic!("expected direction coordinate");
+    };
+    assert_eq!(direction.direction_ref(), DirectionRef::B1950Vla);
+}
+
+#[test]
 fn exportfits_remaps_projection_parameters_with_the_latitude_axis() {
     use casa_coordinates::{CoordinateModel, CoordinateType};
     use casa_images::read_fits_image;

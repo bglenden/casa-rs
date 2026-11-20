@@ -968,7 +968,7 @@ impl DirectionCoordinate {
         let mut rec = RecordValue::default();
         rec.upsert(
             "system",
-            Value::Scalar(ScalarValue::String(format!("{:?}", self.direction_ref))),
+            Value::Scalar(ScalarValue::String(self.direction_ref.as_str().into())),
         );
         rec.upsert(
             "projection",
@@ -1016,7 +1016,7 @@ impl DirectionCoordinate {
         );
         rec.upsert(
             "conversionSystem",
-            Value::Scalar(ScalarValue::String(format!("{:?}", self.conversion_ref))),
+            Value::Scalar(ScalarValue::String(self.conversion_ref.as_str().into())),
         );
         rec.upsert(
             "longpole",
