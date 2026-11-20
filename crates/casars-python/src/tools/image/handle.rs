@@ -28,6 +28,8 @@ pub(super) struct FitsAttachment {
     path: PathBuf,
     hdu: usize,
     pub(super) shape: Vec<usize>,
+    pub(super) tile_shape: Vec<usize>,
+    pub(super) has_mask: bool,
     pixels: OnceCell<FitsSectionReader>,
 }
 
@@ -134,6 +136,8 @@ impl ImageHandle {
             path: path.to_path_buf(),
             hdu: source.hdu_index(),
             shape: source.shape().to_vec(),
+            tile_shape: source.tile_shape(),
+            has_mask: source.has_implicit_mask(),
             pixels: OnceCell::new(),
         };
         source.misc_info.remove("object");

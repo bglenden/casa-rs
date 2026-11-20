@@ -375,6 +375,21 @@ impl DirectionCoordinate {
         &self.projection
     }
 
+    /// Whether this slant SIN projection uses the North Celestial Pole form.
+    pub fn is_ncp(&self) -> bool {
+        let declination = self.projection_reference()[1];
+        let parameters = self.projection.parameters();
+        if self.projection.projection_type() != ProjectionType::SIN
+            || parameters.len() != 2
+            || parameters[0] != 0.0
+            || declination == 0.0
+        {
+            return false;
+        }
+        let cotangent = 1.0 / declination.tan();
+        (parameters[1] - cotangent).abs() <= 1e-13 * parameters[1].abs().max(cotangent.abs())
+    }
+
     /// Returns the celestial reference frame.
     pub fn direction_ref(&self) -> DirectionRef {
         self.direction_ref

@@ -74,6 +74,9 @@ Use `ia.open("example.im")` to reopen the product. Use
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.summary(list=False)` to read the shape, coordinate axes, mask names
+and restoring beams and return the two report messages. The default
+`list=True` sends the report to the logger.
 Use `ia.makecomplex("output.im", "imaginary.im")` to combine the attached
 real image with a conformant real image of matching precision. A supplied
 region selects the same section from both inputs. The output copies the real
