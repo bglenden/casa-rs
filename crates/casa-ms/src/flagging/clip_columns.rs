@@ -8,6 +8,7 @@ use casa_tables::Table;
 use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType};
 use ndarray::{ArrayD, IxDyn};
 
+use super::clip_average::{ChannelBins, ChannelReduction};
 use super::{FlagDataColumn, FlaggingError, checked_row_data, load_i32_cells};
 use crate::MeasurementSet;
 use crate::scratch_columns::virtual_model_fields;
@@ -44,16 +45,19 @@ pub(super) fn require_physical_model(
 }
 
 pub(super) struct ClipColumns {
-    primary: &'static str,
+    primary: ClipColumn,
     subtract: Option<&'static str>,
-    broadcast_weights: bool,
-    fallback_weights: BTreeMap<i32, bool>,
+    average_weights: Option<ClipColumn>,
+    average: bool,
+    inverse_sigma: bool,
+    sum_weights: bool,
 }
 
 impl ClipColumns {
     pub(super) fn bind(
         table: &Table,
         column: FlagDataColumn,
+        average: bool,
     ) -> Result<Option<Self>, FlaggingError> {
         let has_column = |name| {
             table
@@ -86,11 +90,42 @@ impl ClipColumns {
                 Err(FlaggingError::MissingClipColumn)
             };
         }
+        let inverse_sigma = matches!(primary, "DATA" | "FLOAT_DATA");
+        let average_weights = if average {
+            match primary {
+                // Flagdata reads both observed types through CASA's complex
+                // visibility adapter, which weights DATA and FLOAT_DATA by sigma.
+                "DATA" | "FLOAT_DATA" => Some(if has_column("SIGMA_SPECTRUM") {
+                    ClipColumn::spectrum("SIGMA_SPECTRUM", "SIGMA")
+                } else {
+                    ClipColumn::scalar("SIGMA")
+                }),
+                "CORRECTED_DATA" => Some(if has_column(spectrum) {
+                    ClipColumn::spectrum(spectrum, "WEIGHT")
+                } else {
+                    ClipColumn::scalar("WEIGHT")
+                }),
+                _ => None,
+            }
+        } else {
+            None
+        };
         Ok(Some(Self {
-            primary,
+            primary: if primary == spectrum {
+                ClipColumn::spectrum(spectrum, "WEIGHT")
+            } else if broadcast_weights {
+                ClipColumn::scalar(primary)
+            } else {
+                ClipColumn::array(primary)
+            },
             subtract,
-            broadcast_weights,
-            fallback_weights: BTreeMap::new(),
+            average_weights,
+            average,
+            inverse_sigma,
+            sum_weights: matches!(
+                column,
+                FlagDataColumn::Weight | FlagDataColumn::WeightSpectrum
+            ),
         }))
     }
 
@@ -110,19 +145,39 @@ impl ClipColumns {
                     reason: format!("{name} does not expose a fixed-width numeric array type"),
                 })
         };
-        let primary = size_of(self.primary)?;
+        let primary = size_of(self.primary.name)?;
+        let mut bytes = primary;
         // Account for the input columns and room to assemble a residual row.
         if let Some(name) = self.subtract {
-            Ok(primary + 2 * size_of(name)?)
-        } else if self.uses_weight_spectrum() {
-            Ok(primary + size_of("WEIGHT")?)
-        } else {
-            Ok(primary)
+            bytes += 2 * size_of(name)?;
+            if self.average {
+                bytes += size_of(name)?;
+            }
         }
+        if let Some(scalar) = self.primary.scalar_fallback {
+            bytes += size_of(scalar)?;
+        }
+        if let Some(weights) = &self.average_weights {
+            bytes += size_of(weights.name)?;
+            bytes += weights
+                .scalar_fallback
+                .map_or_else(|| size_of(weights.name), size_of)?;
+        }
+        if self.average {
+            // Include an averaged operand and worst case per-row bin indices,
+            // flags and the original channel mapping.
+            bytes += primary;
+            bytes += std::mem::size_of::<usize>() + std::mem::size_of::<bool>();
+        }
+        Ok(bytes)
     }
 
     pub(super) fn uses_weight_spectrum(&self) -> bool {
-        self.primary == FlagDataColumn::WeightSpectrum.name()
+        self.primary.scalar_fallback.is_some()
+            || self
+                .average_weights
+                .as_ref()
+                .is_some_and(|weights| weights.scalar_fallback.is_some())
     }
 
     pub(super) fn read<'a>(
@@ -133,7 +188,7 @@ impl ClipColumns {
         ddid_to_spw: &BTreeMap<i32, i32>,
         path: &str,
     ) -> Result<ClipColumnCells<'a>, FlaggingError> {
-        let read = |name| {
+        let read = |name: &str| {
             table
                 .column_accessor(name)
                 .and_then(|column| column.array_cells_owned(rows))
@@ -142,26 +197,79 @@ impl ClipColumns {
                     reason: format!("read selected {name} rows: {source}"),
                 })
         };
-        let primary = read(self.primary)?;
-        let mut scalar_weights = None;
-        if self.uses_weight_spectrum() {
-            let ddids = ddids.expect("weight spectrum reads project DATA_DESC_ID");
-            // CASA decides whether scalar fallback is available in each
-            // spectral window. Probe within the admitted read block.
-            let mut needs_scalar = Vec::with_capacity(rows.len());
-            for (&ddid, cell) in ddids.iter().zip(&primary) {
+        Ok(ClipColumnCells {
+            primary: self.primary.read(&read, ddids, ddid_to_spw, path)?,
+            average_weights: self
+                .average_weights
+                .as_mut()
+                .map(|weights| weights.read(&read, ddids, ddid_to_spw, path))
+                .transpose()?,
+            subtract: self.subtract.map(read).transpose()?,
+            model_name: self.subtract,
+            inverse_sigma: self.inverse_sigma,
+            sum_weights: self.sum_weights,
+        })
+    }
+}
+
+struct ClipColumn {
+    name: &'static str,
+    broadcast: bool,
+    scalar_fallback: Option<&'static str>,
+    fallback_windows: BTreeMap<i32, bool>,
+}
+
+impl ClipColumn {
+    fn array(name: &'static str) -> Self {
+        Self {
+            name,
+            broadcast: false,
+            scalar_fallback: None,
+            fallback_windows: BTreeMap::new(),
+        }
+    }
+
+    fn scalar(name: &'static str) -> Self {
+        Self {
+            broadcast: true,
+            ..Self::array(name)
+        }
+    }
+
+    fn spectrum(name: &'static str, scalar: &'static str) -> Self {
+        Self {
+            scalar_fallback: Some(scalar),
+            ..Self::array(name)
+        }
+    }
+
+    fn read<'a>(
+        &'a mut self,
+        read: &impl Fn(&str) -> Result<Vec<Option<ArrayValue>>, FlaggingError>,
+        ddids: Option<&[i32]>,
+        ddid_to_spw: &BTreeMap<i32, i32>,
+        path: &str,
+    ) -> Result<ClipOperand<'a>, FlaggingError> {
+        let cells = read(self.name)?;
+        let mut fallback = None;
+        if let Some(scalar) = self.scalar_fallback {
+            let ddids = ddids.expect("spectrum reads project DATA_DESC_ID");
+            // Decide fallback independently in each spectral window, and do
+            // so within the admitted block. Retain defined later cells.
+            let mut needs_scalar = Vec::with_capacity(cells.len());
+            for (&ddid, cell) in ddids.iter().zip(&cells) {
                 let spw = ddid_to_spw
                     .get(&ddid)
                     .ok_or_else(|| FlaggingError::MutateFlags {
                         path: path.to_string(),
                         reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
                     })?;
-                let fallback = *self.fallback_weights.entry(*spw).or_insert(cell.is_none());
-                needs_scalar.push(fallback && cell.is_none());
+                let can_fallback = *self.fallback_windows.entry(*spw).or_insert(cell.is_none());
+                needs_scalar.push(can_fallback && cell.is_none());
             }
             if needs_scalar.iter().any(|needs| *needs) {
-                scalar_weights = Some(
-                    read("WEIGHT")?
+                fallback = Some(
+                    read(scalar)?
                         .into_iter()
                         .zip(needs_scalar)
                         .map(|(weights, needs_scalar)| if needs_scalar { weights } else { None })
@@ -169,20 +277,66 @@ impl ClipColumns {
                 );
             }
         }
-        Ok(ClipColumnCells {
-            columns: self,
-            primary,
-            subtract: self.subtract.map(read).transpose()?,
-            scalar_weights,
+        Ok(ClipOperand {
+            column: self,
+            cells,
+            fallback,
         })
     }
 }
 
+struct ClipOperand<'a> {
+    column: &'a ClipColumn,
+    cells: Vec<Option<ArrayValue>>,
+    fallback: Option<Vec<Option<ArrayValue>>>,
+}
+
+impl ClipOperand<'_> {
+    fn row(
+        &self,
+        slot: usize,
+        flags: &ArrayD<bool>,
+        row: usize,
+        path: &str,
+    ) -> Result<Cow<'_, ArrayValue>, FlaggingError> {
+        let cell = self.cells.get(slot);
+        if self.column.broadcast {
+            return broadcast_weights(
+                cell.and_then(Option::as_ref),
+                flags.shape(),
+                row,
+                self.column.name,
+                path,
+            )
+            .map(Cow::Owned);
+        }
+        if let Some(weights) = self
+            .fallback
+            .as_ref()
+            .and_then(|cells| cells[slot].as_ref())
+        {
+            return broadcast_weights(
+                Some(weights),
+                flags.shape(),
+                row,
+                self.column
+                    .scalar_fallback
+                    .expect("available fallback has a source"),
+                path,
+            )
+            .map(Cow::Owned);
+        }
+        checked_row_data(cell, flags, row, self.column.name, path).map(Cow::Borrowed)
+    }
+}
+
 pub(super) struct ClipColumnCells<'a> {
-    columns: &'a ClipColumns,
-    primary: Vec<Option<ArrayValue>>,
+    primary: ClipOperand<'a>,
     subtract: Option<Vec<Option<ArrayValue>>>,
-    scalar_weights: Option<Vec<Option<ArrayValue>>>,
+    model_name: Option<&'static str>,
+    average_weights: Option<ClipOperand<'a>>,
+    inverse_sigma: bool,
+    sum_weights: bool,
 }
 
 impl ClipColumnCells<'_> {
@@ -190,28 +344,45 @@ impl ClipColumnCells<'_> {
         &self,
         slot: usize,
         flags: &ArrayD<bool>,
+        bins: Option<&ChannelBins<'_>>,
         row: usize,
         path: &str,
     ) -> Result<Cow<'_, ArrayValue>, FlaggingError> {
-        let primary = self.primary.get(slot);
-        if self.columns.broadcast_weights {
-            return broadcast_weights(primary.and_then(Option::as_ref), flags.shape(), row, path)
-                .map(Cow::Owned);
+        let mut primary = self.primary.row(slot, flags, row, path)?;
+        if let Some(bins) = bins {
+            let weights = self
+                .average_weights
+                .as_ref()
+                .map(|column| column.row(slot, flags, row, path))
+                .transpose()?;
+            let reduction = match weights.as_deref() {
+                Some(spectrum @ (ArrayValue::Float32(_) | ArrayValue::Float64(_))) => {
+                    ChannelReduction::Weighted {
+                        spectrum,
+                        inverse_sigma: self.inverse_sigma,
+                    }
+                }
+                Some(_) => {
+                    return Err(FlaggingError::MutateFlags {
+                        path: path.to_string(),
+                        reason: format!(
+                            "channel averaging statistics on row {row} must be floating-point arrays"
+                        ),
+                    });
+                }
+                None if self.sum_weights => ChannelReduction::Sum,
+                None => ChannelReduction::Mean,
+            };
+            primary = Cow::Owned(bins.average(primary.as_ref(), flags, reduction));
         }
-        if let Some(weights) = self
-            .scalar_weights
-            .as_ref()
-            .and_then(|cells| cells.get(slot))
-            .and_then(Option::as_ref)
-        {
-            return broadcast_weights(Some(weights), flags.shape(), row, path).map(Cow::Owned);
-        }
-        let primary = checked_row_data(primary, flags, row, self.columns.primary, path)?;
-        let Some((cells, name)) = self.subtract.as_ref().zip(self.columns.subtract) else {
-            return Ok(Cow::Borrowed(primary));
+        let Some((cells, name)) = self.subtract.as_ref().zip(self.model_name) else {
+            return Ok(primary);
         };
-        let model = checked_row_data(cells.get(slot), flags, row, name, path)?;
-        let residual = match (primary, model) {
+        let stored_model = checked_row_data(cells.get(slot), flags, row, name, path)?;
+        let averaged_model =
+            bins.map(|bins| bins.average(stored_model, flags, ChannelReduction::Mean));
+        let model = averaged_model.as_ref().unwrap_or(stored_model);
+        let residual = match (primary.as_ref(), model) {
             (ArrayValue::Complex32(data), ArrayValue::Complex32(model)) => {
                 ArrayValue::Complex32(data - model)
             }
@@ -233,7 +404,7 @@ impl ClipColumnCells<'_> {
                     path: path.to_string(),
                     reason: format!(
                         "{} and {name} row {row} must hold matching numeric samples and a complex model",
-                        self.columns.primary
+                        self.primary.column.name
                     ),
                 });
             }
@@ -246,6 +417,7 @@ fn broadcast_weights(
     cell: Option<&ArrayValue>,
     shape: &[usize],
     row: usize,
+    column: &str,
     path: &str,
 ) -> Result<ArrayValue, FlaggingError> {
     let expected = &shape[..1];
@@ -262,7 +434,7 @@ fn broadcast_weights(
         ),
         _ => Err(FlaggingError::MutateFlags {
             path: path.to_string(),
-            reason: format!("WEIGHT row {row} must hold one weight per correlation"),
+            reason: format!("{column} row {row} must hold one value per correlation"),
         }),
     }
 }

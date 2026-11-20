@@ -3961,6 +3961,37 @@ result meets the clipping criterion. The paired Stokes clip oracle
 reproduces the CASA flags and compares the native flags with independently
 calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Clip channel averaging can abort on a strided selection
+
+In CASA 6.7.6.14, `flagdata(mode="clip", channelavg=True, chanbin=2,
+spw="0:0~3^2", correlation="XX")` aborts with `ArraySlicerError` on a
+four-channel spectral window. The equivalent explicit selection `0:0;2`
+works. Native flagdata groups the actual selected channels, averages the
+two samples and sets new flags on channels 0 and 2 when the bin meets the
+clip range. The channel clip oracle checks the mask independently from
+the input samples and from CASA with the equivalent explicit selection.
+
+## Clip channel averaging can flag nonzero data as zero
+
+In CASA 6.7.6.14, the observed-data iterator runs its weighted kernel
+even with `chanbin=0`. A positive visibility with zero sigma is replaced
+by zero for clipping and then flagged by `clipzeros=True`. Native flagdata
+passes the sample through at width zero. The paired oracle checks both
+implementations against the result with averaging disabled.
+
+The complex weighted kernel also squares the normalization. With two
+positive weights of `1e-25`, the square underflows in single precision.
+The iterator supplies zero to the clip agent despite a finite nonzero
+weighted mean. Native flagdata divides by the real sum of weights. The
+oracle checks the expected finite mean, the normal signed-weight behavior
+and the zero-total-weight case independently.
+
+The parameter bridge narrows widths before comparing them to the window
+length. A width of `4294967298` wraps into two channels, which can flag two
+samples even though the whole-window mean falls outside the clipping
+range. Native flagdata applies the same whole-window rule as other widths
+larger than the window, for both scalar and per-window forms.
+
 ## Weight clipping can ignore defined channel weights
 
 In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="WEIGHT_SPECTRUM")`
