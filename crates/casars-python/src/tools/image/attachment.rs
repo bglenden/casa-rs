@@ -54,19 +54,36 @@ impl AttachedImage {
     }
 
     pub(super) fn open(path: &Path) -> PyResult<Self> {
+        Self::open_with_read_lock(path, true)
+    }
+
+    pub(super) fn open_for_ordered_read(path: &Path) -> PyResult<Self> {
+        Self::open_with_read_lock(path, false)
+    }
+
+    pub(super) fn native_path(&self) -> Option<&Path> {
+        self.key.as_deref()
+    }
+
+    fn open_with_read_lock(path: &Path, keep_read_lock: bool) -> PyResult<Self> {
         if path.is_file() {
             return ImageHandle::open(path).map(Self::temporary).map_err(raised);
         }
         let key = key(path)?;
         let shared = Self::shared(&registry(), &key);
         if let Some(shared) = shared {
-            shared.read_current_beams()?;
+            if keep_read_lock {
+                shared.read_current_beams()?;
+            }
             return Ok(shared);
         }
 
         // The data lock may wait for a different process. Keep the registry
         // available to other image names while this open is in progress.
         let opened = Self::open_native(path, &key, Some(0), TableUseLock::acquire_waiting)?;
+        if !keep_read_lock {
+            opened.lock().unlock_storage()?;
+        }
         let shared = {
             let mut registry = registry();
             if let Some(shared) = Self::shared(&registry, &key) {
@@ -77,7 +94,9 @@ impl AttachedImage {
             }
         };
         drop(opened);
-        shared.read_current_beams()?;
+        if keep_read_lock {
+            shared.read_current_beams()?;
+        }
         Ok(shared)
     }
 

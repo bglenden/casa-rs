@@ -383,18 +383,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (infile = None, region = None, locate = None, verbose = None), text_signature = "($self, infile='', region={}, locate=[-1.0], verbose=False)")]
-    fn insert(
-        &self,
-        infile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        locate: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("insert")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None, point = None, width = None, negfind = None, list = None), text_signature = "($self, region={}, point=True, width=5, negfind=False, list=True)")]
     fn maxfit(
         &self,
