@@ -1077,9 +1077,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>timeavg</code> | <code>flagdata.timeavg@r1</code> | <code>bool</code> | <code>false</code>; optional | Clip | Average time before clipping. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Clip | Averaging time bin, a time quantity as CASA writes it. |
 | <code>clipzeros</code> | <code>parameter.clipzeros@r1</code> | <code>bool</code> | <code>false</code>; optional | Flagging | Flag exact zero amplitudes in clip mode. |
-| <code>quackinterval</code> | <code>parameter.quackinterval@r1</code> | <code>float</code> | <code>1.0</code>; optional | Quack | Quack interval in seconds. |
-| <code>quackmode</code> | <code>parameter.quackmode@r2</code> | <code>choice (4 values)</code> | <code>"beg"</code>; optional | Quack | Which part of each scan quack flags, as CASA names it: 'beg' its first quackinterval, 'endb' its last, 'end' all but its last, 'tail' all but its first. |
-| <code>quackincrement</code> | <code>flagdata.quackincrement@r1</code> | <code>bool</code> | <code>false</code>; optional | Quack | Quack successive intervals, taking existing flags into account. |
+| <code>quackinterval</code> | <code>parameter.quackinterval@r1</code> | <code>variant</code> | <code>1.0</code>; optional | Quack | Quack interval in seconds. |
+| <code>quackmode</code> | <code>parameter.quackmode@r2</code> | <code>variant</code> | <code>"beg"</code>; optional | Quack | Which part of each scan quack flags, as CASA names it: 'beg' its first quackinterval, 'endb' its last, 'end' all but its last, 'tail' all but its first. |
+| <code>quackincrement</code> | <code>flagdata.quackincrement@r1</code> | <code>variant</code> | <code>false</code>; optional | Quack | Quack successive intervals, taking existing flags into account. |
 | <code>tolerance</code> | <code>flagdata.tolerance@r1</code> | <code>float</code> | <code>0.0</code>; optional | Shadow | Shadowing in metres that shadow mode tolerates. |
 | <code>addantenna</code> | <code>flagdata.addantenna@r1</code> | <code>string</code> | <code>""</code>; optional | Shadow | Antennas, from a file or dictionary, that shadow mode adds. |
 | <code>lowerlimit</code> | <code>flagdata.lowerlimit@r1</code> | <code>float</code> | <code>0.0</code>; optional | Elevation | Lowest elevation, in degrees, that elevation mode keeps. |
