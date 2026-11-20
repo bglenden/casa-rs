@@ -17,13 +17,13 @@ from gaincal_oracle import relative_rms
 
 
 def ft(factory, dataset, model, cache, *, scratch, spw='', correction=True, limit=.05,
-       interp='nearest', accepts=True):
+       interp='nearest', accepts=True, machine='pbwproject'):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
     assert tool.selectvis(field=0, spw=spw)
     assert tool.defineimage(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
                             phasecenter=0, stokes='IQUV', outframe='TOPO')
-    assert tool.setoptions(ftmachine='pbwproject', wprojplanes=1, numthreads=1,
+    assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
                            cfcachedirname=str(cache), applypointingoffsets=False,
                            dopbgriddingcorrections=correction, pblimit=limit, freqinterp=interp)
     assert tool.ft(str(model)) is accepts
@@ -75,11 +75,11 @@ def corrected_or_data(dataset):
     return prior
 
 
-def read_virtual(dataset):
+def read_virtual(dataset, *, name='nPBWProjectFT'):
     from casars.tools import ms
 
     entry = recipe(dataset)
-    assert entry['name'] == 'nPBWProjectFT'
+    assert entry['name'] == name
     grid = Path(entry['diskimage'])
     tool = image()
     for path in (grid, grid / 'CASARS_LEGACY_PBW_KERNEL'):
@@ -134,7 +134,7 @@ def setup_controls(root, dataset, model, cache, expected):
         assert error < 1.e-3
 
 
-def geometry_control(root, dataset, model, cache, *, pinned_only=False):
+def geometry_control(root, dataset, model, cache, *, pinned_only=False, machine='pbwproject'):
     root.mkdir(parents=True, exist_ok=True)
     pinned = root / 'geometry-pinned.ms'
     ready = root / 'geometry-pinned.ms.complete'
@@ -163,7 +163,7 @@ def geometry_control(root, dataset, model, cache, *, pinned_only=False):
         assert writer.putcell('UVW', int(rotation), [0., 0., 0.])
         assert writer.done()
         subprocess.run([sys.executable, __file__, '--casa', str(pinned), str(model),
-                        str(cache)], check=True)
+                        str(cache), '--machine', machine], check=True)
     expected = data(pinned, 'MODEL_DATA')
     assert np.all(np.abs(expected[:, 0, boundary[[0, 2, 4]]]) > 1.)
     assert not np.any(expected[:, 0, boundary[[1, 3]]])
@@ -178,8 +178,9 @@ def geometry_control(root, dataset, model, cache, *, pinned_only=False):
     for label, scratch in (('scratch', True), ('saved', False)):
         target = root / f'geometry-{label}.ms'
         make_input(pinned, target, scratch=scratch)
-        ft(native, target, model, cache, scratch=scratch)
-        actual = data(target, 'MODEL_DATA') if scratch else read_virtual(target)
+        ft(native, target, model, cache, scratch=scratch, machine=machine)
+        name = 'PBMosaicFT' if machine == 'pbmosaic' else 'nPBWProjectFT'
+        actual = data(target, 'MODEL_DATA') if scratch else read_virtual(target, name=name)
         assert not np.any(actual[:, 0, boundary[[1, 3]]])
         errors = [relative_rms(actual, expected),
                   relative_rms(actual[:, 0, rotation], expected[:, 0, rotation])]
@@ -209,6 +210,43 @@ def invalid_cache_control(root, dataset, model, cache):
     ft(native, scratch, model, bad_cache, scratch=True, accepts=False)
     np.testing.assert_array_equal(data(scratch, 'MODEL_DATA'), before)
     print('legacy PB/W rejected a short imported kernel without changing MODEL_DATA', flush=True)
+
+
+def mosaic_control(root, dataset, model, cache):
+    from casars.tools import imager as native, ms as native_ms
+
+    root.mkdir(parents=True)
+    pinned, scratch, saved, cold, received, pinned_saved = (
+        root / f'{label}.ms' for label in ('pinned', 'scratch', 'saved', 'cold', 'received', 'pinned-saved')
+    )
+    for path in (pinned, scratch, saved, cold, received, pinned_saved):
+        make_input(dataset, path, scratch=path not in (saved, pinned_saved))
+    warm = root / 'warm'
+    shutil.copytree(cache, warm)
+    before = cache_contents(warm)
+    parameters = ['--machine', 'pbmosaic']
+    subprocess.run([sys.executable, __file__, '--casa', str(pinned), str(model), str(warm),
+                    *parameters], check=True)
+    expected = data(pinned, 'MODEL_DATA')
+    assert np.abs(expected).max() > 1. and np.abs(expected.imag).max() > .1
+    ft(native, scratch, model, warm, scratch=True, machine='pbmosaic')
+    ft(native, saved, model, warm, scratch=False, machine='pbmosaic')
+    assert cache_contents(warm) == before
+    subprocess.run([sys.executable, __file__, '--casa', str(pinned_saved), str(model), str(warm),
+                    '--saved', *parameters], check=True)
+    ft(native, cold, model, root / 'built', scratch=True, machine='pbmosaic')
+    subprocess.run([sys.executable, __file__, '--casa', str(received), str(model),
+                    str(root / 'built'), *parameters], check=True)
+    warm.rename(root / 'unavailable-warm')
+    products = (data(scratch, 'MODEL_DATA'), read_virtual(saved, name='PBMosaicFT'),
+                data(cold, 'MODEL_DATA'), data(received, 'MODEL_DATA'))
+    errors = [relative_rms(product, expected) for product in products]
+    print('legacy pbmosaic', expected.size, 'complex samples per product', errors, flush=True)
+    assert max(errors) < 1.e-3
+    assert 'name' not in recipe(pinned_saved)
+    reject_recipe(native_ms, pinned_saved, 'virtual model has no name string')
+    subprocess.run([sys.executable, __file__, '--casa-reject', str(saved), 'Unsupported FTMachine'],
+                   check=True)
 
 
 def run(root, dataset, model, cache):
@@ -287,10 +325,13 @@ def main():
     parser.add_argument('--casa-reject', nargs=2)
     parser.add_argument('--geometry', choices=('both', 'pinned'))
     parser.add_argument('--invalid-cache', action='store_true')
+    parser.add_argument('--mosaic', action='store_true')
+    parser.add_argument('--machine', choices=('pbwproject', 'pbmosaic'), default='pbwproject')
     args = parser.parse_args()
     if args.casa:
         ft(imager, *(Path(path) for path in args.casa), scratch=not args.saved,
-           correction=not args.without_correction, limit=args.limit, interp=args.interp)
+           correction=not args.without_correction, limit=args.limit, interp=args.interp,
+           machine=args.machine)
     elif args.casa_reject:
         from casatools import ms
 
@@ -299,11 +340,13 @@ def main():
     elif args.geometry:
         geometry_control(*(path.resolve() for path in (args.work, args.dataset, args.model,
                                                       args.cache)),
-                         pinned_only=args.geometry == 'pinned')
+                         pinned_only=args.geometry == 'pinned', machine=args.machine)
     elif args.invalid_cache:
         args.work.mkdir(parents=True)
         invalid_cache_control(*(path.resolve() for path in (args.work, args.dataset, args.model,
                                                            args.cache)))
+    elif args.mosaic:
+        mosaic_control(*(path.resolve() for path in (args.work, args.dataset, args.model, args.cache)))
     else:
         run(*(path.resolve() for path in (args.work, args.dataset, args.model, args.cache)))
 
