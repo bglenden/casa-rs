@@ -7351,7 +7351,9 @@ passed to `ia.subimage(overwrite=True)`. The source history then fails to
 read because the table lacks the `TIME` column. If the history table is
 already open, CASA reports that it is in the table cache. Casa-rs rejects
 overwriting existing entries inside the source image before staging the
-cutout.
+cutout. The same replacement through `ia.fromimage` or
+`ia.newimagefromimage` succeeds in CASA and leaves the source history
+unreadable. Casa-rs protects the source before staging either copy.
 
 ## Paged image concatenation can remove a source image or mask
 
@@ -7612,7 +7614,9 @@ CASA 6.7.6.14 terminates with SIGABRT and an uncaught
 whose increment is zero. A scratch probe used a 7 × 7 float image and a
 point component, with the first increment of a region covering [1, 1]
 through [5, 5] set to zero. Casa-rs raises a Python error during region
-validation and preserves the stored pixels and history (#1625).
+validation and preserves the stored pixels and history (#1625). The same
+zero-stride record also aborts CASA when passed to `ia.fromimage` or
+`ia.newimagefromimage`. Casa-rs reports a Python error before copying.
 
 ## Legacy imager single-dish Gaussian settings and virtual recipes
 
