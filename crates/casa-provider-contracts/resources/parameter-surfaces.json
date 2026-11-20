@@ -13294,7 +13294,7 @@
           "projections": {
             "cli": {"flags": ["--chanbin"], "metavar": "N"},
             "provider": {"field": "chanbin", "adapter": "identity"},
-            "python": {"name": "chanbin"},
+            "python": {"name": "chanbin", "type_hint": "int | list[int] | tuple[int, ...]"},
             "presentation": {"label": "Channel Bin", "group": "Spectral"}
           }
         },
@@ -14043,7 +14043,7 @@
           "projections": {
             "cli": {"flags": ["--width"], "metavar": "N"},
             "provider": {"field": "width", "adapter": "identity"},
-            "python": {"name": "width"},
+            "python": {"name": "width", "type_hint": "int | str | list[int] | tuple[int, ...]"},
             "presentation": {"label": "Channel Width", "group": "Selection"}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "Channel-averaging width is distinct from image and PV-slice widths."}
