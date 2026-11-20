@@ -59,6 +59,7 @@ IMPLEMENTED["coordsys"] = {
     "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
+    "adddegaxes",
     "statistics",
     "beamarea", "beamforconvolvedsize", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "deconvolvefrombeam", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
     "getchunk", "getregion", "haslock", "history", "imagecalc", "isconform", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",

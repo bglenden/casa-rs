@@ -191,6 +191,13 @@ references, and unit-stride boxes and polygon records.
 An existing entry inside the input image cannot be replaced, protecting
 the source's history and mask tables.
 
+Use `ia.adddegaxes(stokes="I", spectral=True)` to make a copy with new
+singleton axes. Pass `outfile` to save the copy as a native image. The copy
+preserves the source pixels, existing coordinates, named masks and history.
+Set `silent=True` to skip requested coordinate types that already exist.
+Sources with image attribute groups are tracked in
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ### Migrate an existing image reader or writer
 
 The former `casars.data.Image` and `casars.Image` exports have been retired.
