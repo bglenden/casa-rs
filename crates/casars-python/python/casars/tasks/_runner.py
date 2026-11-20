@@ -341,6 +341,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
                 values[parameter] = converted
     _coerce_flagdata_quack_options(values, errors, cfloat, cint)
     for parameter, expected, casa_type in (
+        ("autocorr", bool, "cBool"),
         ("spwchan", bool, "cBool"),
         ("spwcorr", bool, "cBool"),
         ("basecnt", bool, "cBool"),
@@ -360,7 +361,8 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
             errors[parameter] = ["null value not allowed"]
         elif expected is bool and isinstance(value, np.bool_):
             # CASA admits these scalars and uses the switch defaults.
-            values[parameter] = bool(value) if parameter == "writeflags" else False
+            # Preserve autocorr=True to avoid flagging cross-correlations.
+            values[parameter] = bool(value) if parameter in ("autocorr", "writeflags") else False
         elif not isinstance(value, expected):
             errors[parameter] = [f"must be of {casa_type} type"]
         elif casa_type == "cFloat":
