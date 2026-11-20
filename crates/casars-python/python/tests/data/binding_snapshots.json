@@ -103,6 +103,11 @@
               "kind": {
                "str": null
               }
+             },
+             "dict[variant](kind)": {
+              "kind": {
+               "str": null
+              }
              }
             }
            },
@@ -974,6 +979,11 @@
               }
              },
              "dict[string](kind)": {
+              "kind": {
+               "str": null
+              }
+             },
+             "dict[variant](kind)": {
               "kind": {
                "str": null
               }

@@ -318,7 +318,7 @@ pub fn export_fits(
 
 /// Import a primary-HDU FITS image, preserving double-precision pixels.
 ///
-/// For the CASA task defaults and selection options, use [`importfits`].
+/// For the CASA task defaults and selection options, use [`importfits()`].
 pub fn import_fits(
     fitsimage: impl AsRef<Path>,
     imagename: impl AsRef<Path>,
