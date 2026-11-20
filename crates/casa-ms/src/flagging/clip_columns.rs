@@ -13,16 +13,11 @@ pub(super) struct ClipColumns {
     primary: &'static str,
     subtract: Option<&'static str>,
     broadcast_weights: bool,
-    fallback_weights: bool,
+    fallback_weights: Option<bool>,
 }
 
 impl ClipColumns {
-    pub(super) fn bind(
-        table: &Table,
-        column: FlagDataColumn,
-        first_row: Option<usize>,
-        path: &str,
-    ) -> Result<Self, FlaggingError> {
+    pub(super) fn bind(table: &Table, column: FlagDataColumn) -> Result<Self, FlaggingError> {
         let has_column = |name| {
             table
                 .schema()
@@ -40,24 +35,11 @@ impl ClipColumns {
         if !has_column(primary) || subtract.is_some_and(|name| !has_column(name)) {
             return Err(FlaggingError::MissingClipColumn);
         }
-        // CASA allows scalar fallback when the first row has no spectrum.
-        // Keep any spectra that are defined later in that selection.
-        let fallback_weights = if let Some(row) = first_row.filter(|_| primary == spectrum) {
-            !table
-                .column_accessor(spectrum)
-                .and_then(|column| column.array_cell_is_defined_uncached(row))
-                .map_err(|source| FlaggingError::MutateFlags {
-                    path: path.to_string(),
-                    reason: format!("read {spectrum} metadata in row {row}: {source}"),
-                })?
-        } else {
-            false
-        };
         Ok(Self {
             primary,
             subtract,
             broadcast_weights,
-            fallback_weights,
+            fallback_weights: None,
         })
     }
 
@@ -81,7 +63,7 @@ impl ClipColumns {
         // Account for the input columns and room to assemble a residual row.
         if let Some(name) = self.subtract {
             Ok(2 * primary + size_of(name)?)
-        } else if self.fallback_weights {
+        } else if self.primary == FlagDataColumn::WeightSpectrum.name() {
             Ok(primary + size_of("WEIGHT")?)
         } else {
             Ok(primary)
@@ -89,7 +71,7 @@ impl ClipColumns {
     }
 
     pub(super) fn read<'a>(
-        &'a self,
+        &'a mut self,
         table: &Table,
         rows: &[usize],
         path: &str,
@@ -104,7 +86,13 @@ impl ClipColumns {
                 })
         };
         let primary = read(self.primary)?;
-        let scalar_weights = if self.fallback_weights && primary.iter().any(Option::is_none) {
+        // Inspect the first selected spectrum within the admitted read block.
+        // CASA permits scalar fallback when that first cell is undefined.
+        let fallback_weights = self.primary == FlagDataColumn::WeightSpectrum.name()
+            && *self
+                .fallback_weights
+                .get_or_insert_with(|| primary.first().is_some_and(Option::is_none));
+        let scalar_weights = if fallback_weights && primary.iter().any(Option::is_none) {
             Some(read("WEIGHT")?)
         } else {
             None

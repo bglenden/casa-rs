@@ -826,12 +826,7 @@ fn apply_clip_flags(
     let mut total_samples = 0usize;
     let mut row_changes = Vec::<(usize, usize)>::new();
     let include_ddid = channel_selections.is_some() || correlations.is_some();
-    let columns = ClipColumns::bind(
-        ms.main_table(),
-        request.data_column,
-        selected_rows.first().copied(),
-        &path,
-    )?;
+    let mut columns = ClipColumns::bind(ms.main_table(), request.data_column)?;
     let bytes_per_sample = columns.bytes_per_sample(ms.main_table(), &path)?;
     let read_plan = clip_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
     for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
