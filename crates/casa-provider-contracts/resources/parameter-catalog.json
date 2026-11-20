@@ -9279,6 +9279,30 @@
       "persistence_class": "profile"
     },
     {
+      "id": "flagdata.channelavg",
+      "semantic_revision": 2,
+      "casa_name": "channelavg",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Average selected channels before clipping.", "details": "When a bin clips, set flags on its original selected channels. A Boolean vector is accepted by the CASA parameter validator and rejected by the clipping agent.", "examples": ["false", "true"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.chanbin",
+      "semantic_revision": 2,
+      "casa_name": "chanbin",
+      "value_domain": {"kind": "array", "element": {"kind": "integer"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Channel averaging width for clipping.", "details": "Use one integer for all spectral windows or one width per spectral-window row. A width of zero passes through channels. A width of one averages the whole selected window.", "examples": ["1", "[2, 0]"]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "flagdata.timeavg",
       "semantic_revision": 1,
       "casa_name": "timeavg",
