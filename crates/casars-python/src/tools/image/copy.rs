@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_coordinates::CoordinateSystem;
 use casa_images::{ImageInterface, ImagePixel, image::image_history_rows};
-use casa_types::RecordValue;
+use casa_types::{RecordValue, Value};
 use ndarray::{ArrayD, IxDyn, SliceInfoElem, Zip};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
@@ -12,7 +12,7 @@ use pyo3::types::{PyDict, PyString};
 use crate::convert::Variant;
 use crate::tools::table::casa_record;
 
-use super::beams::{image_info, image_info_record};
+use super::beams::{image_info, image_info_record, plane_axes, stored_beam_record};
 use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
@@ -45,6 +45,51 @@ fn slice(start: &[usize], shape: &[usize], stride: &[usize]) -> Vec<SliceInfoEle
             step: stride as isize,
         })
         .collect()
+}
+
+fn selected_image_info(original: &ImageHandle, selection: &Selection) -> PyResult<RecordValue> {
+    let mut info = image_info(original).map_err(raised)?;
+    if info.image_type == casa_images::ImageType::Undefined {
+        info.image_type = casa_images::ImageType::Intensity;
+    }
+    let stored = image_info_record(original);
+    let mut record = stored.cloned().unwrap_or_else(|| info.to_record());
+    let beams = &info.beam_set;
+    if !beams.is_multi() {
+        return Ok(record);
+    }
+    let (spectral, stokes) = plane_axes(&original.coordinate_record())?;
+    let indices = |axis: Option<usize>, beams| match axis {
+        Some(axis) if beams > 1 => (0..selection.shape[axis])
+            .map(|index| (selection.start[axis] + index * selection.stride[axis]).min(beams - 1))
+            .collect::<Vec<_>>(),
+        _ => vec![0],
+    };
+    let channels = indices(spectral, beams.n_channels());
+    let polarizations = indices(stokes, beams.n_stokes());
+    if channels.len() == beams.n_channels() && polarizations.len() == beams.n_stokes() {
+        return Ok(record);
+    }
+    let subset = beams.subset(&channels, &polarizations).map_err(raised)?;
+    let beam = |channel, polarization| {
+        Value::Record(stored_beam_record(stored, beams, channel, polarization))
+    };
+    record.remove("perplanebeams");
+    if subset.is_single() {
+        record.upsert("restoringbeam", beam(channels[0], polarizations[0]));
+    } else {
+        let mut grid = subset.to_record();
+        for (plane, &polarization) in polarizations.iter().enumerate() {
+            for (slot, &channel) in channels.iter().enumerate() {
+                grid.upsert(
+                    format!("*{}", plane * channels.len() + slot),
+                    beam(channel, polarization),
+                );
+            }
+        }
+        record.upsert("perplanebeams", Value::Record(grid));
+    }
+    Ok(record)
 }
 
 impl CopyImage<'_> {
@@ -139,23 +184,8 @@ impl CopyImage<'_> {
         if self.dropdeg {
             selection.drop_degenerate()?;
         }
-        let mut info = image_info(original).map_err(raised)?;
         let coordinates = original.coordinates();
-        if info.beam_set.is_multi() && !selection.is_full(original.shape()) {
-            let mut axis = 0;
-            for index in 0..coordinates.n_coordinates() {
-                let coordinate = coordinates.coordinate(index);
-                if matches!(
-                    coordinate.coordinate_type(),
-                    CoordinateType::Stokes | CoordinateType::Spectral
-                ) && (selection.start[axis] != 0
-                    || selection.shape[axis] != original.shape()[axis])
-                {
-                    return Err(stub(self.method).unwrap_err());
-                }
-                axis += coordinate.n_pixel_axes();
-            }
-        }
+        let info = selected_image_info(original, &selection)?;
         let record = selection.coordinates(
             original.coordinate_record(),
             coordinates,
@@ -199,12 +229,6 @@ impl CopyImage<'_> {
                 ImageHandle::DComplex(storage) => copy_native!(storage, DComplex),
             }
         };
-        if info.image_type == casa_images::ImageType::Undefined {
-            info.image_type = casa_images::ImageType::Intensity;
-        }
-        let info = image_info_record(original)
-            .cloned()
-            .unwrap_or_else(|| info.to_record());
         let units =
             with_pixels!(original, storage => with_storage!(storage, image => image.units()));
         let misc =

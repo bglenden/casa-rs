@@ -233,3 +233,72 @@ def test_copy_crops_tabular_spectral_lookup_starting_at_zero(tmp_path, oracle):
         records.append(lookup)
         assert image.done()
     _assert_value(*records)
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("case", ["strided", "one plane", "remove singleton axes"])
+def test_copy_selects_tabular_frequencies_and_original_beam_planes(tmp_path, oracle, method, case):
+    source = str(tmp_path / "per-plane.im")
+    shape = (3, 4, 4, 6)
+    pixels = np.arange(np.prod(shape), dtype=np.float64).reshape(shape)
+    frequencies = np.array([1.4e9, 1.401e9, 1.4025e9, 1.4043e9, 1.407e9, 1.412e9])
+    coordinates = oracle.coordsys().newcoordsys(direction=True, stokes="I Q U V", spectral=True)
+    assert coordinates.setspectral(frequencies={"unit": "Hz", "value": frequencies})
+    writer = oracle.image()
+    assert writer.fromshape(source, list(shape), csys=coordinates.torecord())
+    assert coordinates.done()
+    assert writer.putchunk(pixels)
+    for channel in range(shape[3]):
+        for polarization in range(shape[2]):
+            assert writer.setrestoringbeam(
+                f"{(10 + channel) * 60 + polarization}arcsec",
+                "2arcsec", "12deg", channel=channel, polarization=polarization, log=False,
+            )
+    assert writer.done()
+
+    region_tool = oracle.regionmanager()
+    if case == "strided":
+        region = region_tool.box([0, 0, 1, 1], [2, 3, 3, 5], inc=[1, 1, 2, 2])
+        expected = pixels[:, :, 1:4:2, 1:6:2]
+        expected_frequencies = frequencies[1:6:2]
+    else:
+        region = region_tool.box([0, 0, 2, 3], [2, 3, 2, 3])
+        expected = pixels[:, :, 2:3, 3:4]
+        expected_frequencies = frequencies[3:4]
+    assert region_tool.done()
+    drop_axes = case == "remove singleton axes"
+    if drop_axes:
+        expected = expected[:, :, 0, 0]
+
+    beam_records = []
+    for writer_module in (oracle, tools):
+        parent = writer_module.image()
+        assert parent.fromshape(shape=[1])
+        path = str(tmp_path / f"{writer_module.__name__}.im")
+        result = _attach_copy(parent, method, infile=source, outfile=path, region=region, dropdeg=drop_axes)
+        assert result.done()
+        for reader_module in (oracle, tools):
+            reader = reader_module.image()
+            assert reader.open(path)
+            _assert_value(reader.getchunk(), expected)
+            coords = reader.coordsys()
+            spectral = next((value for key, value in coords.torecord().items() if key.startswith("spectral")), None)
+            if drop_axes:
+                assert spectral is None
+            else:
+                lookup = spectral["tabular"]
+                _assert_value(lookup["worldvalues"], expected_frequencies)
+                _assert_value(lookup["pixelvalues"], np.arange(len(expected_frequencies), dtype=np.float64))
+                increment = (expected_frequencies[-1] - expected_frequencies[0]) / max(1, len(expected_frequencies) - 1)
+                _assert_value(lookup["cdelt"], np.array([increment]))
+            assert coords.done()
+            beam = reader.restoringbeam()
+            if case == "strided":
+                assert (beam["nChannels"], beam["nStokes"]) == (3, 2)
+                assert beam["beams"]["*2"]["*1"]["major"] == {"value": 903.0, "unit": "arcsec"}
+            else:
+                assert beam["major"] == {"value": 782.0, "unit": "arcsec"}
+            beam_records.append(beam)
+            assert reader.done()
+    for beam in beam_records[1:]:
+        _assert_value(beam, beam_records[0])
