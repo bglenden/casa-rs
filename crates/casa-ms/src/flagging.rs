@@ -51,7 +51,7 @@ mod extend;
 mod summary;
 
 use clip::{ClipOptions, apply_clip_array};
-use correlation::CorrelationSelection;
+use correlation::{ClipProjection, CorrelationSelection};
 mod version_backup;
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{save_next_flag_backup, save_next_partition_flag_backup};
@@ -910,22 +910,33 @@ fn apply_clip_flags(
                 &mut row_changes,
             )?;
             if !row_changes.is_empty() {
-                let mut row_changed = 0;
                 let mut updated_flags = flags.clone();
-                {
-                    let mut updated_flags = updated_flags
-                        .view_mut()
-                        .into_dimensionality::<Ix2>()
-                        .map_err(|source| FlaggingError::MutateFlags {
+                let mut flag_planes = updated_flags
+                    .view_mut()
+                    .into_dimensionality::<Ix2>()
+                    .map_err(|source| FlaggingError::MutateFlags {
                         path: path.clone(),
                         reason: format!("FLAG row {row} must be rank-2: {source}"),
                     })?;
+                let may_overlap = projections.is_some_and(|items| {
+                    items.len() > 1
+                        && items
+                            .iter()
+                            .any(|item| matches!(item, ClipProjection::Stokes(..)))
+                });
+                let row_changed = if may_overlap {
+                    row_changes
+                        .iter()
+                        .filter(|&&(corr, chan)| {
+                            !std::mem::replace(&mut flag_planes[(corr, chan)], true)
+                        })
+                        .count()
+                } else {
                     for &(corr, chan) in &row_changes {
-                        let already_flagged =
-                            std::mem::replace(&mut updated_flags[(corr, chan)], true);
-                        row_changed += usize::from(!already_flagged);
+                        flag_planes[(corr, chan)] = true;
                     }
-                }
+                    row_changes.len()
+                };
                 changed.changed_samples += row_changed;
                 flagged_samples += row_changed;
                 updates.insert(row, updated_flags);

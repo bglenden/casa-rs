@@ -163,54 +163,54 @@ fn clip_cells<T: Copy>(
     combine: impl Fn(StokesCombination, T, T) -> T,
 ) -> Result<(), ndarray::ShapeError> {
     let values = values.view().into_dimensionality::<Ix2>()?;
-    let mut visit = |projection: ClipProjection, chan: usize| match projection {
-        ClipProjection::Stored(plane) => {
-            if !flags[(plane, chan)] && clip(values[(plane, chan)]) {
-                changed.push((plane, chan));
-            }
-        }
-        ClipProjection::Stokes(left, right, combination) => {
-            let left_flagged = flags[(left, chan)];
-            let right_flagged = flags[(right, chan)];
-            if (!left_flagged || !right_flagged)
-                && clip(combine(
-                    combination,
-                    values[(left, chan)],
-                    values[(right, chan)],
-                ))
-            {
-                if !left_flagged {
-                    changed.push((left, chan));
+    let mut visit = |projection| match projection {
+        ClipProjection::Stored(plane) if plane < values.nrows() => {
+            for_selected_channel(channels, values.ncols(), |chan| {
+                if !flags[(plane, chan)] && clip(values[(plane, chan)]) {
+                    changed.push((plane, chan));
                 }
-                if !right_flagged {
-                    changed.push((right, chan));
+            });
+        }
+        ClipProjection::Stokes(left, right, combination)
+            if left < values.nrows() && right < values.nrows() =>
+        {
+            for_selected_channel(channels, values.ncols(), |chan| {
+                let left_flagged = flags[(left, chan)];
+                let right_flagged = flags[(right, chan)];
+                if (!left_flagged || !right_flagged)
+                    && clip(combine(
+                        combination,
+                        values[(left, chan)],
+                        values[(right, chan)],
+                    ))
+                {
+                    if !left_flagged {
+                        changed.push((left, chan));
+                    }
+                    if !right_flagged {
+                        changed.push((right, chan));
+                    }
                 }
-            }
+            });
         }
-    };
-    let mut visit_channels = |projection| {
-        let plane_count = values.shape()[0];
-        let in_bounds = match projection {
-            ClipProjection::Stored(plane) => plane < plane_count,
-            ClipProjection::Stokes(left, right, _) => left < plane_count && right < plane_count,
-        };
-        if !in_bounds {
-            return;
-        }
-        match channels {
-            Some(channels) => channels.iter().for_each(|&chan| visit(projection, chan)),
-            None => (0..values.shape()[1]).for_each(|chan| visit(projection, chan)),
-        }
+        _ => {}
     };
     match projections {
-        Some(projections) => projections.iter().copied().for_each(visit_channels),
+        Some(projections) => projections.iter().copied().for_each(visit),
         None => {
-            for plane in 0..values.shape()[0] {
-                visit_channels(ClipProjection::Stored(plane));
+            for plane in 0..values.nrows() {
+                visit(ClipProjection::Stored(plane));
             }
         }
     }
     Ok(())
+}
+
+fn for_selected_channel(channels: Option<&[usize]>, count: usize, visit: impl FnMut(usize)) {
+    match channels {
+        Some(channels) => channels.iter().copied().for_each(visit),
+        None => (0..count).for_each(visit),
+    }
 }
 
 #[cfg(test)]
