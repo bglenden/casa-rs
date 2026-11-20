@@ -43,6 +43,8 @@ def test_setrestfrequency_append_and_active_velocities(casa):
         ({"value": np.array([1420.0], dtype=np.float32), "unit": "MHz"}, [1.42e9]),
         ({"value": [2.0, 3.0], "unit": "m"}, [299792458.0 / 2, 299792458.0 / 3]),
         (["2GHz", "3m", "2Jy"], [2.0e9, 299792458.0 / 3, 2.0e-26]),
+        (" 2GHz,   3MHz ", [2.0e9, 3.0e6]),
+        (["2 GHz", "3 MHz"], [2.0e9, 3.0e6]),
         ("2ns", [2e-9]),
         (0.0, [0.0]),
     ],
@@ -95,11 +97,19 @@ def test_setrestfrequency_rejects_infinity_without_mutating_spectral_state(casa)
     np.testing.assert_array_equal(cs.restfrequency()["value"], [2.0e9, 1.0e9])
 
 
+def test_setrestfrequency_empty_token_list_keeps_the_coordinate_state():
+    cs = tools.coordsys().newcoordsys(spectral=True)
+    assert cs.setrestfrequency(np.array(1.415e9))
+    with pytest.raises(RuntimeError, match="Value is not a valid frequency"):
+        cs.setrestfrequency("  ")
+    np.testing.assert_array_equal(cs.restfrequency()["value"], [1.415e9])
+
+
 def test_setrestfrequency_native_image_interoperability(casa, tmp_path):
     for index, writer in enumerate((tools, casa)):
         image = writer.image()
         path = str(tmp_path / f"spectral-{index}.im")
-        assert image.fromshape(path, [3, 4, 2])
+        assert image.fromshape(path, [3, 4, 1, 2])
         cs = image.coordsys()
         assert cs.setunits(["MHz"], "spectral")
         assert cs.setrestfrequency(["1.420GHz", "1.450GHz"], 1)

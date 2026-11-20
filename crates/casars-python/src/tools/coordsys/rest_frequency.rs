@@ -30,10 +30,19 @@ impl Frequencies {
             };
             return Ok(double_values(&raw, true)?.map(|values| Self::Numeric(values, Some(unit))));
         }
-        Ok(match value.extract::<Variant>()? {
-            Variant::Text(value) => Some(Self::Text(vec![value])),
-            Variant::Texts(values) => Some(Self::Text(values)),
-            _ => double_values(value, false)?.map(|values| Self::Numeric(values, None)),
+        if let Some(values) = double_values(value, false)? {
+            return Ok(Some(Self::Numeric(values, None)));
+        }
+        Ok(match value.extract::<Variant>() {
+            Ok(Variant::Text(value)) => Some(Self::Text(
+                value
+                    .split([' ', ','])
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            )),
+            Ok(Variant::Texts(values)) => Some(Self::Text(values)),
+            _ => None,
         })
     }
 
@@ -47,7 +56,11 @@ impl Frequencies {
                     .iter()
                     .map(|text| read_quantity(text, &format!(" In converting quantity {text}")))
                     .collect::<Result<Vec<_>, _>>()?;
-                let from = quantities[0].unit().clone();
+                let from = quantities
+                    .first()
+                    .ok_or_else(|| raised("Value is not a valid frequency"))?
+                    .unit()
+                    .clone();
                 let values = quantities
                     .iter()
                     .map(|quantity| casacore::get_value(quantity, &from))
