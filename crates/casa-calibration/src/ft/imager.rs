@@ -2,6 +2,7 @@
 //! Prepare a legacy imager model using the object's effective image and FT settings.
 
 use std::collections::BTreeMap;
+use std::f64::consts::TAU;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ use super::settings::{
 };
 use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
-use super::voltage_pattern::ImagerVoltagePattern;
+use super::voltage_pattern::{ImagerVoltagePattern, scratch_voltage_batches};
 use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
 
 /// Geometry installed by the imager before creating a model image.
@@ -66,6 +67,7 @@ pub struct ImagerPrediction {
     voltage_pattern: Option<ImagerVoltagePattern>,
     apply_voltage_pattern: bool,
     voltage_squint: bool,
+    voltage_angle_increment: f64,
     mosaic_voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
@@ -131,6 +133,7 @@ impl Default for ImagerPrediction {
             voltage_pattern: None,
             apply_voltage_pattern: false,
             voltage_squint: false,
+            voltage_angle_increment: TAU,
             mosaic_voltage_pattern: None,
             pending_publication: None,
             partial_batch: None,
@@ -265,6 +268,7 @@ impl ImagerPrediction {
         self.apply_voltage_pattern = pattern.is_some();
         self.voltage_pattern = pattern;
         self.voltage_squint = false;
+        self.voltage_angle_increment = TAU;
     }
 
     /// Update the voltage pattern for future predictions.
@@ -303,6 +307,21 @@ impl ImagerPrediction {
         apply: bool,
         squint: bool,
     ) -> MsResult<()> {
+        self.configure_voltage_pattern_rotation(pattern, apply, squint, TAU)
+    }
+
+    /// Set the sky gain and its legacy parallactic angle refresh increment,
+    /// in radians. A saved model retains the first applied sky gain.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_voltage_pattern_rotation(
+        &mut self,
+        pattern: Option<ImagerVoltagePattern>,
+        apply: bool,
+        squint: bool,
+        increment: f64,
+    ) -> MsResult<()> {
         if self.partial_batch.is_some() || self.pending_publication.is_some() {
             return Err(invalid(
                 "finish publishing the previous imager prediction before changing the voltage pattern",
@@ -311,6 +330,7 @@ impl ImagerPrediction {
         self.voltage_pattern = pattern;
         self.apply_voltage_pattern = apply;
         self.voltage_squint = squint;
+        self.voltage_angle_increment = increment;
         Ok(())
     }
 
@@ -459,6 +479,44 @@ impl ImagerPrediction {
             }
             if scratch && !has_column(ms, ModelData) {
                 return Ok(false);
+            }
+            if self.apply_voltage_pattern && self.voltage_angle_increment != TAU {
+                if !matches!(self.options.gridder, ImagerGridder::Spheroidal | ImagerGridder::Boxcar)
+                    || self.options.single_dish.is_some()
+                    || self.legacy_pbw.is_some()
+                    || self.legacy_aw.is_some()
+                    || self.facet_count() > 1
+                    || self.taylor.0 > 1
+                {
+                    return Err(AttachmentError::PredictionPreparation(invalid(
+                        "changing voltage patterns for this legacy Fourier mode are pending #1520",
+                    )));
+                }
+                if scratch {
+                    let groups = scratch_voltage_batches(ms, selection, self.voltage_angle_increment)
+                        .map_err(AttachmentError::PredictionPreparation)?;
+                    let mut batch = selection.clone();
+                    for rows in groups {
+                        batch.selected_rows = rows;
+                        let Some((mut components, mut images)) = self
+                            .prepare(ms, &batch, &model, true)
+                            .map_err(AttachmentError::PredictionPreparation)?
+                        else {
+                            if writing_scratch {
+                                return Err(AttachmentError::PredictionPreparation(invalid(
+                                    "a model became unreadable after writing a voltage-pattern batch",
+                                )));
+                            }
+                            return Ok(false);
+                        };
+                        self.track_images(ms, &batch, &mut images, moving_anchor)
+                            .map_err(AttachmentError::PredictionPreparation)?;
+                        components.extend(images.iter().map(|image| image.entry.clone()));
+                        writing_scratch |= !components.is_empty();
+                        write_model_scratch(ms, &batch, &components, model.incremental, false, None, lock)?;
+                    }
+                    return Ok(true);
+                }
             }
             let Some((mut components, mut images)) =
                 self.prepare(ms, selection, &model, scratch)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare the legacy imager's voltage pattern on the model image.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,7 +9,10 @@ use casa_coordinates::{Coordinate, DirectionCoordinate};
 use casa_images::PagedImage;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, SubtableId, voltage_pattern};
+use casa_ms::{
+    MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, SubtableId,
+    voltage_pattern,
+};
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::ephemeris::offset_true_angle;
@@ -162,6 +166,81 @@ struct BeamSquint {
     beam: PrimaryBeam,
     reference_hz: f64,
     angle: f64,
+}
+
+/// Partition scratch rows in legacy visibility-buffer order. The first row
+/// in each state supplies the apparent-sky image for that state.
+pub(super) fn scratch_voltage_batches<'a>(
+    ms: &MeasurementSet,
+    selection: &'a ResolvedMsSelection,
+    increment: f64,
+) -> MsResult<impl Iterator<Item = Vec<ResolvedMsSelectionRow>> + use<'a>> {
+    let main = ms.main_table();
+    let key = |row: &ResolvedMsSelectionRow| -> MsResult<_> {
+        let ScalarValue::Int32(array) = main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
+        else {
+            return Err(invalid("ARRAY_ID must be Int32"));
+        };
+        Ok((*array, row.field_id, row.data_desc_id))
+    };
+    let mut ordered = selection
+        .selected_rows
+        .iter()
+        .map(|row| Ok((key(row)?, row)))
+        .collect::<MsResult<Vec<_>>>()?;
+    ordered.sort_unstable_by(|(a, left), (b, right)| {
+        a.cmp(b)
+            .then_with(|| left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds))
+            .then_with(|| left.row_index.cmp(&right.row_index))
+    });
+    let feed_geometry = load_parallactic_angle_state(ms)?;
+    let mut buffer = None;
+    let mut held = None;
+    let mut angles = BTreeMap::new();
+    let mut starts = Vec::new();
+    for (index, &((array, field, dd), row)) in ordered.iter().enumerate() {
+        let time = row.time_mjd_seconds;
+        let current = (array, field, dd, time);
+        if buffer != Some(current) {
+            angles.clear();
+            buffer = Some(current);
+        }
+        let mut angle = |antenna, column| -> MsResult<f32> {
+            let ScalarValue::Int32(feed) = main.cell_accessor(row.row_index, column)?.scalar()?
+            else {
+                return Err(invalid(format!("{column} must be Int32")));
+            };
+            let key = (antenna, *feed);
+            if let Some(&angle) = angles.get(&key) {
+                return Ok(angle);
+            }
+            let angle = feed_geometry
+                .feed_parallactic_angle(time, field, antenna, *feed, row.spectral_window_id)
+                .map_err(invalid)? as f32;
+            angles.insert(key, angle);
+            Ok(angle)
+        };
+        let first = angle(row.antenna1_id, "FEED1")?;
+        let second = angle(row.antenna2_id, "FEED2")?;
+        let refresh = held.is_none_or(|(held_array, held_field, held_angle): (_, _, f32)| {
+            (array, field) != (held_array, held_field)
+                || f64::from((first - held_angle).abs()) > increment
+                || f64::from((second - held_angle).abs()) > increment
+        });
+        if refresh {
+            starts.push(index);
+            held = Some((array, field, second));
+        }
+    }
+    starts.push(ordered.len());
+    Ok((0..starts.len() - 1).map(move |batch| {
+        let mut rows = ordered[starts[batch]..starts[batch + 1]]
+            .iter()
+            .map(|(_, row)| (**row).clone())
+            .collect::<Vec<_>>();
+        rows.sort_unstable_by_key(|row| row.row_index);
+        rows
+    }))
 }
 
 impl ImagerVoltagePattern {
