@@ -395,9 +395,7 @@ fn flagdata_with_persistence(
         .correlation
         .as_deref()
         .filter(|expression| !expression.is_empty() && !expression.starts_with('\0'))
-        .or_else(|| {
-            (request.casa_row_selection && request.mode == FlagDataMode::Clip).then_some("")
-        });
+        .or_else(|| (request.mode == FlagDataMode::Clip).then_some(""));
     let correlations = match correlation {
         Some(expression) => {
             CorrelationSelection::read(ms, request.mode, request.data_column, expression)?

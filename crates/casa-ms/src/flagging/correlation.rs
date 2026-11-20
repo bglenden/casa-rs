@@ -120,14 +120,8 @@ impl CorrelationSelection {
             .collect();
         // CASA disables the clip agent when no stored product matches the
         // in-row filter, before it interprets a visibility expression.
-        let default_has_stokes = default_clip
-            && modes
-                .iter()
-                .flatten()
-                .any(|name| ["Q", "U", "V"].contains(name));
         let mut unknown_clip_expression = None;
         let clip_products = if mode == FlagDataMode::Clip
-            && !default_has_stokes
             && (clip_operator.is_some() || !required.is_empty())
         {
             let visibility = clip_operator
@@ -158,18 +152,19 @@ impl CorrelationSelection {
                 visibility.to_owned()
             };
             let products = if visibility.contains("WVR") {
-                vec!["I"]
+                wvr_clip_products(&visibility, &modes).ok_or_else(unsupported)?
             } else if (clip_operator.is_none() && required.contains("I"))
                 || modes.iter().all(|stored| stored.contains(&"I"))
             {
                 // Without WVR, the mapper skips every buffer with stored I.
                 Vec::new()
             } else {
-                if visibility.contains(['I', 'Q', 'U', 'V']) {
+                if !default_clip && visibility.contains(['I', 'Q', 'U', 'V']) {
                     return Err(unsupported());
                 }
                 RECEPTOR_PRODUCTS
                     .into_iter()
+                    .chain(["Q", "U", "V"].into_iter().filter(|_| default_clip))
                     .filter(|name| visibility.contains(*name))
                     .collect()
             };
@@ -185,11 +180,6 @@ impl CorrelationSelection {
         let by_polarization: Vec<Vec<usize>> = modes
             .iter()
             .map(|names| {
-                // Preserve the existing direct-plane default for Stokes data
-                // while keeping stored-I buffers outside default clipping.
-                if default_has_stokes && !names.contains(&"I") {
-                    return (0..names.len()).collect();
-                }
                 if !required.iter().all(|name| names.contains(name)) {
                     return Vec::new();
                 }
@@ -290,15 +280,41 @@ impl CorrelationSelection {
     }
 }
 
-fn clip_planes(products: &[&str], stored: &[&str]) -> Vec<usize> {
-    if products == ["I"] {
-        return stored
-            .iter()
-            .rposition(|name| *name == "I")
-            .into_iter()
-            .collect();
+fn wvr_clip_products(visibility: &str, modes: &[Vec<&str>]) -> Option<Vec<&'static str>> {
+    let derived = modes
+        .iter()
+        .filter(|stored| stored.contains(&"I"))
+        .any(|stored| {
+            let has_pair = |a, b| stored.contains(&a) && stored.contains(&b);
+            (visibility.contains('Q')
+                && !stored.contains(&"Q")
+                && (has_pair("XX", "YY") || has_pair("RL", "LR")))
+                || (visibility.contains('U')
+                    && !stored.contains(&"U")
+                    && (has_pair("XY", "YX") || has_pair("RL", "LR")))
+        });
+    if derived {
+        return None;
     }
-    if stored.contains(&"I") || products.first().is_none_or(|name| !stored.contains(name)) {
+    // WVR admits a stored-I buffer. CASA's visibility mapper also adds
+    // other requested stored products, with V suppressed for WVR.
+    Some(
+        std::iter::once("I")
+            .chain(
+                RECEPTOR_PRODUCTS
+                    .into_iter()
+                    .chain(["Q", "U"])
+                    .filter(|name| visibility.contains(*name)),
+            )
+            .collect(),
+    )
+}
+
+fn clip_planes(products: &[&str], stored: &[&str]) -> Vec<usize> {
+    let Some(first) = products.first() else {
+        return Vec::new();
+    };
+    if !stored.contains(first) || (stored.contains(&"I") && *first != "I") {
         return Vec::new();
     }
     // The visibility mapper resolves duplicate labels to the last stored
