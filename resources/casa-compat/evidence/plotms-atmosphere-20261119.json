@@ -1,24 +1,27 @@
 {
   "schema_version": 1,
   "execution_date": "2026-11-19",
-  "revision": "85e691c397f7cdb2097e11e65de5772a4dca1310",
+  "revision": "12d08ef332634591a6ad4611408f4cc178f601c5",
   "casa_version": "6.7.6.14",
   "casaplotms_version": "2.9.1",
   "command": "casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore>",
   "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on the same current-format bandpass and gain tables, with optional associated weather, water-vapour and receiver tables.",
   "result": "passed",
-  "text_exports": 17,
-  "points": 849,
+  "text_exports": 21,
+  "points": 985,
   "paired_errors": 1,
-  "rendered_coordinates": 16,
+  "rendered_coordinates": 19,
   "normalized_rms": {
+    "wide-selection": 3.93199e-05,
+    "wide-time-average": 2.63271e-05,
     "weather-transmission": 3.42394e-06,
     "weather-sky": 9.15578e-05,
     "signal-and-image": 4.40529e-06,
-    "sky-and-image": 0.000120243
+    "sky-and-image": 0.000120243,
+    "odd-image": 3.26408e-05
   },
   "pointwise_relative_tolerance": {
-    "default_cases": 1.2e-05,
-    "measured_weather_or_receiver": 0.0002
+    "ordinary_coordinates": 1.2e-05,
+    "wide_band_or_measured_atmospheric_values": 0.0002
   }
 }

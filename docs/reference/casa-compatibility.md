@@ -1576,10 +1576,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-atmosphere"></a>
 ##### atmosphere
 
-**Same-input atmospheric overlays — passed.** 17 exports, 849 selected coordinates, one Python axis error and 16 rendered sky-temperature coordinates matched. The maximum normalized RMS for the four measured-weather and receiver overlays was 0.00012. CASA 6.7.6.14 and casaplotms 2.9.1 on the same current-format bandpass and gain tables, with optional associated weather, water-vapour and receiver tables.
+**Same-input atmospheric overlays — passed.** 21 exports, 985 selected coordinates, one Python axis error and 19 rendered coordinates matched. Seven wide-band, weather and receiver overlay cases had a maximum normalized RMS of 0.00012. CASA 6.7.6.14 and casaplotms 2.9.1 on the same current-format bandpass and gain tables, with optional associated weather, water-vapour and receiver tables.
 
-- [tools/casa-compat/plotms_atmosphere_oracle.py](https://github.com/bglenden/casa-rs/blob/85e691c397f7cdb2097e11e65de5772a4dca1310/tools/casa-compat/plotms_atmosphere_oracle.py)
-- Revision: `85e691c397f7cdb2097e11e65de5772a4dca1310`; CASA: `6.7.6.14`.
+- [tools/casa-compat/plotms_atmosphere_oracle.py](https://github.com/bglenden/casa-rs/blob/12d08ef332634591a6ad4611408f4cc178f601c5/tools/casa-compat/plotms_atmosphere_oracle.py)
+- Revision: `12d08ef332634591a6ad4611408f4cc178f601c5`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-atmosphere-20261119.json`.
 
