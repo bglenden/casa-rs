@@ -326,6 +326,12 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         correlation_vector = _coerce_flagdata_options(values)
         try:
             return run(name, **values).value
+        except TaskParameterError as error:
+            completion = error.completion
+            if (completion.parameter == "datacolumn"
+                    and completion.message == "Failed to parse parameters for mode clip"):
+                raise ValueError(completion.message) from error
+            raise
         except TaskExecutionError as error:
             completion = error.completion
             if completion.parameter == "correlation":

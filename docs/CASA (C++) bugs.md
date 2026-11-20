@@ -3957,6 +3957,32 @@ result meets the clipping criterion. The paired Stokes clip oracle
 reproduces the CASA flags and compares the native flags with independently
 calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Weight clipping can ignore defined channel weights
+
+In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="WEIGHT_SPECTRUM")`
+can use scalar WEIGHT for all rows when the first selected row has an
+undefined spectrum. The same behavior occurs with `datacolumn="WEIGHT"`.
+For example, clipping inside 0.9 to 1.1 flags a channel in a later row
+whose spectral weight is 2 because its scalar weight is 1.
+
+casa-rs uses scalar weights for the undefined cells in this case and uses
+the stored spectra where present. The paired test verifies the extra CASA
+flags and the native channel mask independently. It also checks that an
+undefined cell following a defined first spectrum still raises a read
+error. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+## Residual clipping can use the wrong observed column
+
+In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="RESIDUAL_DATA")`
+uses FLOAT_DATA as the observed operand when an MS contains both DATA
+and FLOAT_DATA. On the paired fixture this leaves a DATA residual of 1
+unflagged when clipping inside 0.9 to 1.6.
+
+casa-rs subtracts the complex MODEL_DATA from DATA when both observed
+columns exist. An MS whose only observed column is FLOAT_DATA uses that
+column and keeps the imaginary part of the model in the residual. The
+oracle verifies the masks and original flag backups. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## An overflowing observation selector flags a different observation
 
 In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.
