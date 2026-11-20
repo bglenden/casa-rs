@@ -44,16 +44,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (source = None, convolved = None), text_signature = "($self, source=[], convolved=[])")]
-    fn beamforconvolvedsize(
-        &self,
-        source: Option<&Bound<'_, PyAny>>,
-        convolved: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("beamforconvolvedsize")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None), text_signature = "($self, region={})")]
     fn boundingbox(&self, region: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("boundingbox")
@@ -209,16 +199,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("decompose")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (source = None, beam = None), text_signature = "($self, source=[], beam=[])")]
-    fn deconvolvefrombeam(
-        &self,
-        source: Option<&Bound<'_, PyAny>>,
-        beam: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("deconvolvefrombeam")
     }
 
     /// Not yet implemented in casa-rs.

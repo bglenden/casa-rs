@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
 
 mod attachment;
+mod beam_deconvolution;
 mod beam_edit;
 mod beam_rotate;
 mod beam_view;

@@ -66,7 +66,7 @@ const METHODS: &[Method] = &[
             param("convolved", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "boundingbox",
@@ -273,7 +273,7 @@ const METHODS: &[Method] = &[
         "deconvolvefrombeam",
         &[param("source", K::Any, Empty), param("beam", K::Any, Empty)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "deviation",
