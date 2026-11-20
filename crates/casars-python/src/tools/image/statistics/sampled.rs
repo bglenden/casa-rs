@@ -17,11 +17,11 @@ const COLS: usize = BASIC.len() + QUANTILES.len();
 pub(super) fn collect<T: ImagePixel + StatsElement>(
     selection: &impl ImageInterface<T>,
     chunk: &Chunk,
-    options: &StatsOptions,
+    options: &StatsOptions<'_>,
     mask: Option<&ArrayD<bool>>,
     flux_scale: Option<f64>,
     record: &mut Vec<(&'static str, CasaValue)>,
-) -> PyResult<()> {
+) -> PyResult<Vec<usize>> {
     let rank = chunk.size.len();
     let display_axes = if options.axes.is_empty() {
         Vec::new()
@@ -47,6 +47,8 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
     let mut start = vec![0; rank];
     let stride = vec![1; rank];
     let mut position = start.clone();
+    let mut iterations = Vec::new();
+    let chauvenet = matches!(options.algorithm, StatisticsAlgorithm::Chauvenet { .. });
     let biweight = matches!(options.algorithm, StatisticsAlgorithm::Biweight { .. });
     for mut plane in 0..plane_count {
         for &axis in &display_axes {
@@ -85,9 +87,18 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
         }
         if sample.is_empty() && !biweight {
             rows.push([0.0; COLS]);
+            if chauvenet {
+                iterations.push(0);
+            }
             continue;
         }
-        let mut row = match compute_robust_stats(&sample, &options.algorithm).map_err(raised)? {
+        let result = compute_robust_stats(&sample, &options.algorithm).map_err(raised)?;
+        if let RobustStats::Sample(stats) = result
+            && let Some(count) = stats.chauvenet_iterations
+        {
+            iterations.push(count);
+        }
+        let mut row = match result {
             RobustStats::Sample(stats) if stats.npts > 0.0 => {
                 if display_axes.is_empty() {
                     extrema = [stats.minpos, stats.maxpos].map(|offset| {
@@ -174,5 +185,5 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
         }
         add_extrema(record, selection.coordinates(), chunk, extrema)?;
     }
-    Ok(())
+    Ok(iterations)
 }
