@@ -565,12 +565,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (other), text_signature = "($self, other)")]
-    fn isconform(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("isconform")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (writelock = None, nattempts = None), text_signature = "($self, writelock=False, nattempts=0)")]
     fn lock(
         &self,
