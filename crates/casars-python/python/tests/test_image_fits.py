@@ -99,7 +99,10 @@ def test_subimage_of_attached_fits_survives_parent_close(tmp_path, oracle, bitpi
         _assert_value(reopened.getchunk(getmask=True), np.array([[False], [True]]))
         assert reopened.brightnessunit() == "Jy/beam"
         assert reopened.history()[-2] == "Ran ia.subimage"
-        records.append(reopened.coordsys().torecord())
+        coordinates = reopened.coordsys()
+        _assert_value(coordinates.referencepixel()["numeric"], np.array([0.0, -1.0]))
+        records.append(coordinates.torecord())
+        assert coordinates.done()
         assert reopened.done()
     _assert_value(*records)
     assert source.read_bytes() == content
