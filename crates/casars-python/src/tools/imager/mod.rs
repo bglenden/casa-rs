@@ -343,11 +343,10 @@ impl PyImager {
         self.with_state(py, |state| {
             let pattern = (dovp || !usedefaultvp).then(|| ImagerVoltagePattern {
                 table: (!usedefaultvp).then(|| PathBuf::from(vptable)),
-                squint: dosquint,
             });
             state
                 .prediction
-                .configure_voltage_pattern_application(pattern, dovp)
+                .configure_voltage_pattern_squint(pattern, dovp, dosquint)
                 .map_err(runtime_error)?;
             state.model_in_sky_equation = false;
             Ok(())

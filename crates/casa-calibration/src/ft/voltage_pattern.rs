@@ -143,8 +143,6 @@ pub(super) fn legacy_radial_pattern(path: &Path, telescope: &str) -> MsResult<Pr
 pub struct ImagerVoltagePattern {
     /// Custom pattern table. With no table, use the telescope's default.
     pub table: Option<PathBuf>,
-    /// Apply the default circular-feed beam squint to polarized models.
-    pub squint: bool,
 }
 
 #[derive(Clone)]
@@ -167,6 +165,7 @@ impl ImagerVoltagePattern {
         &self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
+        squint: bool,
     ) -> MsResult<PreparedVoltagePattern> {
         let main = ms.main_table();
         let mut first = None;
@@ -223,7 +222,7 @@ impl ImagerVoltagePattern {
                 .observation_direction_j2000(time, usize::try_from(field).map_err(invalid)?)?,
         };
         let frame = engine.spectral_frame_observatory_direction(time, centre.clone())?;
-        let squint = if self.squint {
+        let squint = if squint {
             if self.table.is_some() || telescope != "VLA" {
                 return Err(invalid(
                     "this legacy voltage-pattern squint is pending #1520",
