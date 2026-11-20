@@ -923,7 +923,17 @@ fn build_export_keywords(
             continue;
         }
 
-        if let Some((old_i, old_j)) = split_pc_keyword(name) {
+        if let Some((axis, parameter)) = split_indexed_keyword(name, "PV") {
+            if let Some(new_axis) = axis
+                .checked_sub(1)
+                .and_then(|idx| plan.old_to_new.get(idx).copied().flatten())
+            {
+                out.push((format!("PV{new_axis}_{parameter}"), keyword.value.clone()));
+            }
+            continue;
+        }
+
+        if let Some((old_i, old_j)) = split_indexed_keyword(name, "PC") {
             if let (Some(new_i), Some(new_j)) = (
                 old_i
                     .checked_sub(1)
@@ -962,8 +972,8 @@ fn split_axis_keyword(name: &str) -> Option<(&'static str, usize)> {
     None
 }
 
-fn split_pc_keyword(name: &str) -> Option<(usize, usize)> {
-    let rest = name.strip_prefix("PC")?;
+fn split_indexed_keyword(name: &str, prefix: &str) -> Option<(usize, usize)> {
+    let rest = name.strip_prefix(prefix)?;
     let (lhs, rhs) = rest.split_once('_')?;
     if lhs.is_empty()
         || rhs.is_empty()

@@ -274,6 +274,7 @@ fn read_primary_fits_header(
         }
     }
     for axis in 1..=shape.len() {
+        let ctype_key = format!("CTYPE{axis}");
         for prefix in ["CUNIT", "CTYPE"] {
             let key = format!("{prefix}{axis}");
             if let Some(value) = read_optional_key::<String>(fits, hdu, &key)? {
@@ -284,6 +285,18 @@ fn read_primary_fits_header(
             let key = format!("{prefix}{axis}");
             if let Some(value) = read_optional_key::<f64>(fits, hdu, &key)? {
                 header.set(key, FitsValue::Float(value));
+            }
+        }
+        if header.get_string(&ctype_key).is_some_and(|ctype| {
+            ctype
+                .rsplit_once('-')
+                .is_some_and(|(_, projection)| projection.eq_ignore_ascii_case("AZP"))
+        }) {
+            for parameter in 1..=2 {
+                let key = format!("PV{axis}_{parameter}");
+                if let Some(value) = read_optional_key::<f64>(fits, hdu, &key)? {
+                    header.set(key, FitsValue::Float(value));
+                }
             }
         }
     }
