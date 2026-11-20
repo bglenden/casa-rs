@@ -702,12 +702,7 @@ impl ImagerPrediction {
             let moving = matches!(&self.definition, Some(ImageDefinition::Requested(request)) if request.moving_source.is_some());
             let components =
                 model.components.is_some() && (!choice.combined || !model.images.is_empty());
-            if terms > 1
-                || facets > 1
-                || moving
-                || components
-                || self.options.frequency_interpolation != 0
-            {
+            if terms > 1 || facets > 1 || moving || components {
                 return Err(invalid(
                     "this single-dish imager model combination is pending #1520",
                 ));
@@ -759,6 +754,10 @@ impl ImagerPrediction {
                 _ => None,
             },
         };
+        if dish.is_some_and(|choice| choice.combined) {
+            // GridBoth keeps the default mapper of each child machine.
+            geometry.settings.frequency_interpolation = 0;
+        }
         let mut images = Vec::new();
         for (index, path) in model.images.iter().enumerate() {
             let taylor = reference_hz.map(|reference_hz| TaylorTerm {

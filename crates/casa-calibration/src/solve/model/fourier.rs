@@ -203,7 +203,7 @@ impl PreparedFourierModel {
             ));
         }
         let axis = image_spectral_axis(image, channels)?;
-        let (basis, resampler) = spectral_layout(record, &axis, continuum_basis)?;
+        let (basis, resampler) = spectral_layout(record, &axis, continuum_basis, false)?;
         let tracking = tracking::Tracking::load(terms[0])?;
         let (kernels, mosaic) = if mosaic::is_mosaic(terms[0]) {
             let (kernels, layout) = MosaicLayout::load(
@@ -595,10 +595,11 @@ fn uses_projected_tangent(
     Ok(!telescope.contains("ATCA") && !telescope.contains("WSRT"))
 }
 
-fn spectral_layout(
+pub(super) fn spectral_layout(
     record: &RecordValue,
     axis: &SpectralAxis,
     continuum_basis: Basis,
+    retain_saved_interpolation: bool,
 ) -> Result<(Basis, SpectralResampler), GainSolveError> {
     let channels = axis.channels();
     if channels == 1 {
@@ -610,20 +611,23 @@ fn spectral_layout(
             "invalid channel axis for virtual Fourier model",
         ));
     }
-    // FTMachine::fromRecord sets nearest neighbour when reopening a
-    // prediction grid, even if the original tclean used another method.
+    // FTMachine::fromRecord restores nearest neighbour for Fourier grids.
+    // Native SDGrid recipes retain the interpolation the writer used.
     let live_frequencies = match record.get("casars_live_image_frequency") {
         Some(Value::Array(ArrayValue::Float64(frequencies))) => Some(frequencies),
         _ => None,
     };
-    let to_vis = record.get("tovis");
+    let reopen_with_nearest = !retain_saved_interpolation
+        && matches!(
+            record.get("tovis"),
+            Some(Value::Scalar(ScalarValue::Bool(true)))
+        );
     let interpolation = record.get("freqinterpmethod");
     let spline = live_frequencies.is_some()
-        && !matches!(to_vis, Some(Value::Scalar(ScalarValue::Bool(true))))
+        && !reopen_with_nearest
         && matches!(interpolation, Some(Value::Scalar(ScalarValue::Int32(3))));
-    let kernel = match (to_vis, interpolation) {
-        (Some(Value::Scalar(ScalarValue::Bool(true))), _)
-        | (_, Some(Value::Scalar(ScalarValue::Int32(0)))) => SpectralKernel::Nearest,
+    let kernel = match (reopen_with_nearest, interpolation) {
+        (true, _) | (_, Some(Value::Scalar(ScalarValue::Int32(0)))) => SpectralKernel::Nearest,
         (_, Some(Value::Scalar(ScalarValue::Int32(1)))) => SpectralKernel::Linear,
         (_, Some(Value::Scalar(ScalarValue::Int32(2)))) => SpectralKernel::Cubic,
         (_, Some(Value::Scalar(ScalarValue::Int32(3)))) if spline => SpectralKernel::Cubic,

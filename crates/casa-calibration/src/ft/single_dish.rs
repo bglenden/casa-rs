@@ -23,7 +23,7 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::image::{
     ImageModel, coordinate_index, first_correlations, grid_stokes, match_channels,
-    polarization_coordinate, record_selection, selection_mask,
+    polarization_coordinate, record_selection, selection_mask, validate_short_cubic,
 };
 use super::moving_source::first_imager_row;
 use super::settings::{ImagerSingleDishKernel, PredictionGeometry};
@@ -460,6 +460,23 @@ fn model_record(
         "spwchanselflag",
         Value::Array(ArrayValue::Int32(selection_mask(ms, selected)?)),
     );
+    if channels > 1 && geometry.settings.frequency_interpolation != 0 {
+        let input_axis = spectral_with_runtime(spectral)?;
+        let input = (0..channels)
+            .map(|channel| {
+                input_axis
+                    .world_frequency_hz(channel as f64)
+                    .map_err(invalid)
+            })
+            .collect::<MsResult<Vec<_>>>()?;
+        if geometry.settings.frequency_interpolation == 2 && channels < 4 {
+            validate_short_cubic(ms, selected, &frequencies, geometry.frequency_frame_valid)?;
+        }
+        record.upsert(
+            "casars_live_image_frequency",
+            Value::Array(ArrayValue::from_f64_vec(input)),
+        );
+    }
     Ok(record)
 }
 

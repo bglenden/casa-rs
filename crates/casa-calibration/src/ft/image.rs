@@ -449,7 +449,7 @@ fn automatic_w_planes(
     })
 }
 
-fn validate_short_cubic(
+pub(super) fn validate_short_cubic(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     matching_frequencies: &[f64],
@@ -470,10 +470,12 @@ fn validate_short_cubic(
             std::collections::btree_map::Entry::Vacant(window) => {
                 let raw = windows.chan_freq(id as usize)?;
                 let frequencies = if let Some(channel) = selected.channel_selections.get(&id) {
-                    channel
-                        .indices(raw.len())?
-                        .into_iter()
-                        .map(|index| raw[index])
+                    let (span, stride) = channel_span(channel);
+                    raw.get(span)
+                        .ok_or_else(|| invalid("legacy cubic selection is outside its window"))?
+                        .iter()
+                        .step_by(stride)
+                        .copied()
                         .collect()
                 } else {
                     raw
