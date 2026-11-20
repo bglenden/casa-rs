@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_tables::LockType;
 use casa_types::RecordValue;
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
@@ -102,7 +101,7 @@ impl PyImageTool {
             let region = region?;
             let mask = mask?;
             let mut image = attachment.lock();
-            attachment.require_lock(&mut image, LockType::Read)?;
+            attachment.require_pixel_read_lock(&mut image)?;
             let shape = image.shape();
             let chunk = Chunk::from(Selection::new(shape, &region, "getregion")?);
             let axes = collapse_axes(

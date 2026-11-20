@@ -1,5 +1,7 @@
 """Classical statistics through the CASA-compatible image tool."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -12,6 +14,22 @@ def casa():
     package = pytest.importorskip("casatools")
     assert package.version_string().replace("-", ".") == "6.7.6.14"
     return package
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_lazy_statistics_reacquire_native_input_read_lock(casa, tmp_path):
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    for backend in (casa, tools):
+        source = backend.image()
+        path = str(tmp_path / f"{backend.__name__}.im")
+        assert source.fromarray(path, pixels)
+        assert source.done()
+        result = source.imagecalc(pixels=f'"{path}" + 1')
+        assert result.unlock()
+        np.testing.assert_array_equal(result.haslock(), [False, False])
+        np.testing.assert_array_equal(result.statistics()["sum"], [78.0])
+        np.testing.assert_array_equal(result.haslock(), [True, False])
+        assert result.done()
 
 
 @pytest.mark.parametrize("pixel_type", ["f", "d"])

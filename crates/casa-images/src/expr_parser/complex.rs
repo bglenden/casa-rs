@@ -25,7 +25,7 @@ fn as_double(value: Complex32) -> Complex64 {
     Complex64::new(f64::from(value.re), f64::from(value.im))
 }
 
-fn promote<T: ImageExprValue + PartialOrd + ExprValueConvert>(
+pub(super) fn promote<T: ImageExprValue + PartialOrd + ExprValueConvert>(
     node: ExprNode<'_, T>,
     pos: usize,
 ) -> Result<ImageExprBuilder<'_, Complex64>, ExprParseError> {

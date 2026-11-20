@@ -5,7 +5,6 @@ use casa_images::{ImageInterface, ImagePixel, analysis::statistics_flux_scale};
 use casa_lattices::{
     FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm, StatsElement,
 };
-use casa_tables::LockType;
 use casa_types::quanta::{Quantity, Unit};
 use ndarray::{ArrayD, Zip};
 use pyo3::prelude::*;
@@ -388,7 +387,7 @@ impl PyImageTool {
             let single_precision = matches!(&*image, ImageHandle::Float(_));
             let region = region?;
             let mask = expression?;
-            attachment.require_lock(&mut image, LockType::Read)?;
+            attachment.require_pixel_read_lock(&mut image)?;
             let result = (|| {
                 let shape = image.shape();
                 let axes = axes.map_or_else(Vec::new, |arg| arg.0);

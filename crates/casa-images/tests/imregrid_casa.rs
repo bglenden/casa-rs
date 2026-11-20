@@ -35,6 +35,11 @@ fn regrid_products_match_casa() {
     copy_inputs(&directory, workspace.path());
     for (name, case) in evidence["cases"].as_object().unwrap() {
         let output = format!("{name}.out");
+        let path = workspace.path().join(&output);
+        let existing = case["existing"].as_str().map(|source| {
+            copy_inputs(&workspace.path().join(source), &path);
+            fs::read(path.join("table.dat")).unwrap()
+        });
         let mut values = case["params"].clone();
         values["output"] = json!(output);
         let mut child = Command::new(env!("CARGO_BIN_EXE_imregrid"))
@@ -57,27 +62,70 @@ fn regrid_products_match_casa() {
             .unwrap();
         let reply = child.wait_with_output().unwrap();
         let message = String::from_utf8_lossy(&reply.stdout);
-        let path = workspace.path().join(output);
         let Some(expected) = case.get("product") else {
             assert!(!reply.status.success(), "{name}: {message}");
-            assert!(!path.exists(), "{name} published a refused output");
+            if let Some(before) = existing {
+                assert!(
+                    message.contains("output already exists"),
+                    "{name}: {message}"
+                );
+                assert_eq!(fs::read(path.join("table.dat")).unwrap(), before, "{name}");
+                assert!(matches!(
+                    AnyPagedImage::open(&path).unwrap(),
+                    AnyPagedImage::Float32(_)
+                ));
+            } else {
+                assert!(!path.exists(), "{name} published a refused output");
+            }
+            if name.ends_with("_frame_refused") {
+                assert!(
+                    message.contains("This method only supports Float valued images"),
+                    "{name}: {message}"
+                );
+            }
+            if name == "complex_sfl_frame" {
+                assert!(
+                    message.contains("SFL projection cannot be rotated"),
+                    "{name}: {message}"
+                );
+            }
             continue;
         };
         assert!(reply.status.success(), "{name}: {message}");
         let metadata = case.get("preserved_input_metadata").unwrap_or(expected);
         match AnyPagedImage::open(path).unwrap() {
-            AnyPagedImage::Float32(image) => compare(name, &image, expected, metadata),
-            AnyPagedImage::Float64(image) => compare(name, &image, expected, metadata),
-            _ => panic!("{name} returned an unexpected pixel type"),
+            AnyPagedImage::Float32(image) => {
+                assert!(expected["pixel_type"].is_null(), "{name}: real result");
+                compare(name, &image, expected, metadata, |value| {
+                    [f64::from(value), 0.0]
+                });
+            }
+            AnyPagedImage::Float64(image) => {
+                assert!(expected["pixel_type"].is_null(), "{name}: real result");
+                compare(name, &image, expected, metadata, |value| [value, 0.0]);
+            }
+            AnyPagedImage::Complex32(image) => {
+                assert_eq!(expected["pixel_type"], "complex", "{name}");
+                compare(name, &image, expected, metadata, |value| {
+                    [f64::from(value.re), f64::from(value.im)]
+                });
+            }
+            AnyPagedImage::Complex64(image) => {
+                assert_eq!(expected["pixel_type"], "dcomplex", "{name}");
+                compare(name, &image, expected, metadata, |value| {
+                    [value.re, value.im]
+                });
+            }
         }
     }
 }
 
-fn compare<T: ImagePixel + Into<f64> + Copy>(
+fn compare<T: ImagePixel + Copy>(
     name: &str,
     image: &PagedImage<T>,
     expected: &Value,
     metadata: &Value,
+    components: impl Fn(T) -> [f64; 2],
 ) {
     assert_eq!(json!(image.shape()), expected["shape"], "{name}");
     assert_eq!(json!(image.axis_names()), expected["names"], "{name}");
@@ -103,9 +151,16 @@ fn compare<T: ImagePixel + Into<f64> + Copy>(
     let (mut residual, mut power) = (0.0, 0.0);
     for (pixel, &actual) in data.view().reversed_axes().iter().enumerate() {
         if mask[pixel] {
-            let reference = expected["pixels"][pixel].as_f64().unwrap();
-            residual += (actual.into() - reference).powi(2);
-            power += reference.powi(2);
+            let value = &expected["pixels"][pixel];
+            let reference = if value.is_array() {
+                [value[0].as_f64().unwrap(), value[1].as_f64().unwrap()]
+            } else {
+                [value.as_f64().unwrap(), 0.0]
+            };
+            for (actual, reference) in components(actual).into_iter().zip(reference) {
+                residual += (actual - reference).powi(2);
+                power += reference.powi(2);
+            }
         }
     }
     let normalized_rms = (residual / power).sqrt();
