@@ -23,6 +23,16 @@ const XX_YY: [Correlation; 2] = [Correlation::XX, Correlation::YY];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 const UVW_M: [f64; 3] = [37.0, -21.0, 4.0];
 
+#[test]
+fn legacy_spline_model_window_keeps_the_full_axis() {
+    let image = SpectralAxis::new(100e9, 2e6, 10).unwrap();
+    let spline = SpectralResampler::legacy_spline(image.clone(), image);
+    assert_eq!(
+        spline.model_planes(PlaneRange::new(2, 3), 1e6),
+        PlaneRange::new(0, 10),
+    );
+}
+
 fn context() -> RowContext {
     RowContext {
         native_frequency_ratio: 1.0,

@@ -491,12 +491,6 @@ impl SpectralResampler {
         degridded_channels(axis.channels, self.prediction_channels(native), map)
     }
 
-    fn uses_legacy_spline(&self) -> bool {
-        self.legacy_prediction_map
-            .as_ref()
-            .is_some_and(|mapping| mapping.spline)
-    }
-
     /// Validate CASA's four-image-plane minimum for live cubic prediction
     /// before a caller opens the scratch writer. Single-channel and entirely
     /// unmapped buffers bypass interpolation.

@@ -839,6 +839,12 @@ impl SpectralResampler {
         resampler
     }
 
+    fn uses_legacy_spline(&self) -> bool {
+        self.legacy_prediction_map
+            .as_ref()
+            .is_some_and(|mapping| mapping.spline)
+    }
+
     /// Set the original channel `start`, `count`, and `stride` of the next
     /// legacy visibility buffer. Ordinary resamplers ignore this selection.
     pub fn set_legacy_prediction_selection(&mut self, selection: Option<[usize; 3]>) {
@@ -945,10 +951,14 @@ impl SpectralResampler {
     /// cubic) (`interpolateFrequencyFromgrid`). So every model plane a
     /// wave's samples reach lies within `⌈1.5 + s/|Δ|⌉` planes of the wave
     /// (`⌈2.5 + 3s/|Δ|⌉` for a cubic). Direct and nearest sampling predict
-    /// a native on its own plane: no halo.
+    /// a native on its own plane: no halo. A legacy spline requires the
+    /// full image axis for its second derivatives.
     #[must_use]
     pub fn model_halo(&self, native_spacing_hz: f64) -> u32 {
         match &self.sampling {
+            Sampling::Interpolated(axis, _) if axis.channels > 1 && self.uses_legacy_spline() => {
+                axis.channels
+            }
             Sampling::Interpolated(axis, order) if axis.channels > 1 => {
                 let (prediction, natives) = match order {
                     Order::Linear => (1.0, 1.0),
