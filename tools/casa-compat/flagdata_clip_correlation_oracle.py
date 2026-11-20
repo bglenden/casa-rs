@@ -144,7 +144,7 @@ def compare_preview_and_backup(vis):
             assert_same_visibilities(path, flags_before)
             assert Path(f"{path}.flagversions/flags.flagdata_1").is_dir()
 
-    for expression in ("ABS_XX", "IMAG_XX", "XX,QQ", "WVR"):
+    for expression in ("ABS_I", "NORM_Q", "XX,QQ", "WVR"):
         try:
             tasks.flagdata(vis=vis, mode="clip", correlation=expression, clipminmax=[1, 2])
         except RuntimeError as error:
