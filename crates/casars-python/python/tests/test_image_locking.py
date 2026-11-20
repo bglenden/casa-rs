@@ -217,6 +217,7 @@ assert image.done()
         owner.done()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
 @pytest.mark.parametrize(
     "operation,read,write",
     [
