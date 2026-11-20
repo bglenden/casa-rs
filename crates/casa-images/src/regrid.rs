@@ -52,9 +52,11 @@ use num_complex::Complex32;
 
 use crate::{ImageError, ImageInterface, ImagePixel};
 
+mod pixel;
 mod spectral;
 mod task;
 
+pub(crate) use pixel::RegridPixel;
 pub(crate) use task::{
     TaskRegridOptions, frame_from_template, regrid_direction_frame, regrid_task,
 };
@@ -593,8 +595,9 @@ where
             method,
             scale,
         },
-        |value: T| value.into(),
-        |value| T::from(value as f32),
+        1,
+        |value: T, _| value.into(),
+        |_, _, value| T::from(value as f32),
     );
     if let Some(spectral) = &plan.spectral {
         (out_data, out_mask) = spectral.apply(&out_data, &out_mask, &template.shape);
@@ -620,8 +623,9 @@ fn sample_direction_planes<T>(
     data: &ArrayD<T>,
     mask: Option<&ArrayD<bool>>,
     sampling: DirectionSampling<'_>,
-    read: impl Fn(T) -> f64,
-    write: impl Fn(f64) -> T,
+    components: usize,
+    read: impl Fn(T, usize) -> f64,
+    write: impl Fn(T, usize, f64) -> T,
 ) -> (ArrayD<T>, ArrayD<bool>)
 where
     T: ImagePixel + Copy,
@@ -641,26 +645,29 @@ where
     let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&direction_shape).f(), false);
     let mut plane = vec![0.0f64; in_plane[0] * in_plane[1]];
     let mut plane_mask = mask.map(|_| vec![true; plane.len()]);
-    let mut out_values = vec![0.0f64; out_plane[0] * out_plane[1]];
+    let mut out_values = vec![T::default_value(); out_plane[0] * out_plane[1]];
     let mut out_valid = vec![false; out_values.len()];
     let planes = PlaneIndex::new(input_shape, in_axis);
     let out_planes = PlaneIndex::new(&direction_shape, out_axis);
     for plane_number in 0..planes.count {
-        planes.read(plane_number, data, &mut plane, |v| read(*v));
         if let (Some(values), Some(mask)) = (plane_mask.as_mut(), mask) {
             planes.read(plane_number, mask, values, |v| *v);
         }
-        let view = Plane {
-            data: &plane,
-            mask: plane_mask.as_deref(),
-            shape: in_plane,
-        };
-        for (k, at) in positions.iter().enumerate() {
-            let sampled = at.and_then(|at| view.sample(method, at));
-            out_values[k] = sampled.map_or(0.0, |value| scale * value);
-            out_valid[k] = sampled.is_some();
+        for component in 0..components {
+            planes.read(plane_number, data, &mut plane, |v| read(*v, component));
+            let view = Plane {
+                data: &plane,
+                mask: plane_mask.as_deref(),
+                shape: in_plane,
+            };
+            for (k, at) in positions.iter().enumerate() {
+                let sampled = at.and_then(|at| view.sample(method, at));
+                let value = sampled.map_or(0.0, |value| scale * value);
+                out_values[k] = write(out_values[k], component, value);
+                out_valid[k] = sampled.is_some();
+            }
         }
-        out_planes.write(plane_number, &out_values, &mut out_data, &write);
+        out_planes.write(plane_number, &out_values, &mut out_data, |v| v);
         out_planes.write(plane_number, &out_valid, &mut out_mask, |v| v);
     }
     (out_data, out_mask)

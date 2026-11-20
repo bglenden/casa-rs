@@ -33,6 +33,8 @@ pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,
     beam_view: Mutex<BeamView>,
+    retained_inputs: Vec<Self>,
+    operand_paths: Vec<PathBuf>,
 }
 
 impl AttachedImage {
@@ -46,6 +48,8 @@ impl AttachedImage {
             }),
             key: None,
             beam_view: Mutex::new(beam_view),
+            retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         }
     }
 
@@ -114,6 +118,8 @@ impl AttachedImage {
                 image,
                 key: Some(key.to_path_buf()),
                 beam_view: Mutex::default(),
+                retained_inputs: Vec::new(),
+                operand_paths: Vec::new(),
             })
     }
 
@@ -158,6 +164,8 @@ impl AttachedImage {
             image,
             key: Some(key.to_path_buf()),
             beam_view: Mutex::new(beam_view),
+            retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         };
         opened.check_bound_name(&opened.lock())?;
         Ok(opened)
@@ -183,6 +191,28 @@ impl AttachedImage {
         self.beam_view
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn open_expression_inputs<'a>(
+        paths: impl Iterator<Item = &'a Path>,
+    ) -> PyResult<Vec<Self>> {
+        paths
+            .filter(|path| !path.is_file())
+            .map(Self::open)
+            .collect()
+    }
+
+    pub(super) fn retain_expression_inputs(&mut self, inputs: Vec<Self>, paths: Vec<PathBuf>) {
+        self.retained_inputs = inputs;
+        self.operand_paths = paths;
+    }
+
+    pub(super) fn expression_inputs(&self) -> &[Self] {
+        &self.retained_inputs
+    }
+
+    pub(super) fn operand_paths(&self) -> &[PathBuf] {
+        &self.operand_paths
     }
 
     pub(super) fn is_persistent(&self) -> bool {
@@ -306,6 +336,8 @@ impl AttachedImage {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
                 beam_view: Mutex::new(self.beam_view().clone()),
+                retained_inputs: Vec::new(),
+                operand_paths: Vec::new(),
             });
         }
         if old_name
@@ -381,6 +413,8 @@ impl AttachedImage {
             image,
             key: Some(target),
             beam_view: Mutex::new(beam_view),
+            retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         })
     }
 

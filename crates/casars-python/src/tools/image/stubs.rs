@@ -67,16 +67,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels, verbose = None), text_signature = "($self, pixels, verbose=True)")]
-    fn calc(
-        &self,
-        pixels: &Bound<'_, PyAny>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("calc")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (function = None, axes = None, outfile = None, region = None, r#box = None, chans = None, stokes = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, function='', axes=[], outfile='', region='', box='', chans='', stokes='', mask='', overwrite=False, stretch=False)")]
     fn collapse(
         &self,
@@ -448,19 +438,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, pixels = None, overwrite = None, imagemd = None, prec = None), text_signature = "($self, outfile='', pixels='', overwrite=False, imagemd='', prec='float')")]
-    fn imagecalc(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        pixels: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        imagemd: Option<&Bound<'_, PyAny>>,
-        prec: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("imagecalc")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (infile = None, region = None, locate = None, verbose = None), text_signature = "($self, infile='', region={}, locate=[-1.0], verbose=False)")]
     fn insert(
         &self,
@@ -702,31 +679,6 @@ impl PyImageTool {
         niter: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("statistics")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, velocity = None, optical = None, bitpix = None, minpix = None, maxpix = None, region = None, mask = None, overwrite = None, dropdeg = None, deglast = None, dropstokes = None, stokeslast = None, wavelength = None, airwavelength = None, stretch = None, history = None), text_signature = "($self, outfile='', velocity=False, optical=True, bitpix=-32, minpix=1.0, maxpix=-1.0, region={}, mask='', overwrite=False, dropdeg=False, deglast=False, dropstokes=False, stokeslast=True, wavelength=False, airwavelength=False, stretch=False, history=True)")]
-    fn tofits(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        velocity: Option<&Bound<'_, PyAny>>,
-        optical: Option<&Bound<'_, PyAny>>,
-        bitpix: Option<&Bound<'_, PyAny>>,
-        minpix: Option<&Bound<'_, PyAny>>,
-        maxpix: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        deglast: Option<&Bound<'_, PyAny>>,
-        dropstokes: Option<&Bound<'_, PyAny>>,
-        stokeslast: Option<&Bound<'_, PyAny>>,
-        wavelength: Option<&Bound<'_, PyAny>>,
-        airwavelength: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        history: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("tofits")
     }
 
     /// Not yet implemented in casa-rs.
