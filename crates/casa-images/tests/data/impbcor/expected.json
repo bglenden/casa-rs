@@ -1,0 +1,5941 @@
+{
+  "casa_version": "6.7.6.14",
+  "cases": {
+    "full": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im"
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "divide_cutoff": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "cutoff": 0.5
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "nan_cutoff": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "cutoff": "nan"
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "multiply_cutoff": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "mode": "m",
+        "cutoff": 0.5
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          0.0,
+          14.25,
+          14.800000190734863,
+          27.5,
+          1.75,
+          25.0,
+          25.80000114440918,
+          54.89999771118164,
+          6.5,
+          -7.75,
+          39.20000076293945,
+          67.0,
+          0.0,
+          16.5,
+          16.0,
+          29.0,
+          2.5,
+          28.0,
+          27.600000381469727,
+          57.599998474121094,
+          8.0,
+          -8.5,
+          41.60000228881836,
+          70.0,
+          0.25,
+          17.5,
+          19.94999885559082,
+          35.0,
+          3.0,
+          29.25,
+          31.900001525878906,
+          63.54999923706055,
+          8.75,
+          -4.0,
+          46.25,
+          76.5,
+          0.625,
+          20.125,
+          21.524999618530273,
+          36.875,
+          4.125,
+          32.625,
+          34.07500076293945,
+          66.625,
+          10.625,
+          -4.375,
+          49.025001525878906,
+          79.875,
+          0.75,
+          21.0,
+          25.349998474121094,
+          42.75,
+          4.5,
+          33.75,
+          38.25,
+          72.44999694824219,
+          11.25,
+          0.0,
+          53.54999923706055,
+          86.25,
+          1.5,
+          24.0,
+          27.299999237060547,
+          45.0,
+          6.0,
+          37.5,
+          40.80000305175781,
+          75.9000015258789,
+          13.5,
+          0.0,
+          56.69999694824219,
+          90.0
+        ],
+        "mask": [
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "full_array": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": [
+          [
+            [
+              [
+                0.0,
+                0.125,
+                0.25
+              ],
+              [
+                0.0,
+                0.125,
+                0.25
+              ]
+            ],
+            [
+              [
+                0.25,
+                0.375,
+                0.5
+              ],
+              [
+                0.25,
+                0.375,
+                0.5
+              ]
+            ],
+            [
+              [
+                0.5,
+                0.625,
+                0.75
+              ],
+              [
+                0.5,
+                0.625,
+                0.75
+              ]
+            ]
+          ],
+          [
+            [
+              [
+                0.75,
+                0.875,
+                1.0
+              ],
+              [
+                0.75,
+                0.875,
+                1.0
+              ]
+            ],
+            [
+              [
+                1.0,
+                1.125,
+                1.25
+              ],
+              [
+                1.0,
+                1.125,
+                1.25
+              ]
+            ],
+            [
+              [
+                -0.25,
+                -0.125,
+                0.0
+              ],
+              [
+                -0.25,
+                -0.125,
+                0.0
+              ]
+            ]
+          ],
+          [
+            [
+              [
+                0.4000000059604645,
+                0.5249999761581421,
+                0.6499999761581421
+              ],
+              [
+                0.4000000059604645,
+                0.5249999761581421,
+                0.6499999761581421
+              ]
+            ],
+            [
+              [
+                0.6000000238418579,
+                0.7250000238418579,
+                0.8500000238418579
+              ],
+              [
+                0.6000000238418579,
+                0.7250000238418579,
+                0.8500000238418579
+              ]
+            ],
+            [
+              [
+                0.800000011920929,
+                0.925000011920929,
+                1.0499999523162842
+              ],
+              [
+                0.800000011920929,
+                0.925000011920929,
+                1.0499999523162842
+              ]
+            ]
+          ],
+          [
+            [
+              [
+                0.5,
+                0.625,
+                0.75
+              ],
+              [
+                0.5,
+                0.625,
+                0.75
+              ]
+            ],
+            [
+              [
+                0.8999999761581421,
+                1.024999976158142,
+                1.149999976158142
+              ],
+              [
+                0.8999999761581421,
+                1.024999976158142,
+                1.149999976158142
+              ]
+            ],
+            [
+              [
+                1.0,
+                1.125,
+                1.25
+              ],
+              [
+                1.0,
+                1.125,
+                1.25
+              ]
+            ]
+          ]
+        ]
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im"
+        ],
+        "task_history": true
+      }
+    },
+    "nested_float_list": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": [
+          [
+            0.0,
+            0.25,
+            0.5
+          ],
+          [
+            0.75,
+            1.0,
+            -0.25
+          ],
+          [
+            0.4000000059604645,
+            0.6000000238418579,
+            0.800000011920929
+          ],
+          [
+            0.5,
+            0.8999999761581421,
+            1.0
+          ]
+        ]
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          null,
+          26.66666603088379,
+          95.0,
+          112.0,
+          32.0,
+          26.0,
+          73.33332824707031,
+          68.8888931274414,
+          28.0,
+          -128.0,
+          62.5,
+          68.0,
+          null,
+          30.66666603088379,
+          102.5,
+          118.0,
+          44.0,
+          29.0,
+          78.33332824707031,
+          72.22222137451172,
+          34.0,
+          -140.0,
+          66.25,
+          71.0,
+          null,
+          28.0,
+          97.5,
+          114.0,
+          36.0,
+          27.0,
+          75.0,
+          70.0,
+          30.0,
+          -132.0,
+          63.75,
+          69.0,
+          null,
+          32.0,
+          105.0,
+          120.0,
+          48.0,
+          30.0,
+          80.0,
+          73.33333587646484,
+          36.0,
+          -144.0,
+          67.5,
+          72.0
+        ],
+        "mask": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im"
+        ],
+        "task_history": true
+      }
+    },
+    "plane_image": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "plane.im",
+        "cutoff": 0.1
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          null,
+          26.66666603088379,
+          95.0,
+          112.0,
+          32.0,
+          26.0,
+          73.33332824707031,
+          68.8888931274414,
+          28.0,
+          -128.0,
+          62.5,
+          68.0,
+          null,
+          30.66666603088379,
+          102.5,
+          118.0,
+          44.0,
+          29.0,
+          78.33332824707031,
+          72.22222137451172,
+          34.0,
+          -140.0,
+          66.25,
+          71.0,
+          null,
+          28.0,
+          97.5,
+          114.0,
+          36.0,
+          27.0,
+          75.0,
+          70.0,
+          30.0,
+          -132.0,
+          63.75,
+          69.0,
+          null,
+          32.0,
+          105.0,
+          120.0,
+          48.0,
+          30.0,
+          80.0,
+          73.33333587646484,
+          36.0,
+          -144.0,
+          67.5,
+          72.0
+        ],
+        "mask": [
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for plane.im"
+        ],
+        "task_history": true
+      }
+    },
+    "plane_array": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": [
+          [
+            0.0,
+            0.25,
+            0.5
+          ],
+          [
+            0.75,
+            1.0,
+            -0.25
+          ],
+          [
+            0.4000000059604645,
+            0.6000000238418579,
+            0.800000011920929
+          ],
+          [
+            0.5,
+            0.8999999761581421,
+            1.0
+          ]
+        ],
+        "cutoff": 0.1
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          null,
+          26.66666603088379,
+          95.0,
+          112.0,
+          32.0,
+          26.0,
+          73.33332824707031,
+          68.8888931274414,
+          28.0,
+          -128.0,
+          62.5,
+          68.0,
+          null,
+          30.66666603088379,
+          102.5,
+          118.0,
+          44.0,
+          29.0,
+          78.33332824707031,
+          72.22222137451172,
+          34.0,
+          -140.0,
+          66.25,
+          71.0,
+          null,
+          28.0,
+          97.5,
+          114.0,
+          36.0,
+          27.0,
+          75.0,
+          70.0,
+          30.0,
+          -132.0,
+          63.75,
+          69.0,
+          null,
+          32.0,
+          105.0,
+          120.0,
+          48.0,
+          30.0,
+          80.0,
+          73.33333587646484,
+          36.0,
+          -144.0,
+          67.5,
+          72.0
+        ],
+        "mask": [
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im"
+        ],
+        "task_history": true
+      }
+    },
+    "selected_plane_array": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": [
+          [
+            0.0,
+            0.25,
+            0.5
+          ],
+          [
+            0.75,
+            1.0,
+            -0.25
+          ],
+          [
+            0.4000000059604645,
+            0.6000000238418579,
+            0.800000011920929
+          ],
+          [
+            0.5,
+            0.8999999761581421,
+            1.0
+          ]
+        ],
+        "box": "1,0,3,2",
+        "chans": "1~2",
+        "stokes": "Q"
+      },
+      "product": {
+        "shape": [
+          3,
+          3,
+          1,
+          2
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "Q"
+        ],
+        "reference_pixel": [
+          1.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          2.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          30.66666603088379,
+          102.5,
+          118.0,
+          29.0,
+          78.33332824707031,
+          72.22222137451172,
+          -140.0,
+          66.25,
+          71.0,
+          32.0,
+          105.0,
+          120.0,
+          30.0,
+          80.0,
+          73.33333587646484,
+          -144.0,
+          67.5,
+          72.0
+        ],
+        "mask": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          ""
+        ],
+        "history": [
+          "input history for cube.im"
+        ],
+        "task_history": true
+      }
+    },
+    "singleton_image": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "singleton.im",
+        "cutoff": 0.1
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          null,
+          26.66666603088379,
+          95.0,
+          112.0,
+          32.0,
+          26.0,
+          73.33332824707031,
+          68.8888931274414,
+          28.0,
+          -128.0,
+          62.5,
+          68.0,
+          null,
+          30.66666603088379,
+          102.5,
+          118.0,
+          44.0,
+          29.0,
+          78.33332824707031,
+          72.22222137451172,
+          34.0,
+          -140.0,
+          66.25,
+          71.0,
+          null,
+          28.0,
+          97.5,
+          114.0,
+          36.0,
+          27.0,
+          75.0,
+          70.0,
+          30.0,
+          -132.0,
+          63.75,
+          69.0,
+          null,
+          32.0,
+          105.0,
+          120.0,
+          48.0,
+          30.0,
+          80.0,
+          73.33333587646484,
+          36.0,
+          -144.0,
+          67.5,
+          72.0
+        ],
+        "mask": [
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for singleton.im"
+        ],
+        "task_history": true
+      }
+    },
+    "singleton_direction_axis": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "stripe.im",
+        "box": "1,0,3,2",
+        "cutoff": 0.1
+      },
+      "product": {
+        "shape": [
+          3,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          1.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          null,
+          null,
+          100.0,
+          172.0,
+          244.0,
+          62.0,
+          98.0,
+          134.0,
+          null,
+          null,
+          null,
+          112.0,
+          184.0,
+          256.0,
+          68.0,
+          104.0,
+          140.0,
+          null,
+          null,
+          null,
+          104.0,
+          176.0,
+          248.0,
+          64.0,
+          100.0,
+          136.0,
+          null,
+          null,
+          null,
+          116.0,
+          188.0,
+          260.0,
+          70.0,
+          106.0,
+          142.0,
+          null,
+          null,
+          null,
+          108.0,
+          180.0,
+          252.0,
+          66.0,
+          102.0,
+          138.0,
+          null,
+          null,
+          null,
+          120.0,
+          192.0,
+          264.0,
+          72.0,
+          108.0,
+          144.0
+        ],
+        "mask": [
+          false,
+          false,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for plane.im"
+        ],
+        "task_history": true
+      }
+    },
+    "near_plane": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "nearplane.im",
+        "cutoff": 0.1
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          null,
+          26.66666603088379,
+          95.0,
+          112.0,
+          32.0,
+          26.0,
+          73.33332824707031,
+          68.8888931274414,
+          28.0,
+          -128.0,
+          62.5,
+          68.0,
+          null,
+          30.66666603088379,
+          102.5,
+          118.0,
+          44.0,
+          29.0,
+          78.33332824707031,
+          72.22222137451172,
+          34.0,
+          -140.0,
+          66.25,
+          71.0,
+          null,
+          28.0,
+          97.5,
+          114.0,
+          36.0,
+          27.0,
+          75.0,
+          70.0,
+          30.0,
+          -132.0,
+          63.75,
+          69.0,
+          null,
+          32.0,
+          105.0,
+          120.0,
+          48.0,
+          30.0,
+          80.0,
+          73.33333587646484,
+          36.0,
+          -144.0,
+          67.5,
+          72.0
+        ],
+        "mask": [
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for nearplane.im"
+        ],
+        "task_history": true
+      }
+    },
+    "near_full": {
+      "params": {
+        "imagename": "plane.im",
+        "pbimage": "nearplane.im",
+        "cutoff": 0.1
+      },
+      "product": {
+        "shape": [
+          4,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination"
+        ],
+        "stokes": [],
+        "reference_pixel": [
+          2.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0
+        ],
+        "units": "",
+        "beam": {},
+        "pixels": [
+          null,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "mask": [
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for plane.im",
+          "input history for nearplane.im"
+        ],
+        "task_history": true
+      }
+    },
+    "selection": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "box": "1,0,3,2",
+        "chans": "1~2",
+        "stokes": "Q"
+      },
+      "product": {
+        "shape": [
+          3,
+          3,
+          1,
+          2
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "Q"
+        ],
+        "reference_pixel": [
+          1.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          2.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          ""
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "gapped_channels": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "box": "1,0,3,2",
+        "chans": "0,2",
+        "stokes": "Q"
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Only a single n-dimensional rectangular region is supported."
+    },
+    "multiple_boxes": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "box": "0,0,1,1,2,1,3,2"
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Only a single n-dimensional rectangular region is supported."
+    },
+    "region_and_box": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "box": "1,0,3,2",
+        "region": "circle[[1pix,1pix],1pix]"
+      },
+      "error": "RuntimeError",
+      "message": "Exception: box and regionPtr cannot be simultaneously specified."
+    },
+    "region_and_channels": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "region": "circle[[1pix,1pix],1pix]",
+        "chans": "1~2"
+      },
+      "error": "RuntimeError",
+      "message": "Exception: regionPtr and regionName, chans, and/or stokes cannot be simultaneously specified."
+    },
+    "stokes_only": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "stokes": "Q"
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          1,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          2.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "all_selectors": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "chans": "all",
+        "stokes": "ALL"
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "stokes_bracketed": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "stokes": "[I;Q]"
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "selectors_without_axes": {
+      "params": {
+        "imagename": "plane.im",
+        "pbimage": "plane.im",
+        "chans": "1",
+        "stokes": "Q"
+      },
+      "product": {
+        "shape": [
+          4,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination"
+        ],
+        "stokes": [],
+        "reference_pixel": [
+          2.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0
+        ],
+        "units": "",
+        "beam": {},
+        "pixels": [
+          null,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "mask": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          ""
+        ],
+        "history": [
+          "input history for plane.im",
+          "input history for plane.im"
+        ],
+        "task_history": true
+      }
+    },
+    "decimal_box": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "box": "1.3,0.6,2.75,2.0"
+      },
+      "product": {
+        "shape": [
+          3,
+          2,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          1.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          -124.0,
+          61.25,
+          67.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          -136.0,
+          65.0,
+          70.0,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          ""
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "region_text": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "region": "circle[[1pix,1pix],1pix]"
+      },
+      "product": {
+        "shape": [
+          3,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          28.0,
+          25.0,
+          71.66666412353516,
+          26.0,
+          -124.0,
+          61.25,
+          null,
+          29.33333396911621,
+          100.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          32.0,
+          -136.0,
+          65.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          12.0,
+          21.0,
+          60.000003814697266,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          20.0,
+          null,
+          48.57143020629883,
+          24.0,
+          24.0,
+          64.61538696289062,
+          24.0,
+          24.0,
+          56.470584869384766,
+          24.0,
+          null,
+          51.42857360839844
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          false
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "region_file": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "region": "circle.crtf"
+      },
+      "product": {
+        "shape": [
+          3,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          28.0,
+          25.0,
+          71.66666412353516,
+          26.0,
+          -124.0,
+          61.25,
+          null,
+          29.33333396911621,
+          100.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          32.0,
+          -136.0,
+          65.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          12.0,
+          21.0,
+          60.000003814697266,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          20.0,
+          null,
+          48.57143020629883,
+          24.0,
+          24.0,
+          64.61538696289062,
+          24.0,
+          24.0,
+          56.470584869384766,
+          24.0,
+          null,
+          51.42857360839844
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          false
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "bare_saved_region": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "region": "savedCircle"
+      },
+      "product": {
+        "shape": [
+          3,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          28.0,
+          25.0,
+          71.66666412353516,
+          26.0,
+          -124.0,
+          61.25,
+          null,
+          29.33333396911621,
+          100.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          32.0,
+          -136.0,
+          65.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          12.0,
+          21.0,
+          60.000003814697266,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          20.0,
+          null,
+          48.57143020629883,
+          24.0,
+          24.0,
+          64.61538696289062,
+          24.0,
+          24.0,
+          56.470584869384766,
+          24.0,
+          null,
+          51.42857360839844
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          false
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "lel": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "mask": "sqrt(\"cube.im\") > 2 && \"cube.im\" < 45"
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false,
+          true,
+          true,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          false
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "frequency_beam_as_mask": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "mask": "\"beam.im\" > 0.21"
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "stretch": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "mask": "\"plane.im\" > 0.3",
+        "stretch": true
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          89.5999984741211,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          60.4878044128418,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          60.44444274902344,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          94.4000015258789,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          63.414634704589844,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          63.11111068725586,
+          12.0,
+          21.0,
+          60.000003814697266,
+          76.0,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          54.78260803222656,
+          20.0,
+          null,
+          48.57143020629883,
+          55.20000076293945,
+          24.0,
+          24.0,
+          64.61538696289062,
+          80.0,
+          24.0,
+          24.0,
+          56.470584869384766,
+          57.39130401611328,
+          24.0,
+          null,
+          51.42857360839844,
+          57.599998474121094
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "stretch_off": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "mask": "\"plane.im\" > 0.3"
+      },
+      "error": "RuntimeError",
+      "message": "The input image shape ([4, 3, 2, 3]) and mask shape ([4, 3]) are different, and it was specified that the mask should not be extended, so the mask cannot be applied to the (sub)image. Specifying that the mask should be extended may resolve the issue at File: /Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/imageanalysis/ImageAnalysis/SubImageFactory.tcc, line: 306"
+    },
+    "shifted_beam": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "shifted.im"
+      },
+      "error": "RuntimeError",
+      "message": "Coordinate systems of image and template are different: The DirectionCoordinates have differing LinearXform components at File: /Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/imageanalysis/ImageAnalysis/ImagePrimaryBeamCorrector.cc, line: 144"
+    },
+    "fits_input": {
+      "params": {
+        "imagename": "cube.fits",
+        "pbimage": "plane.fits",
+        "cutoff": 0.1
+      },
+      "product": {
+        "shape": [
+          4,
+          3,
+          3,
+          2
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Frequency",
+          "Stokes"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1415000000.0,
+          1.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0000000000004
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 3.9999999999996003
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          110.0,
+          28.0,
+          25.0,
+          71.66666412353516,
+          67.77777862548828,
+          26.0,
+          -124.0,
+          61.25,
+          67.0,
+          null,
+          26.66666603088379,
+          95.0,
+          112.0,
+          32.0,
+          26.0,
+          73.33332824707031,
+          68.8888931274414,
+          28.0,
+          -128.0,
+          62.5,
+          68.0,
+          null,
+          28.0,
+          97.5,
+          114.0,
+          36.0,
+          27.0,
+          75.0,
+          70.0,
+          30.0,
+          -132.0,
+          63.75,
+          69.0,
+          null,
+          29.33333396911621,
+          100.0,
+          116.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          71.11111450195312,
+          32.0,
+          -136.0,
+          65.0,
+          70.0,
+          null,
+          30.66666603088379,
+          102.5,
+          118.0,
+          44.0,
+          29.0,
+          78.33332824707031,
+          72.22222137451172,
+          34.0,
+          -140.0,
+          66.25,
+          71.0,
+          null,
+          32.0,
+          105.0,
+          120.0,
+          null,
+          30.0,
+          80.0,
+          73.33333587646484,
+          36.0,
+          -144.0,
+          67.5,
+          72.0
+        ],
+        "mask": [
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for plane.im"
+        ],
+        "task_history": true
+      }
+    },
+    "fits_beam": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "plane.fits",
+        "cutoff": 0.1
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Direction coordinates of input image and primary beam image are different. Cannot do primary beam correction.."
+    },
+    "wrong_array_shape": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": [
+          [
+            1.0,
+            1.0
+          ],
+          [
+            1.0,
+            1.0
+          ]
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Array shape does not equal image direction plane shape."
+    },
+    "integer_array": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": [
+          [
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            1
+          ]
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "Unsupported type intvec for pbimage at File: /private/var/folders/60/83wxljbx2vlfbx_hy0yfv8rc0000gn/T/build-via-sdist-4slzdl8a/casatools-6.7.6.14/src/tools/image/image_cmpt.cc, line: 4313"
+    },
+    "flat_array": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": [
+          1.0,
+          0.5
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "Primary beam array is of wrong shape ([2]) at File: /Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/imageanalysis/ImageAnalysis/ImagePrimaryBeamCorrector.cc, line: 117"
+    },
+    "invalid_mode": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "mode": "unrecognized"
+      },
+      "error": "RuntimeError",
+      "message": "Unknown mode unrecognized"
+    },
+    "region_record": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "region": {
+          "arblc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "artrc": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "blc": [
+            2.0,
+            1.0,
+            1.0,
+            2.0
+          ],
+          "comment": "",
+          "fracblc": [
+            false,
+            false,
+            false,
+            false
+          ],
+          "fracinc": [
+            false,
+            false,
+            false,
+            false
+          ],
+          "fractrc": [
+            false,
+            false,
+            false,
+            false
+          ],
+          "inc": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "isRegion": 3,
+          "name": "LCSlicer",
+          "oneRel": true,
+          "trc": [
+            3.0,
+            3.0,
+            2.0,
+            3.0
+          ]
+        }
+      },
+      "product": {
+        "shape": [
+          2,
+          3,
+          2,
+          2
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          1.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          22.85714340209961,
+          72.3809585571289,
+          23.11111068725586,
+          60.68965148925781,
+          -256.0,
+          54.054054260253906,
+          26.285715103149414,
+          78.09524536132812,
+          25.77777862548828,
+          64.82758331298828,
+          -280.0,
+          57.297298431396484,
+          21.0,
+          60.000003814697266,
+          21.600000381469727,
+          52.9411735534668,
+          null,
+          48.57143020629883,
+          24.0,
+          64.61538696289062,
+          24.0,
+          56.470584869384766,
+          null,
+          51.42857360839844
+        ],
+        "mask": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "default_mask": [
+          ""
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "circle_record": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "region": {
+          "absrel": 1,
+          "center": {
+            "*1": {
+              "unit": "rad",
+              "value": 0.00029088821276818686
+            },
+            "*2": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "comment": "",
+          "coordinates": {
+            "direction0": {
+              "axes": [
+                "Right Ascension",
+                "Declination"
+              ],
+              "cdelt": [
+                -1.0,
+                1.0
+              ],
+              "conversionSystem": "J2000",
+              "crpix": [
+                2.0,
+                1.0
+              ],
+              "crval": [
+                0.0,
+                0.0
+              ],
+              "latpole": 0.0,
+              "longpole": 180.0,
+              "pc": [
+                [
+                  1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0
+                ]
+              ],
+              "projection": "SIN",
+              "projection_parameters": [
+                0.0,
+                0.0
+              ],
+              "system": "J2000",
+              "units": [
+                "'",
+                "'"
+              ]
+            },
+            "obsdate": {
+              "m0": {
+                "unit": "d",
+                "value": 51544.00000000116
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            },
+            "observer": "Karl Jansky",
+            "pixelmap0": [
+              0,
+              1
+            ],
+            "pixelmap1": [
+              2
+            ],
+            "pixelmap2": [
+              3
+            ],
+            "pixelreplace0": [
+              0.0,
+              0.0
+            ],
+            "pixelreplace1": [
+              0.0
+            ],
+            "pixelreplace2": [
+              0.0
+            ],
+            "pointingcenter": {
+              "initial": true,
+              "value": [
+                0.0,
+                0.0
+              ]
+            },
+            "spectral2": {
+              "conversion": {
+                "direction": {
+                  "m0": {
+                    "unit": "rad",
+                    "value": 0.0
+                  },
+                  "m1": {
+                    "unit": "rad",
+                    "value": 1.5707963267948966
+                  },
+                  "refer": "J2000",
+                  "type": "direction"
+                },
+                "epoch": {
+                  "m0": {
+                    "unit": "d",
+                    "value": 0.0
+                  },
+                  "refer": "LAST",
+                  "type": "epoch"
+                },
+                "position": {
+                  "m0": {
+                    "unit": "rad",
+                    "value": 0.0
+                  },
+                  "m1": {
+                    "unit": "rad",
+                    "value": 0.0
+                  },
+                  "m2": {
+                    "unit": "m",
+                    "value": 0.0
+                  },
+                  "refer": "ITRF",
+                  "type": "position"
+                },
+                "system": "LSRK"
+              },
+              "formatUnit": "",
+              "name": "Frequency",
+              "nativeType": 0,
+              "restfreq": 1420405751.7860003,
+              "restfreqs": [
+                1420405751.7860003
+              ],
+              "system": "LSRK",
+              "unit": "Hz",
+              "velType": 0,
+              "velUnit": "km/s",
+              "version": 2,
+              "waveUnit": "mm",
+              "wcs": {
+                "cdelt": 1000.0,
+                "crpix": 1.0,
+                "crval": 1415000000.0,
+                "ctype": "FREQ",
+                "pc": 1.0
+              }
+            },
+            "stokes1": {
+              "axes": [
+                "Stokes"
+              ],
+              "cdelt": [
+                1.0
+              ],
+              "crpix": [
+                0.0
+              ],
+              "crval": [
+                1.0
+              ],
+              "pc": [
+                [
+                  1.0
+                ]
+              ],
+              "stokes": [
+                "I",
+                "Q"
+              ]
+            },
+            "telescope": "ALMA",
+            "telescopeposition": {
+              "m0": {
+                "unit": "rad",
+                "value": -1.1825465955049892
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.3994149869262737
+              },
+              "m2": {
+                "unit": "m",
+                "value": 6379946.01326443
+              },
+              "refer": "ITRF",
+              "type": "position"
+            },
+            "worldmap0": [
+              0,
+              1
+            ],
+            "worldmap1": [
+              2
+            ],
+            "worldmap2": [
+              3
+            ],
+            "worldreplace0": [
+              0.0,
+              0.0
+            ],
+            "worldreplace1": [
+              1.0
+            ],
+            "worldreplace2": [
+              1415000000.0
+            ]
+          },
+          "isRegion": 2,
+          "name": "WCEllipsoid",
+          "oneRel": true,
+          "pixelAxes": [
+            1,
+            2
+          ],
+          "radius": {
+            "unit": "'",
+            "value": 1.0
+          },
+          "theta": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "type": 1
+        }
+      },
+      "product": {
+        "shape": [
+          3,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          28.0,
+          25.0,
+          71.66666412353516,
+          26.0,
+          -124.0,
+          61.25,
+          null,
+          29.33333396911621,
+          100.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          32.0,
+          -136.0,
+          65.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          12.0,
+          21.0,
+          60.000003814697266,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          20.0,
+          null,
+          48.57143020629883,
+          24.0,
+          24.0,
+          64.61538696289062,
+          24.0,
+          24.0,
+          56.470584869384766,
+          24.0,
+          null,
+          51.42857360839844
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          true,
+          false,
+          true,
+          false
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    },
+    "ellipse_record": {
+      "params": {
+        "imagename": "cube.im",
+        "pbimage": "beam.im",
+        "region": {
+          "absrel": 1,
+          "center": {
+            "*1": {
+              "unit": "rad",
+              "value": 0.00029088821276818686
+            },
+            "*2": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "comment": "",
+          "coordinates": {
+            "direction0": {
+              "axes": [
+                "Right Ascension",
+                "Declination"
+              ],
+              "cdelt": [
+                -1.0,
+                1.0
+              ],
+              "conversionSystem": "J2000",
+              "crpix": [
+                2.0,
+                1.0
+              ],
+              "crval": [
+                0.0,
+                0.0
+              ],
+              "latpole": 0.0,
+              "longpole": 180.0,
+              "pc": [
+                [
+                  1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0
+                ]
+              ],
+              "projection": "SIN",
+              "projection_parameters": [
+                0.0,
+                0.0
+              ],
+              "system": "J2000",
+              "units": [
+                "'",
+                "'"
+              ]
+            },
+            "obsdate": {
+              "m0": {
+                "unit": "d",
+                "value": 51544.00000000116
+              },
+              "refer": "UTC",
+              "type": "epoch"
+            },
+            "observer": "Karl Jansky",
+            "pixelmap0": [
+              0,
+              1
+            ],
+            "pixelmap1": [
+              2
+            ],
+            "pixelmap2": [
+              3
+            ],
+            "pixelreplace0": [
+              0.0,
+              0.0
+            ],
+            "pixelreplace1": [
+              0.0
+            ],
+            "pixelreplace2": [
+              0.0
+            ],
+            "pointingcenter": {
+              "initial": true,
+              "value": [
+                0.0,
+                0.0
+              ]
+            },
+            "spectral2": {
+              "conversion": {
+                "direction": {
+                  "m0": {
+                    "unit": "rad",
+                    "value": 0.0
+                  },
+                  "m1": {
+                    "unit": "rad",
+                    "value": 1.5707963267948966
+                  },
+                  "refer": "J2000",
+                  "type": "direction"
+                },
+                "epoch": {
+                  "m0": {
+                    "unit": "d",
+                    "value": 0.0
+                  },
+                  "refer": "LAST",
+                  "type": "epoch"
+                },
+                "position": {
+                  "m0": {
+                    "unit": "rad",
+                    "value": 0.0
+                  },
+                  "m1": {
+                    "unit": "rad",
+                    "value": 0.0
+                  },
+                  "m2": {
+                    "unit": "m",
+                    "value": 0.0
+                  },
+                  "refer": "ITRF",
+                  "type": "position"
+                },
+                "system": "LSRK"
+              },
+              "formatUnit": "",
+              "name": "Frequency",
+              "nativeType": 0,
+              "restfreq": 1420405751.7860003,
+              "restfreqs": [
+                1420405751.7860003
+              ],
+              "system": "LSRK",
+              "unit": "Hz",
+              "velType": 0,
+              "velUnit": "km/s",
+              "version": 2,
+              "waveUnit": "mm",
+              "wcs": {
+                "cdelt": 1000.0,
+                "crpix": 1.0,
+                "crval": 1415000000.0,
+                "ctype": "FREQ",
+                "pc": 1.0
+              }
+            },
+            "stokes1": {
+              "axes": [
+                "Stokes"
+              ],
+              "cdelt": [
+                1.0
+              ],
+              "crpix": [
+                0.0
+              ],
+              "crval": [
+                1.0
+              ],
+              "pc": [
+                [
+                  1.0
+                ]
+              ],
+              "stokes": [
+                "I",
+                "Q"
+              ]
+            },
+            "telescope": "ALMA",
+            "telescopeposition": {
+              "m0": {
+                "unit": "rad",
+                "value": -1.1825465955049892
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.3994149869262737
+              },
+              "m2": {
+                "unit": "m",
+                "value": 6379946.01326443
+              },
+              "refer": "ITRF",
+              "type": "position"
+            },
+            "worldmap0": [
+              0,
+              1
+            ],
+            "worldmap1": [
+              2
+            ],
+            "worldmap2": [
+              3
+            ],
+            "worldreplace0": [
+              0.0,
+              0.0
+            ],
+            "worldreplace1": [
+              1.0
+            ],
+            "worldreplace2": [
+              1415000000.0
+            ]
+          },
+          "isRegion": 2,
+          "name": "WCEllipsoid",
+          "oneRel": true,
+          "pixelAxes": [
+            1,
+            2
+          ],
+          "radii": {
+            "*1": {
+              "unit": "'",
+              "value": 1.5
+            },
+            "*2": {
+              "unit": "'",
+              "value": 0.75
+            }
+          },
+          "theta": {
+            "unit": "rad",
+            "value": 1.832595714594046
+          },
+          "type": 2
+        }
+      },
+      "product": {
+        "shape": [
+          3,
+          3,
+          2,
+          3
+        ],
+        "names": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "stokes": [
+          "I",
+          "Q"
+        ],
+        "reference_pixel": [
+          2.0,
+          1.0,
+          0.0,
+          1.0
+        ],
+        "reference_value": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "units": "Jy/beam",
+        "beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 5.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 12.0
+          }
+        },
+        "pixels": [
+          null,
+          25.33333396911621,
+          92.5,
+          28.0,
+          25.0,
+          71.66666412353516,
+          26.0,
+          -124.0,
+          61.25,
+          null,
+          29.33333396911621,
+          100.0,
+          40.0,
+          28.0,
+          76.66666412353516,
+          32.0,
+          -136.0,
+          65.0,
+          16.0,
+          22.85714340209961,
+          72.3809585571289,
+          21.33333396911621,
+          23.11111068725586,
+          60.68965148925781,
+          22.399999618530273,
+          -256.0,
+          54.054054260253906,
+          40.0,
+          26.285715103149414,
+          78.09524536132812,
+          29.33333396911621,
+          25.77777862548828,
+          64.82758331298828,
+          27.200000762939453,
+          -280.0,
+          57.297298431396484,
+          12.0,
+          21.0,
+          60.000003814697266,
+          18.0,
+          21.600000381469727,
+          52.9411735534668,
+          20.0,
+          null,
+          48.57143020629883,
+          24.0,
+          24.0,
+          64.61538696289062,
+          24.0,
+          24.0,
+          56.470584869384766,
+          24.0,
+          null,
+          51.42857360839844
+        ],
+        "mask": [
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false,
+          false,
+          true,
+          false
+        ],
+        "default_mask": [
+          "mask0"
+        ],
+        "history": [
+          "input history for cube.im",
+          "input history for beam.im"
+        ],
+        "task_history": true
+      }
+    }
+  }
+}

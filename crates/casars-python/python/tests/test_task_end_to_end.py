@@ -18,7 +18,7 @@ import tarfile
 import pytest
 
 from casars import tasks
-from casars.data import Image
+from casars._native_image import NativeImageView
 from casars.parameters import TaskParameters
 from casars.tasks import _runner
 
@@ -191,9 +191,9 @@ def test_casas_spellings_of_a_default_run_as_casa_runs_them(
     assert tasks.immath(imagename=[image.name], outfile="a.im", expr="A*2", varnames=["A"]) is True
     assert (image.parent / "a.im").exists()
     # hdvalue='' is CASA's default and a value: it clears the unit.
-    assert Image.open(image).units == "Jy/beam"
+    assert NativeImageView.open(image).units == "Jy/beam"
     assert tasks.imhead(image.name, mode="put", hdkey="bunit", hdvalue="") is None
-    assert Image.open(image).units == ""
+    assert NativeImageView.open(image).units == ""
 
 
 def test_a_missing_input_image_is_a_parameter_error(

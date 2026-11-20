@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bounded header-only array inspection through a column capability.
+use std::borrow::Cow;
+
 use super::*;
 
 impl TableColumn<'_> {
     /// Returns whether an array cell is defined without reading its payload or
     /// populating the table-level row cache.
     ///
-    /// This metadata-only probe requires a lazy, disk-backed
-    /// `TiledShapeStMan` column.
+    /// The metadata-only probe uses the backing column for compressed
+    /// arrays and requires a supported lazy, disk-backed manager.
     pub fn array_cell_is_defined_uncached(&self, row_index: usize) -> Result<bool, TableError> {
         if row_index >= self.table.row_count() {
             return Err(TableError::RowOutOfBounds {
@@ -17,7 +19,7 @@ impl TableColumn<'_> {
         }
         self.table
             .inner
-            .array_cell_is_defined_uncached(row_index, &self.column)
+            .array_cell_is_defined_uncached(row_index, &self.shape_column()?)
     }
 
     /// Returns the selected cells' shapes without reading array payloads.
@@ -43,6 +45,13 @@ impl TableColumn<'_> {
         }
         self.table
             .inner
-            .array_cell_shapes_uncached(&self.column, rows)
+            .array_cell_shapes_uncached(&self.shape_column()?, rows)
+    }
+
+    fn shape_column(&self) -> Result<Cow<'_, str>, TableError> {
+        Ok(match self.table.complex_compression(&self.column)? {
+            Some(compression) => Cow::Owned(compression.stored),
+            None => Cow::Borrowed(&self.column),
+        })
     }
 }

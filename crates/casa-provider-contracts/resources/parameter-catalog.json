@@ -765,15 +765,33 @@
       "persistence_class": "profile"
     },
     {
-      "id": "impbcor.mode",
+      "id": "impbcor.region",
       "semantic_revision": 1,
+      "casa_name": "region",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CRTF text, region file, or casacore region record.",
+        "details": null,
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "impbcor.mode",
+      "semantic_revision": 2,
       "casa_name": "mode",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "divide",
-          "multiply"
-        ]
+        "kind": "string"
       },
       "normalization": {
         "kind": "identity"
@@ -783,7 +801,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Correction mode",
-        "details": null,
+        "details": "CASA selects division or multiplication by the first nonblank letter, ignoring case.",
         "examples": [
           "divide"
         ]
@@ -792,10 +810,10 @@
     },
     {
       "id": "impv.width",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "width",
       "value_domain": {
-        "kind": "integer"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -804,7 +822,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Averaging width in pixels",
+        "summary": "Odd averaging width in pixels or an angular width.",
         "details": null,
         "examples": [
           "1"
@@ -1410,10 +1428,10 @@
     },
     {
       "id": "ms.transform.width",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "width",
       "value_domain": {
-        "kind": "integer"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -1422,11 +1440,27 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Number of adjacent selected channels averaged into each output channel.",
+        "summary": "Channel-averaging width as an integer, numeric string, or per-SPW integer list.",
         "details": null,
         "examples": [
           "1"
         ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "mstransform.chanbin",
+      "semantic_revision": 1,
+      "casa_name": "chanbin",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Channel-averaging width as a single integer or a per-SPW integer list.",
+        "details": null,
+        "examples": ["2", "[2, 4]"]
       },
       "persistence_class": "profile"
     },
@@ -2393,10 +2427,10 @@
     },
     {
       "id": "parameter.cutoff",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "cutoff",
       "value_domain": {
-        "kind": "float"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -2405,8 +2439,8 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Minimum PB value to keep; negative disables cutoff masking",
-        "details": null,
+        "summary": "Primary-beam cutoff for division or multiplication",
+        "details": "Division keeps values at or above the cutoff. Multiplication keeps values at or below it. Negative and NaN cutoffs disable cutoff masking.",
         "examples": [
           "-1.0"
         ]
@@ -2650,20 +2684,20 @@
     },
     {
       "id": "parameter.end",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "end",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "End pixel coordinate",
-        "details": null,
+        "details": "Supply two zero-based pixel values or a sky direction as a pair or a frame-qualified string.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -5391,27 +5425,20 @@
     },
     {
       "id": "parameter.pbimage",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "pbimage",
       "value_domain": {
-        "kind": "array",
-        "element": {
-          "kind": "path",
-          "resource_kind": "image"
-        },
-        "min_items": 0,
-        "max_items": 1,
-        "allow_scalar": true
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "path"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Primary-beam CASA image path; CASA's [] default means it must be given",
-        "details": "CASA's pbimage is an image name or the beam itself as a numeric pixel array. casa-rs takes the name only: an array of numbers is refused, before the task starts, until #977.",
+        "summary": "Primary-beam image name or floating-point pixel array",
+        "details": "A pixel array must match the input image shape or its two direction axes. A direction-plane beam is extended across other axes.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -5755,10 +5782,10 @@
       "semantic_revision": 1,
       "casa_name": "quackinterval",
       "value_domain": {
-        "kind": "float"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "numeric_variant"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -5777,13 +5804,7 @@
       "semantic_revision": 2,
       "casa_name": "quackmode",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "beg",
-          "end",
-          "endb",
-          "tail"
-        ]
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -6749,20 +6770,20 @@
     },
     {
       "id": "parameter.start",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "start",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Cube-axis start channel, frequency, or velocity",
-        "details": null,
+        "details": "Supply two zero-based pixel values or a sky direction as a pair or a frame-qualified string.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -7042,20 +7063,19 @@
     },
     {
       "id": "parameter.template",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "template",
       "value_domain": {
-        "kind": "path",
-        "resource_kind": "image"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "path"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Template CASA image path",
+        "summary": "Template CASA image path, get selector, or coordinate and shape record",
         "details": null,
         "examples": []
       },
@@ -8940,51 +8960,114 @@
       "persistence_class": "profile"
     },
     {
-      "id": "impv.mode",
+      "id": "impv.region",
       "semantic_revision": 1,
+      "casa_name": "region",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA region text, image region name, or a region record. Direction-axis cropping is refused.",
+        "details": null,
+        "examples": [
+          "",
+          "none"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "impv.mode",
+      "semantic_revision": 2,
       "casa_name": "mode",
-      "value_domain": {"kind": "choice", "values": ["coords", "length"]},
-      "normalization": {"kind": "identity"},
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "How the slice is given: by start and end, or by center, length and position angle.", "details": null, "examples": ["coords"]},
+      "documentation": {
+        "summary": "How the slice is given: by start and end, or by center, length and position angle.",
+        "details": null,
+        "examples": [
+          "coords"
+        ]
+      },
       "persistence_class": "profile"
     },
     {
       "id": "pv.center",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "center",
-      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": 2, "allow_scalar": true},
-      "normalization": {"kind": "trim"},
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Center of the slice in the direction plane, given with length and pa.", "details": null, "examples": ["['14:35:00', '-30.00.00']"]},
+      "documentation": {
+        "summary": "Center of the slice in the direction plane, given with length and pa.",
+        "details": "Supply two zero-based pixel values or a sky direction as a pair or a frame-qualified string.",
+        "examples": [
+          "['14:35:00', '-30.00.00']"
+        ]
+      },
       "persistence_class": "profile"
     },
     {
       "id": "impv.length",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "length",
-      "value_domain": {"kind": "string"},
-      "normalization": {"kind": "trim"},
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Length of the slice in the direction plane, given with center and pa.", "details": null, "examples": ["30arcsec"]},
+      "documentation": {
+        "summary": "Length of the slice in the direction plane, given with center and pa.",
+        "details": "Numeric lengths are in pixels. An angular quantity is accepted as well.",
+        "examples": [
+          "30arcsec"
+        ]
+      },
       "persistence_class": "profile"
     },
     {
       "id": "impv.pa",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "pa",
-      "value_domain": {"kind": "string"},
-      "normalization": {"kind": "trim"},
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Position angle of the slice, north through east, given with center and length.", "details": null, "examples": ["45deg"]},
+      "documentation": {
+        "summary": "Position angle of the slice, north through east, given with center and length.",
+        "details": null,
+        "examples": [
+          "45deg"
+        ]
+      },
       "persistence_class": "profile"
     },
     {
@@ -9147,24 +9230,24 @@
       "id": "flagdata.clipminmax",
       "semantic_revision": 1,
       "casa_name": "clipminmax",
-      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "max_items": 2, "allow_scalar": false},
+      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "allow_scalar": true},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Range of data values that clip mode keeps; values outside it are flagged.", "details": null, "examples": ["[]"]},
+      "documentation": {"summary": "Two values define the closed clipping range. Other lengths leave the range unset.", "details": null, "examples": ["[]", "[0.0, 1.0]"]},
       "persistence_class": "profile"
     },
     {
       "id": "flagdata.clipoutside",
       "semantic_revision": 1,
       "casa_name": "clipoutside",
-      "value_domain": {"kind": "bool"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Clip outside clipminmax's range rather than inside it.", "details": null, "examples": ["true"]},
+      "documentation": {"summary": "Flag samples outside the closed clip range when true, or inside it when false.", "details": "A Boolean vector disables the CASA clipping agent.", "examples": ["true"]},
       "persistence_class": "profile"
     },
     {
@@ -9195,7 +9278,7 @@
       "id": "flagdata.quackincrement",
       "semantic_revision": 1,
       "casa_name": "quackincrement",
-      "value_domain": {"kind": "bool"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
@@ -9668,7 +9751,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "output_policy",
-      "documentation": {"summary": "Write the flags the automatic modes compute to the MeasurementSet.", "details": null, "examples": ["true"]},
+      "documentation": {"summary": "Internal flag-write argument. Flagdata derives persistence from action.", "details": null, "examples": ["true"]},
       "persistence_class": "profile"
     },
     {
@@ -9912,15 +9995,87 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.field",
+      "semantic_revision": 7,
+      "casa_name": "field",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "field", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA field selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.spw",
+      "semantic_revision": 5,
+      "casa_name": "spw",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "spectral_window", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA spw selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 5,
+      "casa_name": "scan",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "scan", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA scan selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 6,
+      "casa_name": "antenna",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "antenna", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA antenna selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 5,
+      "casa_name": "timerange",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "time_range", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA timerange selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "mstransform.timespan",
       "semantic_revision": 1,
       "casa_name": "timespan",
-      "value_domain": {"kind": "string"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Let time averages span 'scan', 'state' or both.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.combine",
+      "semantic_revision": 2,
+      "casa_name": "combine",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Let time averages span scan, field or state boundaries.", "details": null, "examples": ["''", "'scan,field'"]},
       "persistence_class": "profile"
     },
     {
@@ -12611,7 +12766,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
-      "documentation": {"summary": "Applycal field selector text.", "details": null, "examples": [""]},
+      "documentation": {"summary": "CASA field selector text. Empty selects every field.", "details": null, "examples": [""]},
       "persistence_class": "profile"
     },
     {
@@ -12659,7 +12814,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
-      "documentation": {"summary": "Applycal timerange selector text.", "details": null, "examples": [""]},
+      "documentation": {"summary": "CASA time selection passed to the MeasurementSet parser as literal text.", "details": null, "examples": [""]},
       "persistence_class": "profile"
     },
     {

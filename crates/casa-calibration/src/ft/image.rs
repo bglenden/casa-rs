@@ -1,40 +1,103 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare image models with the existing gridder for CASA's legacy imager.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, SpectralCoordinate,
-    StokesCoordinate, StokesType,
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
+    SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
-    GridPrecision, ImageExtent, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale,
-    PaddingFactor, PolarizationRouting, Spheroidal, WPlaneCount, WPlanes,
+    GridPrecision, ImageCorrection, ImageExtent, MOSAIC_OVERSAMPLING, MeasurementOperator,
+    ModelImages, ModelPlane, ModelPrescale, MosaicPb, PaddingFactor, PolarizationRouting,
+    PreparedModelGrids, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes, grid_planning_bytes,
 };
+use casa_imaging_runtime::pass::{WORKER_STACK_BYTES, WorkerTeam};
+use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral, legacy_multi_term};
+use casa_ms::virtual_model::ft_record::{
+    FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
+    legacy_multi_term, set_grid_motion, set_grid_tangent,
+};
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
-    virtual_model_image_path,
+    convert_frequency_to_frame_with_frame, virtual_model_image_path,
 };
+use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::record::direction_from_record;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
+use super::moving_source::MovingSourceAnchor;
 use super::settings::{ImagerGridder, PredictionGeometry};
-use super::{channel_span, invalid, model_entry};
+use super::voltage_pattern::{legacy_mosaic_table, relocate_mosaic_table};
+use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 
 /// An uncommitted Fourier image. The scratch path uses it until the write
 /// finishes. The virtual model can keep it once its on-disk record is filed.
 pub(crate) struct ImageModel {
     pub(crate) entry: VirtualModelEntry,
+    pub(super) nonzero: bool,
     backing: GridLifetime,
 }
 
 impl ImageModel {
+    pub(super) fn prepare(
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+        keep_zero: bool,
+        scratch: bool,
+        write: impl FnOnce(&Path) -> MsResult<(RecordValue, bool)>,
+    ) -> MsResult<Option<Self>> {
+        let mut path = virtual_model_image_path(ms)?;
+        if scratch {
+            let name = path.file_name().expect("the model image has a name");
+            path.set_file_name(format!("scratch-{}", name.to_string_lossy()));
+        }
+        let backing = GridLifetime {
+            path,
+            retained: false,
+        };
+        let (container, nonzero) = write(&backing.path)?;
+        if !nonzero && !keep_zero {
+            return Ok(None);
+        }
+        let entry = model_entry(ms, selected, VirtualModelKind::FtMachine, container)?;
+        Ok(Some(Self {
+            entry,
+            nonzero,
+            backing,
+        }))
+    }
+
+    pub(super) fn track(&mut self, tracking: &MovingSourceAnchor) -> MsResult<()> {
+        let record = &mut self.entry.container;
+        let Some(Value::Record(image)) = record.get("mimage_rec") else {
+            return Err(invalid("the Fourier grid has no image direction"));
+        };
+        let reference = direction_from_record(image).map_err(invalid)?.refer();
+        let anchor = tracking.source.direction(&tracking.frame, reference)?;
+        let location = tracking
+            .frame
+            .position()
+            .expect("moving-source frame has a location");
+        let set_motion = |record: &mut RecordValue| {
+            set_grid_motion(record, tracking.source.model(), &anchor, location);
+        };
+        if let Some(Value::Record(grid)) = record.get("subftm") {
+            let mut grid = grid.clone();
+            set_motion(&mut grid);
+            record.upsert("subftm", Value::Record(grid));
+        }
+        set_motion(record);
+        Ok(())
+    }
+
     pub(crate) fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
         let backing = GridLifetime {
             path: virtual_model_image_path(target)?,
@@ -55,8 +118,13 @@ impl ImageModel {
             entry.container.upsert("subftm", Value::Record(grid));
         } else {
             entry.container.upsert("diskimage", path);
+            relocate_mosaic_table(&mut entry.container, &self.backing.path, &backing.path)?;
         }
-        Ok(Self { entry, backing })
+        Ok(Self {
+            entry,
+            nonzero: self.nonzero,
+            backing,
+        })
     }
 
     pub(crate) fn retain(&mut self) {
@@ -103,62 +171,124 @@ pub(crate) fn prepare_image(
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
-    prepare_configured_image(
+    prepare_configured_images(
         ms,
         selected,
         path,
         taylor,
         keep_zero,
         scratch,
-        PredictionGeometry::default(),
+        &mut PredictionGeometry::default(),
     )
+    .map(|images| images.into_iter().next())
 }
 
-pub(super) fn prepare_configured_image(
+pub(super) fn prepare_configured_images(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     path: &Path,
     taylor: Option<TaylorTerm>,
     keep_zero: bool,
     scratch: bool,
-    options: PredictionGeometry,
-) -> MsResult<Option<ImageModel>> {
+    options: &mut PredictionGeometry,
+) -> MsResult<Vec<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
-    let layout = ImageTransform::new(ms, selected, &image, options)?;
-    let mut path = virtual_model_image_path(ms)?;
-    if scratch {
-        let name = path
-            .file_name()
-            .expect("the grid has a name")
-            .to_string_lossy();
-        path.set_file_name(format!("scratch-{name}"));
-    }
-    let backing = GridLifetime {
-        path,
-        retained: false,
+    let [nx, ny, _, _] = *image.shape() else {
+        return Err(invalid(
+            "ft requires four direction, Stokes and spectral image axes",
+        ));
     };
-    if !layout.grid(&image, &backing.path)? && !keep_zero {
-        return Ok(None);
+    let facets = options.facets.max(1);
+    let shape = [nx / facets, ny / facets];
+    if shape.contains(&0) {
+        return Err(invalid(
+            "the facet count exceeds the model image width or height",
+        ));
     }
-    let record = layout.record(ms, selected, &backing.path, scratch)?;
-    let container = match taylor {
-        Some(term) => legacy_multi_term(record, term.count, term.index, term.reference_hz),
-        None => record,
-    };
-    let entry = model_entry(ms, selected, VirtualModelKind::FtMachine, container)?;
-    Ok(Some(ImageModel { entry, backing }))
+    let mut outputs = Vec::new();
+    for y in 0..facets {
+        for x in 0..facets {
+            let window = ModelWindow {
+                origin: [x * shape[0], y * shape[1]],
+                shape,
+            };
+            let layout =
+                ImageTransform::new(ms, selected, &image, scratch, options.clone(), window)?;
+            outputs.extend(write_model_grid(
+                ms, selected, &image, taylor, keep_zero, scratch, layout,
+            )?);
+            if facets > 1 && matches!(options.settings.gridder, ImagerGridder::Mosaic) {
+                // CubeSkyEquation assigns the first image to MosaicFT and
+                // the remaining facets and outliers to independent GridFTs.
+                options.use_mosaic_outlier_grid();
+            }
+        }
+    }
+    Ok(outputs)
+}
+
+fn write_model_grid(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    image: &PagedImage<f32>,
+    taylor: Option<TaylorTerm>,
+    keep_zero: bool,
+    scratch: bool,
+    layout: ImageTransform,
+) -> MsResult<Option<ImageModel>> {
+    ImageModel::prepare(ms, selected, keep_zero, scratch, |path| {
+        let nonzero = layout.grid(image, path)?;
+        let record = layout.record(ms, selected, path, scratch)?;
+        let record = match taylor {
+            Some(term) => legacy_multi_term(record, term.count, term.index, term.reference_hz),
+            None => record,
+        };
+        Ok((record, nonzero))
+    })
+}
+
+#[derive(Clone, Copy)]
+struct ModelWindow {
+    origin: [usize; 2],
+    shape: [usize; 2],
+}
+
+impl ModelWindow {
+    fn direction(self, original: &DirectionCoordinate) -> DirectionCoordinate {
+        let reference = original.reference_pixel();
+        original
+            .clone()
+            .with_reference_pixel(std::array::from_fn(|axis| {
+                reference[axis] - self.origin[axis] as f64
+            }))
+    }
 }
 
 struct ImageTransform {
     operator: MeasurementOperator,
     coordinates: CoordinateSystem,
     frequencies: Vec<f64>,
+    interpolation_frequencies: Option<Vec<f64>>,
     increment: [f64; 2],
     phase_center: [f64; 2],
     frame: String,
     options: PredictionGeometry,
     distance_m: Option<f64>,
     w_record: Option<WRecord>,
+    mosaic: Option<MosaicImage>,
+    window: ModelWindow,
+}
+
+struct MosaicImage {
+    stokes: String,
+    beam: MosaicBeam,
+    sampling: u16,
+}
+
+enum MosaicBeam {
+    Array(i32),
+    Common(String),
+    Image(PathBuf),
 }
 
 struct WRecord {
@@ -256,12 +386,134 @@ fn effective_padding(options: &PredictionGeometry) -> MsResult<GridPadding> {
     // Its GridFT factory uses unit padding even when setoptions supplies
     // another value.
     let factor = match options.settings.gridder {
-        ImagerGridder::WProject(_) => options.settings.padding,
+        ImagerGridder::WProject(_) | ImagerGridder::AutoWProject => options.settings.padding,
+        ImagerGridder::Spheroidal | ImagerGridder::Boxcar if options.tangent.is_some() => {
+            options.settings.padding
+        }
         ImagerGridder::Spheroidal | ImagerGridder::Boxcar => 1.0,
+        ImagerGridder::Mosaic => return Ok(GridPadding::None),
     };
     Ok(GridPadding::CasaComposite(
         PaddingFactor::new(factor).map_err(invalid)?,
     ))
+}
+
+fn automatic_w_planes(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+) -> MsResult<WPlaneCount> {
+    let velocity = 299_792_458.0;
+    let spectral = ms.spectral_window()?;
+    let windows = selected
+        .selected_rows
+        .iter()
+        .map(|row| row.spectral_window_id)
+        .collect::<BTreeSet<_>>();
+    let mut min_frequency = f64::INFINITY;
+    let mut max_frequency: f64 = 0.;
+    for window in windows {
+        let frequencies = spectral.chan_freq(window as usize)?;
+        let channels = match selected.channel_selections.get(&window) {
+            Some(selection) => selection.indices(frequencies.len())?,
+            None => (0..frequencies.len()).collect(),
+        };
+        for channel in channels {
+            min_frequency = min_frequency.min(frequencies[channel]);
+            max_frequency = max_frequency.max(frequencies[channel]);
+        }
+    }
+    let uvw = ms.main_table().column_accessor("UVW")?;
+    let mut min_w = f64::INFINITY;
+    let mut max_w: f64 = 0.;
+    let mut square_sum: f64 = 0.;
+    for rows in selected.selected_rows.chunks(256) {
+        let row_ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+        for value in uvw.array_cells_owned_uncached(&row_ids)? {
+            let Some(ArrayValue::Float64(values)) = value else {
+                return Err(invalid("UVW must contain three doubles"));
+            };
+            let w = values
+                .iter()
+                .nth(2)
+                .ok_or_else(|| invalid("UVW must contain a W coordinate"))?
+                .abs();
+            min_w = min_w.min(w);
+            max_w = max_w.max(w);
+            square_sum += w * w;
+        }
+    }
+    Ok(WPlaneCount::Auto {
+        min_w: min_w * min_frequency / velocity,
+        max_w: max_w * max_frequency / velocity,
+        rms_w: (square_sum / selected.selected_rows.len() as f64).sqrt() * max_frequency / velocity,
+    })
+}
+
+pub(super) fn validate_short_cubic(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    matching_frequencies: &[f64],
+    convert: bool,
+) -> MsResult<()> {
+    let increment = matching_frequencies[1] - matching_frequencies[0];
+    let axis = SpectralAxis::tabular(matching_frequencies, increment).map_err(invalid)?;
+    let resampler = SpectralResampler::channel_local(axis.clone(), SpectralKernel::Cubic)
+        .with_legacy_prediction_axis(axis);
+    let engine = convert.then(|| MsCalEngine::new(ms)).transpose()?;
+    let windows = ms.spectral_window()?;
+    let mut by_window = BTreeMap::new();
+    let mut buffers = BTreeSet::new();
+    for row in &selected.selected_rows {
+        let id = row.spectral_window_id;
+        let (reference, frequencies) = match by_window.entry(id) {
+            std::collections::btree_map::Entry::Occupied(window) => window.into_mut(),
+            std::collections::btree_map::Entry::Vacant(window) => {
+                let raw = windows.chan_freq(id as usize)?;
+                let frequencies = if let Some(channel) = selected.channel_selections.get(&id) {
+                    let (span, stride) = channel_span(channel);
+                    raw.get(span)
+                        .ok_or_else(|| invalid("legacy cubic selection is outside its window"))?
+                        .iter()
+                        .step_by(stride)
+                        .copied()
+                        .collect()
+                } else {
+                    raw
+                };
+                window.insert((windows.frequency_reference(id as usize)?, frequencies))
+            }
+        };
+        if frequencies.len() < 2 {
+            continue;
+        }
+        let frame = engine.as_ref().filter(|_| *reference != FrequencyRef::LSRK);
+        let key = frame.map(|_| (row.field_id, row.time_mjd_seconds.to_bits()));
+        if !buffers.insert((id, key)) {
+            continue;
+        }
+        if let Some(engine) = frame {
+            let frame =
+                engine.spectral_frame_observatory(row.time_mjd_seconds, row.field_id as usize)?;
+            let ratio = convert_frequency_to_frame_with_frame(
+                *reference,
+                FrequencyRef::LSRK,
+                1.,
+                Some(&frame),
+            )?;
+            let frequencies = frequencies
+                .iter()
+                .map(|value| value * ratio)
+                .collect::<Vec<_>>();
+            resampler
+                .validate_legacy_prediction(&frequencies)
+                .map_err(invalid)?;
+        } else {
+            resampler
+                .validate_legacy_prediction(frequencies)
+                .map_err(invalid)?;
+        }
+    }
+    Ok(())
 }
 
 impl ImageTransform {
@@ -269,9 +521,11 @@ impl ImageTransform {
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
         image: &PagedImage<f32>,
+        scratch: bool,
         options: PredictionGeometry,
+        window: ModelWindow,
     ) -> MsResult<Self> {
-        let [nx, ny, npol, channels] = *image.shape() else {
+        let [_, _, npol, channels] = *image.shape() else {
             return Err(invalid(
                 "ft requires four direction, Stokes and spectral image axes",
             ));
@@ -283,11 +537,34 @@ impl ImageTransform {
         let CoordinateModel::Direction(direction) = coords.coordinate(direction) else {
             unreachable!()
         };
+        let direction = window.direction(direction);
+        let [nx, ny] = window.shape;
         let CoordinateModel::Stokes(stokes) = coords.coordinate(polarization) else {
             unreachable!()
         };
         let CoordinateModel::Spectral(spectral) = coords.coordinate(spectral) else {
             unreachable!()
+        };
+        let interpolation_frequencies =
+            if scratch && channels > 1 && matches!(options.settings.frequency_interpolation, 1..=3)
+            {
+                // FTMachine saves these image world frequencies before stripping
+                // the reference conversion from the channel-matching coordinate.
+                let original = spectral_with_runtime(spectral)?;
+                Some(
+                    (0..channels)
+                        .map(|channel| original.world_frequency_hz(channel as f64).map_err(invalid))
+                        .collect::<MsResult<Vec<_>>>()?,
+                )
+            } else {
+                None
+            };
+        // A new legacy imager has no active frequency conversion even when
+        // the input image carries a saved reference conversion.
+        let spectral = if options.frequency_frame_valid {
+            spectral_with_runtime(spectral)?.into_owned()
+        } else {
+            spectral.clone().without_conversion()
         };
         if npol != stokes.n_stokes() {
             return Err(invalid(
@@ -329,12 +606,18 @@ impl ImageTransform {
             .pixel_to_world([reference[0] as f64, reference[1] as f64])
             .map_err(invalid)?;
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(
+        let grid_direction = if scratch && matches!(options.settings.gridder, ImagerGridder::Mosaic)
+        {
+            // The live pointing test uses the subimage WCS. The saved image
+            // has its reference direction at the center of the Fourier grid.
+            direction.clone()
+        } else {
             direction
                 .clone()
                 .with_reference_value(phase_center)
-                .with_reference_pixel([(gx / 2) as f64, (gy / 2) as f64]),
-        );
+                .with_reference_pixel([(gx / 2) as f64, (gy / 2) as f64])
+        };
+        coordinates.add_coordinate(grid_direction);
         coordinates.add_coordinate(StokesCoordinate::new(
             routing
                 .grid()
@@ -342,19 +625,39 @@ impl ImageTransform {
                 .map(grid_stokes)
                 .collect::<MsResult<_>>()?,
         ));
-        coordinates.add_coordinate(CoordinateModel::Spectral(spectral.clone()));
+        coordinates.add_coordinate(spectral.clone());
+        let mosaic = matches!(options.settings.gridder, ImagerGridder::Mosaic)
+            .then(|| {
+                mosaic_image(
+                    ms,
+                    stokes,
+                    [nx, ny],
+                    options.mosaic_voltage_table.as_deref(),
+                )
+            })
+            .transpose()?;
         *coordinates.obs_info_mut() = ObsInfo::new("UNKNOWN").with_observer("UNKNOWN");
         let frequencies = (0..channels)
             .map(|index| spectral.world_frequency_hz(index as f64).map_err(invalid))
-            .collect::<MsResult<_>>()?;
+            .collect::<MsResult<Vec<_>>>()?;
+        if scratch && options.settings.frequency_interpolation == 2 && (2..4).contains(&channels) {
+            validate_short_cubic(ms, selected, &frequencies, options.frequency_frame_valid)?;
+        }
         let basis = Basis::ChannelLocal {
             planes: channels as u32,
         };
         let mut w_record = None;
         let kernels: Box<dyn ConvolutionFunctionSet> = match options.settings.gridder {
             ImagerGridder::Spheroidal => Box::new(Spheroidal::new(&geometry, &routing)),
-            ImagerGridder::Boxcar => Box::new(Boxcar::new(&geometry, &routing)),
-            ImagerGridder::WProject(planes) => {
+            ImagerGridder::Boxcar | ImagerGridder::Mosaic => {
+                Box::new(Boxcar::new(&geometry, &routing))
+            }
+            gridder => {
+                let planes = match gridder {
+                    ImagerGridder::WProject(planes) => planes,
+                    ImagerGridder::AutoWProject => automatic_w_planes(ms, selected)?,
+                    _ => unreachable!("ordinary gridders were already constructed"),
+                };
                 let kernels = WPlanes::new(&geometry, &routing, planes).map_err(invalid)?;
                 w_record = Some(WRecord::new(&kernels, planes));
                 Box::new(kernels)
@@ -377,20 +680,29 @@ impl ImageTransform {
             operator,
             coordinates,
             frequencies,
+            interpolation_frequencies,
             increment,
             phase_center,
             frame: direction.direction_ref().as_str().to_owned(),
+            mosaic,
             options,
             distance_m,
             w_record,
+            window,
         })
     }
 
     fn grid(&self, image: &PagedImage<f32>, path: &Path) -> MsResult<bool> {
-        let [nx, ny, npol, channels] = *image.shape() else {
+        let [_, _, npol, channels] = *image.shape() else {
             unreachable!()
         };
+        let [nx, ny] = self.window.shape;
+        let [first_x, first_y] = self.window.origin;
         let [gx, gy] = self.operator.geometry().grid_shape();
+        let mosaic = self
+            .mosaic
+            .as_ref()
+            .map(|mosaic| ImageCorrection::mosaic_sinc([gx, gy], mosaic.sampling));
         let beam = self
             .options
             .voltage_pattern
@@ -401,7 +713,10 @@ impl ImageTransform {
                 let CoordinateModel::Direction(direction) = coords.coordinate(index) else {
                     unreachable!("direction coordinate");
                 };
-                Ok::<_, casa_ms::MsError>((&beam.pattern, beam.separations(direction, [nx, ny])?))
+                Ok::<_, casa_ms::MsError>((
+                    beam.pattern(),
+                    beam.separations(&self.window.direction(direction), [nx, ny])?,
+                ))
             })
             .transpose()?;
         let grid_pols = self.operator.polarization().grid_pols();
@@ -430,57 +745,93 @@ impl ImageTransform {
             cache_bytes,
         )
         .map_err(invalid)?;
-        let mut nonzero = false;
-        for plane in 0..channels {
-            let values = image
-                .get_slice(&[0, 0, 0, plane], &[nx, ny, npol, 1])
-                .map_err(invalid)?;
-            nonzero |= values.iter().any(|value| *value != 0.0);
-            let frequency = self.frequencies[plane];
-            let beam = beam
-                .as_ref()
-                .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
-            let images = (0..npol)
-                .map(|pol| {
-                    Array2::from_shape_fn((ny, nx), |(y, x)| {
-                        let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
-                            let radius = separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
-                            pattern.power(radius)
-                        });
-                        values[[x, y, pol, 0]] * scale
-                    })
-                })
-                .collect();
-            let model = ModelImages {
-                first_plane: plane as u32,
-                planes: vec![ModelPlane { images }],
-            };
-            let grid = self
-                .operator
-                .prepare_model(&model, ModelPrescale::Unit)
-                .map_err(invalid)?;
-            for pol in 0..grid_pols {
-                let shape = IxDyn(&[gx, gy, 1, 1]).f();
-                let values = match self.operator.precision() {
-                    GridPrecision::F32 => {
-                        let cells = grid.block::<f32>(0, pol, 0);
-                        ArrayD::from_shape_fn(shape, |index| cells[index[1] * gx + index[0]])
-                    }
-                    GridPrecision::F64 => {
-                        let cells = grid.block::<f64>(0, pol, 0);
-                        ArrayD::from_shape_fn(shape, |index| {
-                            let cell = cells[index[1] * gx + index[0]];
-                            Complex32::new(cell.re as f32, cell.im as f32)
-                        })
-                    }
-                };
-                output
-                    .put_slice(&values, &[0, 0, pol, plane])
-                    .map_err(invalid)?;
+        let work_bytes = model_plane_memory([nx, ny], npol, [gx, gy], grid_pols);
+        let (workers, reservation) =
+            model_workers(self.options.native_threads, channels, work_bytes);
+        let (_reservation, team) = match WorkerTeam::new(workers) {
+            Ok(team) => (reservation, team),
+            Err(_) => {
+                drop(reservation);
+                (None, WorkerTeam::new(1).map_err(invalid)?)
             }
-        }
+        };
+        tracing::debug!(
+            requested = self.options.native_threads,
+            workers = team.workers(),
+            channels,
+            "preparing imager Fourier model planes"
+        );
+        let nonzero = prepare_model_planes(
+            &team,
+            channels,
+            |plane| {
+                image
+                    .get_slice(&[first_x, first_y, 0, plane], &[nx, ny, npol, 1])
+                    .map_err(invalid)
+            },
+            |plane, values| {
+                let frequency = self.frequencies[plane];
+                let beam = beam
+                    .as_ref()
+                    .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
+                let images = (0..npol)
+                    .map(|pol| {
+                        Array2::from_shape_fn((ny, nx), |(y, x)| {
+                            let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
+                                let radius =
+                                    separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
+                                pattern.power(radius)
+                            });
+                            values[[x, y, pol, 0]] * scale
+                        })
+                    })
+                    .collect();
+                let model = ModelImages {
+                    first_plane: plane as u32,
+                    planes: vec![ModelPlane { images }],
+                };
+                match &mosaic {
+                    Some(correction) => self.operator.prepare_model_with_correction(
+                        &model,
+                        ModelPrescale::Unit,
+                        correction,
+                    ),
+                    None => self.operator.prepare_model(&model, ModelPrescale::Unit),
+                }
+            },
+            |plane, grid| self.write_plane(&mut output, grid, plane),
+        )?;
         output.save().map_err(invalid)?;
         Ok(nonzero)
+    }
+
+    fn write_plane(
+        &self,
+        output: &mut PagedImage<Complex32>,
+        grid: &PreparedModelGrids,
+        plane: usize,
+    ) -> MsResult<()> {
+        let [gx, gy] = self.operator.geometry().grid_shape();
+        for pol in 0..self.operator.polarization().grid_pols() {
+            let shape = IxDyn(&[gx, gy, 1, 1]).f();
+            let values = match self.operator.precision() {
+                GridPrecision::F32 => {
+                    let cells = grid.block::<f32>(0, pol, 0);
+                    ArrayD::from_shape_fn(shape, |index| cells[index[1] * gx + index[0]])
+                }
+                GridPrecision::F64 => {
+                    let cells = grid.block::<f64>(0, pol, 0);
+                    ArrayD::from_shape_fn(shape, |index| {
+                        let cell = cells[index[1] * gx + index[0]];
+                        Complex32::new(cell.re as f32, cell.im as f32)
+                    })
+                }
+            };
+            output
+                .put_slice(&values, &[0, 0, pol, plane])
+                .map_err(invalid)?;
+        }
+        Ok(())
     }
 
     fn record(
@@ -494,12 +845,27 @@ impl ImageTransform {
         let (lon, lat, radius) = engine.observatory_position().as_spherical();
         let row = &selected.selected_rows[0];
         let spectral = ms.spectral_window()?;
-        let channels = spectral.chan_freq(row.spectral_window_id as usize)?;
+        let window = row.spectral_window_id as usize;
+        let mut channels = spectral.chan_freq(window)?;
         let routing = self.operator.polarization();
         let axis = coordinate_index(&self.coordinates, CoordinateType::Spectral)?;
         let CoordinateModel::Spectral(axis) = self.coordinates.coordinate(axis) else {
             unreachable!();
         };
+        let frequency_frame_valid = self.options.frequency_frame_valid;
+        if frequency_frame_valid {
+            let frame =
+                engine.spectral_frame_observatory(row.time_mjd_seconds, row.field_id as usize)?;
+            let ratio = convert_frequency_to_frame_with_frame(
+                spectral.frequency_reference(window)?,
+                FrequencyRef::LSRK,
+                1.,
+                Some(&frame),
+            )?;
+            for frequency in &mut channels {
+                *frequency *= ratio;
+            }
+        }
         let channel_map = match_channels(axis, self.frequencies.len(), &channels);
         let buffer = FirstBuffer {
             field: row.field_id,
@@ -529,9 +895,20 @@ impl ImageTransform {
             spectral: spectral_record,
             buffer: &buffer,
             interpolation: self.options.settings.frequency_interpolation,
-            frequency_frame_valid: false,
+            frequency_frame_valid,
         }
         .record();
+        if let Some(tangent) = &self.options.tangent {
+            set_grid_tangent(&mut record, tangent);
+        }
+        if let Some(frequencies) = &self.interpolation_frequencies {
+            // This temporary record never leaves the active scratch writer.
+            record.upsert("tovis", Value::Scalar(ScalarValue::Bool(false)));
+            record.upsert(
+                "casars_live_image_frequency",
+                Value::Array(ArrayValue::from_f64_vec(frequencies.clone())),
+            );
+        }
         let settings = self.options.settings;
         record.upsert(
             "usedoublegrid",
@@ -558,16 +935,34 @@ impl ImageTransform {
         if let Some(distance) = self.distance_m {
             record.upsert("distance", Value::Scalar(ScalarValue::Float64(distance)));
         }
-        if scratch && settings.frequency_interpolation != 0 {
-            // This temporary record represents the live iterator, which
-            // keeps its configured interpolation when sampling MODEL_DATA.
-            record.upsert("tovis", Value::Scalar(ScalarValue::Bool(false)));
-        }
         if matches!(settings.gridder, ImagerGridder::Boxcar) {
             record.upsert("convtype", Value::Scalar(ScalarValue::String("BOX".into())));
         }
         if let Some(w_record) = &self.w_record {
             w_record.save(&mut record, scratch, self.operator.geometry());
+        }
+        if let Some(mosaic) = &self.mosaic {
+            match &mosaic.beam {
+                MosaicBeam::Array(class) => {
+                    legacy_mosaic(&mut record, &mosaic.stokes, *class, mosaic.sampling);
+                }
+                MosaicBeam::Common(telescope) => {
+                    legacy_common_mosaic(&mut record, &mosaic.stokes, telescope, mosaic.sampling);
+                }
+                MosaicBeam::Image(table) => {
+                    let table = if scratch {
+                        table.clone()
+                    } else {
+                        legacy_mosaic_table(table, path)?
+                    };
+                    legacy_image_mosaic(
+                        &mut record,
+                        &mosaic.stokes,
+                        &table.to_string_lossy(),
+                        mosaic.sampling,
+                    );
+                }
+            }
         }
         record.upsert(
             "spwchanselflag",
@@ -578,20 +973,155 @@ impl ImageTransform {
     }
 }
 
-fn match_channels(axis: &SpectralCoordinate, channels: usize, frequencies: &[f64]) -> Vec<i32> {
+fn prepare_model_planes(
+    team: &WorkerTeam,
+    channels: usize,
+    mut read: impl FnMut(usize) -> MsResult<ArrayD<f32>>,
+    prepare: impl Fn(
+        usize,
+        &ArrayD<f32>,
+    ) -> Result<PreparedModelGrids, casa_imaging_operator::OperatorError>
+    + Send
+    + Sync,
+    mut write: impl FnMut(usize, &PreparedModelGrids) -> MsResult<()>,
+) -> MsResult<bool> {
+    let mut nonzero = false;
+    let workers = team.workers();
+    for first_plane in (0..channels).step_by(workers) {
+        let end = (first_plane + workers).min(channels);
+        let mut planes = Vec::with_capacity(end - first_plane);
+        for plane in first_plane..end {
+            let values = read(plane)?;
+            nonzero |= values.iter().any(|value| *value != 0.0);
+            planes.push((values, None));
+        }
+        team.for_each_mut(&mut planes, |index, (values, grid)| {
+            *grid = Some(prepare(first_plane + index, values)?);
+            Ok::<_, casa_imaging_operator::OperatorError>(())
+        })
+        .map_err(invalid)?;
+        for (index, (_, grid)) in planes.into_iter().enumerate() {
+            write(
+                first_plane + index,
+                &grid.expect("the Fourier plane was prepared"),
+            )?;
+        }
+    }
+    Ok(nonzero)
+}
+
+fn model_worker_memory(workers: usize, work_bytes: u64) -> u64 {
+    // Match the runtime's other owners of a dedicated worker team.
+    let team_worker_bytes = (WORKER_STACK_BYTES + 65_536) as u64;
+    work_bytes
+        .saturating_add(team_worker_bytes)
+        .saturating_mul(workers as u64)
+}
+
+fn model_plane_memory(
+    [nx, ny]: [usize; 2],
+    image_polarizations: usize,
+    [gx, gy]: [usize; 2],
+    grid_polarizations: usize,
+) -> u64 {
+    let image_bytes = nx
+        .saturating_mul(ny)
+        .saturating_mul(image_polarizations)
+        .saturating_mul(2 * size_of::<f32>());
+    let grid_cells = gx.saturating_mul(gy);
+    let grid_bytes = grid_cells
+        .saturating_mul(grid_polarizations + 1)
+        .saturating_mul(2 * size_of::<f64>());
+    (image_bytes.saturating_add(grid_bytes) as u64).saturating_add(grid_planning_bytes(grid_cells))
+}
+
+#[cfg(test)]
+#[path = "image_worker_tests.rs"]
+mod worker_tests;
+
+fn model_workers(threads: i32, planes: usize, work_bytes: u64) -> (usize, Option<Reservation>) {
+    if threads == 1 || planes <= 1 {
+        return (1, None);
+    }
+    let Ok(host) = HostResources::detect() else {
+        return (1, None);
+    };
+    let requested = usize::try_from(threads)
+        .ok()
+        .filter(|count| *count > 0)
+        .unwrap_or(host.threads);
+    let workers = requested.min(host.threads).min(planes);
+    if workers <= 1 {
+        return (1, None);
+    }
+    let policy = ResourcePolicy::Balanced;
+    let demand = Demand {
+        phase: "legacy imager model planes",
+        memory: model_worker_memory(workers, work_bytes),
+    };
+    match admit(&host, &policy, &demand) {
+        Ok(reservation) => (workers, Some(reservation)),
+        Err(_) => (1, None),
+    }
+}
+
+fn mosaic_image(
+    ms: &MeasurementSet,
+    stokes: &StokesCoordinate,
+    shape: [usize; 2],
+    voltage_table: Option<&Path>,
+) -> MsResult<MosaicImage> {
+    let beam = if let Some(table) = voltage_table {
+        MosaicBeam::Image(table.to_owned())
+    } else {
+        legacy_mosaic_beam(ms.observation()?.string(0, "TELESCOPE_NAME")?)
+    };
+    let sampling = if matches!(beam, MosaicBeam::Common(_)) {
+        MosaicPb::simple_oversampling(shape)
+    } else {
+        MOSAIC_OVERSAMPLING
+    };
+    Ok(MosaicImage {
+        stokes: stokes.stokes().iter().map(|stokes| stokes.name()).collect(),
+        beam,
+        sampling,
+    })
+}
+
+fn legacy_mosaic_beam(telescope: String) -> MosaicBeam {
+    // CASA enumerates these names before selecting SimplePBConvFunc.
+    match telescope.as_str() {
+        "EVLA" => MosaicBeam::Array(1),
+        "ATCA_L1" | "ATCA_L2" | "ATCA_L3" | "ATCA_16" | "ATCA_S" | "ATCA_C" | "ATCA_C_RI"
+        | "ATCA" | "ATCA_X" | "ATCA_K" | "ATCA_Q" | "ATCA_W" | "HATCREEK" | "BIMA" | "NGVLA"
+        | "VLA" | "VLA_INVERSE" | "VLA_NVSS" | "VLA_2NULL" | "VLA_4" | "VLA_P" | "VLA_L"
+        | "VLA_C" | "VLA_X" | "VLA_U" | "VLA_K" | "VLA_Q" | "WSRT" | "WSRT_LOW" | "GBT"
+        | "GMRT" | "NRAO12M" | "IRAMPDB" | "IRAM30M" | "NRAO140FT" | "ALMASD" | "SMA" | "ATA"
+        | "NONE" | "DEFAULT" => MosaicBeam::Common(telescope),
+        _ => MosaicBeam::Array(2),
+    }
+}
+
+pub(crate) fn match_channels(
+    axis: &SpectralCoordinate,
+    channels: usize,
+    frequencies: &[f64],
+) -> Vec<i32> {
     frequencies
         .iter()
-        .map(|&frequency| {
-            axis.pixel_at_frequency_hz(frequency)
-                .ok()
-                .map(f64::round)
-                .filter(|&index| (0.0..channels as f64).contains(&index))
-                .map_or(-1, |index| index as i32)
-        })
+        .map(|&frequency| match_channel(axis, channels, frequency))
         .collect()
 }
 
-fn record_selection(
+pub(crate) fn match_channel(axis: &SpectralCoordinate, channels: usize, frequency: f64) -> i32 {
+    axis.pixel_at_frequency_hz(frequency)
+        .ok()
+        .map(f64::round)
+        .filter(|&index| (0.0..channels as f64).contains(&index))
+        .map_or(-1, |index| index as i32)
+}
+
+pub(super) fn record_selection(
     record: &mut RecordValue,
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
@@ -638,7 +1168,10 @@ fn record_selection(
     Ok(())
 }
 
-fn selection_mask(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResult<ArrayD<i32>> {
+pub(super) fn selection_mask(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+) -> MsResult<ArrayD<i32>> {
     let windows = ms.spectral_window()?;
     let counts = (0..windows.row_count())
         .map(|spw| windows.num_chan(spw))
@@ -670,18 +1203,24 @@ fn selection_mask(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResu
     Ok(mask)
 }
 
-fn first_correlations(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResult<Vec<i32>> {
+pub(super) fn first_correlations(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+) -> MsResult<Vec<i32>> {
     ms.polarization()?
         .corr_type(selected.selected_rows[0].polarization_id as usize)
 }
 
-fn coordinate_index(coordinates: &CoordinateSystem, kind: CoordinateType) -> MsResult<usize> {
+pub(crate) fn coordinate_index(
+    coordinates: &CoordinateSystem,
+    kind: CoordinateType,
+) -> MsResult<usize> {
     coordinates
         .find_coordinate(kind)
         .ok_or_else(|| invalid(format!("model image has no {kind:?} coordinate")))
 }
 
-fn grid_stokes(plane: &GridPolarization) -> MsResult<StokesType> {
+pub(super) fn grid_stokes(plane: &GridPolarization) -> MsResult<StokesType> {
     match plane {
         GridPolarization::StokesI => Ok(StokesType::I),
         GridPolarization::Correlation(correlation) => {

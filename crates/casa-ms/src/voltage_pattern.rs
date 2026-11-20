@@ -71,6 +71,56 @@ impl VoltagePatternTable {
         Self::reading_bytes(&self.defaults)
     }
 
+    /// Read all VP definitions after checking the saved default indices.
+    ///
+    /// # Errors
+    /// A definition or default row is unreadable, or a default index is invalid.
+    pub fn definitions(&self) -> Result<Vec<RecordValue>, VoltagePatternError> {
+        let defaults =
+            Table::open(TableOptions::new(&self.defaults)).map_err(VoltagePatternError::read)?;
+        for row in 0..defaults.row_count() {
+            let name = default_cell(&defaults, row, "tel_and_anttype")?;
+            if !matches!(name, ScalarValue::String(_)) {
+                return Err(VoltagePatternError::read(
+                    "VPLIST_DEFAULTS.tel_and_anttype is not a string",
+                ));
+            }
+            let index = default_index(&defaults, row)?;
+            if index < -1 || usize::try_from(index).is_ok_and(|i| i >= self.root.row_count()) {
+                return Err(VoltagePatternError::read(
+                    "VPLIST_DEFAULTS selects an absent beam",
+                ));
+            }
+        }
+        (0..self.root.row_count())
+            .map(|row| self.definition(row))
+            .collect()
+    }
+
+    /// Copy the root and the defaults subtable into an independently owned table.
+    /// The caller can update the returned copy and save it at `path`.
+    ///
+    /// # Errors
+    /// The table could not be read or copied.
+    pub fn copy_to(&self, path: &Path) -> Result<Table, VoltagePatternError> {
+        let defaults =
+            Table::open(TableOptions::new(&self.defaults)).map_err(VoltagePatternError::read)?;
+        let output_defaults =
+            std::path::absolute(path.join("VPLIST_DEFAULTS")).map_err(VoltagePatternError::read)?;
+        self.root
+            .deep_copy(TableOptions::new(path))
+            .map_err(VoltagePatternError::read)?;
+        defaults
+            .deep_copy(TableOptions::new(&output_defaults))
+            .map_err(VoltagePatternError::read)?;
+        let mut copy = Table::open(TableOptions::new(path)).map_err(VoltagePatternError::read)?;
+        copy.keywords_mut().upsert(
+            "VPLIST_DEFAULTS",
+            Value::TableRef(output_defaults.to_string_lossy().into_owned()),
+        );
+        Ok(copy)
+    }
+
     /// Read the last matching default row, as `VPManager::loadfromtable`
     /// updates the telescope map. A saved index of `-1` selects a built-in
     /// pattern and returns `None`.
@@ -85,21 +135,9 @@ impl VoltagePatternTable {
             Table::open(TableOptions::new(&self.defaults)).map_err(VoltagePatternError::read)?;
         let mut selected = None;
         for row in 0..defaults.row_count() {
-            let name = defaults
-                .cell_accessor(row, "tel_and_anttype")
-                .and_then(|cell| cell.scalar())
-                .map_err(VoltagePatternError::read)?;
+            let name = default_cell(&defaults, row, "tel_and_anttype")?;
             if matches!(name, ScalarValue::String(name) if name == telescope) {
-                let ScalarValue::Int32(index) = defaults
-                    .cell_accessor(row, "vplistnum")
-                    .and_then(|cell| cell.scalar())
-                    .map_err(VoltagePatternError::read)?
-                else {
-                    return Err(VoltagePatternError::read(
-                        "VPLIST_DEFAULTS.vplistnum is not an integer",
-                    ));
-                };
-                selected = Some(*index);
+                selected = Some(default_index(&defaults, row)?);
             }
         }
         let selected = selected.ok_or_else(|| {
@@ -114,11 +152,34 @@ impl VoltagePatternTable {
                 "VPLIST_DEFAULTS selects an absent beam",
             ));
         }
+        self.definition(index).map(Some)
+    }
+
+    fn definition(&self, row: usize) -> Result<RecordValue, VoltagePatternError> {
         self.root
-            .cell_accessor(index, "pbdescription")
+            .cell_accessor(row, "pbdescription")
             .and_then(|cell| cell.record())
-            .map(Some)
             .map_err(VoltagePatternError::read)
+    }
+}
+
+fn default_cell<'a>(
+    table: &'a Table,
+    row: usize,
+    column: &str,
+) -> Result<&'a ScalarValue, VoltagePatternError> {
+    table
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(VoltagePatternError::read)
+}
+
+fn default_index(table: &Table, row: usize) -> Result<i32, VoltagePatternError> {
+    match default_cell(table, row, "vplistnum")? {
+        ScalarValue::Int32(index) => Ok(*index),
+        _ => Err(VoltagePatternError::read(
+            "VPLIST_DEFAULTS.vplistnum is not an integer",
+        )),
     }
 }
 

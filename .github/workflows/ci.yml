@@ -1,17 +1,27 @@
 name: CI
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, converted_to_draft, ready_for_review]
   schedule:
     # Check main broadly and refresh the build caches once per night.
     - cron: '23 9 * * *'
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Hosted checks to run
+        type: choice
+        options: [affected, static, full]
+        default: affected
+      base_sha:
+        description: Full merge-base commit SHA (required for affected checks)
+        type: string
   workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ inputs.scope || 'full' }}-${{ inputs.base_sha }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -28,28 +38,31 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'workflow_dispatch' && inputs.scope == 'affected' && github.ref_type == 'branch'
       - name: Select checks
         id: plan
         shell: bash
         env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          CI_SCOPE: ${{ inputs.scope }}
+          CI_BASE_SHA: ${{ inputs.base_sha }}
         run: |
+          set -euo pipefail
           args=()
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            args+=(--base "$PR_BASE")
-            if [[ "$PR_DRAFT" == true ]]; then args+=(--draft); fi
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF_TYPE" == branch ]]; then
+            case "$CI_SCOPE" in
+              affected) args+=(--base "$CI_BASE_SHA") ;;
+              static) args+=(--static) ;;
+              full) ;;
+              *) echo "Select affected, static or full checks" >&2; exit 1 ;;
+            esac
           fi
           python3 -B scripts/test-ci-scope.py
           python3 scripts/ci_scope.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # Preserve the required lint_test status on ready PRs. A draft check on the
-  # same commit cannot satisfy that status before the ready run has started.
+  # Fail the workflow if a selected check did not run successfully.
   lint_test:
-    name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft_checks' || 'lint_test' }}
     if: ${{ always() }}
     needs: [ci_scope, rust_checks, python_package, docs]
     runs-on: ubuntu-latest

@@ -18,13 +18,17 @@ use super::PyImageTool;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 
-enum Region {
+pub(super) enum Region {
     Text(String),
     Record(RecordValue),
 }
 
 impl Region {
-    fn argument(py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Self>> {
+    pub(super) fn argument(
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+        method: &str,
+    ) -> PyResult<Option<Self>> {
         let Some(value) = value else {
             return Ok(None);
         };
@@ -34,9 +38,9 @@ impl Region {
                 return Ok(None);
             }
             if !matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name)))
-                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCUnion"))
+                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"))
             {
-                return Err(super::stub("subimage").unwrap_err());
+                return Err(super::stub(method).unwrap_err());
             }
             return Ok(Some(Self::Record(record)));
         }
@@ -50,14 +54,14 @@ impl Region {
         Err(raised("Unsupported type for region"))
     }
 
-    fn as_region(&self) -> SubimageRegion<'_> {
+    pub(super) fn as_region(&self) -> SubimageRegion<'_> {
         match self {
             Self::Text(text) => SubimageRegion::Text(text),
             Self::Record(record) => SubimageRegion::Record(record),
         }
     }
 
-    fn history(&self) -> String {
+    pub(super) fn history(&self) -> String {
         match self {
             Self::Text(text) => format!("{text:?}"),
             Self::Record(_) => "{...}".to_owned(),
@@ -74,7 +78,7 @@ fn empty_variant(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(value.extract::<Variant>()?.is_empty_sequence())
 }
 
-fn mask_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
+pub(super) fn mask_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
     let Some(value) = value else {
         return Ok(String::new());
     };
@@ -192,7 +196,7 @@ impl PyImageTool {
     ) -> PyResult<Option<Py<Self>>> {
         let request = Request {
             outfile,
-            region: Region::argument(py, region)?,
+            region: Region::argument(py, region, "subimage")?,
             mask: mask_argument(mask)?,
             dropdeg,
             overwrite,
@@ -205,17 +209,19 @@ impl PyImageTool {
         let result = py.detach(|| {
             let state = self.state();
             let attached = state.image.as_ref().ok_or_else(|| raised("Unable to create image"))?;
-            let original = attached.lock();
-            if original.fits().is_some() {
-                return not_yet_implemented_in("image", "subimage", 1627);
-            }
             if outfile.is_empty() && !wantreturn {
                 logs.push(LogLine::warning("outfile was not specified and wantreturn is false. The resulting image will be inaccessible"));
             }
-            if !outfile.is_empty() && let Some(source) = original.path() {
-                ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
-            }
             publish_image(outfile, overwrite, |path| {
+                // Release the source handle before publication takes the image registry lock.
+                let mut original = attached.lock();
+                if original.fits().is_some() {
+                    return not_yet_implemented_in("image", "subimage", 1627);
+                }
+                attached.require_lock(&mut original, casa_tables::LockType::Read)?;
+                if !outfile.is_empty() && let Some(source) = original.path() {
+                    ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
+                }
                 let mut copy = match &*original {
                     ImageHandle::Float(source) => ImageHandle::Float(request.build(source, path, &mut logs)?),
                     ImageHandle::Double(source) => ImageHandle::Double(request.build(source, path, &mut logs)?),

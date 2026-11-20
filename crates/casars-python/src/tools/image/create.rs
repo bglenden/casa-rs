@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
@@ -219,6 +220,7 @@ pub(super) fn publish_image_checked<L>(
     let product = stage.path().join("image");
     drop(build(Some(&product))?);
     let mut registry = attachment::registry();
+    let mut replacement_locks = BTreeMap::new();
     let existed = match path.symlink_metadata() {
         Ok(_) if !overwrite => {
             return Err(raised(format!(
@@ -227,9 +229,12 @@ pub(super) fn publish_image_checked<L>(
             )));
         }
         Ok(_) => {
-            if registry
-                .get(&attachment::key(&path)?)
-                .is_some_and(|image| image.strong_count() > 0)
+            let key = attachment::key(&path)?;
+            if attachment::conflicting_images(&registry, &key, 0)
+                || key
+                    .ancestors()
+                    .filter(|parent| parent.join("table.dat").is_file())
+                    .any(crate::tools::table::path_is_in_use)
             {
                 return Err(raised(format!(
                     "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
@@ -248,6 +253,7 @@ pub(super) fn publish_image_checked<L>(
                     path.display()
                 )));
             }
+            attachment::lock_table_tree(&key, &mut replacement_locks)?;
             true
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
@@ -259,8 +265,13 @@ pub(super) fn publish_image_checked<L>(
     } else {
         rename_without_replacing(&product, &path).map_err(raised)?;
     }
-    match AttachedImage::open(&mut registry, &path) {
-        Ok(image) => Ok(image),
+    match AttachedImage::open_created(&mut registry, &path) {
+        Ok(image) => {
+            // The old table is inside the private staging directory after an exchange.
+            drop(stage);
+            drop(replacement_locks);
+            Ok(image)
+        }
         Err(error) => {
             let restore = if existed {
                 exchange_directories(&product, &path)

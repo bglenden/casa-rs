@@ -7,8 +7,8 @@ use casa_coordinates::{CoordinateModel, CoordinateType};
 use fitsio::images::ImageType as FitsImageType;
 
 use super::{
-    ImageExtrema, ImageHeaderSummary, ImageType, axis_summaries, format_beam, projection_header,
-    spectral_summary, summarize_beam_set, world_header,
+    ImageExtrema, ImageHeaderSummary, ImageType, axis_summaries, format_beam,
+    imhead_unknown_keyword, projection_header, spectral_summary, summarize_beam_set, world_header,
 };
 use crate::ImageError;
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
@@ -42,9 +42,7 @@ pub(super) fn custom_value(
             })
     });
     if internal.contains(&upper.as_str()) || axis_keyword || matrix_keyword {
-        return Err(ImageError::InvalidMetadata(format!(
-            "Unknown keyword {key}"
-        )));
+        return Err(imhead_unknown_keyword(key));
     }
     let cards = crate::fits_read::read_cards(path)?;
     let references = cards.iter().map(String::as_str).collect::<Vec<_>>();
@@ -58,40 +56,8 @@ pub(super) fn custom_value(
         Some(FitsValue::Logical(_)) => Err(ImageError::InvalidMetadata(
             "Unhandled data type Bool for user defined type. Send us a bug report".into(),
         )),
-        _ => Err(ImageError::InvalidMetadata(format!(
-            "Unknown keyword {key}"
-        ))),
+        _ => Err(imhead_unknown_keyword(key)),
     }
-}
-
-/// FITSImage uses TiledFileAccess's 32768-pixel tile shape.
-fn tile_shape(shape: &[usize]) -> Vec<usize> {
-    let mut remaining = 32768_f32;
-    let mut result = vec![1; shape.len()];
-    for (axis, &length) in shape.iter().enumerate() {
-        if length as f32 <= remaining {
-            result[axis] = length;
-            remaining /= length as f32;
-        } else {
-            let ideal = (remaining + 0.5) as usize;
-            if length % ideal == 0 {
-                result[axis] = ideal;
-            } else {
-                for offset in 1..ideal.min(length - ideal + 1) {
-                    if length % (ideal - offset) == 0 {
-                        result[axis] = ideal - offset;
-                        break;
-                    }
-                    if length % (ideal + offset) == 0 {
-                        result[axis] = ideal + offset;
-                        break;
-                    }
-                }
-            }
-            break;
-        }
-    }
-    result
 }
 
 pub(super) fn summary(path: &Path) -> Result<ImageHeaderSummary, ImageError> {
@@ -121,7 +87,7 @@ pub(super) fn summary(path: &Path) -> Result<ImageHeaderSummary, ImageError> {
         imagename: path.display().to_string(),
         pixel_type: "Float32".into(),
         shape: primary.shape.clone(),
-        tile_shape: tile_shape(&primary.shape),
+        tile_shape: crate::fits_read::fits_tile_shape(&primary.shape),
         units: crate::fits_read::brightness_unit(&primary.header),
         object_name: if primary.header.get_string("OBJECT") == Some("") {
             " ".into()

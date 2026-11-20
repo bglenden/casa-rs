@@ -98,7 +98,15 @@ pub fn parse_parameter_cli_overrides(
                 .catalog
                 .concept(&binding.concept)
                 .ok_or_else(|| format!("missing concept for {}", binding.name))?;
-            let (value, consumed) = if is_bool_domain(&concept.value_domain) {
+            // A CASA variant can keep a Boolean switch while accepting a
+            // wider value domain through the Python and JSON entry points.
+            let variant_switch = matches!(concept.value_domain, ParameterType::Variant)
+                && binding
+                    .projections
+                    .cli
+                    .as_ref()
+                    .is_some_and(|projection| !projection.false_flags.is_empty());
+            let (value, consumed) = if is_bool_domain(&concept.value_domain) || variant_switch {
                 if inline.is_some() {
                     return Err(format!("boolean {flag} does not take a value"));
                 }
@@ -232,8 +240,15 @@ fn validated_cli_value(
     let one_selector = concept.semantic_role == ParameterRole::Selection
         && is_text_list_domain(&concept.value_domain)
         && !text.starts_with('[');
+    let selector_variant = matches!(concept.value_domain, ParameterType::Variant)
+        && matches!(
+            concept.normalization,
+            NormalizationRule::CasaSelector { .. }
+        );
     let exact_empty_default = text.is_empty()
-        && (matches!(concept.value_domain, ParameterType::String) || one_selector)
+        && (matches!(concept.value_domain, ParameterType::String)
+            || one_selector
+            || selector_variant)
         && matches!(&binding.default,
             DefaultSpec::Literal { value: ParameterValue::String(value) } if value.is_empty());
     if bundle.surface.id() == "immath"
@@ -256,7 +271,7 @@ fn validated_cli_value(
     if text.trim().is_empty()
         && !exact_empty_default
         && !exact_field_text
-        && !matches!(concept.value_domain, ParameterType::Variant)
+        && (selector_variant || !matches!(concept.value_domain, ParameterType::Variant))
     {
         return Err(format!("parameter {:?} has no typed value", binding.name));
     }

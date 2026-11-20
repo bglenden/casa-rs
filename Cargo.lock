@@ -247,6 +247,8 @@ dependencies = [
  "casa-images",
  "casa-imaging-model",
  "casa-imaging-operator",
+ "casa-imaging-runtime",
+ "casa-imaging-singledish",
  "casa-lattices",
  "casa-measures-data",
  "casa-ms",
@@ -486,6 +488,7 @@ dependencies = [
  "flate2",
  "libm",
  "ndarray",
+ "num-complex",
  "serde_json",
  "thiserror",
 ]

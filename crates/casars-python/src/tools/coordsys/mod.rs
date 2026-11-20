@@ -13,6 +13,7 @@ mod reference;
 mod stubs;
 pub(crate) mod surface;
 mod transform_many;
+pub(super) mod world_reference;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

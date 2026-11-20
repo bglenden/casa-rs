@@ -53,6 +53,11 @@ use num_complex::Complex32;
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 mod spectral;
+mod task;
+
+pub(crate) use task::{
+    TaskRegridOptions, frame_from_template, regrid_direction_frame, regrid_task,
+};
 
 /// casacore's `Interpolate2D` methods that `imregrid` and the image tool's
 /// `regrid` offer, Lanczos aside.
@@ -578,38 +583,19 @@ where
     };
     let data = input.get()?;
     let mask = input.default_mask()?;
-    // The direction pass keeps the input's channels; the spectral pass
-    // takes them to the template's.
-    let mut direction_shape = input_shape.clone();
-    direction_shape[out_axis..out_axis + 2].copy_from_slice(&out_plane);
-    let mut out_data = ArrayD::<T>::from_elem(IxDyn(&direction_shape).f(), T::from(0.0));
-    let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&direction_shape).f(), false);
-    let mut plane = vec![0.0f64; in_plane[0] * in_plane[1]];
-    let mut plane_mask = mask.as_ref().map(|_| vec![true; plane.len()]);
-    let mut out_values = vec![0.0f64; out_plane[0] * out_plane[1]];
-    let mut out_valid = vec![false; out_values.len()];
-    let planes = PlaneIndex::new(&input_shape, in_axis);
-    let out_planes = PlaneIndex::new(&direction_shape, out_axis);
-    for plane_number in 0..planes.count {
-        planes.read(plane_number, &data, &mut plane, |v| (*v).into());
-        if let (Some(values), Some(mask)) = (plane_mask.as_mut(), mask.as_ref()) {
-            planes.read(plane_number, mask, values, |v| *v);
-        }
-        let view = Plane {
-            data: &plane,
-            mask: plane_mask.as_deref(),
-            shape: in_plane,
-        };
-        for (k, at) in grid.iter().enumerate() {
-            let sampled = at.and_then(|at| view.sample(method, at));
-            out_values[k] = sampled.map_or(0.0, |value| scale * value);
-            out_valid[k] = sampled.is_some();
-        }
-        out_planes.write(plane_number, &out_values, &mut out_data, |v| {
-            T::from(v as f32)
-        });
-        out_planes.write(plane_number, &out_valid, &mut out_mask, |v| v);
-    }
+    let (mut out_data, mut out_mask) = sample_direction_planes(
+        &data,
+        mask.as_ref(),
+        DirectionSampling {
+            axes: [in_axis, out_axis],
+            shape: out_plane,
+            positions: &grid,
+            method,
+            scale,
+        },
+        |value: T| value.into(),
+        |value| T::from(value as f32),
+    );
     if let Some(spectral) = &plan.spectral {
         (out_data, out_mask) = spectral.apply(&out_data, &out_mask, &template.shape);
     }
@@ -620,6 +606,64 @@ where
         template_coordinates: plan.template_coordinates,
         scale,
     })
+}
+
+struct DirectionSampling<'a> {
+    axes: [usize; 2],
+    shape: [usize; 2],
+    positions: &'a [Option<[f64; 2]>],
+    method: RegridMethod,
+    scale: f64,
+}
+
+fn sample_direction_planes<T>(
+    data: &ArrayD<T>,
+    mask: Option<&ArrayD<bool>>,
+    sampling: DirectionSampling<'_>,
+    read: impl Fn(T) -> f64,
+    write: impl Fn(f64) -> T,
+) -> (ArrayD<T>, ArrayD<bool>)
+where
+    T: ImagePixel + Copy,
+{
+    let DirectionSampling {
+        axes: [in_axis, out_axis],
+        shape: out_plane,
+        positions,
+        method,
+        scale,
+    } = sampling;
+    let input_shape = data.shape();
+    let in_plane = [input_shape[in_axis], input_shape[in_axis + 1]];
+    let mut direction_shape = input_shape.to_vec();
+    direction_shape[out_axis..out_axis + 2].copy_from_slice(&out_plane);
+    let mut out_data = ArrayD::<T>::from_elem(IxDyn(&direction_shape).f(), T::default_value());
+    let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&direction_shape).f(), false);
+    let mut plane = vec![0.0f64; in_plane[0] * in_plane[1]];
+    let mut plane_mask = mask.map(|_| vec![true; plane.len()]);
+    let mut out_values = vec![0.0f64; out_plane[0] * out_plane[1]];
+    let mut out_valid = vec![false; out_values.len()];
+    let planes = PlaneIndex::new(input_shape, in_axis);
+    let out_planes = PlaneIndex::new(&direction_shape, out_axis);
+    for plane_number in 0..planes.count {
+        planes.read(plane_number, data, &mut plane, |v| read(*v));
+        if let (Some(values), Some(mask)) = (plane_mask.as_mut(), mask) {
+            planes.read(plane_number, mask, values, |v| *v);
+        }
+        let view = Plane {
+            data: &plane,
+            mask: plane_mask.as_deref(),
+            shape: in_plane,
+        };
+        for (k, at) in positions.iter().enumerate() {
+            let sampled = at.and_then(|at| view.sample(method, at));
+            out_values[k] = sampled.map_or(0.0, |value| scale * value);
+            out_valid[k] = sampled.is_some();
+        }
+        out_planes.write(plane_number, &out_values, &mut out_data, &write);
+        out_planes.write(plane_number, &out_valid, &mut out_mask, |v| v);
+    }
+    (out_data, out_mask)
 }
 
 fn clip_pointing_grid(
@@ -814,10 +858,10 @@ pub fn regrid_complex_plane(
 
 /// One direction plane of the input, first axis fastest, with its mask
 /// (true where good) when it has one.
-struct Plane<'a> {
-    data: &'a [f64],
-    mask: Option<&'a [bool]>,
-    shape: [usize; 2],
+pub(crate) struct Plane<'a> {
+    pub(crate) data: &'a [f64],
+    pub(crate) mask: Option<&'a [bool]>,
+    pub(crate) shape: [usize; 2],
 }
 
 impl Plane<'_> {
@@ -829,7 +873,7 @@ impl Plane<'_> {
         self.mask.is_none_or(|mask| mask[i + j * self.shape[0]])
     }
 
-    fn sample(&self, method: RegridMethod, at: [f64; 2]) -> Option<f64> {
+    pub(crate) fn sample(&self, method: RegridMethod, at: [f64; 2]) -> Option<f64> {
         match method {
             RegridMethod::Nearest => self.nearest(at),
             RegridMethod::Linear => self.linear(at),

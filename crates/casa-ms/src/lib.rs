@@ -92,6 +92,7 @@ pub use casa_return::{
 };
 pub use ephemeris::{EphemerisBudget, PhaseCentreEphemeris, PhaseCentreEphemerisError};
 pub use error::{MsError, MsResult};
+pub use flagging::calculate_flagdata_path;
 pub use flagging::{
     FlagCounts, FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
     FlagMerge, FlagSummaryBreakdown, FlagSummaryOptions, FlagVersionEntry, FlaggingError,
@@ -188,8 +189,8 @@ pub use task_contract::{
 };
 pub use task_front_end::{ms_task_success, task_flag_merge, task_selection_text};
 pub use transform::{
-    MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
-    mstransform_task,
+    MsTransformError, MsTransformReport, MsTransformRequest, MsTransformTaskOptions,
+    TimeAverageOptions, TransformDataColumn, TransformTaskHistory, mstransform, mstransform_task,
 };
 pub use virtual_model::{
     VirtualModelCombinations, VirtualModelEntry, VirtualModelKind, VirtualModelRecord,

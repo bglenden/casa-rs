@@ -162,16 +162,16 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     let crpix = coord.reference_pixel();
     let cdelt = coord.increment();
     let proj_name = direction.projection().name();
-    let dir_ref_str = format!("{:?}", direction.direction_ref());
+    let direction_ref = direction.direction_ref();
     let longpole = direction.longpole();
     let latpole = direction.latpole();
     let pc_flat: Vec<f64> = direction.pc_matrix().iter().copied().collect();
 
     // CTYPE: "RA---SIN" / "DEC--SIN" for equatorial, "GLON-SIN" / "GLAT-SIN" for galactic
-    let (lon_prefix, lat_prefix) = match dir_ref_str.as_str() {
-        "GALACTIC" => ("GLON", "GLAT"),
-        "SUPERGAL" => ("SLON", "SLAT"),
-        "ECLIPTIC" => ("ELON", "ELAT"),
+    let (lon_prefix, lat_prefix) = match direction_ref {
+        DirectionRef::GALACTIC => ("GLON", "GLAT"),
+        DirectionRef::SUPERGAL => ("SLON", "SLAT"),
+        DirectionRef::ECLIPTIC => ("ELON", "ELAT"),
         _ => ("RA--", "DEC-"),
     };
 
@@ -183,6 +183,20 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
 
     h.set(format!("CTYPE{a1}"), FitsValue::String(ctype_lon));
     h.set(format!("CTYPE{a2}"), FitsValue::String(ctype_lat));
+    let projection = direction.projection();
+    for (index, &default) in projection
+        .projection_type()
+        .fits_parameter_defaults()
+        .iter()
+        .enumerate()
+    {
+        let value = projection
+            .parameters()
+            .get(index)
+            .copied()
+            .unwrap_or(default);
+        h.set(format!("PV{a2}_{}", index + 1), FitsValue::Float(value));
+    }
 
     // CRVAL in degrees
     h.set(
@@ -227,17 +241,22 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
     }
 
     // RADESYS, EQUINOX
-    match dir_ref_str.as_str() {
-        "J2000" => {
+    match direction_ref {
+        DirectionRef::J2000 => {
             h.set("RADESYS", FitsValue::String("FK5".into()));
             h.set("EQUINOX", FitsValue::Float(2000.0));
         }
-        "B1950" => {
+        DirectionRef::B1950 | DirectionRef::B1950Vla => {
+            let equinox = if direction_ref == DirectionRef::B1950Vla {
+                VLA_BESSELIAN_EQUINOX
+            } else {
+                1950.0
+            };
             h.set("RADESYS", FitsValue::String("FK4".into()));
-            h.set("EQUINOX", FitsValue::Float(1950.0));
+            h.set("EQUINOX", FitsValue::Float(equinox));
         }
-        "ICRS" => h.set("RADESYS", FitsValue::String("ICRS".into())),
-        "GALACTIC" | "SUPERGAL" | "ECLIPTIC" => {}
+        DirectionRef::ICRS => h.set("RADESYS", FitsValue::String("ICRS".into())),
+        DirectionRef::GALACTIC | DirectionRef::SUPERGAL | DirectionRef::ECLIPTIC => {}
         _ => {
             h.set("RADESYS", FitsValue::String("FK5".into()));
             h.set("EQUINOX", FitsValue::Float(2000.0));
@@ -332,6 +351,12 @@ fn extended_stokes_axis(stokes: &[StokesType]) -> Option<(f64, f64)> {
     if !stokes.iter().copied().any(extended_stokes) {
         return None;
     }
+    fits_stokes_axis(stokes)
+}
+
+/// FITS reference value and increment for regularly ordered Stokes planes.
+/// Returns `None` when the codes cannot share a linear FITS axis.
+pub fn fits_stokes_axis(stokes: &[StokesType]) -> Option<(f64, f64)> {
     let mut codes = stokes.iter().copied().map(fits_stokes_code);
     let start = codes.next()?;
     let second = codes.next().unwrap_or(start + 1);
@@ -611,7 +636,23 @@ fn parse_direction(
     // Projection
     let proj_type = ProjectionType::from_name(proj_code)
         .ok_or_else(|| CoordinateError::UnsupportedProjection(proj_code.to_string()))?;
-    let proj = Projection::new(proj_type);
+    let defaults = proj_type.fits_parameter_defaults();
+    let specified = (1..=defaults.len())
+        .map(|index| h.get_float(&format!("PV{a2}_{index}")))
+        .collect::<Vec<_>>();
+    let parameters = if specified.iter().any(Option::is_some) {
+        specified
+            .into_iter()
+            .zip(defaults)
+            .map(|(value, &default)| value.unwrap_or(default))
+            .collect()
+    } else {
+        vec![]
+    };
+    let proj = Projection::with_parameters(proj_type, parameters);
+    if !defaults.is_empty() {
+        proj.validate_conversion_parameters()?;
+    }
 
     let lon_scale = celestial_unit_scale_to_rad(h, a1)?;
     let lat_scale = celestial_unit_scale_to_rad(h, a2)?;
@@ -634,15 +675,8 @@ fn parse_direction(
     let (cdelt_lon, cdelt_lat, pc) = read_linear_transform_2d(h, a1, a2, lon_scale, lat_scale)?;
 
     // Direction reference from RADESYS
-    let dir_ref = if default_dir_ref == DirectionRef::J2000
-        && let Some(radesys) = h.get_string("RADESYS")
-    {
-        match radesys.to_uppercase().as_str() {
-            "FK5" => DirectionRef::J2000,
-            "FK4" => DirectionRef::B1950,
-            "ICRS" => DirectionRef::ICRS,
-            _ => default_dir_ref,
-        }
+    let dir_ref = if default_dir_ref == DirectionRef::J2000 {
+        fits_equatorial_frame(h)?
     } else {
         default_dir_ref
     };
@@ -665,6 +699,43 @@ fn parse_direction(
     }
 
     Ok(coord)
+}
+
+// casacore's FITS encoding for MDirection::B1950_VLA.
+const VLA_BESSELIAN_EQUINOX: f64 = 1979.9;
+
+fn fits_equatorial_frame(header: &FitsHeader) -> Result<DirectionRef, CoordinateError> {
+    let equinox = header
+        .get_float("EQUINOX")
+        .or_else(|| header.get_float("EPOCH"));
+    let near = |standard: f64| {
+        // FITSCoordinateUtil uses casacore's default Double near tolerance.
+        equinox.is_some_and(|value| {
+            value.is_finite()
+                && value > 0.0
+                && (value - standard).abs() <= 1e-13 * value.max(standard)
+        })
+    };
+    let system = header
+        .get_string("RADESYS")
+        .or_else(|| header.get_string("RADECSYS"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_uppercase);
+    Ok(match (system.as_deref(), equinox) {
+        (Some("FK4" | "FK4-NO-E") | None, _) if near(VLA_BESSELIAN_EQUINOX) => {
+            DirectionRef::B1950Vla
+        }
+        (Some("FK4" | "FK4-NO-E"), _) if equinox.is_none() || near(1950.0) => DirectionRef::B1950,
+        (Some("FK5"), _) if equinox.is_none() || near(2000.0) => DirectionRef::J2000,
+        (Some("ICRS"), _) if equinox.is_none() || near(2000.0) => DirectionRef::ICRS,
+        (Some(system @ ("FK4" | "FK4-NO-E" | "FK5" | "ICRS")), Some(equinox)) => {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "FITS direction system {system} with equinox {equinox} is not supported"
+            )));
+        }
+        _ => DirectionRef::J2000,
+    })
 }
 
 /// Reads the 2D linear transform for direction axes.

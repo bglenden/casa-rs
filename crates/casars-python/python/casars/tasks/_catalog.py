@@ -9,6 +9,9 @@ from collections.abc import Mapping
 from os import PathLike
 from typing import Any, Literal, TypeAlias
 
+from numpy import floating
+from numpy.typing import NDArray
+
 from ..parameters import ParameterData
 from ._runner import TaskCompletion, _call_casa, _run
 
@@ -451,7 +454,7 @@ def mstransform(
     usewtspectrum: bool = False,
     combinespws: bool = False,
     chanaverage: bool = False,
-    chanbin: int = 1,
+    chanbin: int | list[int] | tuple[int, ...] = 1,
     hanning: bool = False,
     regridms: bool = False,
     mode: str = 'channel',
@@ -467,7 +470,7 @@ def mstransform(
     preaverage: bool = False,
     timeaverage: bool = False,
     timebin: str = '0s',
-    timespan: str = '',
+    timespan: str | list[str] | tuple[str, ...] = '',
     maxuvwdistance: float = 0.0,
     docallib: bool = False,
     callib: StrPath = '',
@@ -489,14 +492,13 @@ def mstransform(
     CASA's ``mstransform``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,
-    ``realmodelcol``, ``usewtspectrum``, ``combinespws``, ``hanning``,
-    ``regridms``, ``mode``, ``nchan``, ``start``, ``width``, ``nspw``,
-    ``interpolation``, ``phasecenter``, ``restfreq``, ``outframe``,
-    ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,
-    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,
-    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,
-    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,
-    ``monolithic_processing``, ``reindex``.
+    ``realmodelcol``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,
+    ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,
+    ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,
+    ``preaverage``, ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``,
+    ``fitorder``, ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``,
+    ``disableparallel``, ``ddistart``, ``monolithic_processing``,
+    ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -504,10 +506,10 @@ def split(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     outputvis: StrPath = '',
     keepmms: bool = True,
-    field: str = '',
-    spw: str = '',
-    scan: str = '',
-    antenna: str = '',
+    field: str | int = '',
+    spw: str | int = '',
+    scan: str | int = '',
+    antenna: str | int = '',
     correlation: str | list[str] = '',
     timerange: str = '',
     intent: str = '',
@@ -517,17 +519,15 @@ def split(
     feed: str | int = '',
     datacolumn: str = 'corrected',
     keepflags: bool = True,
-    width: int = 1,
+    width: int | str | list[int] | tuple[int, ...] = 1,
     timebin: str = '0s',
-    combine: str = '',
+    combine: str | list[str] | tuple[str, ...] = '',
     *,
     msselect: str = '',
 ) -> Any:
     """Create a selected MeasurementSet subset, equivalent to CASA split.
 
     CASA's ``split``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``, ``timebin``, ``combine``.
     """
     return _call_casa(split, locals())
 
@@ -935,19 +935,19 @@ def flagdata(
     scan: str = '',
     intent: str = '',
     array: str = '',
-    observation: str = '',
+    observation: str | int = '',
     feed: str = '',
-    clipminmax: list[float] | tuple[float, ...] = [],
+    clipminmax: float | list[float] | tuple[float, ...] = [],
     datacolumn: str = 'DATA',
-    clipoutside: bool = True,
+    clipoutside: bool | list[bool] = True,
     channelavg: bool = False,
     chanbin: int = 1,
     timeavg: bool = False,
     timebin: str = '0s',
     clipzeros: bool = False,
-    quackinterval: float = 1.0,
-    quackmode: Literal['beg', 'end', 'endb', 'tail'] = 'beg',
-    quackincrement: bool = False,
+    quackinterval: float | list[float] = 1.0,
+    quackmode: str | list[str] = 'beg',
+    quackincrement: bool | list[bool] = False,
     tolerance: float = 0.0,
     addantenna: str = '',
     lowerlimit: float = 0.0,
@@ -1001,16 +1001,14 @@ def flagdata(
 
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``autocorr``, ``inpfile``, ``reason``, ``tbuff``, ``uvrange``,
-    ``timerange``, ``correlation``, ``intent``, ``array``, ``observation``,
-    ``feed``, ``clipminmax``, ``clipoutside``, ``channelavg``, ``chanbin``,
-    ``timeavg``, ``timebin``, ``quackincrement``, ``tolerance``,
-    ``addantenna``, ``lowerlimit``, ``upperlimit``, ``ntime``,
-    ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
-    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
-    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
-    ``flagneartime``, ``flagnearfreq``, ``display``, ``savepars``,
-    ``cmdreason``, ``outfile``, ``overwrite``, ``writeflags``.
+    ``inpfile``, ``reason``, ``tbuff``, ``correlation``, ``channelavg``,
+    ``chanbin``, ``timeavg``, ``timebin``, ``tolerance``, ``addantenna``,
+    ``lowerlimit``, ``upperlimit``, ``ntime``, ``combinescans``,
+    ``timefit``, ``freqfit``, ``maxnpieces``, ``flagdimension``,
+    ``usewindowstats``, ``halfwin``, ``winsize``, ``antint_ref_antenna``,
+    ``minchanfrac``, ``verbose``, ``growaround``, ``flagneartime``,
+    ``flagnearfreq``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,
+    ``overwrite``.
     """
     return _call_casa(flagdata, locals())
 
@@ -1030,39 +1028,37 @@ def flagmanager(
 
 def impbcor(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
-    pbimage: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    pbimage: StrPath | NDArray[floating] | list[ParameterData] | tuple[ParameterData, ...] = [],
     outfile: StrPath = '',
     overwrite: bool = False,
     box: str = '',
-    region: str = '',
+    region: StrPath | Mapping[str, ParameterData] = '',
     chans: str = '',
     stokes: str = '',
     mask: str = '',
-    mode: Literal['divide', 'multiply'] = 'divide',
+    mode: str = 'divide',
     cutoff: float = -1.0,
     stretch: bool = False,
 ) -> Any:
-    """Apply primary-beam correction to a CASA image
+    """Apply primary-beam correction to a CASA or FITS image
 
     CASA's ``impbcor``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``box``, ``region``, ``chans``, ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impbcor, locals())
 
 def impv(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     outfile: StrPath = '',
-    mode: Literal['coords', 'length'] = 'coords',
-    start: str = '',
-    end: str = '',
-    center: str | list[str] | tuple[str, ...] = '',
-    length: str = '',
-    pa: str = '',
-    width: int = 1,
+    mode: str = 'coords',
+    start: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    end: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    center: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    length: float | str | Mapping[str, ParameterData] = '',
+    pa: str | Mapping[str, ParameterData] = '',
+    width: int | str | Mapping[str, ParameterData] = 1,
     unit: str = 'arcsec',
     overwrite: bool = False,
-    region: str = '',
+    region: StrPath | Mapping[str, ParameterData] = '',
     chans: str = '',
     stokes: str = '',
     mask: str = '',
@@ -1071,9 +1067,6 @@ def impv(
     """Extract a CASA-style position-velocity image
 
     CASA's ``impv``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``mode``, ``center``, ``length``, ``pa``, ``unit``, ``region``,
-    ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impv, locals())
 
@@ -1124,12 +1117,12 @@ def immath(
 
 def imregrid(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
-    template: StrPath = 'get',
+    template: StrPath | Mapping[str, ParameterData] = 'get',
     output: StrPath = '',
     asvelocity: bool = True,
     axes: int | list[int] | tuple[int, ...] = [-1],
     shape: int | list[int] | tuple[int, ...] = [-1],
-    interpolation: Literal['linear', 'nearest'] = 'linear',
+    interpolation: Literal['linear', 'nearest', 'cubic'] = 'linear',
     decimate: int = 10,
     replicate: bool = False,
     overwrite: bool = False,
@@ -1137,8 +1130,6 @@ def imregrid(
     """Regrid a CASA image onto a template image
 
     CASA's ``imregrid``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``asvelocity``, ``axes``, ``shape``, ``decimate``, ``replicate``.
     """
     return _call_casa(imregrid, locals())
 
@@ -1155,8 +1146,6 @@ def feather(
     """Combine high-resolution and low-resolution images in the Fourier domain
 
     CASA's ``feather``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``effdishdiam``, ``lowpassfiltersd``.
     """
     return _call_casa(feather, locals())
 

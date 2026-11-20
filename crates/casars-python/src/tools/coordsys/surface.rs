@@ -168,7 +168,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "lineartransform",
@@ -221,7 +221,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("reorder", &[param("order", K::Any, Required)], R::Any, No),
     method(

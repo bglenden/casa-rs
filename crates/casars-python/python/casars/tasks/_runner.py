@@ -9,12 +9,13 @@ stdout says how it ended. A Python task call neither loads nor saves Last.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 import functools
 from http import HTTPStatus
 import inspect
 from json import JSONDecodeError, loads
+from math import isnan
 import os
 from os import PathLike
 from pathlib import Path
@@ -186,7 +187,7 @@ def run(
         if task in ("split", "mstransform"):
             if "correlation" in values:
                 try:
-                    values["correlation"] = _ms_transform_correlation(values["correlation"])
+                    values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
                 except AssertionError as error:
                     raise ValueError(str(error)) from error
             for selector in ("array", "uvrange", "feed"):
@@ -260,16 +261,30 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
         _validate_ms_transform_datacolumn(arguments["datacolumn"])
+        _coerce_ms_task_options(name, arguments, values)
         _coerce_ms_transform_selectors(name, values)
+        _coerce_ms_channel_width(name, values)
         try:
             return run(name, **values).value
+        except TaskExecutionError as error:
+            if name == "split" and error.completion.message == "Unable to continue with MMS processing":
+                raise Exception(error.completion.message) from error
+            raise
         except TaskParameterError as error:
             message = error.completion.message or ""
+            if error.completion.parameter == "outputvis":
+                if message.startswith("Output MS "):
+                    raise OSError(message) from error
+                if message.startswith("input and output MeasurementSet paths must differ: "):
+                    path = arguments["outputvis"]
+                    raise OSError(f"Output MS {path} already exists - will not overwrite it.") from error
             if error.completion.parameter == "spw" and message.startswith("invalid spectral-window selection "):
                 raise RuntimeError(message) from error
             if error.completion.parameter == "datacolumn" and message.startswith("unsupported datacolumn "):
                 invalid = arguments["datacolumn"]
                 raise AssertionError(str({"datacolumn": [f"unallowed value {invalid}"]})) from error
+            if error.completion.parameter == "width" and message == "list index out of range":
+                raise IndexError(message) from error
             raise
     if name == "ft":
         for selector in ("uvrange", "observation"):
@@ -308,7 +323,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     if name == "flagdata":
-        _coerce_flagdata_summary(values)
+        _coerce_flagdata_options(values)
     return run(name, **values).value
 
 
@@ -414,13 +429,55 @@ def _bandpass_statistics(value):
     return value
 
 
-def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
+def _coerce_flagdata_options(values: dict[str, Any]) -> None:
     import numpy as np
 
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
+    vector_selectors = []
+    for parameter in ("field", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if isinstance(value, str):
+            values[parameter] = str(value)
+        elif value is None:
+            errors[parameter] = ["null value not allowed"] * 3
+        elif _flagdata_string_vector(value):
+            vector_selectors.append(parameter)
+        else:
+            errors[parameter] = ["must be of cStr type", "must be of cStrVec type"]
+    if "observation" in values:
+        value = values["observation"]
+        if value is None:
+            errors["observation"] = ["null value not allowed"] * 3
+        elif isinstance(value, str):
+            values["observation"] = str(value)
+        elif isinstance(value, (np.int32, np.int64)):
+            values["observation"] = int(value)
+        elif isinstance(value, int):
+            if not -(2**63) <= value < 2**63:
+                # Preserve the selector for native range validation even
+                # when the transport cannot represent it as an integer.
+                values["observation"] = str(value)
+        else:
+            errors["observation"] = ["must be of cStr type", "must be of cInt type"]
+    for parameter, default in (("clipoutside", True), ("quackincrement", False)):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["null value not allowed"] * 3
+        else:
+            converted = _flagdata_bool_option(value, numpy_default=default)
+            if converted is None:
+                errors[parameter] = ["must be of cBool type", "must be of cBoolVec type"]
+            else:
+                values[parameter] = converted
+    _coerce_flagdata_quack_options(values, errors, cfloat, cint)
     for parameter, expected, casa_type in (
+        ("autocorr", bool, "cBool"),
         ("spwchan", bool, "cBool"),
         ("spwcorr", bool, "cBool"),
         ("basecnt", bool, "cBool"),
@@ -430,6 +487,8 @@ def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
         ("maxrel", cfloat, "cFloat"),
         ("minabs", cint, "cInt"),
         ("maxabs", cint, "cInt"),
+        ("clipzeros", bool, "cBool"),
+        ("writeflags", bool, "cBool"),
     ):
         if parameter not in values:
             continue
@@ -437,8 +496,9 @@ def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
         if value is None:
             errors[parameter] = ["null value not allowed"]
         elif expected is bool and isinstance(value, np.bool_):
-            # CASA admits these scalars but leaves the summary options disabled.
-            values[parameter] = False
+            # CASA admits these scalars and uses the switch defaults.
+            # Preserve autocorr=True to avoid flagging cross-correlations.
+            values[parameter] = bool(value) if parameter in ("autocorr", "writeflags") else False
         elif not isinstance(value, expected):
             errors[parameter] = [f"must be of {casa_type} type"]
         elif casa_type == "cFloat":
@@ -450,8 +510,134 @@ def _coerce_flagdata_summary(values: dict[str, Any]) -> None:
         elif casa_type == "cInt":
             # Counts from stored MeasurementSets fit in a signed 64-bit value.
             values[parameter] = max(-(2**63), min(int(value), 2**63 - 1))
+    if "clipminmax" in values:
+        try:
+            values["clipminmax"] = _flagdata_clip_range(
+                values["clipminmax"], cfloat, outside=values.get("clipoutside") is not False,
+            )
+        except ValueError as error:
+            errors["clipminmax"] = [str(error)]
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
+    if vector_selectors and values.get("action") not in ("", "none"):
+        raise TypeError(f"argument _{vector_selectors[0]} must be a string")
+    for parameter in vector_selectors:
+        del values[parameter]
+
+
+def _flagdata_string_vector(value: Any) -> bool:
+    import numpy as np
+
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        return value.dtype.type is np.str_
+    return isinstance(value, Iterable) and all(isinstance(item, str) for item in value)
+
+
+def _flagdata_bool_option(value: Any, *, numpy_default: bool) -> bool | list[bool] | None:
+    import numpy as np
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, np.bool_):
+        return numpy_default
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        if value.dtype.type is not np.bool_:
+            return None
+        value = (value[()],)
+    if isinstance(value, Iterable) and not isinstance(value, str):
+        items = list(value)
+        if all(isinstance(item, (bool, np.bool_)) for item in items):
+            return [bool(item) for item in items]
+    return None
+
+
+def _coerce_flagdata_quack_options(
+    values: dict[str, Any],
+    errors: dict[str, list[str]],
+    numeric: tuple[type, ...],
+    integer: tuple[type, ...],
+) -> None:
+    import numpy as np
+
+    if "quackmode" in values:
+        mode = values["quackmode"]
+        if isinstance(mode, str):
+            values["quackmode"] = str(mode)
+        elif mode is None:
+            errors["quackmode"] = ["null value not allowed"] * 3
+        else:
+            if isinstance(mode, np.ndarray) and mode.ndim == 0:
+                options = [mode[()]] if mode.dtype.type is np.str_ else None
+            else:
+                options = list(mode) if isinstance(mode, Iterable) else None
+            if options is not None and all(isinstance(item, str) for item in options):
+                values["quackmode"] = [str(item) for item in options]
+            else:
+                errors["quackmode"] = ["must be of cStr type", "must be of cStrVec type"]
+
+    if "quackinterval" not in values:
+        return
+    interval = values["quackinterval"]
+    if isinstance(interval, numeric):
+        values["quackinterval"] = _flagdata_quack_seconds(interval)
+        return
+    if interval is None:
+        errors["quackinterval"] = ["null value not allowed"] * 5
+        return
+
+    messages = [f"must be of {kind} type" for kind in ("cFloat", "cFloatVec", "cInt", "cIntVec")]
+    if isinstance(interval, np.ndarray) and interval.ndim == 0:
+        if interval.dtype.type in integer:
+            interval = (interval[()],)
+        else:
+            if interval.dtype.type in numeric:
+                messages[1] = "field 'quackinterval' cannot be coerced: iteration over a 0-d array"
+            errors["quackinterval"] = messages
+            return
+    options = list(interval) if isinstance(interval, Iterable) and not isinstance(interval, str) else None
+    if options is not None and all(isinstance(item, numeric) for item in options):
+        values["quackinterval"] = [_flagdata_quack_seconds(item) for item in options]
+    else:
+        errors["quackinterval"] = messages
+
+
+def _flagdata_quack_seconds(value: Any) -> float:
+    seconds = float(value)
+    # The profile carries finite numbers. NaN disables the agent and an
+    # infinite positive interval covers the entire finite scan.
+    if isnan(seconds):
+        return 0.0
+    return max(-sys.float_info.max, min(seconds, sys.float_info.max))
+
+
+def _flagdata_clip_range(
+    value: Any, numeric: tuple[type, ...], *, outside: bool
+) -> list[float]:
+    if value is None:
+        raise ValueError("null value not allowed")
+    if isinstance(value, numeric) and not isinstance(value, bool):
+        items = [value]
+    elif isinstance(value, Iterable) and not isinstance(value, str):
+        try:
+            items = list(value)
+        except TypeError as error:
+            raise ValueError(f"field 'clipminmax' cannot be coerced: {error}") from error
+    else:
+        raise ValueError("must be of cFloatVec type")
+    if not all(isinstance(item, numeric) for item in items):
+        raise ValueError("must be of cFloatVec type")
+    bounds = [float(item) for item in items]
+    # The parameter profile accepts finite values. The clipping agent's
+    # single-precision bounds turn these finite doubles into infinities.
+    limit = sys.float_info.max
+    if len(bounds) == 2 and not outside and any(isnan(bound) for bound in bounds):
+        return [limit, -limit]
+    for index, bound in enumerate(bounds):
+        if isnan(bound):
+            bounds[index] = -limit if index == 0 else limit
+        else:
+            bounds[index] = max(-limit, min(bound, limit))
+    return bounds
 
 
 def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
@@ -575,8 +761,30 @@ def _call_initweights(values: dict[str, Any]) -> Any:
 
 
 def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
+    import numpy as np
+
+    for name in ("field", "spw", "scan", "antenna", "timerange"):
+        if name not in values or isinstance(values[name], str):
+            continue
+        original = values[name]
+        candidate = original
+        if not isinstance(original, np.ndarray):
+            try:
+                candidate = list(original)
+            except TypeError:
+                pass
+        converted, record_type = _ms_transform_selector_variant(name, candidate)
+        # Preserve scalar NumPy provenance even for a value whose tool
+        # record CASA omits, or whose split selector is read as text.
+        scalar_array = isinstance(original, np.ndarray) and original.ndim == 0
+        values[name] = original if record_type is None or scalar_array else converted
+        if not (task == "split" and name != "timerange") and record_type is not None:
+            raise RuntimeError(
+                "RecordRep::get_pointer - incorrect data type String   "
+                f"used for field {name} with type {record_type:<8}"
+            )
     if "correlation" in values:
-        values["correlation"] = _ms_transform_correlation(values["correlation"])
+        values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
     for name in ("observation", "intent", "array", "uvrange", "feed"):
         if name not in values:
             continue
@@ -587,13 +795,52 @@ def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
         if name == "observation" or (task == "split" and name in ("array", "feed")):
             values[name] = converted
         elif record_type is None:
-            # CASA's tool record conversion omits this scalar variant.
-            del values[name]
+            # The Rust tool omits NumPy integer selectors where CASA
+            # does. Keep their values available for provenance.
+            if name == "intent":
+                del values[name]
         else:
             raise RuntimeError(
                 "RecordRep::get_pointer - incorrect data type String   "
                 f"used for field {name} with type {record_type:<8}"
             )
+
+
+def _coerce_ms_channel_width(task: str, values: dict[str, Any]) -> None:
+    import numpy as np
+
+    name = "width" if task == "split" else "chanbin"
+    if name not in values:
+        return
+    value = values[name]
+    integers = (int, np.int32, np.int64)
+    if isinstance(value, np.ndarray) and value.ndim == 0 and value.dtype.type in integers:
+        values[name] = value.item()
+        return
+    if isinstance(value, integers):
+        return
+    if name == "width" and isinstance(value, str):
+        return
+    if not isinstance(value, (str, bytes)):
+        try:
+            vector = list(iter(value))
+        except TypeError:
+            vector = None
+        if vector is not None and all(isinstance(item, integers) for item in vector):
+            values[name] = vector
+            return
+        if name == "width" and vector and all(isinstance(item, str) for item in vector):
+            # A numeric string list is converted to a map by CASA's Python
+            # task. The processing raises at the subsequent scalar comparison.
+            if vector[0].isdigit():
+                list(map(int, vector))
+                raise TypeError("'>' not supported between instances of 'map' and 'int'")
+            raise TypeError("'int' object is not iterable")
+    kinds = ["cStr", "cStrVec"] if name == "width" else []
+    kinds.extend(["cInt", "cIntVec"])
+    if value is None:
+        raise AssertionError(str({name: ["null value not allowed"] * len(kinds)}))
+    raise AssertionError(str({name: [f"must be of {kind} type" for kind in kinds]}))
 
 
 def _validate_ms_transform_datacolumn(value: Any) -> None:
@@ -634,13 +881,43 @@ def _ms_transform_selector_variant(name: str, value: Any) -> tuple[Any, str | No
     raise AssertionError(str({name: [f"must be of {kind} type" for kind in types]}))
 
 
-def _ms_transform_correlation(value: Any) -> Any:
+def _coerce_ms_task_options(
+    task: str, arguments: Mapping[str, Any], values: dict[str, Any]
+) -> None:
+    import numpy as np
+
+    def check(name: str, types: tuple[type, ...], casa_type: str) -> Any:
+        value = arguments[name]
+        if not isinstance(value, types):
+            message = "null value not allowed" if value is None else f"must be of {casa_type} type"
+            raise AssertionError(str({name: [message]}))
+        return value
+
+    check("timebin", (str,), "cStr")
+    span = "combine" if task == "split" else "timespan"
+    if span in values:
+        values[span] = _ms_transform_string_or_vector(span, values[span])
+    if task == "split":
+        keep_mms = check("keepmms", (bool, np.bool_), "cBool")
+        if "keepmms" in values:
+            values["keepmms"] = bool(keep_mms)
+    else:
+        active = check("timeaverage", (bool, np.bool_), "cBool")
+        distance = check("maxuvwdistance", (float, int, np.float32, np.float64, np.int32, np.int64),
+                         "cFloat")
+        if "timeaverage" in values:
+            values["timeaverage"] = bool(active)
+        if "maxuvwdistance" in values:
+            values["maxuvwdistance"] = float(distance)
+
+
+def _ms_transform_string_or_vector(name: str, value: Any) -> Any:
     if isinstance(value, str):
         return value
     import numpy as np
 
     if value is None:
-        raise AssertionError(str({"correlation": ["null value not allowed"] * 3}))
+        raise AssertionError(str({name: ["null value not allowed"] * 3}))
     if isinstance(value, np.ndarray):
         if value.ndim == 0 and value.dtype.type is np.str_:
             return value
@@ -648,7 +925,7 @@ def _ms_transform_correlation(value: Any) -> Any:
             value = value.tolist()
     if isinstance(value, (list, tuple)) and all(isinstance(label, str) for label in value):
         return value
-    raise AssertionError(str({"correlation": ["must be of cStr type", "must be of cStrVec type"]}))
+    raise AssertionError(str({name: ["must be of cStr type", "must be of cStrVec type"]}))
 
 
 def _call_gencal(values: dict[str, Any]) -> Any:

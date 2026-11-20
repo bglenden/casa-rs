@@ -780,6 +780,27 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
         TempImage::put_mask(self, name, data)
     }
 
+    fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        validate_mask_slice_write(self.shape(), data.shape(), start)?;
+        let index = self
+            .masks
+            .iter()
+            .position(|(existing, _)| existing == name)
+            .unwrap_or_else(|| {
+                self.masks.push((
+                    name.to_owned(),
+                    ArrayD::from_elem(IxDyn(self.shape()), false),
+                ));
+                self.masks.len() - 1
+            });
+        assign_mask_slice(&mut self.masks[index].1, data, start)
+    }
+
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
         TempImage::remove_mask(self, name)
     }

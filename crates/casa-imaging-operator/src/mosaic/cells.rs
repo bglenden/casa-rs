@@ -168,7 +168,10 @@ impl FrequencyCells {
             original_width,
         } = SelectedSpan::new(window)?;
         let tol = max_freq * 0.5 / 100.0;
-        let cells = (((max_freq - min_freq) / tol).round() as usize).min(selected.len());
+        let native_channels = window
+            .buffer_band
+            .map_or(selected.len(), |native| native.channels);
+        let cells = (((max_freq - min_freq) / tol).round() as usize).min(native_channels);
         if cells + 1 >= selected.len() {
             return Ok(Self::identity(window, first));
         }
