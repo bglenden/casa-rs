@@ -19,18 +19,15 @@ enum Weights {
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
-    let mode = match task.text("wtmode")?.as_deref() {
-        Some("nyq") => Weights::Ordinary(Mode::Nyquist),
-        Some("sigma") => Weights::Ordinary(Mode::Sigma),
-        Some("weight") => Weights::Ordinary(Mode::Weight),
-        Some("ones") => Weights::Ordinary(Mode::Ones),
-        Some("delwtsp") => Weights::Ordinary(Mode::DeleteWeightSpectrum),
-        Some("delsigsp") => Weights::Ordinary(Mode::DeleteSigmaSpectrum),
-        Some(mode @ ("tsys" | "tinttsys")) => {
-            Weights::Tsys(Box::new(read_tsys(task)?), mode == "tinttsys")
-        }
-        _ => return Err(TaskFailure::validation("unknown initialization mode").at("wtmode")),
-    };
+    let mode =
+        match task.text("wtmode")?.as_deref() {
+            Some(mode @ ("tsys" | "tinttsys")) => {
+                Weights::Tsys(Box::new(read_tsys(task)?), mode == "tinttsys")
+            }
+            mode => Weights::Ordinary(mode.and_then(Mode::from_name).ok_or_else(|| {
+                TaskFailure::validation("unknown initialization mode").at("wtmode")
+            })?),
+        };
     let spectrum = task.flag("dowtsp")?;
     if let Some(parts) = partition_paths(&path)? {
         for part in parts {

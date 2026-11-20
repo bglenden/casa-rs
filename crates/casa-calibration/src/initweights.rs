@@ -20,7 +20,19 @@ pub(crate) enum Mode {
 }
 
 impl Mode {
-    fn removed_column(self) -> &'static str {
+    pub(crate) fn from_name(mode: &str) -> Option<Self> {
+        Some(match mode {
+            "nyq" => Self::Nyquist,
+            "sigma" => Self::Sigma,
+            "weight" => Self::Weight,
+            "ones" => Self::Ones,
+            "delwtsp" => Self::DeleteWeightSpectrum,
+            "delsigsp" => Self::DeleteSigmaSpectrum,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn removed_column(self) -> &'static str {
         match self {
             Self::DeleteWeightSpectrum => WEIGHT_SPECTRUM,
             _ => SIGMA_SPECTRUM,
