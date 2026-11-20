@@ -6,6 +6,7 @@ Run with CASA's Python. Output images are temporary; expected.json holds their
 pixel values, masks and sampled WCS for offline checks and live CASA readback.
 """
 
+import copy
 import json
 import os
 import shutil
@@ -136,6 +137,14 @@ def make_inputs():
                      pixelaxes=[0, 1], csys=cs.torecord())
     assert rg.tofile("box.rgn", region)
     make_compound_regions(ia, cs.torecord(), rg)
+    make_extended_regions(ia, cs.torecord(), rg)
+    make_relative_shapes(cs.torecord(), rg)
+    for name, lower, upper, stride in [
+        ("stride", [0, 1, 0, 0], [5, 5, 3, 3], [2, 2, 1, 2]),
+        ("stride_degenerate", [0, 1, 1, 0], [5, 5, 2, 1], [2, 2, 3, 4]),
+        ("stride_tabular", [0, 0, 0, 0], [3, 2, 1, 0], [2, 1, 1, 1]),
+    ]:
+        assert rg.tofile(name + ".rgn", rg.box(blc=lower, trc=upper, inc=stride))
     rg.done()
     cs.done()
     ia.done()
@@ -166,6 +175,112 @@ def make_compound_regions(ia, coords, rg):
         ("polygon_transposed", rg.intersection(pair)),
     ]:
         assert rg.tofile(f"saved_compound_{name}.rgn", region)
+
+
+def make_extended_regions(ia, coords, rg):
+    def box(axes, low, high):
+        return rg.wbox(blc=[f"{p}pix" for p in low], trc=[f"{p}pix" for p in high],
+                       pixelaxes=axes, csys=coords)
+
+    qualified = rg.fromtext(POLY + ", range=[1pix,2pix], corr=[Q]", ia.shape(), coords)
+    extension = box([3, 2], [0, 1], [2, 2])
+
+    def stretched(last):
+        original = box([0, 1, 3], [1, 1, 1], [4, 3, last])
+        return {"name": "WCExtension", "isRegion": 2, "comment": "",
+                "regions": {"*1": original, "*2": extension, "nr": 2}}
+
+    first = box([0, 1], [0, 1], [2, 4])
+    second = box([0, 1], [3, 2], [4, 4])
+    members = {"*1": first, "*2": second}
+
+    def concatenated(end):
+        region = rg.concatenation(box=box([3], [1], [end]), regions=members)
+        # RegionManager repeats its first argument when building the record.
+        # Store distinct members to exercise the actual casacore reader.
+        region["regions"]["*2"] = second
+        return region
+
+    polygons = {"*1": rg.fromtext(POLY, ia.shape(), coords),
+                "*2": rg.fromtext("poly[[0pix,2pix],[2pix,2pix],[2pix,4pix],[0pix,4pix]]",
+                                  ia.shape(), coords)}
+    polygon_stack = rg.concatenation(box=box([3], [1], [2]), regions=polygons)
+    polygon_stack["regions"]["*2"] = polygons["*2"]
+    wrong_frame = copy.deepcopy(concatenated(2))
+    spectral = wrong_frame["box"]["coordinates"]["spectral2"]
+    spectral["system"] = "BARY"
+    spectral["conversion"]["system"] = "BARY"
+
+    sky = casatools.image()
+    assert sky.open("relative_sky.im")
+    sky_cs = sky.coordsys()
+    sky_coords = sky_cs.torecord()
+    original = rg.wbox(blc=["2pix"],trc=["2pix"],pixelaxes=[1],csys=sky_coords)
+    target = rg.wbox(blc=["-1pix","0pix"],trc=["1pix","1pix"],pixelaxes=[0,1],
+                    csys=sky_coords,absrel="relref")
+    stretch = {"name":"WCExtension","isRegion":2,"comment":"",
+               "regions":{"*1":original,"*2":target,"nr":2}}
+    sibling = rg.wbox(blc=["4pix","3pix"],trc=["5pix","4pix"],pixelaxes=[0,1],csys=sky_coords)
+    nested = rg.makeunion({"*1":stretch,"*2":sibling})
+    sky_cs.done()
+    sky.done()
+
+    for name, region in [
+        ("extension", qualified),
+        ("stretch", stretched(1)),
+        ("stretch_invalid", stretched(2)),
+        ("concat", concatenated(2)),
+        ("concat_invalid", concatenated(3)),
+        ("concat_polygons", polygon_stack),
+        ("concat_frame_invalid", wrong_frame),
+        ("nested_relative", nested),
+    ]:
+        assert rg.tofile(f"saved_axis_{name}.rgn", region)
+
+
+def make_relative_shapes(coords, rg):
+    polygon = rg.wpolygon(
+        x=["0arcmin", "-2.1arcmin", "-1.2arcmin"],
+        y=["0arcmin", "0arcmin", "2arcmin"],
+        pixelaxes=[0, 1], csys=coords, absrel="relref",
+    )
+    assert rg.tofile("saved_relative_polygon_ref.rgn", polygon)
+    extent = rg.wbox(blc=["1pix", "2pix"], trc=["2pix", "2pix"], pixelaxes=[3, 2], csys=coords)
+    extended = {"name": "WCExtension", "isRegion": 2, "comment": "",
+                "regions": {"*1": polygon, "*2": extent, "nr": 2}}
+    assert rg.tofile("saved_relative_polygon_extended.rgn", extended)
+    # The tool refuses to serialize a polygon with a default axis unit.
+    # Replace an equal-length unit spelling to test reading that record.
+    invalid = Path("saved_relative_polygon_default_invalid.rgn")
+    polygon["x"]["unit"] = "arcmin1"
+    assert rg.tofile(str(invalid), polygon)
+    record = invalid.read_bytes()
+    assert record.count(b"arcmin1") == 1
+    invalid.write_bytes(record.replace(b"arcmin1", b"default"))
+
+    sky = casatools.image()
+    assert sky.open("relative_sky.im")
+    cs = sky.coordsys()
+    coords = cs.torecord()
+    relative = rg.wpolygon(
+        x=["0.9deg", "-1.4deg", "0.3deg"], y=["-0.8deg", "-0.6deg", "1.1deg"],
+        pixelaxes=[0, 1], csys=coords, absrel="relcen",
+    )
+    assert rg.tofile("saved_relative_polygon_center.rgn", relative)
+    ellipse = rg.fromtext("circle[[2pix,2pix],1.7pix]", sky.shape(), coords)
+    ellipse["absrel"] = 3
+    for field, value in zip(ellipse["center"], (0.4, -0.2)):
+        ellipse["center"][field].update(unit="deg", value=value)
+    assert rg.tofile("saved_relative_ellipse_center.rgn", ellipse)
+    ellipse["absrel"] = 2
+    ellipse["pixelAxes"] = ellipse["pixelAxes"][::-1].copy()
+    assert rg.tofile("saved_relative_ellipse_reversed.rgn", ellipse)
+    ellipse["pixelAxes"] = ellipse["pixelAxes"][::-1].copy()
+    for field in ellipse["center"].values():
+        field["unit"] = "pix"
+    assert rg.tofile("saved_relative_ellipse_far_side_invalid.rgn", ellipse)
+    cs.done()
+    sky.done()
 
 
 def history_marker(image):
@@ -278,6 +393,24 @@ def capture_cases(output):
         capture(name, region=name + ".rgn", error=label == "nonoverlap")
     capture("saved_compound_masked_edge", region="saved_compound_masked_edge.rgn")
     capture("saved_compound_polygon_transposed", "transposed.im", region="saved_compound_polygon_transposed.rgn")
+    capture("saved_stride", region="stride.rgn")
+    capture("saved_stride_mask", region="stride.rgn", mask='"cube.im" > 195')
+    capture("saved_stride_stretch", region="stride.rgn", mask='"stretch.im" > 200', stretch=True)
+    capture("saved_stride_drop", region="stride_degenerate.rgn", dropdeg=True, keepaxes=[3])
+    capture("saved_stride_tabular", "axis_maps/tabular_spectral_first.image", region="stride_tabular.rgn")
+    for label in ("extension", "stretch", "stretch_invalid", "concat", "concat_invalid",
+                  "concat_polygons", "concat_frame_invalid"):
+        name = "saved_axis_" + label
+        capture(name, region=name + ".rgn", error=label.endswith("_invalid"))
+    capture("saved_axis_nested_relative", "relative_sky.im", region="saved_axis_nested_relative.rgn")
+    for label in ("polygon_ref", "polygon_extended", "polygon_center", "ellipse_center"):
+        name = "saved_relative_" + label
+        image = "relative_sky.im" if label.endswith("_center") else "cube.im"
+        capture(name, image, region=name + ".rgn")
+    capture("saved_relative_polygon_default_invalid", region="saved_relative_polygon_default_invalid.rgn", error=True)
+    for label in ("ellipse_reversed", "ellipse_far_side_invalid"):
+        name = "saved_relative_" + label
+        capture(name, "relative_sky.im", region=name + ".rgn", error=label.endswith("_invalid"))
     capture("saved_box_conflict", "plane.im", region="saved.rgn", box="0,0,4,4", error=True)
     capture("saved_chans_conflict", region="box.rgn", chans="1", error=True)
     capture("saved_stokes_conflict", region="box.rgn", stokes="Q", error=True)

@@ -10,12 +10,13 @@ use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use crate::analysis::axes::subimage_coordinates_with_stokes;
 use crate::{ImageBeamSet, ImageError, ImageInfo};
 
-use super::super::axes::{replace_stokes_in_record, shift_record_reference_pixels};
+use super::super::axes::{replace_stokes_in_record, section_record_reference_pixels};
 
 pub(super) struct CoordReductionSpec<'a> {
     pub(super) full_shape: &'a [usize],
     pub(super) start: &'a [usize],
     pub(super) shape: &'a [usize],
+    pub(super) stride: Option<&'a [usize]>,
     pub(super) kept_axes: &'a [usize],
     pub(super) selected_stokes: Option<&'a [StokesType]>,
 }
@@ -27,19 +28,24 @@ pub(super) fn reduce_coordinates_and_beams(
     mut image_info: ImageInfo,
 ) -> Result<(CoordinateSystem, Option<RecordValue>, ImageInfo), ImageError> {
     let ndim = spec.full_shape.len();
-    let shifted = subimage_coordinates_with_stokes(
-        input_coords,
-        spec.start,
-        spec.shape,
-        spec.selected_stokes,
-    )?;
-    let shifted_legacy = native.and_then(|mut record| {
-        shift_record_reference_pixels(&mut record, spec.start, spec.shape).ok()?;
+    let section_record = |mut record: RecordValue| -> Result<RecordValue, ImageError> {
+        section_record_reference_pixels(&mut record, spec.start, spec.shape, spec.stride)?;
         if let Some(stokes) = spec.selected_stokes {
-            replace_stokes_in_record(&mut record, stokes).ok()?;
+            replace_stokes_in_record(&mut record, stokes)?;
         }
-        Some(record)
-    });
+        Ok(record)
+    };
+    let shifted = if spec.stride.is_some() {
+        CoordinateSystem::from_record(&section_record(input_coords.to_record())?)?
+    } else {
+        subimage_coordinates_with_stokes(
+            input_coords,
+            spec.start,
+            spec.shape,
+            spec.selected_stokes,
+        )?
+    };
+    let shifted_legacy = native.and_then(|record| section_record(record).ok());
 
     let (out_coords, out_legacy) = if spec.kept_axes.len() == ndim {
         (shifted, shifted_legacy)
@@ -52,12 +58,13 @@ pub(super) fn reduce_coordinates_and_beams(
         (CoordinateSystem::from_record(&reduced)?, Some(reduced))
     };
 
-    image_info.beam_set = subset_beam_set(
+    image_info.beam_set = subset_beam_section(
         &image_info.beam_set,
         input_coords,
         ndim,
         spec.start,
         spec.shape,
+        spec.stride,
     )?;
 
     Ok((out_coords, out_legacy, image_info))
@@ -82,21 +89,31 @@ pub(in crate::analysis) fn subset_beam_set(
     start: &[usize],
     shape: &[usize],
 ) -> Result<ImageBeamSet, ImageError> {
+    subset_beam_section(beam_set, input_coords, ndim, start, shape, None)
+}
+
+fn subset_beam_section(
+    beam_set: &ImageBeamSet,
+    input_coords: &CoordinateSystem,
+    ndim: usize,
+    start: &[usize],
+    shape: &[usize],
+    stride: Option<&[usize]>,
+) -> Result<ImageBeamSet, ImageError> {
     if !beam_set.is_multi() {
         return Ok(beam_set.clone());
     }
-    let chans: Vec<usize> = match find_system_axis(input_coords, CoordinateType::Spectral) {
-        Some(ax) if ax < ndim && beam_set.n_channels() > 1 => (start[ax]..start[ax] + shape[ax])
-            .map(|c| c.min(beam_set.n_channels().saturating_sub(1)))
-            .collect(),
+    let indices = |kind, length: usize| match find_system_axis(input_coords, kind) {
+        Some(axis) if axis < ndim && length > 1 => {
+            let step = stride.map_or(1, |stride| stride[axis]);
+            (0..shape[axis])
+                .map(|index| (start[axis] + step * index).min(length - 1))
+                .collect::<Vec<_>>()
+        }
         _ => vec![0],
     };
-    let stokes: Vec<usize> = match find_system_axis(input_coords, CoordinateType::Stokes) {
-        Some(ax) if ax < ndim && beam_set.n_stokes() > 1 => (start[ax]..start[ax] + shape[ax])
-            .map(|s| s.min(beam_set.n_stokes().saturating_sub(1)))
-            .collect(),
-        _ => vec![0],
-    };
+    let chans = indices(CoordinateType::Spectral, beam_set.n_channels());
+    let stokes = indices(CoordinateType::Stokes, beam_set.n_stokes());
     beam_set.subset(&chans, &stokes)
 }
 

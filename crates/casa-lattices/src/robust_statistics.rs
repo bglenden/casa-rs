@@ -16,6 +16,8 @@
 //! its name, the reciprocal of the probit at 3/4, the factor that makes
 //! the median absolute deviation estimate a Gaussian sigma.
 
+use crate::statistics::{RunningStats, Statistic};
+
 /// The MAD-to-sigma factor casacore names `C::probit_3_4`.
 const PROBIT_3_4: f64 = 1.482602218505602;
 
@@ -329,7 +331,7 @@ pub fn compute_robust_stats(
                     .max_by(|left, right| {
                         left.value
                             .total_cmp(&right.value)
-                            .then(left.position.cmp(&right.position))
+                            .then(right.position.cmp(&left.position))
                     })
                     .expect("the kept sample is non-empty");
                 stats.max = real_max.value;
@@ -387,22 +389,21 @@ fn classical_stats_of_values(values: &[f64]) -> RobustSampleStats {
     let mut sorted = values.to_vec();
     sorted.sort_by(|left, right| left.total_cmp(right));
     let npts = values.len();
-    let sum: f64 = values.iter().sum();
-    let sumsq: f64 = values.iter().map(|value| value * value).sum();
-    let mean = if npts == 0 {
-        f64::NAN
+    let mut moments = RunningStats::default();
+    for &value in values {
+        moments.push(value);
+    }
+    let [sum, sumsq, mean, rms, sigma] = if npts == 0 {
+        [0.0, 0.0, f64::NAN, f64::NAN, 0.0]
     } else {
-        sum / npts as f64
-    };
-    let rms = if npts == 0 {
-        f64::NAN
-    } else {
-        (sumsq / npts as f64).sqrt()
-    };
-    let sigma = if npts > 1 {
-        ((sumsq - sum * sum / npts as f64) / (npts as f64 - 1.0)).sqrt()
-    } else {
-        0.0
+        [
+            Statistic::Sum,
+            Statistic::SumSq,
+            Statistic::Mean,
+            Statistic::Rms,
+            Statistic::Sigma,
+        ]
+        .map(|statistic| moments.finish(statistic))
     };
     let median = averaging_median(&sorted);
     let mut deviations: Vec<f64> = values.iter().map(|value| (value - median).abs()).collect();

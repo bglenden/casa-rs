@@ -26,6 +26,7 @@ pub use awp2::{Awp2, Awp2Sampling, Awp2Screens};
 pub use cache::{CacheBound, CacheCharge};
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
 pub use legacy_ep::LegacyEpConvolution;
+pub use legacy_pbw::LegacyPbWConvolution;
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
 pub use pa::{first_covered_pa, stored_pa_rad};
@@ -37,6 +38,7 @@ use cell_image::{load_group, read_header};
 use native_cache::{STAGING_PREFIX, write_manifest};
 
 mod legacy_ep;
+mod legacy_pbw;
 mod pa;
 mod rotation;
 

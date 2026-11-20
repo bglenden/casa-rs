@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_lattices::{
-    Lattice, LatticeElement, LatticeError, LatticeMut, PagedArray, TiledShape, TraversalCacheHint,
-    TraversalCacheScope, TraversalCursorIter, TraversalSpec, recommended_tile_cache_size,
+    ArrayLattice, Lattice, LatticeElement, LatticeError, LatticeMut, PagedArray, TiledShape,
+    TraversalCacheHint, TraversalCacheScope, TraversalCursorIter, TraversalSpec,
+    recommended_tile_cache_size,
 };
 use casa_tables::{
     ColumnSchema, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerKind, Table, TableInfo, TableOptions,
@@ -28,7 +29,7 @@ use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
     Value,
 };
-use ndarray::{ArrayViewD, IxDyn, Slice, SliceInfoElem};
+use ndarray::{ArrayViewD, IxDyn, ShapeBuilder, Slice, SliceInfoElem};
 
 use crate::error::ImageError;
 use crate::image_expr::ImageExprBuilder;
@@ -3059,6 +3060,42 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            if start.iter().zip(&bounding_shape).zip(&self.shape).any(
+                |((&start, &extent), &limit)| {
+                    start.checked_add(extent).is_none_or(|end| end > limit)
+                },
+            ) {
+                return Err(LatticeError::IndexOutOfBounds {
+                    index: start.to_vec(),
+                    shape: self.shape.clone(),
+                });
+            }
+            let output_count = shape
+                .iter()
+                .try_fold(1_usize, |count, &n| count.checked_mul(n))
+                .ok_or_else(|| LatticeError::InvalidTraversal("slice size overflow".into()))?;
+            let bounding_count = bounding_shape
+                .iter()
+                .fold(1_usize, |count, &n| count.saturating_mul(n));
+            // Gather through the existing tile cache when most of the bounding
+            // box would be discarded. Nearby samples still reuse loaded tiles.
+            if bounding_count > output_count.saturating_mul(8) {
+                let mut io = tio.borrow_mut();
+                let mut values = Vec::with_capacity(output_count);
+                let mut position = start.to_vec();
+                for mut offset in 0..output_count {
+                    for axis in 0..ndim {
+                        position[axis] = start[axis] + (offset % shape[axis]) * stride[axis];
+                        offset /= shape[axis];
+                    }
+                    values.push(
+                        io.get_at::<T>(&position)
+                            .map_err(|error| LatticeError::Table(error.to_string()))?,
+                    );
+                }
+                return ArrayD::from_shape_vec(IxDyn(shape).f(), values)
+                    .map_err(|error| LatticeError::InvalidTraversal(error.to_string()));
+            }
             let bounding = tio
                 .borrow_mut()
                 .get_slice::<T>(start, &bounding_shape)
@@ -3069,7 +3106,7 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
                 .map(|(&extent, &step)| SliceInfoElem::Slice {
                     start: 0,
                     end: Some(extent as isize),
-                    step: step as isize,
+                    step: step.min(extent.max(1)) as isize,
                 })
                 .collect();
             return Ok(bounding.slice(local_slice.as_slice()).to_owned());
@@ -3077,17 +3114,7 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
         let array = self
             .read_array()
             .map_err(|e| LatticeError::Table(e.to_string()))?;
-        let slice_info: Vec<SliceInfoElem> = start
-            .iter()
-            .zip(shape.iter())
-            .zip(stride.iter())
-            .map(|((&s, &n), &st)| SliceInfoElem::Slice {
-                start: s as isize,
-                end: Some((s + n * st) as isize),
-                step: st as isize,
-            })
-            .collect();
-        Ok(array.slice(slice_info.as_slice()).to_owned())
+        ArrayLattice::new(array).get_slice(start, shape, stride)
     }
 
     fn get(&self) -> Result<ArrayD<T>, LatticeError> {
@@ -4627,6 +4654,37 @@ mod tests {
             image.get_plane(0, 1).unwrap(),
             ArrayD::from_shape_vec(IxDyn(&[1, 2]), vec![3.0, 4.0]).unwrap()
         );
+    }
+
+    #[test]
+    fn a_sparse_strided_slice_reads_only_intersecting_tiles() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sparse.image");
+        let shape = vec![8192, 4096];
+        let coords = casa_coordinates::defaults::coordinate_system_for_shape(&shape, false);
+        let corners = [[0, 0], [8191, 0], [0, 4095], [8191, 4095]];
+        let mut image = PagedImage::<f32>::create(shape, coords, &path).unwrap();
+        for (index, corner) in corners.iter().enumerate() {
+            image.put_at(index as f32 + 1.0, corner).unwrap();
+        }
+        image.save().unwrap();
+        drop(image);
+
+        let image = PagedImage::<f32>::open(&path).unwrap();
+        let values = image
+            .get_slice_with_stride(&[0, 0], &[2, 2], &[8191, 4095])
+            .unwrap();
+        for (index, position) in [[0, 0], [1, 0], [0, 1], [1, 1]].iter().enumerate() {
+            assert_eq!(values[IxDyn(position)], index as f32 + 1.0);
+        }
+        let metrics = image.tiled_io_stats().unwrap();
+        let tile = image.tile_shape();
+        let selected_tiles = corners
+            .iter()
+            .map(|position| [position[0] / tile[0], position[1] / tile[1]])
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(metrics.lru_read_tiles, selected_tiles.len());
+        assert_eq!(metrics.flat_allocated_bytes, 0);
     }
 
     #[test]
