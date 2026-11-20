@@ -774,6 +774,7 @@ fn exportfits_remaps_projection_parameters_with_the_latitude_axis() {
     for (kind, parameters) in [
         (ProjectionType::AZP, vec![2.0, 30.0]),
         (ProjectionType::AIR, vec![45.0]),
+        (ProjectionType::SZP, vec![2.0, 30.0, 45.0]),
     ] {
         let source = temp.path().join(format!("{kind}.im"));
         let mut coordinates = CoordinateSystem::new();

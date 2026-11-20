@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Zenithal perspective with a tilted projection plane (FITS AZP).
 
-use std::f64::consts::{FRAC_PI_2, PI, TAU};
+use std::f64::consts::FRAC_PI_2;
 
-use super::{deproject_tan, project_tan};
+use super::{deproject_tan, planeward_latitude, project_tan};
 use crate::error::CoordinateError;
 
 pub(super) struct ZenithalPerspective {
@@ -88,17 +88,4 @@ impl ZenithalPerspective {
         }
         Ok((x.atan2(-plane_y), theta.max(-FRAC_PI_2)))
     }
-}
-
-fn planeward_latitude(midpoint: f64, offset: f64) -> f64 {
-    [midpoint - offset, midpoint + offset + PI]
-        .into_iter()
-        .map(|theta| {
-            if theta > FRAC_PI_2 {
-                theta - TAU
-            } else {
-                theta
-            }
-        })
-        .fold(f64::NEG_INFINITY, f64::max)
 }

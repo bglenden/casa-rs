@@ -36,7 +36,7 @@ def check_fits_export(binary, path, case):
     result = subprocess.run([str(binary), '--json-run', '-'], input=json.dumps(request), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     header = fits.getheader(exported)
-    parameter_count = {'AZP': 2, 'AIR': 1}[case['get']]
+    parameter_count = {'AZP': 2, 'AIR': 1, 'SZP': 3}[case['get']]
     for index, value in enumerate(case['parameters'][:parameter_count], 1):
         assert math.isclose(header[f'PV2_{index}'], value, rel_tol=1e-12, abs_tol=0), (case, header)
     ia = image(); ia.open(str(exported)); check_world(ia, case); ia.done()
@@ -74,7 +74,7 @@ def main():
             if len(history) == 3: assert history[0] == case['history'][0], (case, history)
             check_world(ia, case)
             ia.done()
-            if args.exportfits and case['get'] in ('AZP', 'AIR'):
+            if args.exportfits and case['get'] in ('AZP', 'AIR', 'SZP'):
                 check_fits_export(args.exportfits, path, case)
     print(f"CASA {version_string()} reopened {len(expected['cases'])} projection edit results")
 
