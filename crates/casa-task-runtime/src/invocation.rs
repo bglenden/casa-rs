@@ -10,7 +10,8 @@
 use std::collections::BTreeMap;
 
 use casa_provider_contracts::{
-    ParameterType, ParameterValue, ProviderInvocation, TaskRunRequest, ValueAdapter,
+    NumpyScalarType, ParameterType, ParameterValue, ProviderInvocation, TaskRunRequest,
+    ValueAdapter,
 };
 use thiserror::Error;
 
@@ -30,9 +31,8 @@ pub fn project_provider_invocation(
 }
 
 /// Project a session whose caller also retains original explicit values.
-/// Proven required-path spellings, flagdata provenance parameters and
-/// inactive applycal spwmap shapes retain their originals when they normalize
-/// to the resolved value.
+/// Retain the original form when a task's behavior or provenance depends on
+/// it and it normalizes to the resolved value.
 pub fn project_provider_invocation_with_originals(
     session: &ParameterSession,
     originals: &BTreeMap<String, ParameterValue>,
@@ -65,12 +65,15 @@ pub fn project_provider_invocation_with_originals(
                 session.bundle().surface.id() == "flagdata"
                     && matches!(name.as_str(), "vis" | "spw" | "chanbin" | "timedev" | "freqdev" | "outfile")
             });
+            let tool_flag = original.filter(|value| {
+                preserves_model_task_boolean(session.bundle().surface.id(), name, value)
+            });
             let sent = given.filter(|_| is_quantity(session, name))
                 .map(|given| match given {
                     ParameterValue::ScalarArray(value) | ParameterValue::NumpyScalar { value, .. } => value.as_ref(),
                     other => other,
                 })
-                .or(path_original).or(inactive_map).or(flagdata_history).unwrap_or(value);
+                .or(path_original).or(inactive_map).or(flagdata_history).or(tool_flag).unwrap_or(value);
             Some((name.clone(), sent.clone()))
         })
         .collect::<BTreeMap<_, _>>();
@@ -97,6 +100,25 @@ pub fn project_provider_invocation_with_originals(
         args,
         stdin: Some(stdin),
     })
+}
+
+// These model tasks distinguish NumPy and Python Booleans at a tool call
+// after choosing the physical MS route or validating its model operands.
+pub(crate) fn preserves_model_task_boolean(
+    surface: &str,
+    name: &str,
+    value: &ParameterValue,
+) -> bool {
+    matches!(
+        (surface, name),
+        ("ft", "incremental") | ("clearcal", "addmodel") | ("delmod", "otf" | "scr")
+    ) && matches!(
+        value,
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Bool,
+            ..
+        }
+    )
 }
 
 /// Whether `name`'s concept on `session`'s surface takes one quantity.
@@ -180,7 +202,6 @@ mod tests {
 
     #[test]
     fn numpy_scalars_preserve_dtype_in_variant_and_unwrap_other_domains() {
-        use casa_provider_contracts::NumpyScalarType;
         let scalar = ParameterValue::NumpyScalar {
             dtype: NumpyScalarType::Float32,
             value: Box::new(ParameterValue::Float(0.5)),
@@ -203,6 +224,29 @@ mod tests {
             ParameterSession::defaults(builtin_surface_bundle("tclean").unwrap()).unwrap();
         tclean.set("threshold", scalar).unwrap();
         assert_eq!(request(&tclean).values["threshold"], serde_json::json!(0.5));
+    }
+
+    #[test]
+    fn ft_retains_numpy_boolean_but_normalizes_a_scalar_array() {
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("ft").unwrap()).unwrap();
+        let boolean = ParameterValue::Bool(false);
+        let numpy = ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Bool,
+            value: Box::new(boolean.clone()),
+        };
+        session.set("incremental", numpy.clone()).unwrap();
+        assert_eq!(request(&session).typed_values["incremental"], numpy);
+
+        session
+            .set(
+                "incremental",
+                ParameterValue::ScalarArray(Box::new(boolean)),
+            )
+            .unwrap();
+        let projected = request(&session);
+        assert!(!projected.typed_values.contains_key("incremental"));
+        assert_eq!(projected.values["incremental"], false);
     }
 
     #[test]

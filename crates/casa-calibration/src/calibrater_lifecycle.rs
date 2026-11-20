@@ -10,7 +10,6 @@ use casa_tables::RequiredScalarColumnValues;
 use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
-use crate::model_columns::initialize_calibrater_columns;
 
 use crate::{
     ApplyCalibrationTableSpec, AttachmentError, AttachmentMode, AttachmentOptions,
@@ -186,15 +185,9 @@ impl CalibraterLifecycle {
                 )))
             })?;
         if add_corrected || add_model {
-            let mut opened = OpenedMs::open(attachment.path()).map_err(AttachmentError::from)?;
-            opened.lock = initialize_calibrater_columns(
-                &mut opened.measurement_set,
-                compress,
-                add_corrected,
-                add_model,
-                opened.lock,
-            )
-            .map_err(AttachmentError::from)?;
+            let opened = OpenedMs::open(attachment.path())
+                .and_then(|opened| opened.initialize_calibrater(compress, add_corrected, add_model))
+                .map_err(AttachmentError::from)?;
             opened.release().map_err(AttachmentError::from)?;
         }
         self.equation = Some(VisibilityEquation {

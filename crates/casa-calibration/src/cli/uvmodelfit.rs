@@ -3,11 +3,9 @@
 
 use casa_components::ComponentList;
 use casa_ms::MsSelection;
-use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
-use crate::session::resolve_casa_calibration_selection;
 use crate::{VisibilityFitRequest, VisibilityFitShape, fit_visibility_component};
 
 use crate::attachment::OpenedMs;
@@ -17,20 +15,25 @@ use super::multi_ms::partition_paths;
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
     let root = OpenedMs::open(&path).map_err(execution)?;
-    let corrected = VisibilityDataColumn::CorrectedData;
     let parts = partition_paths(&path)?
         .unwrap_or_default()
         .iter()
-        .map(|path| OpenedMs::open(path)?.initialize(corrected))
+        .map(|path| OpenedMs::open(path)?.initialize_calibrater(false, true, true))
         .collect::<Result<Vec<_>, _>>()
         .map_err(execution)?;
     let root = if parts.is_empty() {
-        root.initialize(corrected).map_err(execution)?
+        root.initialize_calibrater(false, true, true)
+            .map_err(execution)?
     } else {
         root.reload().map_err(execution)?
     };
     let ms = &root.measurement_set;
-    let selected = resolve_casa_calibration_selection(ms, &selection(task)?).map_err(execution)?;
+    let selected = root.resolve(&selection(task)?).map_err(selection_error)?;
+    if selected.selected_rows.is_empty() {
+        return Err(selection_error(
+            "MSSelectionNullSelection : The selected table has zero rows.",
+        ));
+    }
     let shape = VisibilityFitShape::parse(&task.text("comptype")?.unwrap_or_default())
         .map_err(failed_fit)?;
     let parameters = task.numbers("sourcepar")?;
@@ -101,6 +104,10 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
 fn failed_fit(error: impl std::fmt::Display) -> TaskFailure {
     tracing::error!("visibility model fit: {error}");
     TaskFailure::execution("Error in Calibrater::modelfit.")
+}
+
+fn selection_error(error: impl std::fmt::Display) -> TaskFailure {
+    execution(format!("Error in data selection specification: {error}"))
 }
 
 fn execution(error: impl std::fmt::Display) -> TaskFailure {
