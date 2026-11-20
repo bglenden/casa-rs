@@ -69,7 +69,7 @@ impl CorrelationSelection {
             .to_uppercase();
         let default_clip = mode == FlagDataMode::Clip && text.is_empty();
         if default_clip {
-            text.push_str(if data_column == FlagDataColumn::FloatData {
+            text.push_str(if data_column.is_real() {
                 "REAL_ALL"
             } else {
                 "ABS_ALL"
@@ -148,7 +148,7 @@ impl CorrelationSelection {
                 .as_ref()
                 .map_or(text.as_str(), |(_, expression)| expression.as_str());
             // The REAL fallback uses the suffix after CASA's separator.
-            let float_suffix = (data_column == FlagDataColumn::FloatData
+            let float_suffix = (data_column.is_real()
                 && clip_operator
                     .as_ref()
                     .is_some_and(|(metric, _)| *metric != ClipMetric::Real))

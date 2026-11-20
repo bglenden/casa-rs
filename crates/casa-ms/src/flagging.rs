@@ -46,11 +46,13 @@ use crate::{
 use casa_numerics::solve_weighted_least_squares;
 
 mod clip;
+mod clip_columns;
 mod correlation;
 mod extend;
 mod summary;
 
 use clip::{ClipOptions, apply_clip_array};
+use clip_columns::ClipColumns;
 use correlation::{ClipProjection, CorrelationSelection};
 mod version_backup;
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
@@ -71,6 +73,16 @@ pub enum FlagDataColumn {
     CorrectedData,
     /// MAIN.FLOAT_DATA.
     FloatData,
+    /// MAIN.MODEL_DATA.
+    ModelData,
+    /// Corrected visibilities minus the model.
+    Residual,
+    /// Observed visibilities minus the model.
+    ResidualData,
+    /// The stored weight spectrum or channel-repeated scalar weights.
+    Weight,
+    /// MAIN.WEIGHT_SPECTRUM.
+    WeightSpectrum,
 }
 
 impl FlagDataColumn {
@@ -79,7 +91,16 @@ impl FlagDataColumn {
             Self::Data => VisibilityDataColumn::Data.name(),
             Self::CorrectedData => VisibilityDataColumn::CorrectedData.name(),
             Self::FloatData => OptionalMainColumn::FloatData.name(),
+            Self::ModelData => VisibilityDataColumn::ModelData.name(),
+            Self::Residual => "RESIDUAL",
+            Self::ResidualData => "RESIDUAL_DATA",
+            Self::Weight => "WEIGHT",
+            Self::WeightSpectrum => OptionalMainColumn::WeightSpectrum.name(),
         }
+    }
+
+    fn is_real(self) -> bool {
+        matches!(self, Self::FloatData | Self::Weight | Self::WeightSpectrum)
     }
 }
 
@@ -323,6 +344,10 @@ pub enum FlaggingError {
     /// The correlation selector resolved to no polarization setup for a summary.
     #[error("no flagdata summary report for the selected correlations")]
     MissingCorrelationSummary,
+
+    /// A requested clipping column is missing from the MeasurementSet.
+    #[error("Failed to parse parameters for mode clip")]
+    MissingClipColumn,
 
     /// Flag-version management failed.
     #[error("failed to manage flag version for {path}: {reason}")]
@@ -687,23 +712,10 @@ fn selected_rows(
 fn clip_read_plan(
     ms: &MeasurementSet,
     row_count: usize,
-    data_column: FlagDataColumn,
+    primitive_bytes: usize,
     include_data_description: bool,
 ) -> Result<MsReadPlan, FlaggingError> {
     let path = display_ms_path(ms);
-    let primitive_bytes = ms
-        .main_table()
-        .schema()
-        .and_then(|schema| schema.column(data_column.name()))
-        .and_then(|column| column.data_type())
-        .and_then(PrimitiveType::fixed_width_bytes)
-        .ok_or_else(|| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: format!(
-                "{} does not expose a fixed-width numeric array type",
-                data_column.name()
-            ),
-        })?;
     let data_description = ms
         .data_description()
         .map_err(|source| FlaggingError::MutateFlags {
@@ -814,21 +826,19 @@ fn apply_clip_flags(
     let mut total_samples = 0usize;
     let mut row_changes = Vec::<(usize, usize)>::new();
     let include_ddid = channel_selections.is_some() || correlations.is_some();
-    let read_plan = clip_read_plan(ms, selected_rows.len(), request.data_column, include_ddid)?;
+    let columns = ClipColumns::bind(
+        ms.main_table(),
+        request.data_column,
+        selected_rows.first().copied(),
+        &path,
+    )?;
+    let bytes_per_sample = columns.bytes_per_sample(ms.main_table(), &path)?;
+    let read_plan = clip_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
     for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
         let table = ms.main_table();
         let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
         let mut touched_rows = std::collections::BTreeSet::<usize>::new();
-        let data_cells = table
-            .column_accessor(request.data_column.name())
-            .and_then(|column| column.array_cells_owned(rows))
-            .map_err(|source| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!(
-                    "read selected {} rows: {source}",
-                    request.data_column.name()
-                ),
-            })?;
+        let data_cells = columns.read(table, rows, &path)?;
         let flag_cells = table
             .column_accessor(FLAG_COLUMN)
             .and_then(|column| column.array_cells_owned(rows))
@@ -868,13 +878,13 @@ fn apply_clip_flags(
                 continue;
             }
             let column = request.data_column.name();
-            let data_value = checked_row_data(data_cells.get(row_slot), flags, row, column, &path)?;
             if flags.ndim() != 2 {
                 return Err(FlaggingError::MutateFlags {
                     path: path.clone(),
                     reason: format!("{column} row {row} is not rank-2"),
                 });
             }
+            let data_value = data_cells.row(row_slot, flags, row, &path)?;
             let nchan = flags.shape()[1];
             let channels =
                 if let Some((selectors, ddid)) = channel_selections.zip(ddid) {
@@ -898,7 +908,7 @@ fn apply_clip_flags(
                 };
             row_changes.clear();
             apply_clip_array(
-                data_value,
+                data_value.as_ref(),
                 flags,
                 channels.as_deref(),
                 ClipOptions {

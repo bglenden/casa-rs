@@ -3815,6 +3815,20 @@ result meets the clipping criterion. The paired Stokes clip oracle
 reproduces the CASA flags and compares the native flags with independently
 calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Weight clipping can ignore defined channel weights
+
+In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="WEIGHT_SPECTRUM")`
+can use scalar WEIGHT for all rows when the first selected row has an
+undefined spectrum. The same behavior occurs with `datacolumn="WEIGHT"`.
+For example, clipping inside 0.9 to 1.1 flags a channel in a later row
+whose spectral weight is 2 because its scalar weight is 1.
+
+casa-rs uses scalar weights for the undefined cells in this case and uses
+the stored spectra where present. The paired test verifies the extra CASA
+flags and the native channel mask independently. It also checks that an
+undefined cell following a defined first spectrum still raises a read
+error. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## An overflowing observation selector flags a different observation
 
 In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.
