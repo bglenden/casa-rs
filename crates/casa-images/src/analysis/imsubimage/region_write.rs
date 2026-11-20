@@ -110,8 +110,7 @@ impl ImageRegionWrite {
             let name = if let Some(name) = image.default_mask_name() {
                 name
             } else {
-                let initial = ArrayD::from_elem(IxDyn(image.shape()), true);
-                image.put_mask(fresh_mask_name, &initial)?;
+                image.create_filled_mask(fresh_mask_name, true)?;
                 image.set_default_mask(fresh_mask_name)?;
                 fresh_mask_name.to_owned()
             };

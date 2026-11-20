@@ -640,6 +640,12 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
     /// Replaces a named mask.
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError>;
 
+    /// Creates a named mask with uniform validity.
+    fn create_filled_mask(&mut self, name: &str, value: bool) -> Result<(), ImageError> {
+        validate_new_mask_name(name, &self.mask_names())?;
+        self.put_mask(name, &ArrayD::from_elem(IxDyn(self.shape()), value))
+    }
+
     /// Whether an existing named mask accepts writes.
     fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
         Ok(self.mask_names().iter().any(|entry| entry == name))
@@ -2955,6 +2961,25 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
         PagedImage::put_mask(self, name, data)
     }
 
+    fn create_filled_mask(&mut self, name: &str, value: bool) -> Result<(), ImageError> {
+        validate_new_mask_name(name, &self.mask_names())?;
+        let Some(image_path) = &self.path else {
+            return self.put_mask(name, &ArrayD::from_elem(IxDyn(self.shape()), value));
+        };
+        let stage = tempfile::tempdir_in(image_path).map_err(|e| ImageError::Io(e.to_string()))?;
+        let staged_path = stage.path().join("mask");
+        let tiled = TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?;
+        let mut mask =
+            PagedArray::<bool>::create_with_cache(tiled, &staged_path, self.cache_bytes())?;
+        mask.set(value)?;
+        mask.flush()?;
+        drop(mask);
+        casa_tables::publication::rename_without_replacing(&staged_path, &image_path.join(name))
+            .map_err(|e| ImageError::Io(e.to_string()))?;
+        self.register_paged_mask(name);
+        Ok(())
+    }
+
     fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
         let Some(Value::Record(masks)) = self.table.keywords().get(MASKS_KEYWORD) else {
             return Ok(false);
@@ -3491,6 +3516,20 @@ pub(crate) fn slice_mask_array(
         .collect();
     let view = mask.slice(slice_info.as_slice());
     Ok(view.to_owned())
+}
+
+fn validate_new_mask_name(name: &str, existing: &[String]) -> Result<(), ImageError> {
+    if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "Invalid mask name {name}"
+        )));
+    }
+    if existing.iter().any(|entry| entry == name) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "Mask {name} already exists"
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_mask_slice_write(
