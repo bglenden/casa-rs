@@ -17,6 +17,7 @@ the module path.
 from __future__ import annotations
 
 from .._core import (
+    calibrater,
     componentlist,
     coordsys,
     image,
@@ -30,6 +31,7 @@ from .._core import (
 )
 
 __all__ = [
+    "calibrater",
     "componentlist",
     "coordsys",
     "image",
