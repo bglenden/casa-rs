@@ -41,13 +41,35 @@ def test_overwrite_relabels_only_the_selected_linear_coordinate(casa):
         assert cs.done()
 
 
+def test_overwrite_relabels_the_tabular_unit(casa):
+    for backend in (casa, tools):
+        cs = backend.coordsys()
+        assert cs.newcoordsys(tabular=True)
+        before = cs.increment()["numeric"].copy()
+        assert cs.setunits("Jy", type="tabular", overwrite=True)
+        assert list(cs.units()) == ["Jy"]
+        np.testing.assert_array_equal(cs.increment()["numeric"], before)
+        assert cs.done()
+
+
+def test_failed_mixed_unit_edit_preserves_the_transform():
+    cs = tools.coordsys()
+    assert cs.newcoordsys(direction=True, spectral=True, linear=2)
+    before = cs.increment()["numeric"].copy()
+    with pytest.raises(RuntimeError, match="Units are not compatible dimensionally"):
+        cs.setunits(["deg", "deg", "m", "m", "m"])
+    assert list(cs.units()) == ["'", "'", "Hz", "km", "km"]
+    np.testing.assert_array_equal(cs.increment()["numeric"], before)
+    assert cs.done()
+
+
 def test_setunits_preserves_the_affine_transform_across_native_readback(casa, tmp_path):
     for index, (writer, reader) in enumerate(((casa, tools), (tools, casa))):
         path = str(tmp_path / f"units-{index}.im")
         image = writer.image()
         assert image.fromshape(path, [4, 5], linear=True)
         cs = image.coordsys()
-        assert cs.setunits(["km","km"], "linear", overwrite=True)
+        assert cs.setunits(["km", "km"], "linear", overwrite=True)
         assert cs.setreferencepixel([0.0, 0.0])
         assert cs.setreferencevalue([1.0, 2.0])
         assert cs.setincrement([0.25, 0.5])
