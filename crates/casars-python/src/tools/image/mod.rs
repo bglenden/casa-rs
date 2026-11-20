@@ -18,6 +18,7 @@ mod create;
 mod data_compat;
 mod deconvolve_components;
 mod default_record;
+mod fits_export;
 mod fits_header;
 mod fits_import;
 mod fits_rename;
