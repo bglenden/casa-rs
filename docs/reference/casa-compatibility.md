@@ -1356,7 +1356,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 14, Implemented: 23, Not implemented: 11, Partial: 54, Unassessed: 0.
+Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 14, Implemented: 24, Not implemented: 2, Partial: 62, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1382,17 +1382,17 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `field` | `''` | `''`; `field` → `field` | Implemented | Field names or ids (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
 | `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral windows:channels (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
 | `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Time range (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
-| `uvrange` | `''` | `''`; `uvrange` → `uvrange` | Not implemented | UV range (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `uvrange` | `''` | `''`; `uvrange` → `uvrange` | Partial | UV range (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Baseline/antenna names or ids (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
 | `scan` | `''` | `''`; `scan` → `scan` | Implemented | Scan numbers (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
 | `correlation` | `''` | `''`; `correlation` → `correlation` | Implemented | Correlations/polarizations (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
 | `polarization` | `''` | `''`; `polarization` → `polarization` | Implemented | Polarizations (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
-| `antpos` | `''` | `''`; `antpos` → `antpos` | Not implemented | Antenna positions (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
-| `array` | `''` | `''`; `array` → `array` | Not implemented | (Sub)array numbers (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `antpos` | `''` | `''`; `antpos` → `antpos` | Implemented | Display XYZ components of an antenna-position calibration, or select an ordered component subset. Preserve the requested selector in text metadata for other calibration types. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors) |
+| `array` | `''` | `''`; `array` → `array` | Partial | (Sub)array numbers (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `observation` | `''` | `''`; `observation` → `observation` | Implemented | Observation IDs (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
-| `intent` | `''` | `''`; `intent` → `intent` | Not implemented | Observing intent (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
-| `feed` | `''` | `''`; `feed` → `feed` | Not implemented | Feed numbers (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
-| `msselect` | `''` | `''`; `msselect` → `msselect` | Not implemented | MSSelection TaQL string (blank for none) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `intent` | `''` | `''`; `intent` → `intent` | Partial | Observing intent (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `feed` | `''` | `''`; `feed` → `feed` | Partial | Feed numbers (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `msselect` | `''` | `''`; `msselect` → `msselect` | Partial | Apply a TaQL row expression to a modern calibration table. Refuse a selection with no solutions. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors) |
 | `averagedata` | `True` | `True`; `averagedata` → `averagedata` | Implemented | Enable data averaging parameters [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `avgchannel` | `''` | `''`; `avgchannel` → `avgchannel` | Implemented | Average over channel (blank = False, otherwise value in channels) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
 | `avgtime` | `''` | `''`; `avgtime` → `avgtime` | Implemented | Average over time (blank = False, otherwise value in seconds) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
@@ -1402,9 +1402,9 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `avgantenna` | `False` | `False`; `avgantenna` → `avgantenna` | Implemented | Average per antenna (mutually exclusive with avgbaseline) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `avgspw` | `False` | `False`; `avgspw` → `avgspw` | Implemented | Average over all spectral windows [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `scalar` | `False` | `False`; `scalar` → `scalar` | Implemented | Scalar averaging (False=vector averaging) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
-| `transform` | `True` | `True`; `transform` → `transform` | Not implemented | Enable data transformations [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [remaining](#plotms-evidence-remaining) |
-| `freqframe` | `''` | `''`; `freqframe` → `freqframe` | Not implemented | The frame in which to render frequency and velocity axes [advanced](#plotms-behavior-advanced)<br>Catalog domain: `LSRK`, `CMB`, `GALACTO`, `GEO`, `TOPO`, `LSRD`, `LGROUP`, `BARY`, `` | [remaining](#plotms-evidence-remaining) |
-| `restfreq` | `''` | `''`; `restfreq` → `restfreq` | Not implemented | Rest frequency to use for velocity conversions [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `transform` | `True` | `True`; `transform` → `transform` | Partial | Disable the frequency controls when false. Additional active calibration transforms remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `freqframe` | `''` | `''`; `freqframe` → `freqframe` | Partial | Ignore the requested frequency frame when transform is false. Active frequency conversion remains open for calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `LSRK`, `CMB`, `GALACTO`, `GEO`, `TOPO`, `LSRD`, `LGROUP`, `BARY`, `` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `restfreq` | `''` | `''`; `restfreq` → `restfreq` | Partial | CASA leaves modern calibration-table coordinates unchanged for supplied rest-frequency values. Frequency and velocity transforms for other inputs remain separately tracked. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `veldef` | `'RADIO'` | `'RADIO'`; `veldef` → `veldef` | Not implemented | The definition in which to render velocity [advanced](#plotms-behavior-advanced)<br>Catalog domain: `RADIO`, `OPTICAL`, `TRUE` | [remaining](#plotms-evidence-remaining) |
 | `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter` | Default only | The direction coordinates of the desired center [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `extendflag` | `False` | `False`; `extendflag` → `extendflag` | Default only | Extend flagging to other data points not plotted [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
@@ -1479,20 +1479,20 @@ Evidence: [paired](#plotms-evidence-paired).
 <a id="plotms-behavior-selection"></a>
 ##### Select solution samples
 
-**Partial** — Apply metadata selections for field, channel and window, time, antenna, scan, observation and polarization, including receptor ratios.
+**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors.
 
-TaQL and the remaining calibration selection expressions are open.
+Further legacy formats and MS plotting paths remain open.
 
-Evidence: [paired](#plotms-evidence-paired).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors).
 
 <a id="plotms-behavior-coordinates"></a>
 ##### Project axes and flags
 
-**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing.
+**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.
 
 Pointing-coordinate axes and advanced per-axis MS data columns are open.
 
-Evidence: [paired](#plotms-evidence-paired).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors).
 
 <a id="plotms-behavior-averaging"></a>
 ##### Average solution points
@@ -1533,11 +1533,11 @@ Evidence: [paired](#plotms-evidence-paired).
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
 
-**Partial** — Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.
+**Partial** — Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet callibrary, overlays, transforms and interactive flag controls.
 
 The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.
 
-Evidence: [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining).
+Evidence: [atmosphere](#plotms-evidence-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining).
 
 #### plotms deviations and unfinished work
 
@@ -1551,6 +1551,16 @@ Evidence: [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidenc
 - User impact: The native request produces all 160 available points in the paired fixture.
 - Owner decision: Pending; not an accepted deviation.
 - Evidence: [paired](#plotms-evidence-paired).
+
+##### calibration-selection-diagnostics: Proposed
+
+- Inputs: Modern calibration input with an unsupported selector, invalid antenna-position selector or empty TaQL selection.
+- CASA: Refuses the plot with an RPC failure whose details say plot parameters failed.
+- casa-rs: Refuses the plot with a task parameter error describing the selector or empty row set.
+- Rationale: Give the caller the cause using the native task error contract.
+- User impact: Both workflows preserve an absent export on selection failure.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [selectors](#plotms-evidence-selectors).
 
 #### plotms evidence
 
@@ -1581,6 +1591,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `12d08ef332634591a6ad4611408f4cc178f601c5`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-atmosphere-20261119.json`.
+
+<a id="plotms-evidence-selectors"></a>
+##### selectors
+
+**Same-input PlotMS calibration types and selectors — passed.** 56 text exports, 1,688 points, 14 exact errors, six paired refusals and 32 rendered coordinates matched. Scan, baseline, time and antenna-position page exports used the same filenames. CASA 6.7.6.14 with casaplotms 2.9.1 on identical modern calibration tables, including Tsys and antenna position.
+
+- [https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py)
+- Revision: `d3571932be189f719e83e2626ba7fab982d23d33`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-calibration-selectors-20261119.json`.
 
 ### plotweather
 

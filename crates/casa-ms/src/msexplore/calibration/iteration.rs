@@ -71,7 +71,7 @@ impl IterationAxis {
             Self::Antenna => "Antenna",
             Self::Baseline => "Baseline",
             Self::Polarization => "Poln",
-            Self::AntennaPosition => "AntPos",
+            Self::AntennaPosition => "Antenna Position",
         }
     }
 
@@ -103,6 +103,12 @@ impl IterationAxis {
                 .ok()
                 .and_then(|id| table.fields.get(id))
                 .map_or_else(|| id.to_string(), |field| field.name.clone()),
+            Key::Id(id)
+                if matches!(self, Self::AntennaPosition | Self::Polarization)
+                    && table.position_parameters() =>
+            {
+                CalibrationTable::position_label(id).to_owned()
+            }
             Key::Id(id) if matches!(self, Self::Polarization) && id < 0 => "ratio".into(),
             Key::Id(id) => id.to_string(),
             Key::Antennas(_) => {

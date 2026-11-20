@@ -15,6 +15,7 @@ import casatasks as casa
 from casaplotms import plotms as reference
 import numpy as np
 
+from calibration_gencal_tsys_oracle import attach_syscal
 from calibration_rerefant_oracle import reference_fixture
 from calibration_smoothcal_oracle import copy_ms, fixture, opened
 
@@ -81,6 +82,26 @@ def exports(root, products, native):
         ("scan-grid-text", "bandpass", dict(iteraxis="scan", gridcols=2)),
         ("antenna-grid-text", "bandpass", dict(iteraxis="antenna", gridcols=2, antenna="")),
         ("polarization-grid-text", "bandpass", dict(iteraxis="poln", gridcols=2)),
+        ("tsys-default", "tsys", dict(antenna="A1")),
+        ("tsys-frequency", "tsys", dict(antenna="A1", xaxis="frequency", yaxis="tsys")),
+        ("tsys-amplitude", "tsys", dict(antenna="A1", xaxis="channel", yaxis="amp")),
+        ("antenna-position-default", "antpos", {}),
+        ("antenna-position-xyz", "antpos", dict(xaxis="antenna1", yaxis="antpos", antpos="XYZ")),
+        ("antenna-position-z", "antpos", dict(xaxis="antenna1", yaxis="antpos", antpos="Z")),
+        ("antenna-position-xz", "antpos", dict(yaxis="antpos", antpos="XZ")),
+        ("position-selector-on-bandpass", "bandpass", dict(antpos="X")),
+        ("calibration-rest-frequency", "bandpass", dict(xaxis="frequency", restfreq="100GHz")),
+        ("ignored-unparseable-rest-frequency", "bandpass", dict(xaxis="frequency", restfreq="nonsense")),
+        ("ignored-negative-rest-frequency", "bandpass", dict(xaxis="frequency", restfreq="-1GHz")),
+        ("ignored-zero-rest-frequency", "bandpass", dict(xaxis="frequency", restfreq="0")),
+        ("disabled-transform", "bandpass", dict(freqframe="BARY", transform=False)),
+        ("antenna-position-iteration", "antpos", dict(iteraxis="antpos", antpos="XZ", gridcols=2)),
+        ("table-expression", "bandpass", dict(antenna="", msselect="ANTENNA1==0")),
+        ("compound-table-expression", "bandpass",
+         dict(antenna="", msselect="ANTENNA1==0 && SCAN_NUMBER==2")),
+        ("table-expression-with-default-time", "bandpass",
+         dict(antenna="", msselect="SCAN_NUMBER==2", timerange="*:*:*")),
+        ("table-expression-row-number", "bandpass", dict(antenna="", msselect="ROWNUMBER()==1")),
     ]
     total = 0
     for name, kind, options in cases:
@@ -150,13 +171,20 @@ def plot_pages(root, products, native):
     source = str(products["bandpass"])
     from casars import tasks
 
-    for axis, antenna in (("scan", "A0"), ("time", "A0"), ("baseline", "")):
+    cases = (
+        ("scan", "bandpass", dict(antenna="A0")),
+        ("time", "bandpass", dict(antenna="A0")),
+        ("baseline", "bandpass", dict(antenna="")),
+        ("poln", "antpos", dict(antpos="XZ")),
+        ("antpos", "antpos", dict(antpos="XZ")),
+    )
+    for axis, kind, selectors in cases:
         expected = root / f"pages-{axis}-casa"
         actual = root / f"pages-{axis}-native"
         expected.mkdir()
         actual.mkdir()
-        controls = dict(caltable=source, spw="0", antenna=antenna,
-                        showgui=False, iteraxis=axis, exprange="all")
+        controls = dict(caltable=str(products[kind]), spw="0",
+                        showgui=False, iteraxis=axis, exprange="all", **selectors)
         assert reference(plotfile=str(expected / "plot.png"), **controls) is None
         completion = tasks.run("plotms", plotfile=str(actual / "plot.png"), **controls)
         assert completion.value is None
@@ -223,6 +251,37 @@ def errors(root, products, native):
     return len(cases)
 
 
+def rejected_calibration_selections(root, products, native):
+    from casars.tasks import TaskParameterError
+
+    path = root / "rejected-selection.txt"
+    cases = [
+        ("bandpass", "array", "1", "Selection by array not supported for NewCalTable"),
+        ("bandpass", "intent", "*PHASE*", "Selection by intent not supported for NewCalTable"),
+        ("bandpass", "uvrange", ">100m", "Selection by uvrange not supported for NewCalTable"),
+        ("bandpass", "feed", "1", "Selection by feed not supported for NewCalTable"),
+        ("bandpass", "msselect", "ANTENNA1==-100", "calibration selection contains no rows"),
+        ("antpos", "antpos", "x", "Invalid antpos selection for cal table."),
+    ]
+    for table, name, value, expected in cases:
+        controls = dict(caltable=str(products[table]), showgui=False, plotfile=str(path),
+                        expformat="txt", **{name: value})
+        try:
+            reference(**controls)
+        except Exception as error:
+            assert callable(getattr(error, "details", None)) and error.details() == "plot parameters failed", error
+        else:
+            raise AssertionError(f"CASA accepted {name}")
+        try:
+            native(**controls)
+        except TaskParameterError as error:
+            assert error.completion.message == expected, error
+        else:
+            raise AssertionError(f"Native PlotMS accepted {name}")
+        assert not path.exists()
+    print(f"Paired refusal of {len(cases)} empty, invalid or unsupported calibration selections.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -240,10 +299,15 @@ def main():
     assert [p.replace(annotation=inspect.Parameter.empty) for p in actual.parameters.values()] == list(expected.parameters.values())
     vis = root / "source.ms"
     fixture(vis, root / "solved.cal")
-    products = {name: root / f"{name}.cal" for name in ("gain", "bandpass", "delay")}
+    products = {name: root / f"{name}.cal" for name in ("gain", "bandpass", "delay", "tsys", "antpos")}
     reference_fixture(vis, products["gain"], "G Jones")
     casa.bandpass(str(vis), str(products["bandpass"]), refant="A0", solint="inf", minsnr=0.0)
     casa.gencal(str(vis), str(products["delay"]), "sbd", parameter=[2.5])
+    attach_syscal(vis, root / "syscal.txt", spectrum=True)
+    with opened(vis / "SYSCAL", True) as syscal:
+        syscal.removerows(np.flatnonzero(syscal.getcol("ANTENNA_ID") >= 5).tolist())
+    casa.gencal(str(vis), str(products["tsys"]), "tsys")
+    casa.gencal(str(vis), str(products["antpos"]), "antpos", antenna="A0", parameter=[0.1, -0.2, 0.3])
     products["flagged"] = root / "flagged.cal"
     copy_ms(products["bandpass"], products["flagged"])
     with opened(products["flagged"], True) as table:
@@ -257,6 +321,7 @@ def main():
         error_cases = errors(root, products, native)
         figure(root, products, native)
         plot_pages(root, products, native)
+        rejected_calibration_selections(root, products, native)
     print(f"{cases} exports, {points} points and {error_cases} error cases matched.")
 
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Resolve CALTABLE selections with the native MS metadata grammars.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::selection::antenna_expr::{AntennaRow, BaselineSelection, resolve_antenna_selector};
 use crate::selection::parser::{FieldSelectorRow, resolve_field_selector_rows};
@@ -22,6 +22,7 @@ pub(super) struct Expressions<'a> {
     pub(super) scan: &'a str,
     pub(super) timerange: &'a str,
     pub(super) observation: &'a str,
+    pub(super) taql: &'a str,
 }
 
 pub(super) struct Selection {
@@ -31,6 +32,7 @@ pub(super) struct Selection {
     scans: Vec<i32>,
     observations: Vec<i32>,
     time: Option<TimeSelection>,
+    taql_rows: Option<BTreeSet<usize>>,
     all_windows: bool,
     channel_lists: BTreeMap<i32, Vec<usize>>,
 }
@@ -97,13 +99,15 @@ impl Selection {
             scans,
             observations,
             time: None,
+            taql_rows: table.taql_rows(expressions.taql)?,
             all_windows: spw.selects_all(),
             channel_lists,
         };
         if !expressions.timerange.is_empty() && table.rows() > 0 {
             let defaults = |row: SampleCoordinates| TimeDefaults {
                 time_mjd_s: row.time,
-                exposure_s: row.interval,
+                // MSTimeParse uses 0.1 seconds for calibration tables.
+                exposure_s: 0.1,
             };
             let row_zero = table.coordinates(0)?;
             let mut first = row_zero;
@@ -137,7 +141,10 @@ impl Selection {
         } else {
             usize::MAX
         };
-        includes_id(&self.fields, point.field)
+        self.taql_rows
+            .as_ref()
+            .is_none_or(|rows| rows.contains(&point.row))
+            && includes_id(&self.fields, point.field)
             && includes_id(&self.scans, point.scan)
             && includes_id(&self.observations, point.observation)
             && self.time.as_ref().is_none_or(|time| time.holds(point.time))

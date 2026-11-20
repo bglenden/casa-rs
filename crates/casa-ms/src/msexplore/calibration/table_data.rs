@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Casacore table metadata and parameter cells for calibration plots.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use casa_tables::{Table, TableOptions, add_directory};
@@ -90,6 +91,31 @@ impl CalibrationTable {
 
     pub(super) fn rows(&self) -> usize {
         self.table.row_count()
+    }
+
+    pub(super) fn position_parameters(&self) -> bool {
+        self.subtype.starts_with("KAntPos")
+    }
+
+    pub(super) fn position_label(component: i32) -> &'static str {
+        match component {
+            0 => "X",
+            1 => "Y",
+            2 => "Z",
+            _ => "*",
+        }
+    }
+
+    pub(super) fn taql_rows(&self, expression: &str) -> Result<Option<BTreeSet<usize>>, String> {
+        let expression = expression.trim();
+        if expression.is_empty() {
+            return Ok(None);
+        }
+        let rows = self
+            .table
+            .query(&format!("SELECT * WHERE ({expression})"))
+            .map_err(|error| error.to_string())?;
+        Ok(Some(rows.row_numbers().iter().copied().collect()))
     }
 
     pub(super) fn coordinates(&self, row: usize) -> Result<SampleCoordinates, String> {
