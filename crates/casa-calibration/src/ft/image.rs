@@ -571,6 +571,32 @@ impl ImageTransform {
                 "the model image's Stokes axis does not match its planes",
             ));
         }
+        if npol > 1
+            && options
+                .voltage_pattern
+                .as_ref()
+                .is_some_and(|beam| beam.has_squint())
+        {
+            let polarization = ms.polarization()?;
+            let layouts: BTreeSet<_> = selected
+                .selected_rows
+                .iter()
+                .map(|row| row.polarization_id)
+                .collect();
+            for layout in layouts {
+                let codes = polarization.corr_type(usize::try_from(layout).map_err(invalid)?)?;
+                if codes.iter().any(|&code| {
+                    !matches!(
+                        Correlation::from_casacore_code(code),
+                        Some(Correlation::RR | Correlation::RL | Correlation::LR | Correlation::LL)
+                    )
+                }) {
+                    return Err(invalid(
+                        "legacy voltage-pattern squint for noncircular correlations is pending #1520",
+                    ));
+                }
+            }
+        }
         let correlations = first_correlations(ms, selected)?
             .into_iter()
             .map(|code| {
@@ -714,7 +740,7 @@ impl ImageTransform {
                     unreachable!("direction coordinate");
                 };
                 let direction = self.window.direction(direction);
-                let separations = beam.separations(&direction, [nx, ny])?;
+                let separations = beam.model_separations(&direction, [nx, ny])?;
                 Ok::<_, casa_ms::MsError>((beam, direction, separations))
             })
             .transpose()?;
@@ -760,24 +786,6 @@ impl ImageTransform {
         let work_bytes = model_plane_memory([nx, ny], npol, [gx, gy], grid_pols);
         let (workers, reservation) =
             model_workers(self.options.native_threads, channels, work_bytes);
-        let _squint_memory = if squint && npol == 4 {
-            let host = HostResources::detect().map_err(invalid)?;
-            Some(
-                admit(
-                    &host,
-                    &ResourcePolicy::Balanced,
-                    &Demand {
-                        phase: "legacy voltage-pattern squint image",
-                        memory: (nx as u64)
-                            .saturating_mul(ny as u64)
-                            .saturating_mul((2 * size_of::<f64>() * workers) as u64),
-                    },
-                )
-                .map_err(invalid)?,
-            )
-        } else {
-            None
-        };
         let (_reservation, team) = match WorkerTeam::new(workers) {
             Ok(team) => (reservation, team),
             Err(_) => {
@@ -801,7 +809,12 @@ impl ImageTransform {
             },
             |plane, values| {
                 let images = if let Some((beam, direction, separation)) = &beam {
-                    beam.model_plane(direction, separation, values, self.frequencies[plane])?
+                    beam.model_plane(
+                        direction,
+                        separation.as_ref(),
+                        values,
+                        self.frequencies[plane],
+                    )?
                 } else {
                     (0..npol)
                         .map(|pol| Array2::from_shape_fn((ny, nx), |(y, x)| values[[x, y, pol, 0]]))

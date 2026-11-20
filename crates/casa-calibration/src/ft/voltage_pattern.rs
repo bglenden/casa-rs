@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_coordinates::DirectionCoordinate;
+use casa_coordinates::{Coordinate, DirectionCoordinate};
 use casa_images::PagedImage;
 use casa_imaging_runtime::{Admitted, Demand, HostResources, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
@@ -20,7 +20,7 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
 
 use super::invalid;
-use crate::execute::load_parallactic_angle_state;
+use crate::execute::single_receptor_angle;
 
 const MANAGED_VP_TABLE: &str = "CASARS_VOLTAGE_PATTERNS";
 
@@ -153,6 +153,7 @@ pub(super) struct PreparedVoltagePattern {
     pattern: Arc<Admitted<BeamPattern>>,
     centre: MDirection,
     frame: MeasFrame,
+    projected_model: bool,
     squint: Option<BeamSquint>,
 }
 
@@ -173,6 +174,7 @@ impl ImagerVoltagePattern {
     ) -> MsResult<PreparedVoltagePattern> {
         let main = ms.main_table();
         let mut first = None;
+        let mut first_array = None;
         for row in &selected.selected_rows {
             let ScalarValue::Int32(array) =
                 main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
@@ -180,6 +182,11 @@ impl ImagerVoltagePattern {
                 return Err(invalid("ARRAY_ID must be Int32"));
             };
             let key = (*array, row.field_id, row.data_desc_id, row.time_mjd_seconds);
+            if squint && scratch && *first_array.get_or_insert(*array) != *array {
+                return Err(invalid(
+                    "legacy voltage-pattern squint for a field observed by multiple arrays is pending #1520",
+                ));
+            }
             if first.as_ref().is_none_or(|(previous, _)| key < *previous) {
                 first = Some((key, row));
             }
@@ -212,7 +219,11 @@ impl ImagerVoltagePattern {
                     })?,
             }
         };
-        let engine = MsCalEngine::new(ms)?;
+        let engine = if squint {
+            MsCalEngine::for_calibration(ms)?
+        } else {
+            MsCalEngine::new(ms)?
+        };
         let pointing = if ms.subtable(SubtableId::Pointing).is_some() {
             // A homogeneous BeamSkyJones shares one entry for both antennas.
             // Its update stores the second antenna's direction last.
@@ -258,15 +269,17 @@ impl ImagerVoltagePattern {
             else {
                 return Err(invalid("FEED2 must be Int32"));
             };
-            let angle = load_parallactic_angle_state(ms)?
-                .feed_parallactic_angle(
-                    time,
-                    field,
-                    first.antenna2_id,
-                    *feed,
-                    first.spectral_window_id,
-                )
-                .map_err(invalid)?;
+            let angle = engine.feed_parallactic_angle(
+                time,
+                usize::try_from(field).map_err(invalid)?,
+                usize::try_from(first.antenna2_id).map_err(invalid)?,
+            )? + single_receptor_angle(
+                ms,
+                first.antenna2_id,
+                *feed,
+                first.spectral_window_id,
+                time,
+            )?;
             Some(BeamSquint {
                 beam,
                 reference_hz: frequency,
@@ -282,6 +295,7 @@ impl ImagerVoltagePattern {
             }),
             centre,
             frame,
+            projected_model: telescope == "VLA" && self.table.is_none(),
             squint,
         })
     }
@@ -317,6 +331,7 @@ impl PreparedVoltagePattern {
             }),
             centre: MDirection::from_angles(1., 0.4, DirectionRef::J2000),
             frame: MeasFrame::new(),
+            projected_model: false,
             squint: None,
         }
     }
@@ -334,12 +349,24 @@ impl PreparedVoltagePattern {
         self.squint.is_some()
     }
 
-    fn shifted_separations(
+    pub(super) fn model_separations(
         &self,
         direction: &DirectionCoordinate,
         shape: [usize; 2],
+    ) -> MsResult<Option<Array2<f64>>> {
+        if self.projected_model {
+            Ok(None)
+        } else {
+            self.separations(direction, shape).map(Some)
+        }
+    }
+
+    fn shifted_pixels(
+        &self,
+        direction: &DirectionCoordinate,
+        centre: &MDirection,
         frequency: f64,
-    ) -> MsResult<Option<[Array2<f64>; 2]>> {
+    ) -> MsResult<Option<[[f64; 2]; 2]>> {
         let Some(BeamSquint {
             beam,
             reference_hz,
@@ -348,11 +375,10 @@ impl PreparedVoltagePattern {
         else {
             return Ok(None);
         };
-        let centre = self.centre_in_image_frame(direction)?;
         let shifted = |right| {
             let offset = beam.squint_displacement_rad(reference_hz, frequency, angle, right);
-            let shifted_centre = offset_true_angle(&centre, offset).map_err(invalid)?;
-            Self::separations_from(direction, shape, &shifted_centre)
+            let shifted_centre = offset_true_angle(centre, offset).map_err(invalid)?;
+            pixel_centre(direction, &shifted_centre)
         };
         Ok(Some([shifted(true)?, shifted(false)?]))
     }
@@ -360,38 +386,51 @@ impl PreparedVoltagePattern {
     pub(super) fn model_plane(
         &self,
         direction: &DirectionCoordinate,
-        radial: &Array2<f64>,
+        radial: Option<&Array2<f64>>,
         values: &ArrayD<f32>,
         frequency: f64,
     ) -> MsResult<Vec<Array2<f32>>> {
         let [nx, ny, npol, _] = *values.shape() else {
             unreachable!("legacy model plane shape");
         };
-        let shifted = if npol == 4 {
-            self.shifted_separations(direction, [nx, ny], frequency)?
+        let projected = if radial.is_none() {
+            let centre = self.centre_in_image_frame(direction)?;
+            let shifted = if npol == 4 {
+                self.shifted_pixels(direction, &centre, frequency)?
+            } else {
+                None
+            };
+            Some((pixel_centre(direction, &centre)?, shifted))
         } else {
             None
         };
         let pattern = self.pattern().at_frequency(frequency);
         let power = |distance: f64| pattern.power(distance.to_degrees() * 60.0 * frequency / 1e9);
+        let increments = direction.increment();
+        let increment_deg = [increments[0].to_degrees(), increments[1].to_degrees()];
+        let projected_power =
+            |x, y, centre| pattern.power(projected_radius(x, y, centre, increment_deg, frequency));
         Ok((0..npol)
             .map(|pol| {
                 Array2::from_shape_fn((ny, nx), |(y, x)| {
-                    if let Some([right, left]) = &shifted
-                        && matches!(pol, 0 | 3)
-                    {
-                        let i = values[[x, y, 0, 0]];
-                        let v = values[[x, y, 3, 0]];
-                        let right = (i + v) * power(right[[y, x]]);
-                        let left = (i - v) * power(left[[y, x]]);
-                        // Apply the two displaced parallel-hand beams in correlation space.
-                        return if pol == 0 {
-                            0.5 * (right + left)
-                        } else {
-                            0.5 * (right - left)
-                        };
+                    if let Some((centre, shifted)) = projected {
+                        if let Some([right, left]) = shifted
+                            && matches!(pol, 0 | 3)
+                        {
+                            let i = values[[x, y, 0, 0]];
+                            let v = values[[x, y, 3, 0]];
+                            let right = (i + v) * projected_power(x, y, right);
+                            let left = (i - v) * projected_power(x, y, left);
+                            // Apply the displaced parallel-hand beams in correlation space.
+                            return if pol == 0 {
+                                0.5 * (right + left)
+                            } else {
+                                0.5 * (right - left)
+                            };
+                        }
+                        return values[[x, y, pol, 0]] * projected_power(x, y, centre);
                     }
-                    values[[x, y, pol, 0]] * power(radial[[y, x]])
+                    values[[x, y, pol, 0]] * power(radial.expect("radial plane")[[y, x]])
                 })
             })
             .collect())
@@ -418,6 +457,24 @@ impl PreparedVoltagePattern {
             2.0 * separation.clamp(0., 1.).sqrt().asin()
         }))
     }
+}
+
+fn pixel_centre(direction: &DirectionCoordinate, centre: &MDirection) -> MsResult<[f64; 2]> {
+    let (lon, lat) = centre.as_angles();
+    direction.world_to_pixel([lon, lat]).map_err(invalid)
+}
+
+fn projected_radius(
+    x: usize,
+    y: usize,
+    centre: [f64; 2],
+    increment_deg: [f64; 2],
+    frequency: f64,
+) -> f64 {
+    // PBMath1D rounds the squared components, radius and lookup position to Float.
+    let x2 = ((x as f64 - centre[0]) * increment_deg[0]).powi(2) as f32;
+    let y2 = ((y as f64 - centre[1]) * increment_deg[1]).powi(2) as f32;
+    f64::from((f64::from((x2 + y2).sqrt()) * 60.0 * frequency / 1e9) as f32)
 }
 
 #[cfg(test)]
