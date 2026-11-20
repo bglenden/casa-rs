@@ -9,6 +9,11 @@
       ],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "SIN",
       "world": [
         [
@@ -30,6 +35,11 @@
       ],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "TAN",
       "world": [
         [
@@ -51,6 +61,11 @@
       ],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "ARC",
       "world": [
         [
@@ -72,6 +87,11 @@
       ],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "ZEA",
       "world": [
         [
@@ -93,6 +113,11 @@
       ],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "STG",
       "world": [
         [
@@ -114,6 +139,11 @@
       ],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "tan",
       "world": [
         [
@@ -134,6 +164,11 @@
       ],
       "image": "transposed",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "SIN",
       "world": [
         [
@@ -155,6 +190,11 @@
       ],
       "image": "transposed",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "TAN",
       "world": [
         [
@@ -176,6 +216,11 @@
       ],
       "image": "transposed",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "ARC",
       "world": [
         [
@@ -197,6 +242,11 @@
       ],
       "image": "transposed",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "ZEA",
       "world": [
         [
@@ -218,6 +268,11 @@
       ],
       "image": "transposed",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "STG",
       "world": [
         [
@@ -239,6 +294,11 @@
       ],
       "image": "transposed",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "tan",
       "world": [
         [
@@ -260,6 +320,11 @@
       ],
       "image": "projection_pointing",
       "key": "projection",
+      "latpole": -59.999999999999986,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "TAN",
       "world": [
         [
@@ -281,6 +346,11 @@
       ],
       "image": "projection_pointing",
       "key": "projection",
+      "latpole": -59.999999999999986,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "ARC",
       "world": [
         [
@@ -302,6 +372,11 @@
       ],
       "image": "projection_pointing",
       "key": "projection",
+      "latpole": -59.999999999999986,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "ZEA",
       "world": [
         [
@@ -323,6 +398,11 @@
       ],
       "image": "projection_pointing",
       "key": "projection",
+      "latpole": -59.999999999999986,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "STG",
       "world": [
         [
@@ -344,6 +424,11 @@
       ],
       "image": "normal",
       "key": "PROJECTION",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "ARC",
       "world": [
         [
@@ -357,11 +442,16 @@
       ]
     },
     {
-      "error": "Exception: Unknown projection specification NCP.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "error": "Exception: Unknown projection specification NCP.",
       "get": "SIN",
       "history": [],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "NCP",
       "world": [
         [
@@ -375,11 +465,16 @@
       ]
     },
     {
-      "error": "Exception: Unknown projection specification BAD.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "error": "Exception: Unknown projection specification BAD.",
       "get": "SIN",
       "history": [],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "bad",
       "world": [
         [
@@ -393,11 +488,16 @@
       ]
     },
     {
-      "error": "Exception: Unknown projection specification T.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "error": "Exception: Unknown projection specification T.",
       "get": "SIN",
       "history": [],
       "image": "normal",
       "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
       "value": "T",
       "world": [
         [
@@ -418,6 +518,8 @@
       ],
       "image": "car",
       "key": "projection",
+      "latpole": 90.0,
+      "parameters": [],
       "value": "CAR",
       "world": [
         [
@@ -427,6 +529,509 @@
         [
           6.2830398630752535,
           -0.0002908882086657216
+        ]
+      ]
+    },
+    {
+      "get": "AZP",
+      "history": [
+        "Modified projection from \"SIN\" to \"AZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AZP\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
+      "value": "AZP",
+      "world": [
+        [
+          0.0005817763516946713,
+          -0.000581776253239601
+        ],
+        [
+          6.283039863076279,
+          -0.0002908881973844879
+        ]
+      ]
+    },
+    {
+      "get": "SZP",
+      "history": [
+        "Modified projection from \"SIN\" to \"SZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SZP\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0,
+        90.0
+      ],
+      "value": "SZP",
+      "world": [
+        [
+          0.0005817763515786414,
+          -0.0005817762531235713
+        ],
+        [
+          6.283039863076124,
+          -0.0002908881976925207
+        ]
+      ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"SIN\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0006872131499471789,
+          -0.0006872129876749379
+        ],
+        [
+          6.283013503910853,
+          -0.00034360652225301985
+        ]
+      ]
+    },
+    {
+      "get": "AZP",
+      "history": [
+        "Modified projection from \"CAR\" to \"AZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AZP\", verbose=False)"
+      ],
+      "image": "car",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
+      "value": "AZP",
+      "world": [
+        [
+          6.282603530827893,
+          0.0005817762532396013
+        ],
+        [
+          0.0001454441033073277,
+          0.00029088819738448777
+        ]
+      ]
+    },
+    {
+      "get": "SZP",
+      "history": [
+        "Modified projection from \"CAR\" to \"SZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SZP\", verbose=False)"
+      ],
+      "image": "car",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0,
+        90.0
+      ],
+      "value": "SZP",
+      "world": [
+        [
+          6.282603530828007,
+          0.0005817762531235714
+        ],
+        [
+          0.00014544410346134412,
+          0.00029088819769252055
+        ]
+      ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"CAR\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "car",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        90.0
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          6.282603530704822,
+          0.0005817763763082945
+        ],
+        [
+          0.000145444108171109,
+          0.0002908882071120495
+        ]
+      ]
+    },
+    {
+      "get": "TAN",
+      "history": [
+        "Modified projection from \"SIN\" to \"TAN\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"TAN\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        1.23456789,
+        -1.23e-06
+      ],
+      "value": "TAN",
+      "world": [
+        [
+          0.0005817763516946713,
+          -0.000581776253239601
+        ],
+        [
+          6.283039863076279,
+          -0.0002908881973844879
+        ]
+      ]
+    },
+    {
+      "get": "ARC",
+      "history": [
+        "Modified projection from \"SIN\" to \"ARC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"ARC\", verbose=False)"
+      ],
+      "image": "../imhead_projection/ncp",
+      "key": "projection",
+      "latpole": 57.29577951308232,
+      "parameters": [
+        0.0,
+        0.6420926159343306
+      ],
+      "value": "ARC",
+      "world": [
+        [
+          0.0010757860347173445,
+          0.9994179602910093
+        ],
+        [
+          6.282916238838698,
+          0.9997090953271263
+        ]
+      ]
+    },
+    {
+      "get": "SZP",
+      "history": [
+        "Modified projection from \"SIN\" to \"SZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SZP\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0,
+        90.0
+      ],
+      "value": "SZP",
+      "world": [
+        [
+          0.0005817763515786414,
+          -0.0005817762531235713
+        ],
+        [
+          6.283039863076124,
+          -0.0002908881976925207
+        ]
+      ]
+    },
+    {
+      "get": "SZP",
+      "history": [
+        "Modified projection from \"SIN\" to \"SZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SZP\", verbose=False)"
+      ],
+      "image": "../imhead_projection/ncp",
+      "key": "projection",
+      "latpole": 57.29577951308232,
+      "parameters": [
+        0.0,
+        0.0,
+        90.0
+      ],
+      "value": "SZP",
+      "world": [
+        [
+          0.0010757857919796393,
+          0.9994179604225178
+        ],
+        [
+          6.282916238847895,
+          0.9997090953370754
+        ]
+      ]
+    },
+    {
+      "get": "SIN",
+      "history": [
+        "Modified projection from \"AIR\" to \"SIN\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SIN\", verbose=False)"
+      ],
+      "image": "car",
+      "initial": "AIR",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
+      "value": "SIN",
+      "world": [
+        [
+          6.282603530630982,
+          0.0005817764501500444
+        ],
+        [
+          0.00014544411099911284,
+          0.00029088821276805664
+        ]
+      ]
+    },
+    {
+      "get": "AZP",
+      "history": [
+        "Modified projection from \"AIR\" to \"AZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AZP\", verbose=False)"
+      ],
+      "image": "car",
+      "initial": "AIR",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        0.0,
+        0.0
+      ],
+      "value": "AZP",
+      "world": [
+        [
+          6.282603530827893,
+          0.0005817762532396013
+        ],
+        [
+          0.0001454441033073277,
+          0.00029088819738448777
+        ]
+      ]
+    },
+    {
+      "get": "AZP",
+      "history": [
+        "Modified projection from \"SIN\" to \"AZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AZP\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        1.23456789,
+        -1.23e-06
+      ],
+      "value": "AZP",
+      "world": [
+        [
+          0.0005817764604817043,
+          -0.0005817763620265787
+        ],
+        [
+          6.283039863072029,
+          -0.00029088820588289726
+        ]
+      ]
+    },
+    {
+      "get": "AZP",
+      "history": [
+        "Modified projection from \"SIN\" to \"AZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AZP\", verbose=False)"
+      ],
+      "image": "../imhead_projection/ncp",
+      "key": "projection",
+      "latpole": 57.29577951308232,
+      "parameters": [
+        0.0,
+        0.6420926159343306
+      ],
+      "value": "AZP",
+      "world": [
+        [
+          0.0010757928607485804,
+          0.9994179931580428
+        ],
+        [
+          6.282916237963813,
+          0.9997091126550155
+        ]
+      ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"SIN\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        1.23456789,
+        -1.23e-06
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0006838725677167013,
+          -0.0006838724077994187
+        ],
+        [
+          6.2830143390565025,
+          -0.00034193623117342186
+        ]
+      ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"AZP\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "initial": "AZP",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        1.23456789,
+        -1.23e-06
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0006838725677167013,
+          -0.0006838724077994187
+        ],
+        [
+          6.2830143390565025,
+          -0.00034193623117342186
+        ]
+      ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"SIN\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "projection_high_slant",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        120.0,
+        0.0
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0005919182972869636,
+          -0.0005919181935925917
+        ],
+        [
+          6.283037327616493,
+          -0.0002959591164652507
+        ]
+      ]
+    },
+    {
+      "get": "AZP",
+      "history": [
+        "Modified projection from \"SZP\" to \"AZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AZP\", verbose=False)"
+      ],
+      "image": "projection_slant_zenithal",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        2.0,
+        30.0,
+        45.0
+      ],
+      "value": "AZP",
+      "world": [
+        [
+          0.0005818328826766533,
+          -0.0005038819860805669
+        ],
+        [
+          6.283039856020506,
+          -0.0002519287913300276
+        ]
+      ]
+    },
+    {
+      "get": "SZP",
+      "history": [
+        "Modified projection from \"AZP\" to \"SZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SZP\", verbose=False)"
+      ],
+      "image": "projection_slant_zenithal",
+      "initial": "AZP",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        2.0,
+        30.0,
+        45.0
+      ],
+      "value": "SZP",
+      "world": [
+        [
+          0.0005816773794279344,
+          -0.0005816047438649073
+        ],
+        [
+          6.283039847583937,
+          -0.0002908613799788206
         ]
       ]
     }

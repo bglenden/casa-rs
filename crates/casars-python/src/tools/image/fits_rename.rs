@@ -8,8 +8,8 @@ use std::path::Path;
 use casa_tables::publication::{check_write_access, rename_without_replacing};
 use pyo3::prelude::*;
 
-use super::attachment::{AttachedImage, registry};
-use super::handle::raised;
+use super::attachment::AttachedImage;
+use super::handle::{raised, same_file_snapshot};
 
 pub(super) fn rename(
     old_name: &Path,
@@ -99,7 +99,7 @@ pub(super) fn rename(
         }
     }
 
-    let attachment = AttachedImage::open(&mut registry(), &output)
+    let attachment = AttachedImage::open(&output)
         .map_err(|_| raised(format!("Exception: Unable to open image {name}.")))?;
     if history {
         attachment.lock().append_history_at(
@@ -127,7 +127,7 @@ fn move_across_devices(source: &Path, destination: &Path, overwrite: bool) -> st
     // last fallible move, so rollback never touches the public destination.
     let publish = || {
         let original = claimed.symlink_metadata()?;
-        if !original.is_file() || !same_file(&expected, &original) {
+        if !original.is_file() || !same_file_snapshot(&expected, &original) {
             return Err(std::io::Error::other(
                 "The source FITS file changed before it could be moved",
             ));
@@ -138,7 +138,7 @@ fn move_across_devices(source: &Path, destination: &Path, overwrite: bool) -> st
         let destination_stage = tempfile::tempdir_in(parent)?;
         let copy = destination_stage.path().join("image");
         fs::copy(&claimed, &copy)?;
-        if !same_file(&original, &claimed.symlink_metadata()?) {
+        if !same_file_snapshot(&original, &claimed.symlink_metadata()?) {
             return Err(std::io::Error::other(
                 "The source FITS file changed while it was being copied",
             ));
@@ -160,17 +160,6 @@ fn move_across_devices(source: &Path, destination: &Path, overwrite: bool) -> st
         return Err(error);
     }
     Ok(())
-}
-
-fn same_file(expected: &fs::Metadata, actual: &fs::Metadata) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
-            return false;
-        }
-    }
-    expected.len() == actual.len() && expected.modified().ok() == actual.modified().ok()
 }
 
 #[cfg(test)]

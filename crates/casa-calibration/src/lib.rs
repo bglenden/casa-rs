@@ -35,6 +35,8 @@ mod execute;
 mod fluxscale;
 mod ft;
 mod gencal;
+#[cfg(test)]
+mod imaging_memory_test;
 mod initweights;
 mod interpolation;
 mod listing;
@@ -71,7 +73,10 @@ mod weather;
 mod weight_spectra;
 mod writer;
 
-pub use ft::settings::{ImagerGridder, ImagerTransformOptions};
+pub use ft::settings::{
+    ImagerGridder, ImagerSingleDish, ImagerSingleDishKernel, ImagerSingleDishSetup,
+    ImagerTransformOptions,
+};
 pub use ft::{
     ImagerDefinitionRequest, ImagerImageDefinition, ImagerPhaseCentre, ImagerPrediction,
     ImagerPredictionModel, ImagerSpectralAxis, ImagerVoltagePattern,

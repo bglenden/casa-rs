@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from casars import tasks
-from casars.data import Image
+from casars._native_image import NativeImageView
 from casars.tasks import _runner
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -111,7 +111,7 @@ def test_immath_self_contained_fits_and_default_outfile(
     default_out = tmp_path / "immath_results.im"
     assert default_out.is_dir()
 
-    out = Image.open(default_out)
+    out = NativeImageView.open(default_out)
     assert out.shape == (3, 3, 2)
     assert out.pixel_type == "float32"
     assert out.units == "Jy/beam"
@@ -132,13 +132,13 @@ def test_immath_self_contained_fits_and_default_outfile(
     )
     assert Path(completion.products[0].path) == default_out
     assert completion.products[0].exists is True
-    out2 = Image.open(default_out)
+    out2 = NativeImageView.open(default_out)
     pix2 = np.asarray(out2.get_slice((0, 0, 0), out2.shape))
     assert np.allclose(pix2[mask], pix[mask], rtol=1e-6, atol=1e-6)
 
 
 def _assert_matches_oracle(image_path: Path, oracle_case: dict[str, object], *, rtol: float = 1e-4, atol: float = 1e-5) -> None:
-    im = Image.open(image_path)
+    im = NativeImageView.open(image_path)
     shape = im.shape
     pix = np.asarray(im.get_slice((0,) * len(shape), shape))
     m_raw = im.get_mask_slice((0,) * len(shape), shape)
@@ -163,7 +163,7 @@ def test_immath_python_all_modes_and_parameters(
     oracle_cases = json.loads((IMMATH_DATA_DIR / "expected.json").read_text())["cases"]
 
     def _read_pix_and_mask(p: Path) -> tuple[np.ndarray, np.ndarray]:
-        im = Image.open(p)
+        im = NativeImageView.open(p)
         shp = im.shape
         px = np.asarray(im.get_slice((0,) * len(shp), shp), dtype=np.float64)
         mr = im.get_mask_slice((0,) * len(shp), shp)
@@ -192,7 +192,7 @@ def test_immath_python_all_modes_and_parameters(
         )
         is True
     )
-    ev = Image.open(ws / "eval_custom.im")
+    ev = NativeImageView.open(ws / "eval_custom.im")
     assert ev.shape == (4, 4, 1, 3)
     assert ev.pixel_type == "float64"
     assert ev.units == "Jy/beam"
@@ -221,7 +221,7 @@ def test_immath_python_all_modes_and_parameters(
         )
         is True
     )
-    assert Image.open(ws / "rebin_out.im").shape == (2, 2, 4, 1)
+    assert NativeImageView.open(ws / "rebin_out.im").shape == (2, 2, 4, 1)
     _assert_matches_oracle(ws / "rebin_out.im", oracle_cases["eval_rebin_2x2"]["expected"])
 
     assert (
@@ -233,7 +233,7 @@ def test_immath_python_all_modes_and_parameters(
         )
         is True
     )
-    poly = Image.open(ws / "poly_out.im")
+    poly = NativeImageView.open(ws / "poly_out.im")
     assert poly.shape == (3, 3)
     poly_p, poly_mask = _read_pix_and_mask(ws / "poly_out.im")
     assert bool(poly_mask[0, 2]) is True
@@ -250,12 +250,12 @@ def test_immath_python_all_modes_and_parameters(
         )
         is True
     )
-    assert Image.open(ws / "box_out.im").shape == (4, 4)
+    assert NativeImageView.open(ws / "box_out.im").shape == (4, 4)
     _assert_matches_oracle(ws / "box_out.im", oracle_cases["eval_box_multi"]["expected"])
 
     # 4. spix, pola (+polithresh), poli (+sigma), lpoli, tpoli
     assert tasks.immath(imagename=["spix_lo.im", "spix_hi.im"], mode="spix", outfile="spix_out.im") is True
-    spix = Image.open(ws / "spix_out.im")
+    spix = NativeImageView.open(ws / "spix_out.im")
     assert spix.shape == (4, 4, 1, 3)
     assert spix.units == ""
     _assert_matches_oracle(ws / "spix_out.im", oracle_cases["spix_two_images"]["expected"])
@@ -271,7 +271,7 @@ def test_immath_python_all_modes_and_parameters(
         )
         is True
     )
-    pola = Image.open(ws / "pola_out.im")
+    pola = NativeImageView.open(ws / "pola_out.im")
     assert pola.shape == (4, 4, 1, 2)
     assert pola.units == "deg"
     assert pola.default_mask_name == "mask0"
@@ -286,7 +286,7 @@ def test_immath_python_all_modes_and_parameters(
         )
         is True
     )
-    assert Image.open(ws / "poli_out.im").units == "Jy/beam"
+    assert NativeImageView.open(ws / "poli_out.im").units == "Jy/beam"
     _assert_matches_oracle(ws / "poli_out.im", oracle_cases["poli_multifile_sigma_debias"]["expected"])
 
     assert (
@@ -298,7 +298,7 @@ def test_immath_python_all_modes_and_parameters(
         )
         is True
     )
-    assert Image.open(ws / "lpoli_out.im").shape == (4, 4, 1, 3)
+    assert NativeImageView.open(ws / "lpoli_out.im").shape == (4, 4, 1, 3)
     _assert_matches_oracle(ws / "lpoli_out.im", oracle_cases["lpoli_debias"]["expected"])
 
     assert (
@@ -309,7 +309,7 @@ def test_immath_python_all_modes_and_parameters(
         )
         is True
     )
-    assert Image.open(ws / "tpoli_out.im").shape == (4, 4, 1, 2)
+    assert NativeImageView.open(ws / "tpoli_out.im").shape == (4, 4, 1, 2)
     _assert_matches_oracle(ws / "tpoli_out.im", oracle_cases["tpoli_multifile"]["expected"])
 
 
@@ -346,7 +346,7 @@ def test_immath_casa_readback_interoperability(
     rs_summary = {}
     for name, kwargs in outputs:
         assert tasks.immath(outfile=name, **kwargs) is True
-        im = Image.open(ws / name)
+        im = NativeImageView.open(ws / name)
         shape = im.shape
         pix = np.asarray(im.get_slice((0,) * len(shape), shape))
         m_arr = im.get_mask_slice((0,) * len(shape), shape)

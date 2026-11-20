@@ -10,7 +10,7 @@ use crate::accumulator::{
     PlaneRange, Tile,
 };
 use crate::backend::{ModelPlaneGrids, PlaneCells, PreparedModelGrids};
-use crate::convolution::{CellHold, ConvolutionFunctionSet};
+use crate::convolution::{CellHold, ConvolutionFunctionSet, ImageCorrection};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
 use crate::geometry::GridGeometry;
@@ -352,6 +352,28 @@ impl MeasurementOperator {
         model: &ModelImages,
         prescale: ModelPrescale<'_>,
     ) -> Result<PreparedModelGrids, OperatorError> {
+        self.prepare_model_with_correction(model, prescale, self.cf.image_correction())
+    }
+
+    /// Transform the model with a supplied grid correction. This lets a
+    /// virtual-model writer prepare a portable grid before loading the
+    /// visibility-dependent convolution for the reader.
+    ///
+    /// # Errors
+    /// The correction does not cover the grid, or [`Self::prepare_model`]
+    /// cannot prepare the model images.
+    pub fn prepare_model_with_correction(
+        &self,
+        model: &ModelImages,
+        prescale: ModelPrescale<'_>,
+        correction: &ImageCorrection,
+    ) -> Result<PreparedModelGrids, OperatorError> {
+        let [nx, ny] = self.geometry.grid_shape();
+        if correction.model_x().len() != nx || correction.model_y().len() != ny {
+            return Err(OperatorError::ModelShape {
+                reason: "the model correction does not match the grid shape",
+            });
+        }
         let planes = u32::try_from(model.planes.len())
             .ok()
             .and_then(|count| model.first_plane.checked_add(count))
@@ -371,7 +393,7 @@ impl MeasurementOperator {
                 ModelPrescale::Unit => None,
                 ModelPrescale::Planes(factors) => Some(&factors[index]),
             };
-            self.fill_model_plane(plane, factor, target)?;
+            self.fill_model_plane_corrected(plane, factor, target, correction)?;
         }
         Ok(grids)
     }
@@ -433,6 +455,16 @@ impl MeasurementOperator {
         prescale: Option<&Array2<f32>>,
         grids: ModelPlaneGrids<'_>,
     ) -> Result<(), OperatorError> {
+        self.fill_model_plane_corrected(plane, prescale, grids, self.cf.image_correction())
+    }
+
+    fn fill_model_plane_corrected(
+        &self,
+        plane: &ModelPlane,
+        prescale: Option<&Array2<f32>>,
+        grids: ModelPlaneGrids<'_>,
+        correction: &ImageCorrection,
+    ) -> Result<(), OperatorError> {
         let terms = self.basis.data_terms();
         let requested = self.polarization.requested().len();
         let image_shape = self.geometry.image().shape;
@@ -460,10 +492,10 @@ impl MeasurementOperator {
         }
         match (grids.cells, self.precision) {
             (PlaneCells::F32(cells), GridPrecision::F32) => {
-                self.fill_plane_cells(layout, plane, prescale, cells)
+                self.fill_plane_cells(layout, plane, prescale, cells, correction)
             }
             (PlaneCells::F64(cells), GridPrecision::F64) => {
-                self.fill_plane_cells(layout, plane, prescale, cells)
+                self.fill_plane_cells(layout, plane, prescale, cells, correction)
             }
             _ => Err(OperatorError::ModelShape {
                 reason: "the model grids were made for another operator",
@@ -478,11 +510,11 @@ impl MeasurementOperator {
         plane: &ModelPlane,
         factor: Option<&Array2<f32>>,
         cells: &mut [Complex<T>],
+        correction: &ImageCorrection,
     ) -> Result<(), OperatorError> {
         let [nx, ny] = self.geometry.grid_shape();
         let [ix, iy] = self.geometry.image_origin();
         let image_shape = self.geometry.image().shape;
-        let correction = self.cf.image_correction();
         let requested = self.polarization.requested().len();
         let mut fft = PlaneFft::<T>::new([nx, ny], self.measured_fft())?;
         for term in 0..layout.terms() {

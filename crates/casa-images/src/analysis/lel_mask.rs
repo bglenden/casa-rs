@@ -2,6 +2,9 @@
 //! LEL mask evaluation, `image:maskname` resolution, and `stretch` handling
 //! for image tasks.
 
+mod geometry;
+pub(super) use geometry::validate_mask;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -177,24 +180,7 @@ pub(super) fn evaluate_mask(
         return Ok(None);
     };
 
-    let mut expr = raw.to_string();
-    if Path::new(raw).exists() {
-        // Quote bare file names that include spaces or punctuation.
-        expr = format!("\"{raw}\"");
-    } else if let Some((left, _)) = raw.split_once(':')
-        && !raw.contains([' ', '>', '<', '=', '!', '&', '|', '(', ')'])
-        && Path::new(left).exists()
-    {
-        // Unquoted path:maskname expression in top-level `mask=` parameter.
-        expr = format!("mask(\"{raw}\")");
-    } else if let Some(operator) = raw.find(['<', '>', '=', '!'])
-        && let (name, suffix) = raw.split_at(operator)
-        && Path::new(name.trim()).exists()
-    {
-        // These tasks accept an unquoted image path before a comparison,
-        // including an absolute path that would otherwise lex as division.
-        expr = format!("\"{}\"{suffix}", name.trim());
-    }
+    let expr = mask_expression(raw);
     let opened = referenced_images(&expr)
         .map_err(mask_parse_error)?
         .into_iter()
@@ -211,6 +197,28 @@ pub(super) fn evaluate_mask(
         window,
         &opened,
     )
+}
+
+fn mask_expression(raw: &str) -> String {
+    if Path::new(raw).exists() {
+        // Quote bare file names that include spaces or punctuation.
+        format!("\"{raw}\"")
+    } else if let Some((left, _)) = raw.split_once(':')
+        && !raw.contains([' ', '>', '<', '=', '!', '&', '|', '(', ')'])
+        && Path::new(left).exists()
+    {
+        // Unquoted path:maskname expression in top-level `mask=` parameter.
+        format!("mask(\"{raw}\")")
+    } else if let Some(operator) = raw.find(['<', '>', '=', '!'])
+        && let (name, suffix) = raw.split_at(operator)
+        && Path::new(name.trim()).exists()
+    {
+        // These tasks accept an unquoted image path before a comparison,
+        // including an absolute path that would otherwise lex as division.
+        format!("\"{}\"{suffix}", name.trim())
+    } else {
+        raw.to_string()
+    }
 }
 
 fn evaluate(
@@ -313,16 +321,21 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
 }
 
 fn open_operand(spec: &str) -> Result<Operand, ImageError> {
+    let (path, mask) = operand_path(spec)?;
+    open_path_with_mask_name(path, mask.map(str::to_owned))
+}
+
+fn operand_path(spec: &str) -> Result<(&Path, Option<&str>), ImageError> {
     let direct_path = Path::new(spec);
     if direct_path.exists() {
-        return open_path_with_mask_name(direct_path, None);
+        return Ok((direct_path, None));
     }
     if let Some((left, right)) = spec.rsplit_once(':')
         && !left.is_empty()
         && !right.trim().is_empty()
         && Path::new(left).exists()
     {
-        return open_path_with_mask_name(Path::new(left), Some(right.trim().to_string()));
+        return Ok((Path::new(left), Some(right.trim())));
     }
     Err(ImageError::CasaSelection(format!(
         "Input mask specification is incorrect: ImageExprParse: '{spec}' is an unknown \
@@ -377,7 +390,7 @@ fn open_path_with_mask_name(path: &Path, mask_name: Option<String>) -> Result<Op
         ));
     }
 
-    match AnyPagedImage::open(path)? {
+    match open_mask_image(path)? {
         AnyPagedImage::Float64(_) | AnyPagedImage::Complex64(_) if mask_name.is_some() => {
             Err(ImageError::CasaSelection(format!(
                 "ImageExprParse: {} is a PagedImage with an unsupported data type",
@@ -399,49 +412,52 @@ fn open_path_with_mask_name(path: &Path, mask_name: Option<String>) -> Result<Op
     }
 }
 
+fn open_mask_image(path: &Path) -> Result<AnyPagedImage, ImageError> {
+    #[cfg(unix)]
+    return AnyPagedImage::open_with_lock(path, 0);
+    #[cfg(not(unix))]
+    AnyPagedImage::open(path)
+}
+
 fn convert_paged_mask_source<S: ImageExprValue, T: ImageExprValue>(
     img: PagedImage<S>,
     mask_name: Option<String>,
     convert: impl Fn(S) -> T + Copy + Send + Sync + 'static,
 ) -> Result<MaskSource<T>, ImageError> {
-    if mask_name
+    let ignore_default = mask_name
         .as_deref()
-        .is_some_and(|name| name.eq_ignore_ascii_case("nomask"))
-    {
-        let expression = ImageExprBuilder::from_image(&img)?
-            .strip_mask()
-            .map_pixel_type(convert)?
-            .compile()?;
-        return Ok(MaskSource::Sections(Box::new(expression)));
+        .is_some_and(|name| name.eq_ignore_ascii_case("nomask"));
+    if !ignore_default {
+        validate_mask_name(&img, mask_name.as_deref())?;
     }
-    validate_mask_name(&img, mask_name.as_deref())?;
-    let expression = if let Some(name) = mask_name {
-        let meta = ImageExprMeta::from_image(&img)?;
-        let image = Arc::new(Mutex::new(img));
-        let mask_image = Arc::clone(&image);
-        ImageExprBuilder::from_section_readers(
-            meta,
-            Arc::new(move |start, shape, stride| {
-                image
-                    .lock()
-                    .map_err(mask_source_lock_error)?
-                    .get_slice_with_stride(start, shape, stride)
-                    .map(|pixels| pixels.mapv(convert))
-            }),
-            Some(Arc::new(move |start, shape, stride| {
-                mask_image
-                    .lock()
-                    .map_err(mask_source_lock_error)?
-                    .get_named_mask_slice(&name, start, shape, stride)
-                    .map(Some)
-            })),
-        )
-        .compile()?
-    } else {
-        ImageExprBuilder::from_image(&img)?
-            .map_pixel_type(convert)?
-            .compile()?
-    };
+    let meta = ImageExprMeta::from_image(&img)?;
+    let has_mask = !ignore_default && (mask_name.is_some() || img.has_pixel_mask());
+    // Pixel reads, mask reads and repeated passes observe one native generation.
+    let image = Arc::new(Mutex::new(img));
+    let mask = has_mask.then(|| {
+        let image = Arc::clone(&image);
+        Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
+            let image = image.lock().map_err(mask_source_lock_error)?;
+            match &mask_name {
+                Some(name) => image
+                    .get_named_mask_slice(name, start, shape, stride)
+                    .map(Some),
+                None => image.get_mask_slice(start, shape, stride),
+            }
+        }) as crate::image_expr::OwnedMaskReader
+    });
+    let expression = ImageExprBuilder::from_section_readers(
+        meta,
+        Arc::new(move |start, shape, stride| {
+            image
+                .lock()
+                .map_err(mask_source_lock_error)?
+                .get_slice_with_stride(start, shape, stride)
+                .map(|pixels| pixels.mapv(convert))
+        }),
+        mask,
+    )
+    .compile()?;
     Ok(MaskSource::Sections(Box::new(expression)))
 }
 
@@ -461,4 +477,78 @@ fn validate_mask_name<T: ImagePixel>(
         )));
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
+
+    #[test]
+    fn converted_operand_keeps_writer_out_between_sections() {
+        const CHILD_CASE: &str =
+            "analysis::lel_mask::tests::converted_operand_keeps_writer_out_between_sections";
+        const PATH_KEY: &str = "CASA_RS_MASK_OPERAND_LOCK_TEST_PATH";
+        const WRITE_KEY: &str = "CASA_RS_MASK_OPERAND_LOCK_TEST_WRITE";
+        if let Some(path) = std::env::var_os(PATH_KEY) {
+            let mut table = Table::open_with_lock(
+                TableOptions::new(path),
+                LockOptions::new(LockMode::UserLocking),
+            )
+            .unwrap();
+            assert_eq!(
+                table.lock(LockType::Write, 1).unwrap(),
+                std::env::var_os(WRITE_KEY).is_some()
+            );
+            return;
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("mask.image");
+        let mut image =
+            PagedImage::<f32>::create(vec![4, 4], CoordinateSystem::new(), &path).unwrap();
+        let mask = ArrayD::from_elem(ndarray::IxDyn(&[4, 4]), true);
+        image.put_mask("selected", &mask).unwrap();
+        image.set_default_mask("selected").unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let check_peer = |can_write: bool| {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args(["--exact", CHILD_CASE]).env(PATH_KEY, &path);
+            if can_write {
+                child.env(WRITE_KEY, "yes");
+            } else {
+                child.env_remove(WRITE_KEY);
+            }
+            let output = child.output().unwrap();
+            let report = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && report.contains("1 passed"),
+                "{report}"
+            );
+        };
+        for name in [None, Some("nomask".to_owned())] {
+            let expect_mask = name.is_none();
+            let AnyPagedImage::Float32(image) = open_mask_image(&path).unwrap() else {
+                panic!("float image");
+            };
+            let source = convert_paged_mask_source(image, name, f64::from).unwrap();
+            {
+                let reader = source.as_interface();
+                reader.get_slice(&[0, 0], &[2, 2], &[1, 1]).unwrap();
+                check_peer(false);
+                assert_eq!(
+                    reader
+                        .get_mask_slice(&[2, 2], &[2, 2], &[1, 1])
+                        .unwrap()
+                        .is_some(),
+                    expect_mask
+                );
+                reader.get_slice(&[2, 2], &[2, 2], &[1, 1]).unwrap();
+            }
+            drop(source);
+            check_peer(true);
+        }
+    }
 }

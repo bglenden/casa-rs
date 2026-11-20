@@ -13,8 +13,9 @@ use pyo3::prelude::*;
 use crate::tools::coordsys::validate_coordinate_indices;
 
 use super::PyImageTool;
+use super::attachment::AttachedImage;
 use super::beams::subrecord;
-use super::handle::{ImageHandle, raised};
+use super::handle::raised;
 
 const TOLERANCE: f64 = 1e-6;
 const WCS_TOLERANCE: f64 = 1e-13;
@@ -324,15 +325,11 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let (shape, coordinates) = {
-                let image = attachment.lock();
-                if image.kind() != ImagePixelType::Float32 {
-                    return Err(raised(
-                        "Exception: This method only supports Float valued images.",
-                    ));
-                }
-                (image.shape().to_vec(), image.coordinate_record())
-            };
+            if attachment.lock().kind() != ImagePixelType::Float32 {
+                return Err(raised(
+                    "Exception: This method only supports Float valued images.",
+                ));
+            }
             let path = Path::new(other);
             if other.is_empty() {
                 return Err(raised("Exception: File name is empty."));
@@ -340,8 +337,13 @@ impl PyImageTool {
             if !path.exists() {
                 return Err(raised(format!("Exception: File {other} does not exist..")));
             }
-            let other = ImageHandle::open(path)
+            let other = AttachedImage::open(path)
                 .map_err(|_| raised(format!("Exception: Unable to open image {other}.")))?;
+            let (shape, coordinates) = {
+                let image = attachment.lock();
+                (image.shape().to_vec(), image.coordinate_record())
+            };
+            let other = other.lock();
             if !matches!(
                 other.kind(),
                 ImagePixelType::Float32 | ImagePixelType::Complex32
