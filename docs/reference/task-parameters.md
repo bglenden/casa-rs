@@ -954,7 +954,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>yinterp</code> | <code>plotms.yinterp@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Interpolation method for y-axis |
 | <code>yaxislocation</code> | <code>plotms.yaxislocation@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Location of the y-axis (blank for default: left) |
 | <code>selectdata</code> | <code>plotms.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Enable data selection parameters |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>timerange</code> | <code>plotms.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Time range (blank for all) |
 | <code>uvrange</code> | <code>plotms.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range (blank for all) |
