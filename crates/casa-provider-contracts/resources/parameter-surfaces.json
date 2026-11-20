@@ -23172,7 +23172,7 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 4},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -23180,10 +23180,9 @@
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "SELECTOR"},
             "provider": {"field": "timerange"},
-            "python": {"name": "timerange"},
+            "python": {"name": "timerange", "type_hint": "str"},
             "presentation": {"label": "Time Range", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "correlation",
@@ -23232,7 +23231,7 @@
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 4},
           "order": 15,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -23240,10 +23239,9 @@
           "projections": {
             "cli": {"flags": ["--observation"], "metavar": "SELECTOR"},
             "provider": {"field": "observation"},
-            "python": {"name": "observation"},
+            "python": {"name": "observation", "type_hint": "str | int"},
             "presentation": {"label": "Observation", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "feed",

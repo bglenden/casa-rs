@@ -436,7 +436,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
     vector_selectors = []
-    for parameter in ("field", "scan", "antenna"):
+    for parameter in ("field", "scan", "antenna", "timerange"):
         if parameter not in values:
             continue
         value = values[parameter]
@@ -448,6 +448,21 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
             vector_selectors.append(parameter)
         else:
             errors[parameter] = ["must be of cStr type", "must be of cStrVec type"]
+    if "observation" in values:
+        value = values["observation"]
+        if value is None:
+            errors["observation"] = ["null value not allowed"] * 3
+        elif isinstance(value, str):
+            values["observation"] = str(value)
+        elif isinstance(value, (np.int32, np.int64)):
+            values["observation"] = int(value)
+        elif isinstance(value, int):
+            if not -(2**63) <= value < 2**63:
+                # Preserve the selector for native range validation even
+                # when the transport cannot represent it as an integer.
+                values["observation"] = str(value)
+        else:
+            errors["observation"] = ["must be of cStr type", "must be of cInt type"]
     for parameter, default in (("clipoutside", True), ("quackincrement", False)):
         if parameter not in values:
             continue

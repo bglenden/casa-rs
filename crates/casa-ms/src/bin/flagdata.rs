@@ -13,7 +13,7 @@ use casa_ms::{
     flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
     task_selection_text,
 };
-use casa_provider_contracts::ParameterValue;
+use casa_provider_contracts::{NumpyScalarType, ParameterValue, python_repr};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -107,7 +107,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
     }
     Ok(FlagDataRequest {
         selection: selection(task, &spw)?,
-        casa_scan_and_baseline: true,
+        casa_row_selection: true,
         spw: (!spw.is_empty()).then_some(spw),
         mode,
         action,
@@ -144,7 +144,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
     })
 }
 
-/// The row selection of `spw`, `field`, `scan` and `antenna`.
+/// The row and channel selection passed to the flagging engine.
 fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFailure> {
     let field = task_selection_text(task, "field")?;
     if !field.is_empty() && field.trim().is_empty() {
@@ -169,6 +169,8 @@ fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFa
         field: (!field.is_empty()).then_some(field),
         scan: selector("scan")?,
         antenna: selector("antenna")?,
+        timerange: selector("timerange")?,
+        observation: observation_text(task)?,
         ..MsSelection::default()
     };
     if !spw.is_empty() {
@@ -177,6 +179,26 @@ fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFa
             .map_err(|error| TaskFailure::validation(error.to_string()).at("spw"))?;
     }
     Ok(selection)
+}
+
+fn observation_text(task: &TaskInvocation<'_>) -> Result<Option<String>, TaskFailure> {
+    let Some(value) = task.value("observation") else {
+        return Ok(None);
+    };
+    let value = match value {
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            value,
+        } => value,
+        value => value,
+    };
+    match value {
+        ParameterValue::String(text) => Ok((!text.is_empty()).then(|| text.clone())),
+        ParameterValue::Integer(_) | ParameterValue::Bool(_) => Ok(Some(python_repr(value))),
+        _ => Err(
+            TaskFailure::validation("observation must be a string or integer").at("observation"),
+        ),
+    }
 }
 
 /// CASA's `mode`, with the action its manual flagging takes: `manualflag`
