@@ -71,7 +71,7 @@ def compare_weights(root, seed, engines, old, options, spectra, failure=False):
     compare(*outputs, rtol=5e-7)
 
 
-def compare_selection(root, seed, engines, options, resets):
+def compare_selection(root, seed, engines, options, resets, fails=False):
     for name, factory in zip(('casa', 'native'), engines, strict=True):
         with TemporaryDirectory(dir=root) as attempt:
             vis = Path(attempt) / f'{name}.ms'
@@ -83,7 +83,8 @@ def compare_selection(root, seed, engines, options, resets):
                 main.putcol('MODEL_DATA', np.full_like(model, 53.))
                 selected = main.getcol('DATA_DESC_ID') == 0
             assert selected.any() and not selected.all() and tool.selectvis(spw='0')
-            assert outcome(tool, **options) in (True, (RuntimeError, 'Error in Calibrater::initWeights.'))
+            expected = (RuntimeError, 'Error in Calibrater::initWeights.') if fails else True
+            assert outcome(tool, **options) == expected
             assert tool.initcalset(0) and tool.done()
             with opened(vis) as main:
                 model = main.getcol('MODEL_DATA')
@@ -111,7 +112,10 @@ def compare_mms(root, seed, engines, tsys):
             compare(prior, main_columns(path))
         assert tool.initweights('tsys', True, tsys) is True
         assert tool.done()
-        states.append([main_columns(path) for path in members])
+        after = [main_columns(path) for path in members]
+        for (_, prior), (_, actual) in zip(before, after, strict=True):
+            np.testing.assert_array_equal(actual.pop('HISTORY'), prior['HISTORY'])
+        states.append(after)
     for reference, actual in zip(*states, strict=True):
         compare(reference, actual, rtol=5e-7)
 
@@ -170,14 +174,14 @@ def run(root):
             print('iterator', 'legacy' if old else 'modern', len(cases), 'persisted comparisons', flush=True)
         selection = [
             ({'wtmode': 'ones'}, False),
-            ({'wtmode': 'bad'}, False),
-            ({'wtmode': 'tsys', 'tsystable': str(seed)}, False),
+            ({'wtmode': 'bad'}, False, True),
+            ({'wtmode': 'tsys', 'tsystable': str(seed)}, False, True),
             ({'wtmode': 'tsys', 'tsystable': tsys}, True),
-            ({'wtmode': 'tinttsys', 'tsystable': tsys, 'interp': 'bad'}, True),
-            ({'wtmode': 'badtsys', 'tsystable': tsys}, True),
+            ({'wtmode': 'tinttsys', 'tsystable': tsys, 'interp': 'bad'}, True, True),
+            ({'wtmode': 'badtsys', 'tsystable': tsys}, True, True),
         ]
-        for options, resets in selection:
-            compare_selection(work, seed, engines, options, resets)
+        for case in selection:
+            compare_selection(work, seed, engines, *case)
         compare_mms(work, seed, engines, tsys)
         malformed_map_preserves_weights(work, seed, engines)
     results = {'persisted_cases': 2 * len(cases), 'selection_cases': len(selection),
