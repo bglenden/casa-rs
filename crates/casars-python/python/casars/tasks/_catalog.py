@@ -947,9 +947,9 @@ def flagdata(
     timeavg: bool = False,
     timebin: str = '0s',
     clipzeros: bool = False,
-    quackinterval: float = 1.0,
-    quackmode: Literal['beg', 'end', 'endb', 'tail'] = 'beg',
-    quackincrement: bool = False,
+    quackinterval: float | list[float] = 1.0,
+    quackmode: str | list[str] = 'beg',
+    quackincrement: bool | list[bool] = False,
     tolerance: float = 0.0,
     addantenna: str = '',
     lowerlimit: float = 0.0,
@@ -1006,12 +1006,12 @@ def flagdata(
     ``autocorr``, ``inpfile``, ``reason``, ``tbuff``, ``uvrange``,
     ``timerange``, ``correlation``, ``intent``, ``array``, ``observation``,
     ``feed``, ``channelavg``, ``chanbin``, ``timeavg``, ``timebin``,
-    ``quackincrement``, ``tolerance``, ``addantenna``, ``lowerlimit``,
-    ``upperlimit``, ``ntime``, ``combinescans``, ``timefit``, ``freqfit``,
-    ``maxnpieces``, ``flagdimension``, ``usewindowstats``, ``halfwin``,
-    ``winsize``, ``antint_ref_antenna``, ``minchanfrac``, ``verbose``,
-    ``growaround``, ``flagneartime``, ``flagnearfreq``, ``display``,
-    ``savepars``, ``cmdreason``, ``outfile``, ``overwrite``.
+    ``tolerance``, ``addantenna``, ``lowerlimit``, ``upperlimit``,
+    ``ntime``, ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
+    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
+    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
+    ``flagneartime``, ``flagnearfreq``, ``display``, ``savepars``,
+    ``cmdreason``, ``outfile``, ``overwrite``.
     """
     return _call_casa(flagdata, locals())
 
