@@ -163,6 +163,10 @@ region's stride.
 
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
+Use `ia.subimage(...)` on that attachment for a temporary or native
+section with its WCS and validity mask. With `wantreturn=False`
+and an output path, the tool publishes the section and returns a detached
+image tool.
 Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
 reopens the moved file and reads its stored metadata again.
 
@@ -173,7 +177,7 @@ coordinates before applying the selection to the source. An existing writable
 destination mask receives the source validity over the inserted section.
 
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
-writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
+writable native CASA image for pixel edits. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.
 `zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
