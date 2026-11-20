@@ -327,8 +327,12 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         try:
             return run(name, **values).value
         except TaskExecutionError as error:
-            if correlation_vector and error.completion.parameter == "correlation":
-                raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
+            completion = error.completion
+            if completion.parameter == "correlation":
+                if correlation_vector:
+                    raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
+                if completion.message == "no flagdata summary report for the selected correlations":
+                    raise KeyError("nreport") from error
             raise
     return run(name, **values).value
 
