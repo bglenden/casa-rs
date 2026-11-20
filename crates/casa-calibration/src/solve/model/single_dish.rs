@@ -12,12 +12,15 @@ use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_imaging_singledish::{GridFunction, KernelTable};
 use casa_ms::MeasurementSet;
-use casa_types::measures::direction::MDirection;
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::record::direction_from_record;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, Ix2};
 
 use crate::ft::image::{coordinate_index, match_channel, polarization_coordinate};
-use crate::ft::single_dish::{default_beam, kernel_function, read_kernel_parameters, validate_support};
+use crate::ft::single_dish::{
+    default_beam, kernel_function, read_kernel_parameters, validate_support,
+};
 
 use super::fourier::{
     FourierRow, complex_model_image_path, lsrk_frequency_ratio, scratch_channel_masked,
@@ -28,7 +31,26 @@ const IMAGE_METADATA_BYTES: u64 = 65_536;
 
 pub(super) struct SingleDishModel {
     record: RecordValue,
+    pointing: PointingQuery,
     prepared: Mutex<Option<PreparedModel>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct PointingQuery {
+    pub(super) column: String,
+    convert_first: Option<(DirectionRef, bool)>,
+}
+
+impl PointingQuery {
+    pub(super) fn target_reference(
+        &self,
+        data_rows: usize,
+        pointing_rows: usize,
+    ) -> Option<DirectionRef> {
+        self.convert_first.and_then(|(reference, automatic)| {
+            (!automatic || data_rows > pointing_rows).then_some(reference)
+        })
+    }
 }
 
 struct PreparedModel {
@@ -40,15 +62,53 @@ struct PreparedModel {
     pixel: Option<[f64; 2]>,
     sampled: Vec<Option<Complex32>>,
     convert_frequencies: bool,
+    cache_pointings: bool,
+    cached_pointing: Option<(PointingFrame, Option<[f64; 2]>)>,
     _memory: Reservation,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PointingFrame {
+    antenna: i32,
+    time: u64,
+    reference: DirectionRef,
+    position: [u64; 2],
+}
+
 impl SingleDishModel {
-    pub(super) fn new(record: RecordValue) -> Self {
-        Self {
+    pub(super) fn new(record: RecordValue) -> Result<Self, GainSolveError> {
+        let name = |field, default| match record.get(field) {
+            Some(Value::Scalar(ScalarValue::String(name))) => name.as_str(),
+            _ => default,
+        };
+        let convert_first = match name("casars_sd_convert_first", "NEVER") {
+            "NEVER" => None,
+            mode @ ("ALWAYS" | "AUTO") => {
+                let Some(Value::Record(direction)) = record.get("mimage_rec") else {
+                    return Err(model_error("SDGrid recipe has no image direction"));
+                };
+                Some((
+                    direction_from_record(direction)
+                        .map_err(model_error)?
+                        .refer(),
+                    mode == "AUTO",
+                ))
+            }
+            mode => return Err(model_error(format!("illegal ConvertFirst name {mode}"))),
+        };
+        let pointing = PointingQuery {
+            column: name("pointingdircol", "DIRECTION").to_owned(),
+            convert_first,
+        };
+        Ok(Self {
             record,
+            pointing,
             prepared: Mutex::default(),
-        }
+        })
+    }
+
+    pub(super) fn pointing(&self) -> &PointingQuery {
+        &self.pointing
     }
 
     pub(super) fn predict(
@@ -193,8 +253,51 @@ impl PreparedModel {
             pixel: None,
             sampled: vec![None; sample_count],
             convert_frequencies,
+            cache_pointings: matches!(
+                record.get("casars_sd_cache_pointings"),
+                Some(Value::Scalar(ScalarValue::Bool(true)))
+            ),
+            cached_pointing: None,
             _memory: memory,
         })
+    }
+
+    fn pointing_pixel(
+        &mut self,
+        row: &FourierRow<'_>,
+        pointing: &MDirection,
+    ) -> Result<Option<[f64; 2]>, GainSolveError> {
+        let (longitude, latitude) = pointing.as_angles();
+        let key = PointingFrame {
+            antenna: row.row.antenna1,
+            time: row.row.time_seconds.to_bits(),
+            reference: pointing.refer(),
+            position: [longitude.to_bits(), latitude.to_bits()],
+        };
+        if self.cache_pointings
+            && let Some((prior, pixel)) = self.cached_pointing
+            && prior == key
+        {
+            return Ok(pixel);
+        }
+        let coordinates = if pointing.refer() == self.direction.direction_ref() {
+            [longitude, latitude]
+        } else {
+            let frame = row
+                .engine
+                .antenna_frame(row.row.time_seconds, row.row.antenna1 as usize)
+                .map_err(|error| read_error(row.ms, error))?;
+            let direction = pointing
+                .convert_to(self.direction.direction_ref(), &frame)
+                .map_err(model_error)?;
+            let (longitude, latitude) = direction.as_angles();
+            [longitude, latitude]
+        };
+        let pixel = self.direction.world_to_pixel(coordinates).ok();
+        if self.cache_pointings {
+            self.cached_pointing = Some((key, pixel));
+        }
+        Ok(pixel)
     }
 
     fn predict(
@@ -204,15 +307,7 @@ impl PreparedModel {
         selection_mask: Option<&ArrayD<i32>>,
         output: &mut ArrayD<Complex32>,
     ) -> Result<(), GainSolveError> {
-        let frame = row
-            .engine
-            .antenna_frame(row.row.time_seconds, row.row.antenna1 as usize)
-            .map_err(|error| read_error(row.ms, error))?;
-        let direction = pointing
-            .convert_to(self.direction.direction_ref(), &frame)
-            .map_err(model_error)?;
-        let (longitude, latitude) = direction.as_angles();
-        let Ok(pixel) = self.direction.world_to_pixel([longitude, latitude]) else {
+        let Some(pixel) = self.pointing_pixel(row, pointing)? else {
             return Ok(());
         };
         if self.pixel != Some(pixel) {

@@ -3,7 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use casa_types::measures::direction::MDirection;
+use casa_types::measures::direction::{DirectionRef, MDirection};
+
+use crate::derived::engine::MsCalEngine;
 
 use super::{MsPointing, MsResult};
 
@@ -26,12 +28,17 @@ impl MsPointing<'_> {
     /// first antenna, MAIN time and MAIN interval in seconds. A nonempty
     /// POINTING table leaves unmatched samples blank. Faster visibility
     /// sampling interpolates between each antenna's recorded pointings.
+    /// Missing optional `column` values use DIRECTION. With `convert_first`,
+    /// each direction is converted in its recorded antenna frame and epoch
+    /// before interpolation.
     ///
     /// # Errors
     /// A pointing row or its direction is malformed.
     pub fn single_dish_directions(
         &self,
         requests: &[(i32, f64, f64)],
+        column: &str,
+        convert_first: Option<(&MsCalEngine, DirectionRef)>,
     ) -> MsResult<Vec<Option<MDirection>>> {
         let mut antennas: BTreeMap<_, _> = requests
             .iter()
@@ -47,15 +54,34 @@ impl MsPointing<'_> {
             }
         }
         let mut directions = BTreeMap::new();
+        let column = if self
+            .table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column(column))
+        {
+            column
+        } else {
+            "DIRECTION"
+        };
         requests
             .iter()
             .map(|&(id, time, interval)| {
-                antennas.get_mut(&id).expect("requested antenna").direction(
-                    self,
-                    time,
-                    interval,
-                    &mut directions,
-                )
+                let read = |sample: PointingSample| {
+                    if let Some(direction) = directions.get(&sample.row) {
+                        return Ok(MDirection::clone(direction));
+                    }
+                    let mut direction = self.read_direction_column(sample.row, column, None)?;
+                    if let Some((engine, target)) = convert_first {
+                        let frame = engine.antenna_frame(sample.time, id as usize)?;
+                        direction = direction.convert_to(target, &frame)?;
+                    }
+                    directions.insert(sample.row, direction.clone());
+                    Ok(direction)
+                };
+                antennas
+                    .get_mut(&id)
+                    .expect("requested antenna")
+                    .direction(time, interval, read)
             })
             .collect()
     }
@@ -64,10 +90,9 @@ impl MsPointing<'_> {
 impl AntennaPointings {
     fn direction(
         &mut self,
-        table: &MsPointing<'_>,
         time: f64,
         interval: f64,
-        directions: &mut BTreeMap<usize, MDirection>,
+        mut read: impl FnMut(PointingSample) -> MsResult<MDirection>,
     ) -> MsResult<Option<MDirection>> {
         let find = |tolerance: f64| {
             (self.last..self.samples.len())
@@ -87,15 +112,7 @@ impl AntennaPointings {
         };
         self.last = index;
         let sample = self.samples[index];
-        let mut read = |row| {
-            if let Some(direction) = directions.get(&row) {
-                return Ok(MDirection::clone(direction));
-            }
-            let direction = table.read_direction(row, None)?;
-            directions.insert(row, direction.clone());
-            Ok::<_, crate::MsError>(direction)
-        };
-        let point = read(sample.row)?;
+        let point = read(sample)?;
         if interval >= sample.interval || time == sample.time {
             return Ok(Some(point));
         }
@@ -104,7 +121,7 @@ impl AntennaPointings {
                 .samples
                 .iter()
                 .map(|sample| {
-                    let point = read(sample.row)?;
+                    let point = read(*sample)?;
                     let (longitude, latitude) = point.as_angles();
                     Ok((sample.time, [longitude, latitude]))
                 })

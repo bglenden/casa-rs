@@ -41,14 +41,28 @@ pub(super) fn prepare_model(
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
     let context = &geometry.single_dish_setup;
     if !matches!(context.convert_first.as_str(), "NEVER" | "ALWAYS" | "AUTO") {
-        return Err(invalid(format!("illegal ConvertFirst name {}", context.convert_first)));
+        return Err(invalid(format!(
+            "illegal ConvertFirst name {}",
+            context.convert_first
+        )));
     }
     let coords = image.coordinates();
     let spatial = coordinate_index(coords, CoordinateType::Direction)?;
-    let CoordinateModel::Direction(direction) = coords.coordinate(spatial) else { unreachable!("direction coordinate") };
-    let cell = geometry.single_dish_cell_rad.unwrap_or(direction.increment()[1]);
+    let CoordinateModel::Direction(direction) = coords.coordinate(spatial) else {
+        unreachable!("direction coordinate")
+    };
+    let cell = geometry
+        .single_dish_cell_rad
+        .unwrap_or(direction.increment()[1]);
     let parameters = context.kernel_parameters(cell);
-    validate_model(ms, selected, &image, kernel, parameters)?;
+    validate_model(
+        ms,
+        selected,
+        &image,
+        kernel,
+        parameters,
+        &context.pointing_column,
+    )?;
     let mut coordinates = image.coordinates().clone();
     let pol = coordinate_index(&coordinates, CoordinateType::Stokes)?;
     let CoordinateModel::Stokes(axis) = coordinates.coordinate(pol) else {
@@ -92,14 +106,30 @@ pub(super) fn prepare_model(
             &routing,
         )?;
         let mut saved = RecordValue::default();
-        saved.upsert("convsupport", Value::Scalar(ScalarValue::Int64(parameters.convsupport)));
-        for (name, value) in [("truncate", parameters.truncate), ("gwidth", parameters.gwidth), ("jwidth", parameters.jwidth)] {
+        saved.upsert(
+            "convsupport",
+            Value::Scalar(ScalarValue::Int64(parameters.convsupport)),
+        );
+        for (name, value) in [
+            ("truncate", parameters.truncate),
+            ("gwidth", parameters.gwidth),
+            ("jwidth", parameters.jwidth),
+        ] {
             saved.upsert(name, Value::Scalar(ScalarValue::Float64(value)));
         }
         record.upsert("casars_sd_parameters", Value::Record(saved));
-        record.upsert("pointingdircol", Value::Scalar(ScalarValue::String(context.pointing_column.clone())));
-        record.upsert("casars_sd_convert_first", Value::Scalar(ScalarValue::String(context.convert_first.clone())));
-        record.upsert("casars_sd_cache_pointings", Value::Scalar(ScalarValue::Bool(context.cache_pointings)));
+        record.upsert(
+            "pointingdircol",
+            Value::Scalar(ScalarValue::String(context.pointing_column.clone())),
+        );
+        record.upsert(
+            "casars_sd_convert_first",
+            Value::Scalar(ScalarValue::String(context.convert_first.clone())),
+        );
+        record.upsert(
+            "casars_sd_cache_pointings",
+            Value::Scalar(ScalarValue::Bool(context.cache_pointings)),
+        );
         Ok((record, nonzero))
     })
 }
@@ -110,6 +140,7 @@ fn validate_model(
     image: &PagedImage<f32>,
     kernel: ImagerSingleDishKernel,
     parameters: KernelParameters,
+    pointing_column: &str,
 ) -> MsResult<()> {
     let [nx, ny, ..] = *image.shape() else {
         return Err(invalid("single-dish model needs direction axes"));
@@ -129,11 +160,11 @@ fn validate_model(
                     else {
                         return Err(invalid("MAIN INTERVAL must be a double"));
                     };
-                    let coordinates = pointing.single_dish_directions(&[(
-                        first.antenna1_id,
-                        first.time_mjd_seconds,
-                        *interval,
-                    )])?;
+                    let coordinates = pointing.single_dish_directions(
+                        &[(first.antenna1_id, first.time_mjd_seconds, *interval)],
+                        pointing_column,
+                        None,
+                    )?;
                     if coordinates[0].is_none() {
                         return Err(invalid(
                             "single-dish PB prediction needs pointing information for the first visibility",

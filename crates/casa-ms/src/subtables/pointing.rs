@@ -121,23 +121,40 @@ impl MsPointing<'_> {
     }
 
     fn read_direction(&self, row: usize, polynomial: Option<(i32, f64)>) -> MsResult<MDirection> {
-        let ArrayValue::Float64(values) = self.array(row, "DIRECTION")? else {
-            return Err(MsError::InvalidInput(
-                "POINTING DIRECTION must be double".into(),
-            ));
+        self.read_direction_column(row, "DIRECTION", polynomial)
+    }
+
+    fn read_direction_column(
+        &self,
+        row: usize,
+        column: &str,
+        polynomial: Option<(i32, f64)>,
+    ) -> MsResult<MDirection> {
+        let ArrayValue::Float64(values) = self.array(row, column)? else {
+            return Err(MsError::InvalidInput(format!(
+                "POINTING {column} must be double"
+            )));
         };
-        let (Some(&lon), Some(&lat)) = (
-            values.get(ndarray::IxDyn(&[0, 0])),
-            values.get(ndarray::IxDyn(&[1, 0])),
-        ) else {
-            return Err(MsError::InvalidInput(
-                "invalid POINTING DIRECTION shape".into(),
-            ));
+        let first = |axis| {
+            if values.ndim() == 1 {
+                values.get(ndarray::IxDyn(&[axis]))
+            } else {
+                values.get(ndarray::IxDyn(&[axis, 0]))
+            }
+        };
+        let (Some(&lon), Some(&lat)) = (first(0), first(1)) else {
+            return Err(MsError::InvalidInput(format!(
+                "invalid POINTING {column} shape"
+            )));
         };
         let [lon, lat] = if let Some((order, time)) = polynomial {
             let order = usize::try_from(order)
                 .map_err(|_| MsError::InvalidInput("negative POINTING polynomial order".into()))?;
-            if values.shape()[1] <= order {
+            if values
+                .shape()
+                .get(1)
+                .is_none_or(|&columns| columns <= order)
+            {
                 return Err(MsError::InvalidInput(
                     "invalid POINTING polynomial shape".into(),
                 ));
@@ -152,7 +169,7 @@ impl MsPointing<'_> {
         } else {
             [lon, lat]
         };
-        let reference = resolve_direction_reference(self.table(), "POINTING", "DIRECTION", row)?;
+        let reference = resolve_direction_reference(self.table(), "POINTING", column, row)?;
         Ok(MDirection::from_angles(lon, lat, reference))
     }
 }

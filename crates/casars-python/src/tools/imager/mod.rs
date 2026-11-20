@@ -10,7 +10,8 @@ use std::sync::Mutex;
 
 use casa_calibration::{
     AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerKernelWidth, ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup, ImagerVoltagePattern,
+    ImagerKernelWidth, ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup,
+    ImagerVoltagePattern,
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -292,7 +293,10 @@ impl PyImager {
             convert_first: convertfirst.into(),
         };
         self.with_state(py, |state| {
-            state.prediction.configure_single_dish(setup).map_err(runtime_error)?;
+            state
+                .prediction
+                .configure_single_dish(setup)
+                .map_err(runtime_error)?;
             state.model_in_sky_equation = false;
             Ok(true)
         })

@@ -21,7 +21,9 @@ use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
 use super::imager_definition::ImagerDefinitionRequest;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
-use super::settings::{ImagerGridder, ImagerSingleDishSetup, ImagerTransformOptions, PredictionGeometry};
+use super::settings::{
+    ImagerGridder, ImagerSingleDishSetup, ImagerTransformOptions, PredictionGeometry,
+};
 use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::ImagerVoltagePattern;
@@ -201,11 +203,19 @@ impl ImagerPrediction {
     /// still has an unfinished publication.
     pub fn configure_single_dish(&mut self, mut setup: ImagerSingleDishSetup) -> MsResult<()> {
         if self.partial_batch.is_some() || self.pending_publication.is_some() {
-            return Err(invalid("finish publishing the previous imager prediction before changing single-dish settings"));
+            return Err(invalid(
+                "finish publishing the previous imager prediction before changing single-dish settings",
+            ));
         }
         setup.pointing_column.make_ascii_uppercase();
-        if !matches!(setup.pointing_column.as_str(), "DIRECTION" | "TARGET" | "ENCODER" | "POINTING_OFFSET" | "SOURCE_OFFSET") {
-            return Err(invalid(format!("no such direction column as {} in POINTING", setup.pointing_column)));
+        if !matches!(
+            setup.pointing_column.as_str(),
+            "DIRECTION" | "TARGET" | "ENCODER" | "POINTING_OFFSET" | "SOURCE_OFFSET"
+        ) {
+            return Err(invalid(format!(
+                "no such direction column as {} in POINTING",
+                setup.pointing_column
+            )));
         }
         setup.convert_first.make_ascii_uppercase();
         self.single_dish_setup = setup;
