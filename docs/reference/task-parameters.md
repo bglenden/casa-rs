@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 811
+- Concepts: 812
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -563,7 +563,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>preaverage</code> | <code>regridms.preaverage@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Average channels before regridding to wider ones. |
 | <code>timeaverage</code> | <code>mstransform.timeaverage@r1</code> | <code>bool</code> | <code>false</code>; optional | Time | Average in time over timebin. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Time | Averaging time bin, a time quantity as CASA writes it. |
-| <code>timespan</code> | <code>mstransform.timespan@r1</code> | <code>string</code> | <code>""</code>; optional | Time | Let time averages span 'scan', 'state' or both. |
+| <code>timespan</code> | <code>mstransform.timespan@r1</code> | <code>variant</code> | <code>""</code>; optional | Time | Let time averages span 'scan', 'state' or both. |
 | <code>maxuvwdistance</code> | <code>mstransform.maxuvwdistance@r1</code> | <code>float</code> | <code>0.0</code>; optional | Time | Largest UVW change, in metres, a time average may span. |
 | <code>docallib</code> | <code>mstransform.docallib@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibration | Apply calibration from callib on the fly. |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Calibration | CASA callibrary file describing the calibration-table chain |
@@ -610,7 +610,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
 | <code>width</code> | <code>ms.transform.width@r2</code> | <code>variant</code> | <code>1</code>; optional | Selection | Channel-averaging width as an integer, numeric string, or per-SPW integer list. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Averaging | Averaging time bin, a time quantity as CASA writes it. |
-| <code>combine</code> | <code>parameter.combine@r1</code> | <code>string</code> | <code>""</code>; optional | Averaging | Axes to combine. |
+| <code>combine</code> | <code>parameter.combine@r2</code> | <code>variant</code> | <code>""</code>; optional | Averaging | Let time averages span scan, field or state boundaries. |
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors<br><em>Surface:</em> casa-rs's own control: CASA's split has no msselect parameter. |
 
 <a id="surface-applycal"></a>
