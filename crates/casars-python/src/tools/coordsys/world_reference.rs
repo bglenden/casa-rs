@@ -209,6 +209,9 @@ struct Values<'a> {
     native: Vec<f64>,
     declared: Vec<f64>,
     units: Vec<String>,
+    converted: bool,
+    visible_axes: Vec<usize>,
+    full_measure: Option<(Vec<f64>, Vec<String>)>,
 }
 
 impl<'a> Values<'a> {
@@ -232,13 +235,61 @@ impl<'a> Values<'a> {
             }
             _ => (native.clone(), coordinate.axis_units()),
         };
+        let visible_axes = (0..native.len()).collect();
         Self {
             coordinate,
             record,
             native,
             declared,
             units,
+            converted: false,
+            visible_axes,
+            full_measure: None,
         }
+    }
+
+    fn at_world(
+        coordinate: &'a CoordinateModel,
+        record: Option<&'a RecordValue>,
+        native: &[f64],
+        visible_axes: Vec<usize>,
+        full_coordinate: Option<CoordinateModel>,
+    ) -> PyResult<Self> {
+        let units = match coordinate {
+            CoordinateModel::Direction(direction) => direction.visible_world_units(),
+            _ => coordinate.axis_units(),
+        };
+        let declared = if matches!(coordinate, CoordinateModel::Direction(_)) {
+            use casa_types::quanta::{Quantity, Unit};
+            native
+                .iter()
+                .zip(&units)
+                .map(|(&value, unit)| {
+                    Unit::new(unit)
+                        .and_then(|unit| Quantity::new(value, "rad")?.get_value_in(&unit))
+                        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+                })
+                .collect::<PyResult<_>>()?
+        } else {
+            native.to_vec()
+        };
+        let full_measure = full_coordinate.map(|full| {
+            let mut components = full.reference_value();
+            for (&axis, &value) in visible_axes.iter().zip(native) {
+                components[axis] = value;
+            }
+            (components, full.axis_units())
+        });
+        Ok(Self {
+            coordinate,
+            record,
+            native: native.to_vec(),
+            declared,
+            units,
+            converted: true,
+            visible_axes,
+            full_measure,
+        })
     }
 
     fn quantities(&self) -> impl Iterator<Item = (f64, &str)> {
@@ -255,7 +306,7 @@ impl<'a> Values<'a> {
             CoordinateModel::Stokes(_) => stokes(value),
             CoordinateModel::Direction(direction) => direction_text(
                 direction.direction_ref(),
-                axis,
+                self.visible_axes[axis],
                 self.native[axis],
                 absolute,
                 scientific_style,
@@ -282,33 +333,49 @@ impl<'a> Values<'a> {
         })
     }
 
-    fn measure(&self, absolute: bool) -> PyResult<(&'static str, CasaValue)> {
+    fn measure(&self, absolute: bool, velocities: bool) -> PyResult<(&'static str, CasaValue)> {
         let invalid = |name| {
             PyRuntimeError::new_err(format!(
                 "It is not possible to have a relative {name} measure"
             ))
         };
+        let components = self
+            .full_measure
+            .as_ref()
+            .map_or(self.native.as_slice(), |(value, _)| value.as_slice());
         match self.coordinate {
-            CoordinateModel::Linear(_) => Ok(("linear", numbered_quantities(self.quantities()))),
+            CoordinateModel::Linear(_) => {
+                let units = self
+                    .full_measure
+                    .as_ref()
+                    .map_or(self.units.as_slice(), |(_, units)| units.as_slice());
+                Ok((
+                    "linear",
+                    numbered_quantities(
+                        components
+                            .iter()
+                            .copied()
+                            .zip(units.iter().map(String::as_str)),
+                    ),
+                ))
+            }
             CoordinateModel::Tabular(_) => Ok(("tabular", numbered_quantities(self.quantities()))),
             CoordinateModel::Stokes(_) if absolute => {
                 Ok(("stokes", CasaValue::Text(stokes(self.native[0]))))
             }
-            CoordinateModel::Direction(direction) if absolute && self.native.len() == 2 => {
-                let angle = MDirection::from_angles(
-                    self.native[0],
-                    self.native[1],
-                    direction.direction_ref(),
-                );
+            CoordinateModel::Direction(direction) if absolute && components.len() == 2 => {
+                let frame = if self.converted {
+                    direction.conversion_direction_ref()
+                } else {
+                    direction.direction_ref()
+                };
+                let angle = MDirection::from_angles(components[0], components[1], frame);
                 let [x, y, _] = angle.cosines();
                 Ok((
                     "direction",
                     CasaValue::record([
                         ("type", CasaValue::Text("direction".into())),
-                        (
-                            "refer",
-                            CasaValue::Text(direction.direction_ref().to_string()),
-                        ),
+                        ("refer", CasaValue::Text(frame.to_string())),
                         ("m0", quantity(y.atan2(x), "rad")),
                         ("m1", quantity(angle.latitude_rad(), "rad")),
                     ]),
@@ -318,6 +385,17 @@ impl<'a> Values<'a> {
                 let hz = spectral
                     .value_in_hz(self.declared[0])
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                let frame = if spectral.has_undefined_frame() {
+                    "Undefined".to_owned()
+                } else if self.converted {
+                    spectral.world_frequency_ref().to_string()
+                } else {
+                    spectral.frequency_ref().to_string()
+                };
+                let mut record = vec![("frequency", scalar_measure("frequency", &frame, hz, "Hz"))];
+                if !velocities {
+                    return Ok(("spectral", CasaValue::record(record)));
+                }
                 let rest = spectral
                     .rest_frequency_hz()
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
@@ -325,12 +403,6 @@ impl<'a> Values<'a> {
                     return Err(PyRuntimeError::new_err("velocity is NaN"));
                 }
                 let ratio = MDoppler::new(hz.abs() / rest, DopplerRef::RATIO);
-                let frame = if spectral.has_undefined_frame() {
-                    "Undefined".to_owned()
-                } else {
-                    spectral.frequency_ref().to_string()
-                };
-                let mut record = vec![("frequency", scalar_measure("frequency", &frame, hz, "Hz"))];
                 for (name, frame, kind) in [
                     ("radiovelocity", "RADIO", DopplerRef::RADIO),
                     ("opticalvelocity", "OPTICAL", DopplerRef::Z),
@@ -403,10 +475,90 @@ fn world_reference(
         .into_iter()
         .map(|(coordinate, record)| Values::new(coordinate, record, absolute))
         .collect::<Vec<_>>();
-    let mut record = vec![
-        ("ar_type", CasaValue::Text("absolute".into())),
-        ("pw_type", CasaValue::Text("world".into())),
-    ];
+    let styles = complete().flat_map(|coordinate| {
+        let scientific = scientific_coordinate(coordinate);
+        std::iter::repeat_n(scientific, coordinate.n_world_axes())
+    });
+    format_world_record(&values, styles, &format, absolute, true, true)
+}
+
+fn scientific_coordinate(coordinate: &CoordinateModel) -> bool {
+    !matches!(
+        coordinate.coordinate_type(),
+        CoordinateType::Direction | CoordinateType::Stokes
+    )
+}
+
+pub(super) fn format_transformed_world(
+    state: &CoordinateState,
+    world: &[f64],
+    format: &str,
+    velocities: bool,
+    coordinate_tags: bool,
+) -> PyResult<CasaValue> {
+    let format = format.to_ascii_lowercase();
+    let placements = if format.contains('s') || format.contains('m') {
+        CoordinateSystem::record_coordinates(&state.record)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+    } else {
+        Vec::new()
+    };
+    let mut offset = 0;
+    let mut values = Vec::with_capacity(state.coordinates.n_coordinates());
+    for index in 0..state.coordinates.n_coordinates() {
+        let coordinate = state.coordinates.coordinate(index);
+        let placement = placements.get(index);
+        let record = placement.and_then(|entry| match state.record.get(&entry.field) {
+            Some(Value::Record(record)) => Some(record),
+            _ => None,
+        });
+        let end = offset + coordinate.n_world_axes();
+        let visible_axes = placement.map_or_else(
+            || (0..end - offset).collect(),
+            |placement| {
+                placement
+                    .pixel_axes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(local, axis)| axis.map(|_| local))
+                    .collect()
+            },
+        );
+        let full_coordinate = placement
+            .filter(|placement| format.contains('m') && placement.pixel_axes.contains(&None))
+            .map(|placement| placement.model(&state.record))
+            .transpose()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        values.push(Values::at_world(
+            coordinate,
+            record,
+            &world[offset..end],
+            visible_axes,
+            full_coordinate,
+        )?);
+        offset = end;
+    }
+    let styles = values.iter().flat_map(|axis| {
+        std::iter::repeat_n(scientific_coordinate(axis.coordinate), axis.native.len())
+    });
+    format_world_record(&values, styles, &format, true, velocities, coordinate_tags)
+}
+
+fn format_world_record(
+    values: &[Values<'_>],
+    mut styles: impl Iterator<Item = bool>,
+    format: &str,
+    absolute: bool,
+    velocities: bool,
+    coordinate_tags: bool,
+) -> PyResult<CasaValue> {
+    let mut record = Vec::new();
+    if coordinate_tags {
+        record.extend([
+            ("ar_type", CasaValue::Text("absolute".into())),
+            ("pw_type", CasaValue::Text("world".into())),
+        ]);
+    }
     if format.contains('n') {
         record.push((
             "numeric",
@@ -425,15 +577,8 @@ fn world_reference(
         ));
     }
     if format.contains('s') {
-        let mut styles = complete().flat_map(|coordinate| {
-            let scientific = !matches!(
-                coordinate.coordinate_type(),
-                CoordinateType::Direction | CoordinateType::Stokes
-            );
-            std::iter::repeat_n(scientific, coordinate.n_world_axes())
-        });
         let mut strings = Vec::new();
-        for value in &values {
+        for value in values {
             for axis in 0..value.native.len() {
                 strings.push(value.text(axis, absolute, styles.next().unwrap_or(true))?);
             }
@@ -442,8 +587,8 @@ fn world_reference(
     }
     if format.contains('m') {
         let mut measures = std::collections::BTreeMap::new();
-        for value in &values {
-            match value.measure(absolute) {
+        for value in values {
+            match value.measure(absolute, velocities) {
                 Ok((key, measure)) => {
                     measures.insert(key, measure);
                 }
