@@ -28,11 +28,15 @@ def test_crop_selected_axes_with_two_way_native_readback(casa, tmp_path):
         assert parent.fromarray(source, values)
         assert parent.putregion(pixelmask=mask)
         assert parent.setbrightnessunit("Jy/pixel")
+        assert parent.setmiscinfo({"observer_note": "crop test"})
+        assert parent.setrestoringbeam("3arcsec", "2arcsec", "15deg")
         child = parent.crop(outfile=target, axes=[0, 0])
         assert parent.done()
         _assert_value(child.getchunk(), values[1:6, :].astype(np.float64))
         _assert_value(child.getchunk(getmask=True), mask[1:6, :])
         assert child.brightnessunit() == "Jy/pixel"
+        assert child.miscinfo() == {"observer_note": "crop test"}
+        _assert_value(child.restoringbeam()["major"], {"value": 3.0, "unit": "arcsec"})
         history = child.history()
         assert history[-4] == "Ran ia.crop"
         assert history[-2:] == [
@@ -113,3 +117,34 @@ def test_crop_rejects_invalid_axes_and_unfindable_valid_planes(casa, tmp_path):
             assert not path.exists()
             _assert_value(image.getchunk(getmask=True), mask)
         assert image.done()
+
+
+def test_crop_stretches_mask_and_records_shape_history_with_history_disabled(casa, tmp_path):
+    mask_path = str(tmp_path / "mask.im")
+    writer = casa.image()
+    assert writer.fromarray(mask_path, np.array([[0], [1], [1], [1], [1], [1], [0]], dtype=np.float32))
+    assert writer.done()
+    expression = f'"{mask_path}" > 0'
+    for backend in (casa, tools):
+        source = backend.image()
+        assert source.fromshape(shape=[7, 6])
+        source.dohistory(False)
+        with pytest.raises(RuntimeError, match="mask should not be extended"):
+            source.crop(mask=expression)
+        cropped = source.crop(mask=expression, stretch=True)
+        assert cropped.shape().tolist() == [5, 6]
+        assert cropped.getchunk(getmask=True).all()
+        assert cropped.history()[-2:] == [
+            "Original Temporary_Image size => [7, 6]",
+            "New  size => [5, 6]",
+        ]
+        assert cropped.done() and source.done()
+
+
+def test_crop_rejects_complex_images(casa):
+    for backend in (casa, tools):
+        source = backend.image()
+        assert source.fromshape(shape=[3, 4], type="c")
+        with pytest.raises(RuntimeError, match="only supports Float"):
+            source.crop()
+        assert source.done()
