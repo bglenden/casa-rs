@@ -30,7 +30,7 @@ use serde_json::json;
 use thiserror::Error;
 
 use crate::ms::MeasurementSet;
-use crate::schema::main_table::VisibilityDataColumn;
+use crate::schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
 use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
 use crate::{
@@ -61,6 +61,8 @@ pub enum FlagDataColumn {
     Data,
     /// MAIN.CORRECTED_DATA.
     CorrectedData,
+    /// MAIN.FLOAT_DATA.
+    FloatData,
 }
 
 impl FlagDataColumn {
@@ -68,6 +70,7 @@ impl FlagDataColumn {
         match self {
             Self::Data => VisibilityDataColumn::Data.name(),
             Self::CorrectedData => VisibilityDataColumn::CorrectedData.name(),
+            Self::FloatData => OptionalMainColumn::FloatData.name(),
         }
     }
 }
@@ -78,7 +81,7 @@ impl FlagDataColumn {
 pub enum FlagDataMode {
     /// Manual selected-row/sample flagging.
     Manual,
-    /// Clip mode, currently including the tutorial's `clipzeros=True` path.
+    /// Clip visibility samples or signed floating-point values.
     Clip,
     /// CASA quack-style scan-edge flagging.
     Quack,
@@ -138,6 +141,10 @@ pub struct FlagDataRequest {
     pub summary_options: FlagSummaryOptions,
     /// Clip exact zeros in [`FlagDataMode::Clip`].
     pub clipzeros: bool,
+    /// Optional lower and upper values for the clip range.
+    pub clipminmax: Option<[f64; 2]>,
+    /// Flag outside or inside the range. An accepted vector disables the clip agent.
+    pub clipoutside: Option<bool>,
     /// Quack interval in seconds.
     pub quackinterval: f64,
     /// Quack scan edge.
@@ -187,6 +194,8 @@ impl Default for FlagDataRequest {
             flagbackup: true,
             summary_options: FlagSummaryOptions::default(),
             clipzeros: false,
+            clipminmax: None,
+            clipoutside: Some(true),
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
             timecutoff: 4.0,
@@ -696,8 +705,19 @@ fn apply_clip_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
-    // With no clip range, CASA's clipping agent flags NaNs always, and
-    // zeros too with clipzeros (`FlagAgentClipping.cc`).
+    let Some(outside) = request.clipoutside else {
+        tracing::warn!("clipoutside must be a scalar Boolean to start the clip agent");
+        return Ok(ChangeSet::default());
+    };
+    let options = ClipOptions {
+        zeros: request.clipzeros,
+        // CASA's clipping agent stores its bounds as single-precision values.
+        bounds: request
+            .clipminmax
+            .map(|bounds| bounds.map(|limit| f64::from(limit as f32))),
+        outside,
+    };
+    // CASA flags non-finite data and, with clipzeros, near-zero samples.
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
     let mut changed = ChangeSet::default();
@@ -791,7 +811,7 @@ fn apply_clip_flags(
                 data_value,
                 flags,
                 channels.as_deref(),
-                request.clipzeros,
+                options,
                 &path,
                 row,
                 &mut row_changes,
@@ -817,7 +837,8 @@ fn apply_clip_flags(
                 touched_rows.insert(row);
             }
         }
-        write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
+        // CASA's clip agent writes the per-sample FLAG column.
+        write_touched_flag_updates(ms, updates, touched_rows, false, &mut changed)?;
     }
     changed.summary = Some(FlagSummary {
         flagged_samples,
@@ -1155,7 +1176,7 @@ fn apply_flag_mask_with_preloaded(
             touched_rows.insert(sample.row);
         }
     }
-    write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
+    write_touched_flag_updates(ms, updates, touched_rows, true, &mut changed)?;
     Ok(changed)
 }
 
@@ -1215,6 +1236,7 @@ fn write_touched_flag_updates(
     ms: &mut MeasurementSet,
     mut updates: std::collections::BTreeMap<usize, ArrayD<bool>>,
     touched_rows: std::collections::BTreeSet<usize>,
+    update_flag_rows: bool,
     changed: &mut ChangeSet,
 ) -> Result<(), FlaggingError> {
     let path = display_ms_path(ms);
@@ -1223,24 +1245,24 @@ fn write_touched_flag_updates(
         let Some(flags) = updates.remove(&row) else {
             continue;
         };
-        let flag_row = flags.iter().all(|flag| *flag);
-        prepared.push((row, flags, flag_row));
+        prepared.push((row, flags));
     }
-    let current_flag_rows = load_bool_cells(
-        ms.main_table(),
-        &prepared.iter().map(|(row, _, _)| *row).collect::<Vec<_>>(),
-        FLAG_ROW_COLUMN,
-        &path,
-    )?;
+    let flag_row_updates = if update_flag_rows {
+        let rows = prepared.iter().map(|(row, _)| *row).collect::<Vec<_>>();
+        let current_flag_rows = load_bool_cells(ms.main_table(), &rows, FLAG_ROW_COLUMN, &path)?;
+        prepared
+            .iter()
+            .zip(current_flag_rows)
+            .filter_map(|((row, flags), current)| {
+                let flag_row = flags.iter().all(|flag| *flag);
+                (current != flag_row).then_some((*row, flag_row))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     ms.main_table_mut()
         .reserve_array_cell_updates(FLAG_COLUMN, prepared.len());
-    let flag_row_updates = prepared
-        .iter()
-        .zip(current_flag_rows.iter())
-        .filter_map(|((row, _, flag_row), current)| {
-            (*current != *flag_row).then_some((*row, *flag_row))
-        })
-        .collect::<Vec<_>>();
     {
         let mut writer = ms
             .main_table_mut()
@@ -1256,7 +1278,7 @@ fn write_touched_flag_updates(
         let flag_row_slot = writer
             .column_index(FLAG_ROW_COLUMN)
             .expect("prepared FLAG_ROW slot");
-        for (row, flags, _) in &prepared {
+        for (row, flags) in &prepared {
             writer
                 .seek(*row)
                 .and_then(|()| {
@@ -1280,7 +1302,7 @@ fn write_touched_flag_updates(
         }
     }
     changed.changed_flag_row_rows += flag_row_updates.len();
-    for (row, _, _) in prepared {
+    for (row, _) in prepared {
         changed.changed_rows += 1;
         changed.changed_row_indices.push(row);
     }
@@ -1509,24 +1531,22 @@ fn push_flag_samples(
     }
 }
 
-/// Whether clip mode with no clip range flags the amplitude `value`: a NaN,
+/// Whether clip mode with no clip range flags the amplitude `value`: non-finite,
 /// and with `zeros` a value at or below `f32::EPSILON` too, as CASA's
 /// `FlagAgentBase::isNaN` and `isNaNOrZero` test it.
 fn is_casa_clip(value: f64, zeros: bool) -> bool {
-    value.is_nan() || (zeros && value <= f64::from(f32::EPSILON))
+    !value.is_finite() || (zeros && value <= f64::from(f32::EPSILON))
 }
 
 fn is_casa_clip_complex32(value: Complex32, zeros: bool) -> bool {
-    value.re.is_nan()
-        || value.im.is_nan()
+    !value.norm().is_finite()
         || (zeros
             && f64::from(value.re * value.re + value.im * value.im)
                 <= f64::from(f32::EPSILON) * f64::from(f32::EPSILON))
 }
 
 fn is_casa_clip_complex64(value: Complex64, zeros: bool) -> bool {
-    value.re.is_nan()
-        || value.im.is_nan()
+    !value.norm().is_finite()
         || (zeros
             && value.re * value.re + value.im * value.im
                 <= f64::from(f32::EPSILON) * f64::from(f32::EPSILON))
@@ -1706,11 +1726,18 @@ fn push_sample(
 /// channel, that clip mode flags with no clip range: CASA's clipping agent
 /// flags a NaN always, and with `zeros` an amplitude at or below
 /// `f32::EPSILON` too.
+#[derive(Debug, Clone, Copy)]
+struct ClipOptions {
+    zeros: bool,
+    bounds: Option<[f64; 2]>,
+    outside: bool,
+}
+
 fn apply_clip_array(
     data: &ArrayValue,
     flags: &ArrayD<bool>,
     channels: Option<&[usize]>,
-    zeros: bool,
+    options: ClipOptions,
     path: &str,
     row: usize,
     changed: &mut Vec<(usize, usize)>,
@@ -1722,18 +1749,34 @@ fn apply_clip_array(
             path: path.to_string(),
             reason: format!("FLAG row {row} must be rank-2: {source}"),
         })?;
+    let ClipOptions {
+        zeros,
+        bounds,
+        outside,
+    } = options;
+    let matches_range = |value: f64, [lower, upper]: [f64; 2]| {
+        if outside {
+            value < lower || value > upper
+        } else {
+            value >= lower && value <= upper
+        }
+    };
     match data {
         ArrayValue::Complex32(values) => clip_cells(values, flags, channels, changed, |value| {
             is_casa_clip_complex32(value, zeros)
+                || bounds.is_some_and(|bounds| matches_range(f64::from(value.norm()), bounds))
         }),
         ArrayValue::Complex64(values) => clip_cells(values, flags, channels, changed, |value| {
             is_casa_clip_complex64(value, zeros)
+                || bounds.is_some_and(|bounds| matches_range(value.norm(), bounds))
         }),
         ArrayValue::Float32(values) => clip_cells(values, flags, channels, changed, |value| {
             is_casa_clip(f64::from(value).abs(), zeros)
+                || bounds.is_some_and(|bounds| matches_range(f64::from(value), bounds))
         }),
         ArrayValue::Float64(values) => clip_cells(values, flags, channels, changed, |value| {
             is_casa_clip(value.abs(), zeros)
+                || bounds.is_some_and(|bounds| matches_range(value, bounds))
         }),
         _ => Ok(()),
     }
@@ -3394,6 +3437,12 @@ fn _complex_norm64(value: Complex64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    const CLIP_ZEROS: ClipOptions = ClipOptions {
+        zeros: true,
+        bounds: None,
+        outside: true,
+    };
+
     use super::*;
     use ndarray::array;
 
@@ -3446,15 +3495,26 @@ mod tests {
             ]
             .into_dyn(),
         );
-        apply_clip_array(&c64, &flags, Some(&[0, 2]), true, "<test>", 4, &mut changed)
-            .expect("clip complex64");
+        apply_clip_array(
+            &c64,
+            &flags,
+            Some(&[0, 2]),
+            CLIP_ZEROS,
+            "<test>",
+            4,
+            &mut changed,
+        )
+        .expect("clip complex64");
         assert_eq!(changed, vec![(0, 0), (0, 2)]);
         changed.clear();
         apply_clip_array(
             &c64,
             &flags,
             Some(&[0, 2]),
-            false,
+            ClipOptions {
+                zeros: false,
+                ..CLIP_ZEROS
+            },
             "<test>",
             4,
             &mut changed,
@@ -3465,14 +3525,30 @@ mod tests {
         changed.clear();
         let flags_2x2 = ArrayD::from_elem(IxDyn(&[2, 2]), false);
         let f32s = ArrayValue::Float32(array![[0.0_f32, 1.0], [f32::EPSILON, 2.0]].into_dyn());
-        apply_clip_array(&f32s, &flags_2x2, None, true, "<test>", 5, &mut changed)
-            .expect("clip float32");
+        apply_clip_array(
+            &f32s,
+            &flags_2x2,
+            None,
+            CLIP_ZEROS,
+            "<test>",
+            5,
+            &mut changed,
+        )
+        .expect("clip float32");
         assert_eq!(changed, vec![(0, 0), (1, 0)]);
 
         changed.clear();
         let f64s = ArrayValue::Float64(array![[0.0_f64, 5.0], [f64::NAN, 6.0]].into_dyn());
-        apply_clip_array(&f64s, &flags_2x2, None, true, "<test>", 6, &mut changed)
-            .expect("clip float64");
+        apply_clip_array(
+            &f64s,
+            &flags_2x2,
+            None,
+            CLIP_ZEROS,
+            "<test>",
+            6,
+            &mut changed,
+        )
+        .expect("clip float64");
         assert_eq!(changed, vec![(0, 0), (1, 0)]);
 
         let mut samples = Vec::new();
@@ -3705,7 +3781,7 @@ mod tests {
                 &data_rank2,
                 &flags_rank1,
                 None,
-                true,
+                CLIP_ZEROS,
                 "<test>",
                 12,
                 &mut changed
@@ -3720,7 +3796,7 @@ mod tests {
                 &data_rank1,
                 &flags_rank2,
                 None,
-                true,
+                CLIP_ZEROS,
                 "<test>",
                 13,
                 &mut changed

@@ -9,12 +9,13 @@ stdout says how it ended. A Python task call neither loads nor saves Last.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 import functools
 from http import HTTPStatus
 import inspect
 from json import JSONDecodeError, loads
+from math import isnan
 import os
 from os import PathLike
 from pathlib import Path
@@ -423,6 +424,16 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
+    if "clipoutside" in values:
+        outside = values["clipoutside"]
+        if outside is None:
+            errors["clipoutside"] = ["null value not allowed"] * 3
+        else:
+            converted = _flagdata_clip_outside(outside)
+            if converted is None:
+                errors["clipoutside"] = ["must be of cBool type", "must be of cBoolVec type"]
+            else:
+                values["clipoutside"] = converted
     for parameter, expected, casa_type in (
         ("spwchan", bool, "cBool"),
         ("spwcorr", bool, "cBool"),
@@ -433,6 +444,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
         ("maxrel", cfloat, "cFloat"),
         ("minabs", cint, "cInt"),
         ("maxabs", cint, "cInt"),
+        ("clipzeros", bool, "cBool"),
         ("writeflags", bool, "cBool"),
     ):
         if parameter not in values:
@@ -441,7 +453,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
         if value is None:
             errors[parameter] = ["null value not allowed"]
         elif expected is bool and isinstance(value, np.bool_):
-            # CASA admits these scalars but leaves the summary options disabled.
+            # CASA admits these scalars and uses the switch defaults.
             values[parameter] = bool(value) if parameter == "writeflags" else False
         elif not isinstance(value, expected):
             errors[parameter] = [f"must be of {casa_type} type"]
@@ -454,8 +466,61 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
         elif casa_type == "cInt":
             # Counts from stored MeasurementSets fit in a signed 64-bit value.
             values[parameter] = max(-(2**63), min(int(value), 2**63 - 1))
+    if "clipminmax" in values:
+        try:
+            values["clipminmax"] = _flagdata_clip_range(
+                values["clipminmax"], cfloat, outside=values.get("clipoutside") is not False,
+            )
+        except ValueError as error:
+            errors["clipminmax"] = [str(error)]
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
+
+
+def _flagdata_clip_outside(value: Any) -> bool | list[bool] | None:
+    import numpy as np
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, np.bool_):
+        return True
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        value = (value.item(),)
+    if isinstance(value, Iterable) and not isinstance(value, str):
+        items = list(value)
+        if all(isinstance(item, (bool, np.bool_)) for item in items):
+            return [bool(item) for item in items]
+    return None
+
+
+def _flagdata_clip_range(
+    value: Any, numeric: tuple[type, ...], *, outside: bool
+) -> list[float]:
+    if value is None:
+        raise ValueError("null value not allowed")
+    if isinstance(value, numeric) and not isinstance(value, bool):
+        items = [value]
+    elif isinstance(value, Iterable) and not isinstance(value, str):
+        try:
+            items = list(value)
+        except TypeError as error:
+            raise ValueError(f"field 'clipminmax' cannot be coerced: {error}") from error
+    else:
+        raise ValueError("must be of cFloatVec type")
+    if not all(isinstance(item, numeric) for item in items):
+        raise ValueError("must be of cFloatVec type")
+    bounds = [float(item) for item in items]
+    # The parameter profile accepts finite values. The clipping agent's
+    # single-precision bounds turn these finite doubles into infinities.
+    limit = sys.float_info.max
+    if len(bounds) == 2 and not outside and any(isnan(bound) for bound in bounds):
+        return [limit, -limit]
+    for index, bound in enumerate(bounds):
+        if isnan(bound):
+            bounds[index] = -limit if index == 0 else limit
+        else:
+            bounds[index] = max(-limit, min(bound, limit))
+    return bounds
 
 
 def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:

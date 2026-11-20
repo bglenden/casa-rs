@@ -9174,24 +9174,24 @@
       "id": "flagdata.clipminmax",
       "semantic_revision": 1,
       "casa_name": "clipminmax",
-      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "max_items": 2, "allow_scalar": false},
+      "value_domain": {"kind": "array", "element": {"kind": "float"}, "min_items": 0, "allow_scalar": true},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Range of data values that clip mode keeps; values outside it are flagged.", "details": null, "examples": ["[]"]},
+      "documentation": {"summary": "Two values define the closed clipping range. Other lengths leave the range unset.", "details": null, "examples": ["[]", "[0.0, 1.0]"]},
       "persistence_class": "profile"
     },
     {
       "id": "flagdata.clipoutside",
       "semantic_revision": 1,
       "casa_name": "clipoutside",
-      "value_domain": {"kind": "bool"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Clip outside clipminmax's range rather than inside it.", "details": null, "examples": ["true"]},
+      "documentation": {"summary": "Flag samples outside the closed clip range when true, or inside it when false.", "details": "A Boolean vector disables the CASA clipping agent.", "examples": ["true"]},
       "persistence_class": "profile"
     },
     {
