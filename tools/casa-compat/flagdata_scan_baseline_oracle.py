@@ -109,6 +109,8 @@ def compare_summary():
         {"scan": "1,2", "antenna": "!A0"},
         {"scan": "2", "antenna": "A0&A1", "field": "PHASE"},
         {"antenna": "*"},
+        {"spw": "0,99"},
+        {"scan": "<2", "antenna": "A0&A1", "spw": "0~99"},
     ):
         args = {"vis": "data.ms", "mode": "summary", "basecnt": True, **options}
         assert tasks.flagdata(**args) == casatasks.flagdata(**args), options
@@ -188,7 +190,7 @@ def main():
         compare_summary()
         compare_literal_antenna_names()
         refusals = compare_refusals()
-    print(f"{products} scan/baseline products, six summaries, two inactive calls and {refusals} refusals compared with CASA")
+    print(f"{products} scan/baseline products, eight summaries, two inactive calls and {refusals} refusals compared with CASA")
 
 
 if __name__ == "__main__":
