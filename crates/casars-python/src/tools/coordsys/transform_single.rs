@@ -88,22 +88,32 @@ pub(in crate::tools) fn image_pixel_argument(
     py: Python<'_>,
     value: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Vec<f64>> {
+    pixel_argument(
+        py,
+        value,
+        "Unsupported record type for value",
+        "Unsupported data type for value",
+    )
+}
+
+fn pixel_argument(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+    record_error: &str,
+    type_error: &str,
+) -> PyResult<Vec<f64>> {
     let Some(value) = value.filter(|value| !value.is_none()) else {
         return Ok(Vec::new());
     };
     if let Ok(dict) = value.cast::<PyDict>() {
         let record = casa_record(py, Some(dict))?;
-        return numeric_record_value(
-            record
-                .get("numeric")
-                .ok_or_else(|| raised("Unsupported record type for value"))?,
-        );
+        return numeric_record_value(record.get("numeric").ok_or_else(|| raised(record_error))?);
     }
     if let Some(empty) = bool_vector(value)? {
         return if empty {
             Ok(Vec::new())
         } else {
-            Err(raised("Unsupported data type for value"))
+            Err(raised(type_error))
         };
     }
     if let Ok(array) = value.cast::<PyUntypedArray>()
@@ -115,7 +125,7 @@ pub(in crate::tools) fn image_pixel_argument(
     match value.extract::<Variant>()? {
         Variant::Numbers(values) | Variant::Array { values, .. } => Ok(values),
         Variant::Empty => Ok(Vec::new()),
-        _ => Err(raised("Unsupported data type for value")),
+        _ => Err(raised(type_error)),
     }
 }
 
@@ -534,7 +544,7 @@ impl PyCoordsys {
         format: &str,
         velocities: bool,
     ) -> PyResult<CasaValue> {
-        image_world_record(&self.state(), pixel, format, velocities)
+        image_world_record(&self.state(), pixel, format, velocities, false)
     }
 
     pub(in crate::tools) fn image_measures(
@@ -545,11 +555,11 @@ impl PyCoordsys {
     ) -> PyResult<CasaValue> {
         let state = self.state();
         if direction_frame.eq_ignore_ascii_case("cl") && spectral_frame.eq_ignore_ascii_case("cl") {
-            return image_world_record(&state, pixel, "m", true);
+            return image_world_record(&state, pixel, "m", true, false);
         }
         let mut state = state.clone();
         select_measure_frames(&mut state.coordinates, direction_frame, spectral_frame)?;
-        image_world_record(&state, pixel, "m", true)
+        image_world_record(&state, pixel, "m", true, false)
     }
 
     pub(in crate::tools) fn image_pixel(&self, value: WorldArgument) -> PyResult<CasaValue> {
@@ -564,11 +574,38 @@ impl PyCoordsys {
     }
 }
 
+#[pymethods]
+impl PyCoordsys {
+    #[pyo3(signature = (value=None), text_signature = "($self, value=[])")]
+    fn topixel(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
+        let world = WorldArgument::capture(py, value)?;
+        py.detach(|| self.image_pixel(world))?.into_python(py)
+    }
+
+    #[pyo3(signature = (value=None, format="n"), text_signature = "($self, value=[], format='n')")]
+    fn toworld(
+        &self,
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+        format: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let pixel = pixel_argument(
+            py,
+            value,
+            "unsupported record type for pixel",
+            "unsupported data type for pixel",
+        )?;
+        py.detach(|| image_world_record(&self.state(), pixel, format, true, true))?
+            .into_python(py)
+    }
+}
+
 fn image_world_record(
     state: &CoordinateState,
     pixel: Vec<f64>,
     format: &str,
     velocities: bool,
+    coordinate_tags: bool,
 ) -> PyResult<CasaValue> {
     let mut complete: Vec<_> = models(&state.coordinates)
         .flat_map(CoordinateModel::reference_pixel)
@@ -579,7 +616,7 @@ fn image_world_record(
             "Exception: Error converting to world coordinates: {error}"
         ))
     })?;
-    format_transformed_world(state, &world, format, velocities, false)
+    format_transformed_world(state, &world, format, velocities, coordinate_tags)
 }
 
 fn select_measure_frames(

@@ -194,22 +194,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
-    fn topixel(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("topixel")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None, format = None), text_signature = "($self, value=[], format='n')")]
-    fn toworld(
-        &self,
-        value: Option<&Bound<'_, PyAny>>,
-        format: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("toworld")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn transpose(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("transpose")
