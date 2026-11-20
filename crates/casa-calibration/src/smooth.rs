@@ -18,6 +18,16 @@ pub(crate) enum Smoother {
     Median,
 }
 
+impl Smoother {
+    pub(crate) fn from_name(mode: &str) -> Option<Self> {
+        match mode {
+            "mean" => Some(Self::Mean),
+            "median" => Some(Self::Median),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) fn smooth_calibration_table(
     ms_path: &Path,
     input: &Path,

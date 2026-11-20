@@ -20,21 +20,6 @@ use crate::tools::not_yet_implemented_in;
     clippy::unused_self
 )]
 impl PyCalibrater {
-    #[pyo3(signature = (tablein = None, incrtable = None, tableout = None, field = None, calfield = None, interp = None, t = None, spwmap = None), text_signature = "($self, tablein='', incrtable='', tableout='', field=[], calfield=[], interp='linear', t=-1.0, spwmap=[-1])")]
-    fn accumulate(
-        &self,
-        tablein: Option<&Bound<'_, PyAny>>,
-        incrtable: Option<&Bound<'_, PyAny>>,
-        tableout: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-        calfield: Option<&Bound<'_, PyAny>>,
-        interp: Option<&Bound<'_, PyAny>>,
-        t: Option<&Bound<'_, PyAny>>,
-        spwmap: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "accumulate", 1525)
-    }
-
     #[pyo3(signature = (), text_signature = "($self)")]
     fn activityrec(&self) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "activityrec", 1528)
@@ -48,17 +33,6 @@ impl PyCalibrater {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn corrupt(&self) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "corrupt", 1528)
-    }
-
-    #[pyo3(signature = (caltable, partype, caltype, singlechan), text_signature = "($self, caltable, partype, caltype, singlechan)")]
-    fn createcaltable(
-        &self,
-        caltable: &Bound<'_, PyAny>,
-        partype: &Bound<'_, PyAny>,
-        caltype: &Bound<'_, PyAny>,
-        singlechan: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "createcaltable", 1525)
     }
 
     #[pyo3(signature = (tablein, reference = None, tableout = None, transfer = None, listfile = None, append = None, refspwmap = None, gainthreshold = None, antenna = None, timerange = None, scan = None, incremental = None, fitorder = None, display = None), text_signature = "($self, tablein, reference=[], tableout='', transfer=[], listfile='', append=False, refspwmap=[-1], gainthreshold=-1.0, antenna='', timerange='', scan='', incremental=False, fitorder=1, display=False)")]
@@ -135,17 +109,6 @@ impl PyCalibrater {
         tableout: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "posangcal", 1528)
-    }
-
-    #[pyo3(signature = (tablein, tableout, refantmode = None, refant = None), text_signature = "($self, tablein, tableout, refantmode='flexible', refant=[])")]
-    fn rerefant(
-        &self,
-        tablein: &Bound<'_, PyAny>,
-        tableout: &Bound<'_, PyAny>,
-        refantmode: Option<&Bound<'_, PyAny>>,
-        refant: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "rerefant", 1525)
     }
 
     #[pyo3(signature = (), text_signature = "($self)")]
@@ -339,19 +302,6 @@ impl PyCalibrater {
         not_yet_implemented_in("calibrater", "setsolvegainspline", 1528)
     }
 
-    #[pyo3(signature = (tablein, tableout, field = None, smoothtype = None, smoothtime = None, ratesmooth = None), text_signature = "($self, tablein, tableout, field=[], smoothtype='median', smoothtime=60.0, ratesmooth=False)")]
-    fn smooth(
-        &self,
-        tablein: &Bound<'_, PyAny>,
-        tableout: &Bound<'_, PyAny>,
-        field: Option<&Bound<'_, PyAny>>,
-        smoothtype: Option<&Bound<'_, PyAny>>,
-        smoothtime: Option<&Bound<'_, PyAny>>,
-        ratesmooth: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "smooth", 1525)
-    }
-
     #[pyo3(signature = (), text_signature = "($self)")]
     fn solve(&self) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "solve", 1528)
@@ -376,11 +326,6 @@ impl PyCalibrater {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn state(&self) -> PyResult<Py<PyAny>> {
         not_yet_implemented_in("calibrater", "state", 1528)
-    }
-
-    #[pyo3(signature = (caltable), text_signature = "($self, caltable)")]
-    fn updatecaltable(&self, caltable: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "updatecaltable", 1525)
     }
 
     #[pyo3(signature = (callib = None), text_signature = "($self, callib={})")]

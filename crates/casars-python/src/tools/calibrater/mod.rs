@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Python access to the shared calibrater attachment and visibility equation.
 
+mod arguments;
 mod stubs;
 pub(crate) mod surface;
+mod table_tools;
 mod weights;
 
 use std::{path::Path, sync::Mutex};

@@ -188,12 +188,15 @@ fn copy_moving_field_directions(ms: &MeasurementSet, target: &mut Table) -> Resu
 /// # Errors
 /// Returns a description of read, schema, or publication errors.
 pub fn update_calibration_table(path: &Path) -> Result<(), String> {
-    let table = Table::open(TableOptions::new(path)).map_err(error_text)?;
-    if table.info().table_type != TABLE_INFO_TYPE {
-        return Err("input is not a calibration table".into());
+    if !path.exists() {
+        return Err(format!("Table {} does not exist", path.display()));
     }
+    let table = Table::open(TableOptions::new(path)).map_err(error_text)?;
     if has_observation_column(&table) && table.keywords().get("OBSERVATION").is_some() {
         return Ok(());
+    }
+    if table.info().table_type != TABLE_INFO_TYPE {
+        return Err("input is not a calibration table".into());
     }
     drop(table);
     stage_calibration_table_edit(path, path, |table, stage| {
