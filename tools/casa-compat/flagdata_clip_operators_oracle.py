@@ -48,6 +48,8 @@ def compare_products(ddids):
         ("linear", "ABS_XX,RR", "DATA", np.abs, (1, 2), {0: (0,)}, slice(None)),
         ("linear", "ABS_ALL", "DATA", np.abs, (1, 2), {0: (0, 1)}, slice(None)),
         ("linear", "REAL XX", "DATA", np.real, (-1, 1), {0: (0,)}, slice(None)),
+        ("linear", " REAL_XX", "DATA", np.real, (-1, 1), {0: (0,)}, slice(None)),
+        ("linear", "XX_REAL", "DATA", np.real, (-1, 1), {0: (0,)}, slice(None)),
         ("linear", "IMAG_XX", "DATA", np.imag, (-0.6, -0.4), {0: (0,)}, slice(None)),
         ("linear", "ARG_XX", "DATA", np.angle, (-2, 2), {0: (0,)}, slice(None)),
         ("linear", "NORM_XX", "DATA", squared, (1, 2), {0: (0,)}, slice(None)),
@@ -65,12 +67,15 @@ def compare_products(ddids):
         first = f"reference-{index}.ms"
         second = f"native-{index}.ms"
         options = dict(mode="clip", correlation=expression, datacolumn=column,
-                       clipminmax=list(bounds), clipoutside=False, flagbackup=False)
+                       clipminmax=list(bounds), clipoutside=False,
+                       flagbackup=expression.startswith(" "))
         if channels.start is not None:
             options["spw"] = f"0:{channels.start}~{channels.stop - 1}"
         for path, task in ((first, casatasks.flagdata), (second, tasks.flagdata)):
             copytree(f"{source}.ms", path)
             assert task(vis=path, **options) == {}, options
+            if options["flagbackup"]:
+                assert Path(f"{path}.flagversions/flags.flagdata_1").is_dir()
         assert_equal(first, second)
         values = metric(sources[column])
         within = (values >= bounds[0]) & (values <= bounds[1])
@@ -81,6 +86,13 @@ def compare_products(ddids):
             np.testing.assert_array_equal(flags, expected, err_msg=str(options))
             assert not flag_row
             np.testing.assert_array_equal(data, SAMPLES)
+        if column != "DATA":
+            with table(second, ack=False) as ms:
+                physical_column = "CORRECTED_DATA" if column == "CORRECTED" else column
+                np.testing.assert_array_equal(
+                    ms.getcol(physical_column),
+                    np.broadcast_to(sources[column], (ms.nrows(), 4, 2)),
+                )
     return len(cases)
 
 
@@ -132,6 +144,37 @@ def compare_operator_errors():
     return len(cases)
 
 
+def compare_amplitude_rounding():
+    epsilon = np.finfo(np.float32).eps
+    value = np.complex64(complex(epsilon, epsilon * 0.0003))
+    assert np.abs(value) == epsilon
+    expected = np.zeros((4, 2), dtype=bool)
+    expected[0, 0] = True
+    for name, task in (("reference", casatasks.flagdata), ("native", tasks.flagdata)):
+        path = f"rounded-{name}.ms"
+        copytree("linear.ms", path)
+        with table(path, readonly=False, ack=False) as ms:
+            data = ms.getcol("DATA")
+            data[:, 0, 0] = value
+            ms.putcol("DATA", data)
+        assert task(vis=path, mode="clip", correlation="ABS_XX", clipzeros=True, flagbackup=False) == {}
+        for flag_row, flags, stored in snapshot(path):
+            assert not flag_row
+            np.testing.assert_array_equal(flags, expected)
+            assert stored[0, 0] == value
+
+
+def compare_skipped_unknown_product():
+    make_cal_ms("stored-i.ms", channels=4, scan_seconds=20, stokes="I", frequency="105GHz")
+    before = snapshot("stored-i.ms")
+    for name, task in (("reference", casatasks.flagdata), ("native", tasks.flagdata)):
+        path = f"stored-i-{name}.ms"
+        copytree("stored-i.ms", path)
+        assert task(vis=path, mode="clip", correlation="ABS_BAD", spw="0") == {}
+        assert_same_visibilities(path, before)
+        assert Path(f"{path}.flagversions/flags.flagdata_1").is_dir()
+
+
 def compare_preview():
     path = "linear.ms"
     before, auxiliary = snapshot(path), auxiliary_content(path)
@@ -162,9 +205,11 @@ def main():
         products = compare_products(ddids)
         protections = compare_protections()
         errors = compare_operator_errors()
+        compare_amplitude_rounding()
+        compare_skipped_unknown_product()
         compare_preview()
-    print(f"{products} clip operator products, one preview and {errors} error backups matched CASA "
-          f"6.7.6.14, with {protections} independently verified flag protections")
+    print(f"{products + 1} clip operator products, one preview, {errors} error backups and one "
+          f"skipped buffer backup matched CASA 6.7.6.14, with {protections} verified protections")
 
 
 if __name__ == "__main__":

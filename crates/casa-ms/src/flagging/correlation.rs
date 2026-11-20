@@ -32,7 +32,7 @@ const CLIP_OPERATORS: [(&str, ClipMetric); 5] = [
 pub(super) struct CorrelationSelection {
     by_description: Vec<Vec<usize>>,
     clip_metric: Option<ClipMetric>,
-    unknown_clip_expression: Option<String>,
+    unknown_clip_expression: Option<(String, Vec<bool>)>,
 }
 
 impl CorrelationSelection {
@@ -59,9 +59,14 @@ impl CorrelationSelection {
         let has_operator = CLIP_OPERATORS.iter().any(|(name, _)| text.contains(*name));
         let clip_operator = if mode == FlagDataMode::Clip {
             CLIP_OPERATORS.iter().find_map(|(name, metric)| {
-                text.strip_prefix(*name)
-                    .filter(|rest| !CLIP_OPERATORS.iter().any(|(name, _)| rest.contains(*name)))
-                    .map(|rest| (*metric, rest.trim_start_matches(['_', ' '])))
+                let (prefix, suffix) = text.split_once(*name)?;
+                // The operator can appear on either side of the product.
+                // Separate the pieces to preserve stored product boundaries.
+                let products = format!("{prefix} {suffix}");
+                (!CLIP_OPERATORS
+                    .iter()
+                    .any(|(name, _)| products.contains(*name)))
+                .then_some((*metric, products))
             })
         } else {
             None
@@ -112,10 +117,14 @@ impl CorrelationSelection {
         let clip_products = if mode == FlagDataMode::Clip
             && (clip_operator.is_some() || !required.is_empty())
         {
-            let visibility = clip_operator.map_or(text.as_str(), |(_, expression)| expression);
+            let visibility = clip_operator
+                .as_ref()
+                .map_or(text.as_str(), |(_, expression)| expression.as_str());
             // The REAL fallback uses the suffix after CASA's separator.
             let float_suffix = (data_column == FlagDataColumn::FloatData
-                && clip_operator.is_some_and(|(metric, _)| metric != ClipMetric::Real))
+                && clip_operator
+                    .as_ref()
+                    .is_some_and(|(metric, _)| *metric != ClipMetric::Real))
             .then(|| {
                 text.split_once('_')
                     .or_else(|| text.split_once(' '))
@@ -190,6 +199,18 @@ impl CorrelationSelection {
             .iter()
             .filter_map(|&(id, active)| active.then_some(id))
             .collect();
+        let unknown_clip_expression = unknown_clip_expression.map(|expression| {
+            // CASA skips a stored-I buffer before checking its expression.
+            let report_on_description = descriptions
+                .iter()
+                .map(|&(id, _)| {
+                    modes
+                        .get(id as usize)
+                        .is_none_or(|names| !names.contains(&"I"))
+                })
+                .collect();
+            (expression, report_on_description)
+        });
         let by_description = descriptions
             .into_iter()
             .enumerate()
@@ -226,8 +247,19 @@ impl CorrelationSelection {
         self.clip_metric
     }
 
-    pub(super) fn unknown_clip_expression(&self) -> Option<&str> {
-        self.unknown_clip_expression.as_deref()
+    pub(super) fn clip_planes_for(&self, ddid: i32, path: &str) -> Result<&[usize], FlaggingError> {
+        if let Some((expression, report_on_description)) = &self.unknown_clip_expression
+            && report_on_description.get(ddid as usize) == Some(&true)
+        {
+            return Err(FlaggingError::MutateFlags {
+                path: path.to_string(),
+                reason: format!(
+                    "Unknown polarization requested, ({expression}) supported types are: \
+                     XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
+                ),
+            });
+        }
+        Ok(self.planes(ddid))
     }
 }
 
