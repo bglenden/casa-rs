@@ -79,7 +79,9 @@ exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
 
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
-from a FITS file. Metadata edits on this attachment last until `ia.done()`.
+from a FITS file. Metadata edits apply for the life of the attachment.
+Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
+reopens the moved file and reads its stored metadata again.
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
 writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.
