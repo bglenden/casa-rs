@@ -9,6 +9,8 @@ mod insert;
 mod noise;
 mod pixel_edit;
 pub(super) mod region;
+mod region_write;
+pub use region_write::{put_image_region, validate_put_region_shapes};
 mod replace_masked;
 
 pub use replace_masked::{

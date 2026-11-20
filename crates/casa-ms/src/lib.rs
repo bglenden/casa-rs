@@ -96,8 +96,8 @@ pub use flagging::calculate_flagdata_path;
 pub use flagging::{
     FlagCounts, FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
     FlagMerge, FlagSummaryBreakdown, FlagSummaryOptions, FlagVersionEntry, FlaggingError,
-    QuackMode, delete_flag_version, flag_version_ms_path, flagdata, flagdata_path,
-    initialize_flag_versions, list_flag_versions, rename_flag_version,
+    QuackMode, append_flag_command, delete_flag_version, flag_version_ms_path, flagdata,
+    flagdata_path, initialize_flag_versions, list_flag_versions, rename_flag_version,
     rename_flag_version_for_task, restore_flag_version, save_flag_version, save_next_flag_backup,
     save_next_partition_flag_backup,
 };

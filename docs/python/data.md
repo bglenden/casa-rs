@@ -152,6 +152,11 @@ without waiting. `ia.unlock()` flushes pending changes and releases the
 lock. `putchunk` normally releases the lock after writing. Pass
 `locking=False` to keep it while making several updates.
 
+Use `ia.putregion(pixels, pixelmask, region)` to edit pixels and validity in
+the same region. The default `usemask=True` skips masked pixels after applying
+the supplied mask. Pass `replicate=True` to fill omitted axes and use the
+region's stride.
+
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
 Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool

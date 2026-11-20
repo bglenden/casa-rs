@@ -198,13 +198,18 @@ impl TaskFailure {
 pub struct TaskInvocation<'a> {
     session: &'a ParameterSession,
     workspace: &'a Path,
+    argument_text: Option<&'a BTreeMap<String, String>>,
 }
 
 impl<'a> TaskInvocation<'a> {
     /// A run of `session` in `workspace`, as the front end hands its
     /// callback one; a binary's tests build one to drive the callback.
     pub fn new(session: &'a ParameterSession, workspace: &'a Path) -> Self {
-        Self { session, workspace }
+        Self {
+            session,
+            workspace,
+            argument_text: None,
+        }
     }
 
     /// The surface to run.
@@ -215,6 +220,11 @@ impl<'a> TaskInvocation<'a> {
     /// The resolved session, with each value's origin.
     pub fn session(&self) -> &ParameterSession {
         self.session
+    }
+
+    /// How the calling front end represents a value in a recorded command.
+    pub fn argument_text(&self, name: &str) -> Option<&str> {
+        self.argument_text?.get(name).map(String::as_str)
     }
 
     /// Every active parameter's resolved value, by CASA name.
@@ -725,7 +735,7 @@ where
             .into_iter()
             .map(|warning| format!("Warning: could not save Last for {surface}: {warning}"))
             .collect::<Vec<_>>();
-        let outcome = self.execute(&session, &workspace);
+        let outcome = self.execute(&TaskInvocation::new(&session, &workspace));
         last.after_completion(&attempt, outcome.is_ok());
         stderr.extend(last.take_warnings().into_iter().map(|warning| {
             format!("Warning: could not save Last Successful for {surface}: {warning}")
@@ -927,7 +937,11 @@ where
                 diagnostic.parameter.clone(),
             );
         }
-        match self.execute(&session, &workspace) {
+        match self.execute(&TaskInvocation {
+            session: &session,
+            workspace: &workspace,
+            argument_text: Some(&request.argument_text),
+        }) {
             Ok(success) => {
                 output_lines.extend(success.output_lines);
                 TaskReply::Succeeded {
@@ -945,14 +959,10 @@ where
         }
     }
 
-    fn execute(
-        &self,
-        session: &ParameterSession,
-        workspace: &Path,
-    ) -> Result<TaskSuccess, TaskFailure> {
-        let surface = session.bundle().surface.id();
+    fn execute(&self, invocation: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+        let surface = invocation.surface();
         tracing::info!(task = surface, "{surface} started");
-        let outcome = (self.execute)(&TaskInvocation { session, workspace });
+        let outcome = (self.execute)(invocation);
         match &outcome {
             Ok(_) => tracing::info!(task = surface, "{surface} completed"),
             Err(failure) if failure.kind == TaskFailureKind::Interrupted => tracing::warn!(
