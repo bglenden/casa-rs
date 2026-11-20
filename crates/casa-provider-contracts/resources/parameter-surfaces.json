@@ -27843,10 +27843,10 @@
     {
       "kind": "task",
       "id": "importfits",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Import FITS",
       "category": "Images",
-      "summary": "Import a FITS primary image into a CASA image",
+      "summary": "Import a FITS image into a CASA image",
       "provider_family": "image_analysis",
       "casa_task": "importfits",
       "execution": {
@@ -28027,8 +28027,7 @@
             "provider": {"field": "whichrep"},
             "python": {"name": "whichrep"},
             "presentation": {"label": "Coordinate Representation", "group": "Input", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "whichhdu",
@@ -28042,8 +28041,7 @@
             "provider": {"field": "whichhdu"},
             "python": {"name": "whichhdu"},
             "presentation": {"label": "HDU", "group": "Input", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "zeroblanks",
@@ -28057,8 +28055,7 @@
             "provider": {"field": "zeroblanks"},
             "python": {"name": "zeroblanks"},
             "presentation": {"label": "Zero Blanks", "group": "Input", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "defaultaxes",
@@ -28072,12 +28069,11 @@
             "provider": {"field": "defaultaxes"},
             "python": {"name": "defaultaxes"},
             "presentation": {"label": "Default Axes", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "defaultaxesvalues",
-          "concept": {"id": "fits.defaultaxesvalues", "semantic_revision": 1},
+          "concept": {"id": "fits.defaultaxesvalues", "semantic_revision": 2},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "array", "value": []}},
           "required_when": {"kind": "never"},
@@ -28087,10 +28083,6 @@
             "provider": {"field": "defaultaxesvalues"},
             "python": {"name": "defaultaxesvalues"},
             "presentation": {"label": "Default Axis Values", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "defaultaxes", "value": {"kind": "bool", "value": true}}
           }
         },
         {
@@ -28105,8 +28097,7 @@
             "provider": {"field": "beam"},
             "python": {"name": "beam"},
             "presentation": {"label": "Beam", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         }
       ]
     },

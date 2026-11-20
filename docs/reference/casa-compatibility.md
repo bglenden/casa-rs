@@ -35,7 +35,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | immath | immath | yes | 15 | 15 | 0 | 0 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 6 | 1 | 0 |
 | impbcor | impbcor | yes | 12 | 12 | 0 | 6 | 0 | 0 |
-| importfits | importfits | yes | 9 | 9 | 0 | 6 | 0 | 0 |
+| importfits | importfits | yes | 9 | 9 | 0 | 0 | 0 | 0 |
 | importvla | importvla | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | impv | impv | yes | 16 | 16 | 0 | 9 | 0 | 0 |
 | imregrid | imregrid | yes | 10 | 10 | 0 | 5 | 0 | 0 |
@@ -828,7 +828,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the fitsimage parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `whichrep`, `whichhdu`, `zeroblanks`, `defaultaxes`, `defaultaxesvalues`, `beam`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 9, in CASA's order: yes
 - Defaults that differ: none

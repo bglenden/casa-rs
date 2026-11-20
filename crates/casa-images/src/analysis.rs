@@ -27,6 +27,7 @@ mod exportfits;
 mod extrema;
 mod imhead_fits;
 mod immath;
+mod importfits;
 mod imsubimage;
 pub use imsubimage::{
     SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
@@ -42,6 +43,7 @@ mod world_header;
 
 use self::axes::{direction_plane_axes, other_axes};
 pub use self::extrema::imhead_extrema;
+pub use self::importfits::importfits;
 pub use self::list_log::imhead_list_log;
 use self::planes::{PlaneAt, pv_samples, unravel_index};
 #[cfg(casa_prebuilt_image_provider)]
@@ -101,9 +103,9 @@ pub fn run_image_analysis_task(
         ImageAnalysisTaskRequest::Exportfits(request) => {
             Ok(ImageAnalysisTaskResult::Exportfits(exportfits(&request)?))
         }
-        ImageAnalysisTaskRequest::Importfits(request) => Ok(ImageAnalysisTaskResult::Importfits(
-            import_fits(&request.fitsimage, &request.imagename, request.overwrite)?,
-        )),
+        ImageAnalysisTaskRequest::Importfits(request) => {
+            Ok(ImageAnalysisTaskResult::Importfits(importfits(&request)?))
+        }
     }
 }
 
@@ -317,7 +319,9 @@ pub fn export_fits(
     })
 }
 
-/// Import a primary-HDU FITS image as a CASA image.
+/// Import a primary-HDU FITS image, preserving double-precision pixels.
+///
+/// For the CASA task defaults and selection options, use [`importfits()`].
 pub fn import_fits(
     fitsimage: impl AsRef<Path>,
     imagename: impl AsRef<Path>,
@@ -5080,7 +5084,7 @@ mod tests {
         run_image_analysis_task(ImageAnalysisTaskRequest::Importfits(ImportFitsRequest {
             fitsimage: fits_path.clone(),
             imagename: imported_path.clone(),
-            overwrite: false,
+            ..ImportFitsRequest::default()
         }))
         .unwrap();
         let imported = PagedImage::<f32>::open(&imported_path).unwrap();

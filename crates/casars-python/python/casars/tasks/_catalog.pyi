@@ -1002,7 +1002,7 @@ def importfits(
     zeroblanks: bool = ...,
     overwrite: bool = ...,
     defaultaxes: bool = ...,
-    defaultaxesvalues: str | list[str] | tuple[str, ...] = ...,
+    defaultaxesvalues: ParameterData | list[ParameterData] | tuple[ParameterData, ...] = ...,
     beam: str | list[str] | tuple[str, ...] = ...,
 ) -> Any:
     ...

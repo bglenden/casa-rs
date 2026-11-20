@@ -226,6 +226,13 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         _validate_required_path(values, "vis", arguments["vis"])
     if name == "plotms":
         return _call_plotms(values, arguments)
+    if name == "importfits":
+        try:
+            return run(name, **values).value
+        except TaskParameterError as error:
+            if error.completion.parameter in ("beam", "defaultaxesvalues"):
+                raise TypeError(error.completion.message) from error
+            raise
     if name == "listcal":
         return _call_listcal(values, arguments)
     if name == "calstat":

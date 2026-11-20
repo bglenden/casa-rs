@@ -796,19 +796,20 @@ impl CoordinateSystem {
     /// Set the active rest frequency in the spectral coordinate's stored unit.
     ///
     /// Other listed rest frequencies and the coordinate's original mappings
-    /// remain intact. Returns the updated system and previous active value.
+    /// remain intact. Zero leaves the rest frequency unspecified. Returns the
+    /// updated system and previous active value.
     ///
     /// # Errors
     ///
     /// Returns an error for missing or malformed spectral metadata, or a
-    /// non-positive or non-finite frequency.
+    /// negative or non-finite frequency.
     pub fn set_rest_frequency_in_record(
         record: &mut RecordValue,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
-        if !value.is_finite() || value <= 0.0 {
+        if !value.is_finite() || value < 0.0 {
             return Err(CoordinateError::InvalidRecord(
-                "rest frequency must be positive and finite".into(),
+                "rest frequency must be non-negative and finite".into(),
             ));
         }
         let (field, _) = Self::first_spectral_in_record(record)?

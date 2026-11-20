@@ -8821,9 +8821,9 @@
     },
     {
       "id": "fits.defaultaxesvalues",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "defaultaxesvalues",
-      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": null, "allow_scalar": true},
+      "value_domain": {"kind": "array", "element": {"kind": "variant"}, "min_items": 0, "max_items": null, "allow_scalar": true},
       "normalization": {"kind": "trim"},
       "base_constraints": [],
       "unit_dimension": null,

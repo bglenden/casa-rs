@@ -1701,6 +1701,12 @@ impl<T: ImagePixel> PagedImage<T> {
     ///
     /// Returns an error if the value or spectral metadata is invalid.
     pub fn set_rest_frequency(&mut self, value: f64) -> Result<f64, ImageError> {
+        if !value.is_finite() || value <= 0.0 {
+            return Err(casa_coordinates::CoordinateError::InvalidRecord(
+                "rest frequency must be positive and finite".into(),
+            )
+            .into());
+        }
         self.edit_coordinates(|record| {
             CoordinateSystem::set_rest_frequency_in_record(record, value)
         })

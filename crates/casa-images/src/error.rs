@@ -34,6 +34,15 @@ pub enum ImageError {
     #[error("{0}")]
     CasaSelection(String),
 
+    /// A task rejected the type or form of a named argument.
+    #[error("{message}")]
+    TaskArgumentType {
+        /// CASA parameter name.
+        parameter: &'static str,
+        /// Explanation presented to the caller.
+        message: String,
+    },
+
     /// A lattice-layer error occurred (indexing, slicing, tiling, etc.).
     #[error("lattice error: {0}")]
     Lattice(String),
