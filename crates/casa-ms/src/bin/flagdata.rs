@@ -11,7 +11,7 @@ use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
     FlagSummaryOptions, QuackMode, calculate_flagdata_path, flagdata_empty_record,
     flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
-    parse_numeric_id_selector, task_selection_text,
+    task_selection_text,
 };
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{
@@ -107,6 +107,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
     }
     Ok(FlagDataRequest {
         selection: selection(task, &spw)?,
+        casa_scan_and_baseline: true,
         spw: (!spw.is_empty()).then_some(spw),
         mode,
         action,
@@ -160,8 +161,14 @@ fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFa
             .at("field"));
         }
     }
+    let selector = |name| -> Result<Option<String>, TaskFailure> {
+        let text = task_selection_text(task, name)?;
+        Ok((!text.is_empty()).then_some(text))
+    };
     let mut selection = MsSelection {
         field: (!field.is_empty()).then_some(field),
+        scan: selector("scan")?,
+        antenna: selector("antenna")?,
         ..MsSelection::default()
     };
     if !spw.is_empty() {
@@ -169,34 +176,7 @@ fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFa
             .spw_selector(spw)
             .map_err(|error| TaskFailure::validation(error.to_string()).at("spw"))?;
     }
-    let scan = task_selection_text(task, "scan")?;
-    if !scan.is_empty() {
-        let ids = parse_numeric_id_selector(&scan, "scan")
-            .map_err(|error| TaskFailure::validation(error.to_string()).at("scan"))?;
-        selection = selection.scan(&ids);
-    }
-    let antenna = task_selection_text(task, "antenna")?;
-    if !antenna.is_empty() {
-        selection = antenna_selection(selection, &antenna);
-    }
     Ok(selection)
-}
-
-/// Antenna ids when every item is one, names otherwise.
-fn antenna_selection(selection: MsSelection, value: &str) -> MsSelection {
-    let parts = value
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    match parts
-        .iter()
-        .map(|part| part.parse::<i32>())
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(ids) => selection.antenna(&ids),
-        Err(_) => selection.antenna_name(&parts),
-    }
 }
 
 /// CASA's `mode`, with the action its manual flagging takes: `manualflag`

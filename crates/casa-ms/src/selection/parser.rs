@@ -21,27 +21,29 @@ pub(crate) fn selection_from_options(
 ) -> MsResult<CompiledMsSelection> {
     use super::RowGrammar;
 
-    let full_row_grammar = grammar != RowGrammar::Standard;
+    let full_row_grammar = matches!(grammar, RowGrammar::Casa | RowGrammar::Transform);
+    let flagdata = grammar == RowGrammar::FlagData;
     let mut selection = CompiledMsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
         selection = selection.field(resolve_field_predicate(ms, field)?);
     }
 
-    if full_row_grammar {
-        selection = super::row_grammar::apply(ms, selection, options)?;
-    } else {
+    if full_row_grammar || flagdata {
+        selection = super::row_grammar::apply(ms, selection, options, flagdata)?;
+    }
+    if !full_row_grammar {
         if let Some(spw) = options.spw.as_deref() {
             selection = selection.spw_selector(spw)?;
         }
-        if let Some(scan) = options.scan.as_deref() {
+        if !flagdata && let Some(scan) = options.scan.as_deref() {
             selection = selection.scan(&parse_numeric_id_selector(scan, "scan")?);
         }
         if let Some(observation) = options.observation.as_deref() {
             selection =
                 selection.observation(&parse_numeric_id_selector(observation, "observation")?);
         }
-        if let Some(antenna) = options.antenna.as_deref() {
+        if !flagdata && let Some(antenna) = options.antenna.as_deref() {
             selection = apply_antenna_selector(ms, selection, antenna)?;
         }
     }

@@ -24183,7 +24183,7 @@
           "name": "scan",
           "concept": {
             "id": "ms.selection.scan",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 12,
           "default": {
@@ -24209,11 +24209,11 @@
                 "--scan"
               ],
               "false_flags": [],
-              "metavar": "IDS"
+              "metavar": "SELECTOR"
             },
             "provider": {
               "field": "scan",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "scan",
@@ -24232,7 +24232,7 @@
           "name": "antenna",
           "concept": {
             "id": "ms.selection.antenna",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 8,
           "default": {
@@ -24262,7 +24262,7 @@
             },
             "provider": {
               "field": "antenna",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "antenna",
