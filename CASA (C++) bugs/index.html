@@ -4368,6 +4368,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#importfits-can-remove-an-existing-image-before-import-succeeds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        importfits can remove an existing image before import succeeds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exportfits-drops-characters-when-wrapping-long-history-cards" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11092,6 +11103,16 @@ file imports successfully when <code>whichhdu=-1</code> selects the first image 
 <code>whichhdu=1</code> selects its extension. casa-rs returns <code>RuntimeError</code> for the
 empty HDU and accepts both ways to select the extension. See
 <a href="https://github.com/bglenden/casa-rs/issues/1625">#1625</a>.</p>
+<h2 id="importfits-can-remove-an-existing-image-before-import-succeeds"><code>importfits</code> can remove an existing image before import succeeds<a class="headerlink" href="#importfits-can-remove-an-existing-image-before-import-succeeds" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 removes <code>imagename</code> as soon as it sees <code>overwrite=True</code>. A
+subsequent validation error, such as a beam whose major axis is smaller
+than its minor axis, leaves the old image gone. A beam position angle
+given in time units can fail after publishing the replacement image.
+The task also deletes the output path early when it contains the input
+FITS file.
+casa-rs stages the native image and exchanges it only after the new
+product is complete. It refuses output paths containing the FITS input
+and nonempty directories that are not native images (#977).</p>
 <h2 id="exportfits-drops-characters-when-wrapping-long-history-cards"><code>exportfits</code> drops characters when wrapping long <code>HISTORY</code> cards<a class="headerlink" href="#exportfits-drops-characters-when-wrapping-long-history-cards" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-19</li>

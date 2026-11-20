@@ -3,25 +3,39 @@
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::process::ExitCode;
 <a href=#5 id=5 data-nosnippet>5</a>
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_images::{ImageAnalysisTaskResult, image_task_front_end, image_task_success, import_fits};
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
-<a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">fn </span>main() -&gt; ExitCode {
-<a href=#10 id=10 data-nosnippet>10</a>    image_task_front_end(<span class="string">"importfits"</span>, <span class="kw-2">&amp;</span>[<span class="string">"importfits"</span>], run).main(
-<a href=#11 id=11 data-nosnippet>11</a>        std::env::args_os().skip(<span class="number">1</span>),
-<a href=#12 id=12 data-nosnippet>12</a>        casa_task_runtime::CasaLoggingConfig::from_env(),
-<a href=#13 id=13 data-nosnippet>13</a>        std::env::set_current_dir,
-<a href=#14 id=14 data-nosnippet>14</a>        <span class="kw-2">&amp;mut </span>std::io::stdout(),
-<a href=#15 id=15 data-nosnippet>15</a>        std::io::stderr(),
-<a href=#16 id=16 data-nosnippet>16</a>    )
-<a href=#17 id=17 data-nosnippet>17</a>}
-<a href=#18 id=18 data-nosnippet>18</a>
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
-<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">let </span>result = import_fits(
-<a href=#21 id=21 data-nosnippet>21</a>        task.input_path(<span class="string">"fitsimage"</span>)<span class="question-mark">?</span>,
-<a href=#22 id=22 data-nosnippet>22</a>        task.path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
-<a href=#23 id=23 data-nosnippet>23</a>        task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
-<a href=#24 id=24 data-nosnippet>24</a>    );
-<a href=#25 id=25 data-nosnippet>25</a>    image_task_success(result.map(ImageAnalysisTaskResult::Importfits))
-<a href=#26 id=26 data-nosnippet>26</a>}
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_images::{
+<a href=#7 id=7 data-nosnippet>7</a>    ImageAnalysisTaskResult, ImportFitsRequest, image_task_front_end, image_task_success,
+<a href=#8 id=8 data-nosnippet>8</a>    importfits,
+<a href=#9 id=9 data-nosnippet>9</a>};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_provider_contracts::ParameterValue;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+<a href=#12 id=12 data-nosnippet>12</a>
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">fn </span>main() -&gt; ExitCode {
+<a href=#14 id=14 data-nosnippet>14</a>    image_task_front_end(<span class="string">"importfits"</span>, <span class="kw-2">&amp;</span>[<span class="string">"importfits"</span>], run).main(
+<a href=#15 id=15 data-nosnippet>15</a>        std::env::args_os().skip(<span class="number">1</span>),
+<a href=#16 id=16 data-nosnippet>16</a>        casa_task_runtime::CasaLoggingConfig::from_env(),
+<a href=#17 id=17 data-nosnippet>17</a>        std::env::set_current_dir,
+<a href=#18 id=18 data-nosnippet>18</a>        <span class="kw-2">&amp;mut </span>std::io::stdout(),
+<a href=#19 id=19 data-nosnippet>19</a>        std::io::stderr(),
+<a href=#20 id=20 data-nosnippet>20</a>    )
+<a href=#21 id=21 data-nosnippet>21</a>}
+<a href=#22 id=22 data-nosnippet>22</a>
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">fn </span>run(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt; {
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">let </span>items = |name| <span class="kw">match </span>task.value(name) {
+<a href=#25 id=25 data-nosnippet>25</a>        <span class="prelude-val">Some</span>(ParameterValue::Array(items)) =&gt; <span class="prelude-val">Ok</span>(items.clone()),
+<a href=#26 id=26 data-nosnippet>26</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TaskFailure::validation(<span class="string">"expected a list"</span>).at(name)),
+<a href=#27 id=27 data-nosnippet>27</a>    };
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">let </span>request = ImportFitsRequest {
+<a href=#29 id=29 data-nosnippet>29</a>        fitsimage: task.input_path(<span class="string">"fitsimage"</span>)<span class="question-mark">?</span>,
+<a href=#30 id=30 data-nosnippet>30</a>        imagename: task.path(<span class="string">"imagename"</span>)<span class="question-mark">?</span>,
+<a href=#31 id=31 data-nosnippet>31</a>        whichrep: task.integer(<span class="string">"whichrep"</span>)<span class="question-mark">?</span>,
+<a href=#32 id=32 data-nosnippet>32</a>        whichhdu: task.integer(<span class="string">"whichhdu"</span>)<span class="question-mark">?</span>,
+<a href=#33 id=33 data-nosnippet>33</a>        zeroblanks: task.flag(<span class="string">"zeroblanks"</span>)<span class="question-mark">?</span>,
+<a href=#34 id=34 data-nosnippet>34</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
+<a href=#35 id=35 data-nosnippet>35</a>        defaultaxes: task.flag(<span class="string">"defaultaxes"</span>)<span class="question-mark">?</span>,
+<a href=#36 id=36 data-nosnippet>36</a>        defaultaxesvalues: items(<span class="string">"defaultaxesvalues"</span>)<span class="question-mark">?</span>,
+<a href=#37 id=37 data-nosnippet>37</a>        beam: items(<span class="string">"beam"</span>)<span class="question-mark">?</span>,
+<a href=#38 id=38 data-nosnippet>38</a>    };
+<a href=#39 id=39 data-nosnippet>39</a>    image_task_success(importfits(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Importfits))
+<a href=#40 id=40 data-nosnippet>40</a>}
 </code></pre></div></section></main></body></html>

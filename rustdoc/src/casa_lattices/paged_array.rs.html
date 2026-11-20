@@ -296,7 +296,7 @@
 <a href=#296 id=296 data-nosnippet>296</a>                .map_err(tiled_io_err)<span class="question-mark">?</span>;
 <a href=#297 id=297 data-nosnippet>297</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#298 id=298 data-nosnippet>298</a>        }
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(slice) = typed.as_slice_memory_order() {
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(slice) = typed.view().reversed_axes().to_slice() {
 <a href=#300 id=300 data-nosnippet>300</a>            tio.put_slice_fortran::&lt;U&gt;(slice, start, typed.shape())
 <a href=#301 id=301 data-nosnippet>301</a>                .map_err(tiled_io_err)<span class="question-mark">?</span>;
 <a href=#302 id=302 data-nosnippet>302</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());

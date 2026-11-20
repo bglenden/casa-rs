@@ -2007,10 +2007,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-importfits">Import FITS</a><br><code>importfits</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>image_analysis</code></td>
 <td style="text-align: right;">9</td>
-<td>Import a FITS primary image into a CASA image</td>
+<td>Import a FITS image into a CASA image</td>
 </tr>
 <tr>
 <td><a href="#surface-msconvert">MS Convert</a><br><code>msconvert</code></td>
@@ -9596,10 +9596,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="import-fits-importfits">Import FITS (<code>importfits</code>)<a class="headerlink" href="#import-fits-importfits" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
-<li>Summary: Import a FITS primary image into a CASA image</li>
+<li>Summary: Import a FITS image into a CASA image</li>
 </ul>
 <table>
 <thead>
@@ -9671,8 +9671,8 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>defaultaxesvalues</code></td>
-<td><code>fits.defaultaxesvalues@r1</code></td>
-<td><code>array&lt;string&gt;</code></td>
+<td><code>fits.defaultaxesvalues@r2</code></td>
+<td><code>array&lt;variant&gt;</code></td>
 <td><code>[]</code>; optional</td>
 <td>Output</td>
 <td>Values of the degenerate axes defaultaxes adds.</td>
