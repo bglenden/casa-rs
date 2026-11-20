@@ -544,7 +544,7 @@ impl PyCoordsys {
         format: &str,
         velocities: bool,
     ) -> PyResult<CasaValue> {
-        image_world_record(&self.state(), pixel, format, velocities)
+        image_world_record(&self.state(), pixel, format, velocities, false)
     }
 
     pub(in crate::tools) fn image_measures(
@@ -555,11 +555,11 @@ impl PyCoordsys {
     ) -> PyResult<CasaValue> {
         let state = self.state();
         if direction_frame.eq_ignore_ascii_case("cl") && spectral_frame.eq_ignore_ascii_case("cl") {
-            return image_world_record(&state, pixel, "m", true);
+            return image_world_record(&state, pixel, "m", true, false);
         }
         let mut state = state.clone();
         select_measure_frames(&mut state.coordinates, direction_frame, spectral_frame)?;
-        image_world_record(&state, pixel, "m", true)
+        image_world_record(&state, pixel, "m", true, false)
     }
 
     pub(in crate::tools) fn image_pixel(&self, value: WorldArgument) -> PyResult<CasaValue> {
@@ -595,7 +595,7 @@ impl PyCoordsys {
             "unsupported record type for pixel",
             "unsupported data type for pixel",
         )?;
-        py.detach(|| self.image_world(pixel, format, true))?
+        py.detach(|| image_world_record(&self.state(), pixel, format, true, true))?
             .into_python(py)
     }
 }
@@ -605,6 +605,7 @@ fn image_world_record(
     pixel: Vec<f64>,
     format: &str,
     velocities: bool,
+    coordinate_tags: bool,
 ) -> PyResult<CasaValue> {
     let mut complete: Vec<_> = models(&state.coordinates)
         .flat_map(CoordinateModel::reference_pixel)
@@ -615,7 +616,7 @@ fn image_world_record(
             "Exception: Error converting to world coordinates: {error}"
         ))
     })?;
-    format_transformed_world(state, &world, format, velocities, false)
+    format_transformed_world(state, &world, format, velocities, coordinate_tags)
 }
 
 fn select_measure_frames(
