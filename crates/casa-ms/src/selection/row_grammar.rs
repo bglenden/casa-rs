@@ -18,7 +18,7 @@ pub(super) fn apply(
     options: &ListObsOptions,
     flagdata: bool,
 ) -> MsResult<CompiledMsSelection> {
-    if let Some(text) = options.spw.as_deref() {
+    if !flagdata && let Some(text) = options.spw.as_deref() {
         let spw = ms.resolve_spw_selector(text)?;
         compiled.spw_data_desc_ids = spw
             .row_data_descriptions()
@@ -61,21 +61,26 @@ pub(super) fn apply(
         compiled.casa_taql_exprs.push(baseline_predicate(&baseline));
         compiled.casa_baseline = Some(baseline);
     }
+    let observation = if flagdata {
+        None
+    } else {
+        options.observation.as_deref()
+    };
     for (column, label, text, target) in [
         (
             "SCAN_NUMBER",
             "scan",
-            &options.scan,
+            options.scan.as_deref(),
             &mut compiled.casa_scan_ranges,
         ),
         (
             "OBSERVATION_ID",
             "observation",
-            &options.observation,
+            observation,
             &mut compiled.casa_observation_ranges,
         ),
     ] {
-        if let Some(text) = text.as_deref().filter(|text| !text.is_empty()) {
+        if let Some(text) = text.filter(|text| !text.is_empty()) {
             let ranges = parse_numeric_row_id_ranges(text, label)?;
             compiled
                 .casa_taql_exprs
