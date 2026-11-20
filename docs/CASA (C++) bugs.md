@@ -7855,3 +7855,13 @@ axis order, readable in CASA.
 On the pinned Linux build, `dropdeg=True` on a `[1, 1, 1, 1]` float image
 can terminate Python with SIGFPE. casa-rs raises `RuntimeError` because no
 image axes would remain. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Image region collapse can select the first pixel or abort
+
+With a 5×4×2 image whose coordinate is linear, CASA 6.7.6.14
+`image.getregion(axes=[0])` can return shape `(1, 1, 2)` with the first
+two input pixels. With the standard coordinates and double-complex
+pixels, the same call can terminate the process.
+
+casa-rs averages valid pixels over the requested axes and retains all
+other axes, for every supported image pixel type (#1627).

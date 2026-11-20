@@ -1584,28 +1584,47 @@ impl<T: ImageExprValue> MaskExpression<T> {
         window_shape: &[usize],
         full_shape: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
-        if self.shape == full_shape {
-            return self.get_slice(window_start, window_shape);
+        self.eval_section_for_shape(
+            window_start,
+            window_shape,
+            &vec![1; window_shape.len()],
+            full_shape,
+        )
+    }
+
+    /// Evaluates a strided section relative to a target lattice shape.
+    /// A compatible smaller mask is stretched by broadcasting its singleton
+    /// axes. Only the requested section needs to be evaluated.
+    pub fn eval_section_for_shape(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+        full_shape: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        validate_slice_request(full_shape, start, shape, stride)?;
+        if self.shape.is_empty() && !self.node.is_shape_polymorphic() {
+            return Ok(ArrayD::from_elem(IxDyn(shape), self.get_at(&[])?));
         }
-        if self.shape.is_empty() && !window_shape.is_empty() {
-            let mut ctx = CompiledEvalContext::new(self.arena.sources.len());
-            return self
-                .node
-                .eval_slice(
-                    &self.arena,
-                    &mut ctx,
-                    window_start,
-                    window_shape,
-                    &vec![1; window_shape.len()],
-                )
-                .map_err(Into::into);
+        let evaluate =
+            |start: &[usize], shape: &[usize], strides: &[usize]| -> Result<_, ImageError> {
+                if strides.iter().all(|step| *step == 1) && !self.shape.is_empty() {
+                    self.get_slice(start, shape)
+                } else {
+                    let mut ctx = CompiledEvalContext::new(self.arena.sources.len());
+                    self.node
+                        .eval_slice(&self.arena, &mut ctx, start, shape, strides)
+                        .map_err(Into::into)
+                }
+            };
+        if self.shape == full_shape || self.shape.is_empty() {
+            return evaluate(start, shape, stride);
         }
         if can_broadcast_to(&self.shape, full_shape) {
-            let ones = vec![1; window_shape.len()];
-            let (c_start, c_shape, _) =
-                slice_for_broadcast_child(&self.shape, window_start, window_shape, &ones);
-            let child_mask = self.get_slice(&c_start, &c_shape)?;
-            return broadcast_array(child_mask, window_shape);
+            let (source_start, source_shape, source_stride) =
+                slice_for_broadcast_child(&self.shape, start, shape, stride);
+            let child_mask = evaluate(&source_start, &source_shape, &source_stride)?;
+            return broadcast_array(child_mask, shape);
         }
         Err(ImageError::ShapeMismatch {
             expected: full_shape.to_vec(),

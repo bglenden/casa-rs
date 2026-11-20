@@ -34,6 +34,7 @@ mod modify;
 mod pixels;
 mod point;
 mod records;
+mod region_read;
 mod replace_masked;
 mod serialization;
 mod stubs;
