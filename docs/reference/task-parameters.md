@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 808
+- Concepts: 809
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -547,7 +547,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>usewtspectrum</code> | <code>mstransform.usewtspectrum@r1</code> | <code>bool</code> | <code>false</code>; optional | Data | Create WEIGHT_SPECTRUM and SIGMA_SPECTRUM in the output. |
 | <code>combinespws</code> | <code>mstransform.combinespws@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Combine the selected spectral windows into one. |
 | <code>chanaverage</code> | <code>mstransform.chanaverage@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Average chanbin channels into one. |
-| <code>chanbin</code> | <code>parameter.chanbin@r1</code> | <code>integer</code> | <code>1</code>; optional | Spectral | Channel bin mode.<br><em>Surface:</em> Averages chanbin channels when chanaverage is True, as CASA's mstransform does. |
+| <code>chanbin</code> | <code>mstransform.chanbin@r1</code> | <code>variant</code> | <code>1</code>; optional | Spectral | Channel-averaging width as a single integer or a per-SPW integer list.<br><em>Surface:</em> Averages chanbin channels when chanaverage is True. A list with more than one entry gives one width per selected spectral window. |
 | <code>hanning</code> | <code>mstransform.hanning@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Hanning-smooth the spectra. |
 | <code>regridms</code> | <code>mstransform.regridms@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Regrid the spectral axis. |
 | <code>mode</code> | <code>regridms.mode@r1</code> | <code>string</code> | <code>"channel"</code>; optional | Spectral | How the regridded spectral axis is given: 'channel', 'velocity', 'frequency' or 'channel_b'. |
@@ -608,7 +608,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>feed</code> | <code>ms.selection.feed@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA feed IDs and feed pair selection. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
-| <code>width</code> | <code>ms.transform.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Selection | Number of adjacent selected channels averaged into each output channel. |
+| <code>width</code> | <code>ms.transform.width@r2</code> | <code>variant</code> | <code>1</code>; optional | Selection | Channel-averaging width as an integer, numeric string, or per-SPW integer list. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Averaging | Averaging time bin, a time quantity as CASA writes it. |
 | <code>combine</code> | <code>parameter.combine@r1</code> | <code>string</code> | <code>""</code>; optional | Averaging | Axes to combine. |
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors<br><em>Surface:</em> casa-rs's own control: CASA's split has no msselect parameter. |
