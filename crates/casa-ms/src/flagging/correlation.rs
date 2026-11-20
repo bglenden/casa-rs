@@ -82,21 +82,23 @@ impl CorrelationSelection {
             })
             .collect();
 
+        let windows = ms.spectral_window().map_err(failed)?;
         let descriptions = ms.data_description().map_err(failed)?;
         let descriptions = (0..descriptions.row_count())
             .map(|row| {
-                Ok((
-                    descriptions.polarization_id(row)?,
-                    descriptions.flag_row(row)?,
-                ))
+                let id = descriptions.polarization_id(row)?;
+                let spw = descriptions.spectral_window_id(row)?;
+                let active = !descriptions.flag_row(row)? && !windows.flag_row(spw as usize)?;
+                Ok((id, active))
             })
             .collect::<Result<Vec<_>, MsError>>()
             .map_err(failed)?;
-        // CASA enables the mask per polarization, including for a flagged
-        // description if another unflagged description references that setup.
+        // The implicit SPW wildcard for polarization parsing ignores flagged
+        // windows and descriptions when admitting a setup. The resulting mask
+        // is used by polarization ID, including other descriptions of it.
         let active: BTreeSet<_> = descriptions
             .iter()
-            .filter_map(|&(id, flagged)| (!flagged).then_some(id))
+            .filter_map(|&(id, active)| active.then_some(id))
             .collect();
         let by_description = descriptions
             .into_iter()

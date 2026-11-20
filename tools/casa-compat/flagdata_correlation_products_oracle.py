@@ -139,6 +139,8 @@ def compare_flagged_metadata(vis, metadata):
         ("POLARIZATION", "RR", False, {1: 1}),
         ("DATA_DESCRIPTION", "RR", False, {}),
         ("DATA_DESCRIPTION", "XX", True, {0: 0, 1: 0}),
+        ("SPECTRAL_WINDOW", "RR", False, {}),
+        ("SPECTRAL_WINDOW", "XX", True, {0: 0, 1: 0}),
     )
     for index, (subtable, correlation, shared, planes) in enumerate(cases):
         reference, native = f"metadata-reference-{index}.ms", f"metadata-native-{index}.ms"
@@ -146,7 +148,8 @@ def compare_flagged_metadata(vis, metadata):
             copytree(vis, path)
             with table(f"{path}/{subtable}", readonly=False, ack=False) as stored:
                 stored.putcell("FLAG_ROW", 1, True)
-                if shared:
+            if shared:
+                with table(f"{path}/DATA_DESCRIPTION", readonly=False, ack=False) as stored:
                     stored.putcell("POLARIZATION_ID", 1, 0)
             assert module.flagdata(vis=path, correlation=correlation, flagbackup=False) == {}
         assert_equal(reference, native)
