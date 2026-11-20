@@ -86,6 +86,9 @@ shape and compatible coordinates as a native float or complex image.
 Use `ia.convertflux(value, major, minor)` to convert a Gaussian's integrated
 flux to peak brightness. Pass `topeak=False` for the reverse conversion and
 select the channel and polarization for an image with per-plane beams.
+Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
+float or complex image. Use `update=True` to validate the selected native
+pixel mask after replacement.
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.

@@ -5,6 +5,12 @@
 
 pub(super) mod coords;
 pub(super) mod region;
+mod replace_masked;
+
+pub use replace_masked::{
+    MaskReplacementOptions, MaskReplacementOutcome, replace_masked_complex_pixels,
+    replace_masked_real_pixels,
+};
 
 use std::collections::BTreeSet;
 use std::fs;

@@ -22,6 +22,7 @@ mod metadata;
 mod pixels;
 mod point;
 mod records;
+mod replace_masked;
 mod stubs;
 mod subimage;
 mod summary;

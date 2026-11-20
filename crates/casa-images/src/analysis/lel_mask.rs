@@ -9,7 +9,10 @@ use casa_coordinates::CoordinateSystem;
 use casa_types::{ArrayD, Complex32, Complex64};
 
 use crate::analysis::mask_error_wording;
-use crate::expr_parser::{HashMapResolver, parse_subimage_mask_expr, referenced_images};
+use crate::expr_parser::{
+    HashMapResolver, ReplacementPixels, evaluate_replacement, parse_subimage_mask_expr,
+    referenced_images,
+};
 use crate::image_expr_lel::broadcast_array;
 use crate::{
     AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage, TempImage,
@@ -31,13 +34,13 @@ impl<T: ImagePixel> MaskSource<T> {
 }
 
 enum Operand {
-    Real(MaskSource<f64>),
+    Real(MaskSource<f64>, bool),
     Complex(MaskSource<Complex64>),
 }
 impl Operand {
     fn geometry(&self) -> (&[usize], &CoordinateSystem) {
         match self {
-            Self::Real(source) => (
+            Self::Real(source, _) => (
                 source.as_interface().shape(),
                 source.as_interface().coordinates(),
             ),
@@ -47,6 +50,62 @@ impl Operand {
             ),
         }
     }
+}
+
+fn is_single_precision(opened: &[(String, Operand)], name: &str) -> bool {
+    opened
+        .iter()
+        .any(|(source, value)| source == name && matches!(value, Operand::Real(_, true)))
+}
+
+pub(super) fn evaluate_replacement_pixels(
+    expression: &str,
+    selected_shape: &[usize],
+    want_complex: bool,
+) -> Result<ReplacementPixels, ImageError> {
+    if expression.trim() == "[]" {
+        return Err(ImageError::CasaSelection(
+            "Image Expression: Parse error at or near ']'".into(),
+        ));
+    }
+    let opened = image_operands(expression)?;
+    let (real, complex) = operand_resolvers(&opened);
+    evaluate_replacement(
+        expression,
+        &real,
+        &complex,
+        &|name| is_single_precision(&opened, name),
+        selected_shape,
+        want_complex,
+    )
+}
+
+fn image_operands(expression: &str) -> Result<Vec<(String, Operand)>, ImageError> {
+    referenced_images(expression)?
+        .into_iter()
+        .map(|name| {
+            let image = open_operand(&name)?;
+            Ok::<_, ImageError>((name, image))
+        })
+        .collect()
+}
+
+fn operand_resolvers(
+    opened: &[(String, Operand)],
+) -> (HashMapResolver<'_, f64>, HashMapResolver<'_, Complex64>) {
+    let mut real = HashMap::new();
+    let mut complex = HashMap::new();
+    for (name, operand) in opened {
+        match operand {
+            Operand::Real(source, _) => {
+                real.insert(name.clone(), source.as_interface());
+            }
+            Operand::Complex(source) => {
+                complex.insert(name.clone(), source.as_interface());
+            }
+        }
+    }
+    (HashMapResolver(real), HashMapResolver(complex))
 }
 
 /// Evaluates an optional `mask` expression over `window` `(start, shape)` of a
@@ -106,20 +165,8 @@ fn evaluate(
     window: (&[usize], &[usize]),
     opened: &[(String, Operand)],
 ) -> Result<Option<ArrayD<bool>>, ImageError> {
-    let mut real = HashMap::new();
-    let mut complex = HashMap::new();
-    for (name, operand) in opened {
-        match operand {
-            Operand::Real(source) => {
-                real.insert(name.clone(), source.as_interface());
-            }
-            Operand::Complex(source) => {
-                complex.insert(name.clone(), source.as_interface());
-            }
-        }
-    }
-    let parsed = parse_subimage_mask_expr(expr, &HashMapResolver(real), &HashMapResolver(complex))
-        .map_err(mask_parse_error)?;
+    let (real, complex) = operand_resolvers(opened);
+    let parsed = parse_subimage_mask_expr(expr, &real, &complex).map_err(mask_parse_error)?;
     let mask_shape = parsed.shape();
     if mask_shape != target_shape && !mask_shape.is_empty() {
         if !stretch {
@@ -250,7 +297,7 @@ fn open_path_with_mask_name(
             pixels,
             mask,
         )?;
-        return Ok(Operand::Real(MaskSource::Memory(Box::new(temp))));
+        return Ok(Operand::Real(MaskSource::Memory(Box::new(temp)), true));
     }
 
     match AnyPagedImage::open(path)? {
@@ -261,10 +308,11 @@ fn open_path_with_mask_name(
                     path.display()
                 )));
             }
-            Ok(Operand::Real(MaskSource::Paged(Box::new(img))))
+            Ok(Operand::Real(MaskSource::Paged(Box::new(img)), false))
         }
         AnyPagedImage::Float32(img) => {
-            convert_paged_mask_source(&img, mask_name.as_deref(), f64::from).map(Operand::Real)
+            convert_paged_mask_source(&img, mask_name.as_deref(), f64::from)
+                .map(|image| Operand::Real(image, true))
         }
         AnyPagedImage::Complex64(img) if mask_name.is_none() => {
             Ok(Operand::Complex(MaskSource::Paged(Box::new(img))))
