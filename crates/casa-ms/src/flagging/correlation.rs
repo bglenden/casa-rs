@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Stored correlation planes selected by the CASA manual and quack agents.
+//! Stored correlation planes selected by the CASA flagging agents.
 
 use std::collections::BTreeSet;
 
@@ -26,10 +26,18 @@ impl CorrelationSelection {
         if text.is_empty() {
             return Ok(None);
         }
-        if !matches!(mode, FlagDataMode::Manual | FlagDataMode::Quack)
-            || ["ABS", "ARG", "REAL", "IMAG", "NORM", "WVR"]
-                .iter()
-                .any(|prefix| text.contains(prefix))
+        let has_operator = ["ABS", "ARG", "REAL", "IMAG", "NORM"]
+            .iter()
+            .any(|operator| text.contains(operator));
+        // The summary agent reads stored flags and does not evaluate
+        // visibility expressions. CASA leaves its planes unfiltered here.
+        if mode == FlagDataMode::Summary && has_operator {
+            return Ok(None);
+        }
+        if mode != FlagDataMode::Summary
+            && (!matches!(mode, FlagDataMode::Manual | FlagDataMode::Quack)
+                || has_operator
+                || text.contains("WVR"))
         {
             return Err(FlaggingError::MutateFlags {
                 path: display_ms_path(ms),
@@ -122,5 +130,9 @@ impl CorrelationSelection {
         self.by_description
             .get(ddid as usize)
             .map_or(&[], Vec::as_slice)
+    }
+
+    pub(super) fn has_setup(&self) -> bool {
+        self.by_description.iter().any(|planes| !planes.is_empty())
     }
 }
