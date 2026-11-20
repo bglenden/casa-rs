@@ -164,6 +164,15 @@ def definition_cases(root, reference_ms, factories):
         "selected-spw": dict(nx=32, spw=[-1], restfreq="100GHz", outframe="TOPO"),
         "channel": dict(nx=32, mode="channel", nchan=4, start=2, step=2, outframe="TOPO"),
         "frequency": dict(nx=32, mode="frequency", nchan=3, start="100GHz", step="20MHz"),
+        "restless-mfs": dict(nx=32),
+        "restless-frequency": dict(nx=32, mode="frequency", nchan=3, start="100.003GHz",
+                                   step="2MHz"),
+        "native-frame": dict(nx=32, mode="channel", nchan=3, start=2, step=2, outframe=""),
+        "velocity-default": dict(nx=32, mode="opticalvelocity", nchan=4, start="3km/s",
+                                 step="5km/s", restfreq="100.006GHz", outframe="TOPO"),
+        "velocity-optical": dict(nx=32, mode="velocity", nchan=4, start="3km/s", step="5km/s",
+                                 veltype="optical", restfreq="100.006GHz", outframe="TOPO"),
+        "north-pole": dict(nx=32, phasecenter=-1),
     }
     reports = {}
     for name, arguments in definitions.items():
@@ -172,11 +181,38 @@ def definition_cases(root, reference_ms, factories):
         for engine, factory in factories.items():
             path = root / f"definition-{name}-{engine}.ms"
             shutil.copytree(reference_ms, path)
+            if name.startswith("restless-") or name == "native-frame":
+                with_table = table()
+                subtable = "SPECTRAL_WINDOW" if name == "native-frame" else "SOURCE"
+                assert with_table.open(str(path / subtable), nomodify=False)
+                try:
+                    if name == "native-frame":
+                        with_table.putcell("MEAS_FREQ_REF", 0, 1)  # LSRK
+                    else:
+                        with_table.removecols(["REST_FREQUENCY"])
+                finally:
+                    with_table.close()
             model = root / f"definition-{name}-{engine}.im"
             tool = factory()
             assert tool.open(str(path), usescratch=True)
             assert tool.selectvis(field=0)
             assert tool.defineimage(**arguments), (name, engine)
+            if name == "defaults":
+                for convolution in ("gauss", "gjinc"):
+                    try:
+                        tool.setoptions(ftmachine="wproject", gridfunction=convolution)
+                    except RuntimeError as error:
+                        assert "only for single dish imaging" in str(error)
+                    else:
+                        raise AssertionError((engine, convolution))
+                assert tool.setoptions()
+            if name == "channel" and engine == "native":
+                assert tool.setoptions(freqinterp="linear")
+                before = samples(path)
+                assert tool.ft(str(model)) is False
+                assert not model.exists()
+                np.testing.assert_array_equal(samples(path), before)
+                assert tool.setoptions(freqinterp="nearest")
             assert tool.ft(str(model)), (name, engine)
             assert tool.done()
             observed = empty_image(model)
@@ -218,12 +254,47 @@ def definition_cases(root, reference_ms, factories):
             np.testing.assert_allclose(result[:-1], reference[:-1], rtol=0, atol=1e-14)
             np.testing.assert_allclose(result[-1], reference[-1], rtol=0, atol=0.002)
             reports[f"{name}-{name_of_axis}-hz"] = float(abs(result[-1] - reference[-1]))
+        # The absent MFS rest frequency uses the synthesized center, which
+        # has the same sub-millihertz measures precision as the frequency axis.
+        if name == "restless-mfs":
+            np.testing.assert_allclose(actual.pop("rest"), expected.pop("rest"), rtol=0, atol=0.002)
         np.testing.assert_equal(actual, expected)
         if predictions:
             assert np.max(np.abs(predictions[0])) > 1.
             error = relative_rms(predictions[1], predictions[0])
             assert error < 1e-3, (name, error)
             reports["channel_cube_nrms"] = error
+    reports.update(reopened_channel_cube(root, reference_ms, factories))
+    return reports
+
+
+def reopened_channel_cube(root, reference_ms, factories):
+    """The fresh tool uses the stored frequency axis for a different MS selection."""
+    model = root / "definition-channel-casa.im"
+    reports = {}
+    for label, shift, field in (("other_field", 0., 1), ("other_epoch", 180. * 86400., 0)):
+        predictions = []
+        for engine, factory in factories.items():
+            path = root / f"cube-{label}-{engine}.ms"
+            shutil.copytree(reference_ms, path)
+            if shift:
+                stored = table()
+                assert stored.open(str(path), nomodify=False)
+                try:
+                    for column in ("TIME", "TIME_CENTROID"):
+                        stored.putcol(column, stored.getcol(column) + shift)
+                finally:
+                    stored.close()
+            tool = factory()
+            assert tool.open(str(path), usescratch=True)
+            assert tool.selectvis(field=field)
+            assert tool.ft(str(model)) and tool.done()
+            predictions.append(samples(path, field=field))
+        expected, actual = predictions
+        assert np.max(np.abs(expected)) > 1.
+        error = relative_rms(actual, expected)
+        assert error < 1e-3, (label, error)
+        reports[f"channel_cube_{label}_nrms"] = error
     return reports
 
 

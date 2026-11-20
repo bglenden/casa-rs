@@ -30,6 +30,12 @@ impl TransformArguments<'_> {
     ) -> PyResult<ImagerTransformOptions> {
         let machine = self.machine.to_ascii_lowercase();
         let convolution = self.convolution.to_ascii_lowercase();
+        if machine != "sd" && matches!(convolution.as_str(), "gauss" | "gjinc") {
+            return Err(runtime_error(format!(
+                "Grid function {} is available only for single dish imaging",
+                self.convolution,
+            )));
+        }
         previous.gridder = match machine.as_str() {
             "wproject" => ImagerGridder::w_project(self.planes),
             "mosaic" | "pbwproject" | "pbmosaic" | "awproject" | "mawproject" | "sd" | "both"
@@ -43,12 +49,6 @@ impl TransformArguments<'_> {
             _ => match convolution.as_str() {
                 "box" => ImagerGridder::Boxcar,
                 "sf" => ImagerGridder::Spheroidal,
-                "gauss" | "gjinc" => {
-                    return Err(runtime_error(format!(
-                        "Grid function {} is available only for single dish imaging",
-                        self.convolution,
-                    )));
-                }
                 _ => {
                     return Err(runtime_error(format!(
                         "Unknown interferometric grid function {}",

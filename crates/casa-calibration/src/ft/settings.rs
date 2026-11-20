@@ -82,5 +82,6 @@ impl ImagerTransformOptions {
 pub(super) struct PredictionGeometry {
     pub(super) settings: ImagerTransformOptions,
     pub(super) phase_centre_time: Option<f64>,
+    pub(super) frequency_frame_valid: bool,
     pub(super) voltage_pattern: Option<PreparedVoltagePattern>,
 }

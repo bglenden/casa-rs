@@ -4,6 +4,7 @@
 use casa_calibration::{ImagerDefinitionRequest, ImagerPhaseCentre, ImagerSpectralAxis};
 use casa_coordinates::{ProjectionType, StokesType};
 use casa_ms::{CubeAxisConfig, CubeAxisValue};
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
 use pyo3::prelude::*;
@@ -78,9 +79,18 @@ impl ImageArguments<'_> {
             })?;
         let stokes = stokes_planes(self.stokes)?;
         let centre = match self.centre {
-            Variant::Number(_) | Variant::Numbers(_) | Variant::Empty => ImagerPhaseCentre::Field(
-                usize::try_from(channel_number(self.centre)).map_err(runtime_error)?,
-            ),
+            Variant::Number(_) | Variant::Numbers(_) | Variant::Empty => {
+                let index = channel_number(self.centre);
+                if index < 0 {
+                    ImagerPhaseCentre::Direction(MDirection::from_angles(
+                        0.,
+                        std::f64::consts::FRAC_PI_2,
+                        DirectionRef::J2000,
+                    ))
+                } else {
+                    ImagerPhaseCentre::Field(index as usize)
+                }
+            }
             value if empty(value) => ImagerPhaseCentre::Field(0),
             value => ImagerPhaseCentre::Direction(
                 direction(
@@ -97,7 +107,9 @@ impl ImageArguments<'_> {
                 1520,
             );
         }
-        let frame = frequency_reference(self.frame)?;
+        let frame = (!self.frame.is_empty())
+            .then(|| frequency_reference(self.frame))
+            .transpose()?;
         let windows = if self.windows == [-1] {
             Vec::new()
         } else {
@@ -135,7 +147,7 @@ fn spectral_axis(
     channels: i64,
     start: &Variant,
     step: &Variant,
-    outframe: FrequencyRef,
+    outframe: Option<FrequencyRef>,
     velocity: &str,
 ) -> PyResult<ImagerSpectralAxis> {
     let mode = mode.to_ascii_uppercase();
@@ -143,7 +155,7 @@ fn spectral_axis(
         return Ok(ImagerSpectralAxis::Continuum(outframe));
     }
     let mut config = CubeAxisConfig {
-        outframe,
+        outframe: outframe.unwrap_or(FrequencyRef::LSRK),
         ..CubeAxisConfig::default()
     };
     let mut frame = outframe;
@@ -158,13 +170,13 @@ fn spectral_axis(
             hz: start.hz(),
             frame: None,
         });
-        frame = start.refer();
+        frame = Some(start.refer());
         config.width = Some(CubeAxisValue::FrequencyHz {
             hz: quantity_value(step, "Hz")?,
             frame: None,
         });
     } else if mode.contains("VEL") || mode.contains("OPTICAL") || mode.contains("TRUE") {
-        let velocity = if mode == "VELOCITY" {
+        let velocity = if mode.contains("VELO") {
             velocity.to_ascii_uppercase()
         } else {
             mode
@@ -181,7 +193,7 @@ fn spectral_axis(
         };
         let (start, start_frame) = radial_velocity(start)?;
         if config.veltype == DopplerRef::RADIO {
-            frame = start_frame.unwrap_or(FrequencyRef::LSRK);
+            frame = Some(start_frame.unwrap_or(FrequencyRef::LSRK));
         }
         config.start = Some(CubeAxisValue::VelocityMs {
             ms: start,
@@ -197,6 +209,7 @@ fn spectral_axis(
     Ok(ImagerSpectralAxis::Cube {
         channels: usize::try_from(channels.max(1)).map_err(runtime_error)?,
         frame,
+        native_output_frame: outframe.is_none(),
         config,
     })
 }

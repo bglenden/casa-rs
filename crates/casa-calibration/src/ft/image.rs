@@ -115,6 +115,19 @@ pub(crate) fn prepare_image(
     )
 }
 
+pub(super) fn check_scratch_cube(
+    scratch: bool,
+    interpolation: i32,
+    shape: &[usize],
+) -> MsResult<()> {
+    if scratch && interpolation != 0 && shape.get(3).is_some_and(|&channels| channels > 1) {
+        return Err(invalid(
+            "legacy scratch cube prediction with non-nearest frequency interpolation is pending in #1520",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn prepare_configured_image(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
@@ -125,14 +138,11 @@ pub(super) fn prepare_configured_image(
     options: PredictionGeometry,
 ) -> MsResult<Option<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
-    if scratch
-        && options.settings.frequency_interpolation != 0
-        && image.shape().get(3).is_some_and(|&channels| channels > 1)
-    {
-        return Err(invalid(
-            "legacy scratch cube prediction with non-nearest frequency interpolation is pending in #1520",
-        ));
-    }
+    check_scratch_cube(
+        scratch,
+        options.settings.frequency_interpolation,
+        image.shape(),
+    )?;
     let layout = ImageTransform::new(ms, selected, &image, options)?;
     let mut path = virtual_model_image_path(ms)?;
     if scratch {
@@ -349,7 +359,13 @@ impl ImageTransform {
         let CoordinateModel::Spectral(spectral) = coords.coordinate(spectral) else {
             unreachable!()
         };
-        let spectral = spectral_with_runtime(spectral)?;
+        // A new legacy imager has no active frequency conversion even when
+        // the input image carries a saved reference conversion.
+        let spectral = if options.frequency_frame_valid {
+            spectral_with_runtime(spectral)?.into_owned()
+        } else {
+            spectral.clone().without_conversion()
+        };
         if npol != stokes.n_stokes() {
             return Err(invalid(
                 "the model image's Stokes axis does not match its planes",
@@ -403,7 +419,7 @@ impl ImageTransform {
                 .map(grid_stokes)
                 .collect::<MsResult<_>>()?,
         ));
-        coordinates.add_coordinate(spectral.clone().into_owned());
+        coordinates.add_coordinate(spectral.clone());
         *coordinates.obs_info_mut() = ObsInfo::new("UNKNOWN").with_observer("UNKNOWN");
         let frequencies = (0..channels)
             .map(|index| spectral.world_frequency_hz(index as f64).map_err(invalid))
@@ -567,7 +583,7 @@ impl ImageTransform {
         let CoordinateModel::Spectral(axis) = self.coordinates.coordinate(axis) else {
             unreachable!();
         };
-        let frequency_frame_valid = axis.conversion_frequency_ref() == Some(FrequencyRef::LSRK);
+        let frequency_frame_valid = self.options.frequency_frame_valid;
         if frequency_frame_valid {
             let frame =
                 engine.spectral_frame_observatory(row.time_mjd_seconds, row.field_id as usize)?;

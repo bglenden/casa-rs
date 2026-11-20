@@ -30,13 +30,15 @@ pub enum ImagerPhaseCentre {
 /// Spectral layout of the model image.
 pub enum ImagerSpectralAxis {
     /// A single plane spanning the observed band.
-    Continuum(FrequencyRef),
+    Continuum(Option<FrequencyRef>),
     /// Resample the selected windows on a configured spectral grid.
     Cube {
         /// The number of requested image channels.
         channels: usize,
         /// Reference written on the image axis.
-        frame: FrequencyRef,
+        frame: Option<FrequencyRef>,
+        /// Use the selected window's frequency reference for gridding.
+        native_output_frame: bool,
         /// Channel spacing and the requested frequencies or velocities.
         config: CubeAxisConfig,
     },
@@ -127,14 +129,14 @@ impl ImagerDefinitionRequest {
             .ok_or_else(|| invalid("an image needs a spectral window"))?;
         let spectral_window = ms.spectral_window()?;
         let native_frame = spectral_window.frequency_reference(window)?;
-        let rest = self
-            .rest_frequency_hz
-            .or(rest_frequency(ms, representative_field, window)?)
-            .unwrap_or(spectral_window.ref_frequency(window)?);
+        let rest = match self.rest_frequency_hz {
+            Some(rest) => Some(rest),
+            None => rest_frequency(ms, representative_field, window)?,
+        };
         let (spectral, channels) = match &self.spectral {
             ImagerSpectralAxis::Continuum(requested_frame) => {
                 let chosen = if native_frame == FrequencyRef::REST {
-                    *requested_frame
+                    requested_frame.unwrap_or(native_frame)
                 } else {
                     FrequencyRef::LSRK
                 };
@@ -143,13 +145,22 @@ impl ImagerDefinitionRequest {
             ImagerSpectralAxis::Cube {
                 channels,
                 frame,
+                native_output_frame,
                 config,
             } => {
                 let mut config = config.clone();
+                if *native_output_frame {
+                    config.outframe = native_frame;
+                }
                 let report_frame = if native_frame == FrequencyRef::REST {
                     native_frame
                 } else {
-                    *frame
+                    frame.unwrap_or(native_frame)
+                };
+                let rest = match (rest, &config.start) {
+                    (Some(rest), _) => rest,
+                    (None, Some(CubeAxisValue::FrequencyHz { hz, .. })) => *hz,
+                    (None, _) => spectral_window.ref_frequency(window)?,
                 };
                 // With a single frequency plane CASA records the exact
                 // frequency and spacing supplied in the definition.
@@ -238,7 +249,7 @@ fn continuum_axis(
     selected: &ResolvedMsSelection,
     engine: &MsCalEngine,
     chosen: FrequencyRef,
-    rest: f64,
+    rest: Option<f64>,
 ) -> MsResult<SpectralCoordinate> {
     let spectral_window = ms.spectral_window()?;
     let mut epochs = BTreeMap::<_, [f64; 2]>::new();
@@ -281,12 +292,13 @@ fn continuum_axis(
             upper = upper.max(high * ratio);
         }
     }
+    let center = (lower + upper) * 0.5;
     Ok(SpectralCoordinate::new(
         chosen,
-        (lower + upper) * 0.5,
+        center,
         upper - lower,
         0.,
-        rest,
+        rest.unwrap_or(center),
     ))
 }
 

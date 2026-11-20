@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
-use casa_coordinates::CoordinateSystem;
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{ImageInfo, PagedImage};
 use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
 use casa_ms::{
@@ -17,7 +17,9 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
-use super::image::{ImageModel, TaylorTerm, prepare_configured_image, reference_frequency};
+use super::image::{
+    ImageModel, TaylorTerm, check_scratch_cube, prepare_configured_image, reference_frequency,
+};
 use super::imager_definition::ImagerDefinitionRequest;
 use super::settings::{ImagerTransformOptions, PredictionGeometry};
 use super::virtual_publication::VirtualFtPublication;
@@ -50,6 +52,7 @@ pub struct ImagerPredictionModel<'a> {
 /// Image and transform settings retained across predictions by the imager.
 pub struct ImagerPrediction {
     definition: Option<ImageDefinition>,
+    frequency_frame_valid: bool,
     options: ImagerTransformOptions,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
@@ -106,6 +109,7 @@ impl Default for ImagerPrediction {
     fn default() -> Self {
         Self {
             definition: None,
+            frequency_frame_valid: false,
             options: ImagerTransformOptions::default(),
             taylor: (1, None),
             voltage_pattern: None,
@@ -366,7 +370,7 @@ impl ImagerPrediction {
     }
 
     fn prepare(
-        &self,
+        &mut self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
         model: &ImagerPredictionModel<'_>,
@@ -418,6 +422,11 @@ impl ImagerPrediction {
                 let Some(definition) = definition else {
                     return Ok(None);
                 };
+                check_scratch_cube(
+                    scratch,
+                    self.options.frequency_interpolation,
+                    &definition.shape,
+                )?;
                 let mut image = PagedImage::<f32>::create(
                     definition.shape.to_vec(),
                     definition.coordinates.clone(),
@@ -442,6 +451,16 @@ impl ImagerPrediction {
                 image.set_misc_info(misc).map_err(invalid)?;
                 image.set_table_subtype("GENERIC");
                 image.save().map_err(invalid)?;
+                self.frequency_frame_valid = image
+                    .coordinates()
+                    .find_coordinate(CoordinateType::Spectral)
+                    .is_some_and(|index| {
+                        matches!(
+                            image.coordinates().coordinate(index),
+                            CoordinateModel::Spectral(axis)
+                                if axis.conversion_frequency_ref().is_some()
+                        )
+                    });
             }
         }
         let reference_hz = if terms == 1 {
@@ -518,6 +537,7 @@ impl ImagerPrediction {
         let geometry = PredictionGeometry {
             settings: self.options,
             phase_centre_time: model.phase_centre_time,
+            frequency_frame_valid: self.frequency_frame_valid,
             voltage_pattern,
         };
         let mut images = Vec::new();
