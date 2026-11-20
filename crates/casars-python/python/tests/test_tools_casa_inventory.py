@@ -59,6 +59,7 @@ IMPLEMENTED["image"] = {
     "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
     "getchunk", "history", "isconform", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
+    "makecomplex",
     "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
 }
 IMPLEMENTED["table"] = {

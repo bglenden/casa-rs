@@ -636,6 +636,23 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
     /// Replaces a named mask.
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError>;
 
+    /// Write a unit-stride section of a named mask. New masks start false.
+    fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        validate_mask_slice_write(self.shape(), data.shape(), start)?;
+        let mut mask = match self.get_named_mask(name) {
+            Ok(mask) => mask,
+            Err(ImageError::MaskNotFound(_)) => ArrayD::from_elem(IxDyn(self.shape()), false),
+            Err(error) => return Err(error),
+        };
+        assign_mask_slice(&mut mask, data, start)?;
+        self.put_mask(name, &mask)
+    }
+
     /// Removes a named mask.
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError>;
 
@@ -2876,6 +2893,15 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
         PagedImage::put_mask(self, name, data)
     }
 
+    fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        PagedImage::put_mask_slice(self, name, data, start)
+    }
+
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
         PagedImage::remove_mask(self, name)
     }
@@ -3318,7 +3344,7 @@ fn slice_mask_array(
     Ok(view.to_owned())
 }
 
-fn validate_mask_slice_write(
+pub(crate) fn validate_mask_slice_write(
     full_shape: &[usize],
     data_shape: &[usize],
     start: &[usize],
@@ -3346,7 +3372,7 @@ fn validate_mask_slice_write(
     Ok(())
 }
 
-fn assign_mask_slice(
+pub(crate) fn assign_mask_slice(
     mask: &mut ArrayD<bool>,
     data: &ArrayD<bool>,
     start: &[usize],

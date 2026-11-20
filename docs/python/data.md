@@ -74,6 +74,10 @@ Use `ia.open("example.im")` to reopen the product. Use
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.makecomplex("output.im", "imaginary.im")` to combine the attached
+real image with a conformant real image of matching precision. A supplied
+region selects the same section from both inputs. The output copies the real
+image's metadata and uses the intersection of the input masks.
 Use `ia.isconform("other.im")` to check whether a float image has the same
 shape and compatible coordinates as a native float or complex image.
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
