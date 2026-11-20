@@ -27,6 +27,9 @@ use super::image::{
 };
 use super::moving_source::first_imager_row;
 use super::settings::{ImagerSingleDishKernel, PredictionGeometry};
+use super::voltage_pattern::{
+    PreparedVoltagePattern, legacy_radial_pattern, reserve_radial_lookup,
+};
 use super::{invalid, spectral_with_runtime};
 
 pub(super) fn prepare_model(
@@ -55,6 +58,28 @@ pub(super) fn prepare_model(
         .single_dish_cell_rad
         .unwrap_or(direction.increment()[1]);
     let parameters = context.kernel_parameters(kernel, cell)?;
+    let custom_beam = if kernel == ImagerSingleDishKernel::PrimaryBeam {
+        geometry
+            .single_dish_voltage_table
+            .as_ref()
+            .map(|path| {
+                let first = first_imager_row(ms, selected)?;
+                let ScalarValue::Int32(array) = ms
+                    .main_table()
+                    .cell_accessor(first.row_index, "ARRAY_ID")?
+                    .scalar()?
+                else {
+                    return Err(invalid("ARRAY_ID must be Int32"));
+                };
+                let telescope = ms
+                    .observation()?
+                    .string(usize::try_from(*array).map_err(invalid)?, "TELESCOPE_NAME")?;
+                legacy_radial_pattern(path, &telescope)
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let convert_first = match context.convert_first.as_str() {
         "AUTO" => {
             let pointing_rows = ms
@@ -75,6 +100,7 @@ pub(super) fn prepare_model(
         kernel,
         parameters,
         &context.pointing_column,
+        custom_beam,
     )?;
     let mut coordinates = image.coordinates().clone();
     let pol = coordinate_index(&coordinates, CoordinateType::Stokes)?;
@@ -106,7 +132,13 @@ pub(super) fn prepare_model(
     );
     coordinates.replace_coordinate(pol, grid_axis);
     ImageModel::prepare(ms, selected, keep_zero, scratch, |path| {
-        let (shape, nonzero) = write_planes(&image, coordinates.clone(), &routing, path)?;
+        let (shape, nonzero) = write_planes(
+            &image,
+            coordinates.clone(),
+            &routing,
+            path,
+            geometry.voltage_pattern.as_ref(),
+        )?;
         let mut record = model_record(
             ms,
             selected,
@@ -143,6 +175,12 @@ pub(super) fn prepare_model(
             "casars_sd_cache_pointings",
             Value::Scalar(ScalarValue::Bool(context.cache_pointings)),
         );
+        if let Some(beam) = custom_beam {
+            record.upsert(
+                "casars_sd_primary_beam",
+                Value::Record(saved_radial_beam(beam)),
+            );
+        }
         Ok((record, nonzero))
     })
 }
@@ -154,6 +192,7 @@ fn validate_model(
     kernel: ImagerSingleDishKernel,
     parameters: KernelParameters,
     pointing_column: &str,
+    custom_beam: Option<PrimaryBeam>,
 ) -> MsResult<()> {
     let [nx, ny, ..] = *image.shape() else {
         return Err(invalid("single-dish model needs direction axes"));
@@ -194,14 +233,13 @@ fn validate_model(
             let CoordinateModel::Spectral(axis) = coordinates.coordinate(spectral) else {
                 unreachable!("spectral coordinate")
             };
-            let frequency = axis
-                .clone()
-                .without_conversion()
+            let frequency = spectral_with_runtime(axis)?
                 .world_frequency_hz(0.)
                 .map_err(invalid)?;
             let increment = direction.increment()[0];
-            let beam = default_beam(ms, frequency)?;
             let host = HostResources::detect().map_err(invalid)?;
+            let _pattern_memory = reserve_radial_lookup(&host)?;
+            let beam = primary_beam(ms, frequency, custom_beam)?;
             let _memory = admit(
                 &host,
                 &ResourcePolicy::Balanced,
@@ -273,7 +311,14 @@ pub(crate) fn validate_support([nx, ny]: [usize; 2], radius: usize) -> MsResult<
     Ok(())
 }
 
-pub(crate) fn default_beam(ms: &MeasurementSet, frequency: f64) -> MsResult<BeamPattern> {
+pub(crate) fn primary_beam(
+    ms: &MeasurementSet,
+    frequency: f64,
+    custom: Option<PrimaryBeam>,
+) -> MsResult<BeamPattern> {
+    if let Some(beam) = custom {
+        return Ok(beam.pattern());
+    }
     let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
     if let Some(beam) = PrimaryBeam::for_telescope(&telescope, frequency) {
         return Ok(beam.pattern());
@@ -282,11 +327,48 @@ pub(crate) fn default_beam(ms: &MeasurementSet, frequency: f64) -> MsResult<Beam
         .ok_or_else(|| invalid("no usable single-dish primary beam"))
 }
 
+fn saved_radial_beam(beam: PrimaryBeam) -> RecordValue {
+    let mut record = RecordValue::default();
+    let mut quantity = |key, number, unit: &str| {
+        let mut value = RecordValue::default();
+        value.upsert("value", Value::Scalar(ScalarValue::Float64(number)));
+        value.upsert("unit", Value::Scalar(ScalarValue::String(unit.into())));
+        record.upsert(key, Value::Record(value));
+    };
+    quantity("reffreq", 1., "GHz");
+    let name = match beam {
+        PrimaryBeam::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+            maximum_radius_arcmin_ghz,
+        } => {
+            quantity("dishdiam", dish_diameter_m, "m");
+            quantity("blockagediam", blockage_diameter_m, "m");
+            quantity("maxrad", maximum_radius_arcmin_ghz, "arcmin");
+            "AIRY"
+        }
+        PrimaryBeam::Gaussian {
+            half_width_arcmin_ghz,
+            maximum_radius_arcmin_ghz,
+            is_voltage,
+        } => {
+            quantity("halfwidth", half_width_arcmin_ghz, "arcmin");
+            quantity("maxrad", maximum_radius_arcmin_ghz, "arcmin");
+            record.upsert("isthisvp", Value::Scalar(ScalarValue::Bool(is_voltage)));
+            "GAUSS"
+        }
+        _ => unreachable!("the custom single-dish loader returns a radial law"),
+    };
+    record.upsert("name", Value::Scalar(ScalarValue::String(name.into())));
+    record
+}
+
 fn write_planes(
     source: &PagedImage<f32>,
     coordinates: CoordinateSystem,
     routing: &PolarizationRouting,
     path: &Path,
+    voltage_pattern: Option<&PreparedVoltagePattern>,
 ) -> MsResult<([usize; 4], bool)> {
     let [nx, ny, npol, channels] = *source.shape() else {
         return Err(invalid("single-dish ft needs four model image axes"));
@@ -302,10 +384,28 @@ fn write_planes(
         &ResourcePolicy::Balanced,
         &Demand {
             phase: "legacy single-dish model image preparation",
-            memory: write_bytes(source, [nx, ny, npol]),
+            memory: write_bytes(source, [nx, ny, npol], voltage_pattern.is_some()),
         },
     )
     .map_err(invalid)?;
+    let beam = voltage_pattern
+        .map(|beam| {
+            let coordinates = source.coordinates();
+            let spatial = coordinate_index(coordinates, CoordinateType::Direction)?;
+            let spectral = coordinate_index(coordinates, CoordinateType::Spectral)?;
+            let CoordinateModel::Direction(direction) = coordinates.coordinate(spatial) else {
+                unreachable!("direction coordinate");
+            };
+            let CoordinateModel::Spectral(spectral) = coordinates.coordinate(spectral) else {
+                unreachable!("spectral coordinate");
+            };
+            Ok::<_, casa_ms::MsError>((
+                beam.pattern(),
+                beam.separations(direction, [nx, ny])?,
+                spectral_with_runtime(spectral)?,
+            ))
+        })
+        .transpose()?;
     let shape = [nx, ny, routing.grid_pols(), channels];
     let mut output = PagedImage::<Complex32>::create_with_tile_shape_and_cache(
         shape.to_vec(),
@@ -317,10 +417,23 @@ fn write_planes(
     .map_err(invalid)?;
     let mut nonzero = false;
     for channel in 0..channels {
-        let values = source
+        let mut values = source
             .get_slice(&[0, 0, 0, channel], &[nx, ny, npol, 1])
             .map_err(invalid)?;
         nonzero |= values.iter().any(|&pixel| pixel != 0.);
+        if let Some((beam, separations, spectral)) = &beam {
+            let frequency = spectral
+                .world_frequency_hz(channel as f64)
+                .map_err(invalid)?;
+            let pattern = beam.at_frequency(frequency);
+            let scale = 60. * frequency / 1e9;
+            for ((y, x), separation) in separations.indexed_iter() {
+                let gain = pattern.power(separation.to_degrees() * scale);
+                for pol in 0..npol {
+                    values[[x, y, pol, 0]] *= gain;
+                }
+            }
+        }
         for pol in 0..routing.grid_pols() {
             let coefficients: Vec<Complex32> = (0..npol)
                 .map(|input| {
@@ -347,10 +460,12 @@ fn write_planes(
     Ok((shape, nonzero))
 }
 
-fn write_bytes(source: &PagedImage<f32>, [nx, ny, input_pols]: [usize; 3]) -> u64 {
+fn write_bytes(source: &PagedImage<f32>, [nx, ny, input_pols]: [usize; 3], with_beam: bool) -> u64 {
     // Source Stokes planes, two sets of complex plane cells for the output
     // and its accumulation, and the output's one-plane tile cache.
-    let bytes_per_pixel = input_pols.saturating_mul(size_of::<f32>()) + 3 * size_of::<Complex32>();
+    let bytes_per_pixel = input_pols.saturating_mul(size_of::<f32>())
+        + 3 * size_of::<Complex32>()
+        + usize::from(with_beam) * size_of::<f64>();
     let tiled_bytes = source
         .shape()
         .iter()
@@ -524,14 +639,19 @@ mod tests {
         .unwrap();
         let output_coords = cube_coordinates(vec![StokesType::XX, StokesType::YY]);
         let output_path = scratch.path().join("complex.im");
+        let beam = PreparedVoltagePattern::test_pattern();
         let baseline = reset_peak();
-        let (shape, nonzero) = write_planes(&image, output_coords, &routing, &output_path).unwrap();
+        let (shape, nonzero) =
+            write_planes(&image, output_coords, &routing, &output_path, Some(&beam)).unwrap();
         let measured = peak_since(baseline);
         assert!(nonzero);
         assert_eq!(shape, [nx, ny, pols, channels]);
-        let charge = write_bytes(&image, [nx, ny, pols]);
+        let charge = write_bytes(&image, [nx, ny, pols], true);
         assert!(measured <= charge, "{measured} bytes used over {charge}");
         let output = PagedImage::<Complex32>::open(output_path).unwrap();
-        assert_eq!(output.get().unwrap()[[0, 0, 0, 2]], Complex32::new(1., 0.));
+        assert_eq!(
+            output.get().unwrap()[[nx / 2, ny / 2, 0, 2]],
+            Complex32::new(1., 0.)
+        );
     }
 }

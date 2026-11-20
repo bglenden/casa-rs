@@ -229,6 +229,7 @@ pub(super) struct PredictionGeometry {
     pub(super) voltage_pattern: Option<PreparedVoltagePattern>,
     pub(super) mosaic_voltage_table: Option<PathBuf>,
     pub(super) single_dish_setup: ImagerSingleDishSetup,
+    pub(super) single_dish_voltage_table: Option<PathBuf>,
     pub(super) single_dish_cell_rad: Option<f64>,
 }
 

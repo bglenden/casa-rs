@@ -714,7 +714,7 @@ impl ImageTransform {
                     unreachable!("direction coordinate");
                 };
                 Ok::<_, casa_ms::MsError>((
-                    &beam.pattern,
+                    beam.pattern(),
                     beam.separations(&self.window.direction(direction), [nx, ny])?,
                 ))
             })

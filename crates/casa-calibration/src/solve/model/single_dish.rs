@@ -13,7 +13,8 @@ use casa_images::PagedImage;
 use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_imaging_singledish::{GridFunction, KernelTable};
-use casa_ms::MeasurementSet;
+use casa_ms::{MeasurementSet, voltage_pattern};
+use casa_numerics::BeamPattern;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::record::direction_from_record;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
@@ -21,7 +22,7 @@ use ndarray::{ArrayD, Axis, Ix2};
 
 use crate::ft::image::{coordinate_index, match_channel, polarization_coordinate};
 use crate::ft::single_dish::{
-    default_beam, has_saved_setup, kernel_function, read_kernel_parameters, validate_support,
+    has_saved_setup, kernel_function, primary_beam, read_kernel_parameters, validate_support,
 };
 
 use super::fourier::{
@@ -156,7 +157,13 @@ impl PreparedModel {
             &ResourcePolicy::Balanced,
             &Demand {
                 phase: "open legacy single-dish model",
-                memory: IMAGE_METADATA_BYTES + 128 * 128 * size_of::<Complex32>() as u64,
+                memory: IMAGE_METADATA_BYTES
+                    + 128 * 128 * size_of::<Complex32>() as u64
+                    + if matches!(function, GridFunction::PrimaryBeam) {
+                        BeamPattern::BYTES
+                    } else {
+                        0
+                    },
             },
         )
         .map_err(model_error)?;
@@ -190,6 +197,26 @@ impl PreparedModel {
             record.get("freqframevalid"),
             Some(Value::Scalar(ScalarValue::Bool(true)))
         );
+        let increment = direction.increment()[0];
+        let beam = if matches!(function, GridFunction::PrimaryBeam) {
+            // SDGrid forms its PB in a one-row copy of the image coordinates.
+            // Its reporting frame can differ from the channel matching frame.
+            let frequency = crate::ft::spectral_with_runtime(spectral)
+                .map_err(model_error)?
+                .world_frequency_hz(0.)
+                .map_err(model_error)?;
+            let custom = match record.get("casars_sd_primary_beam") {
+                None => None,
+                Some(Value::Record(beam)) => {
+                    Some(voltage_pattern::radial_pattern(beam).map_err(model_error)?)
+                }
+                _ => return Err(model_error("invalid saved single-dish primary beam")),
+            };
+            let beam = primary_beam(ms, frequency, custom).map_err(model_error)?;
+            Some((beam, frequency))
+        } else {
+            None
+        };
         let spectral = if convert_frequencies {
             crate::ft::spectral_with_runtime(spectral)
                 .map_err(model_error)?
@@ -197,16 +224,9 @@ impl PreparedModel {
         } else {
             spectral.clone().without_conversion()
         };
-        let first_frequency = spectral.world_frequency_hz(0.).map_err(model_error)?;
-        let increment = direction.increment()[0];
-        let beam = if matches!(function, GridFunction::PrimaryBeam) {
-            Some(default_beam(ms, first_frequency).map_err(model_error)?)
-        } else {
-            None
-        };
         let beam_pixels = beam
             .as_ref()
-            .map_or(0, |beam| beam.support_pixels(increment, first_frequency));
+            .map_or(0, |(beam, freq)| beam.support_pixels(increment, *freq));
         let image_bytes = (nx as u64)
             .saturating_mul(ny as u64)
             .saturating_mul(pols as u64)
@@ -237,7 +257,7 @@ impl PreparedModel {
         .map_err(model_error)?;
         let cells = image.get().map_err(model_error)?;
         let kernel = match beam {
-            Some(beam) => KernelTable::primary_beam(&beam, increment, first_frequency),
+            Some((beam, frequency)) => KernelTable::primary_beam(&beam, increment, frequency),
             None => KernelTable::new(function).map_err(model_error)?,
         };
         validate_support([nx, ny], kernel.support()).map_err(model_error)?;
