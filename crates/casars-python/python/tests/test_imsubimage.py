@@ -10,8 +10,7 @@ import subprocess
 import numpy as np
 import pytest
 
-from casars import tasks
-from casars.data import Image
+from casars import tasks, tools
 from casars.tasks import _runner
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -57,15 +56,14 @@ def test_list_scalar_and_multiline_through_python(workspace):
         case = matrix[name]
         outfile = workspace / f"{name}.out"
         tasks.imsubimage(case["imagename"], outfile, **case["params"])
-        image = Image.open(outfile)
-        assert list(image.shape) == case["shape"]
-        origin = (0,) * len(image.shape)
-        data = image.get_slice(origin, image.shape)
-        mask = image.get_mask_slice(origin, image.shape)
-        if mask is None:
-            mask = np.ones(image.shape, dtype=bool)
+        image = tools.image()
+        assert image.open(str(outfile))
+        assert image.shape().tolist() == case["shape"]
+        data = image.getchunk()
+        mask = image.getchunk(getmask=True)
         assert_pixels(data, mask, case["pixels"], name)
-        assert image.default_mask_name == ("mask0" if "mask0" in case["masks"] else None)
+        assert image.maskhandler("default") == (["mask0"] if "mask0" in case["masks"] else [""])
+        assert image.done()
 
 
 def test_imsubimage_errors_and_overwrite(workspace, capsys, monkeypatch):
@@ -76,18 +74,22 @@ def test_imsubimage_errors_and_overwrite(workspace, capsys, monkeypatch):
         tasks.imsubimage("point.im", "point.out", dropdeg=True)
     tasks.imsubimage("plane.im", "existing.out", verbose=True)
     assert "Created subimage" in "".join(capsys.readouterr())
-    before = Image.open("existing.out")
-    original = np.asarray(before.get_slice((0, 0), before.shape)).copy()
+    image = tools.image()
+    assert image.open("existing.out")
+    original = image.getchunk()
+    assert image.done()
     with pytest.raises(tasks.TaskExecutionError, match="already exists"):
         tasks.imsubimage("plane.im", "existing.out", box="1,1,3,4")
     with pytest.raises(tasks.TaskExecutionError, match="mask should not be extended"):
         tasks.imsubimage("cube.im", "existing.out", mask='"stretch.im" > 200', overwrite=True)
-    retained = Image.open("existing.out")
-    assert retained.shape == before.shape
-    np.testing.assert_array_equal(retained.get_slice((0, 0), retained.shape), original)
+    assert image.open("existing.out")
+    np.testing.assert_array_equal(image.getchunk(), original)
+    assert image.done()
     tasks.imsubimage("plane.im", "existing.out", box="1,1,3,4", overwrite=True, verbose=False)
     assert "Created subimage" not in "".join(capsys.readouterr())
-    assert Image.open("existing.out").shape == (3, 4)
+    assert image.open("existing.out")
+    assert image.shape().tolist() == [3, 4]
+    assert image.done()
 
 
 def assert_metadata(actual, expected):

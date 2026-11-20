@@ -38,6 +38,19 @@ pub fn image_fits_header(
     name: &str,
     history: &[ImageHistoryEntry],
 ) -> Result<ImageFitsHeader, ImageError> {
+    image_fits_header_with_beams(image, shape, name, history, None)
+}
+
+/// Build an attached image's FITS header using its saved restoring beam view.
+///
+/// An open tool can retain beam metadata independently of shared native pixels.
+pub fn image_fits_header_with_beams(
+    image: &dyn ImageInterface<f32>,
+    shape: &[usize],
+    name: &str,
+    history: &[ImageHistoryEntry],
+    beam_info: Option<&RecordValue>,
+) -> Result<ImageFitsHeader, ImageError> {
     let coords = image.coordinates();
     let plan = ExportAxisPlan::build(coords, shape, false, false, false)?;
     let standard_wcs = || {
@@ -70,7 +83,10 @@ pub fn image_fits_header(
         Some("PHYSICAL = PIXEL*BSCALE + BZERO"),
     );
     header.add("BZERO", FitsValue::Float(0.0), None);
-    let info = image.image_info()?;
+    let mut info = image.image_info()?;
+    if let Some(record) = beam_info {
+        info.beam_set = ImageInfo::from_record(record)?.beam_set;
+    }
     header.image_metadata(image.units(), &info)?;
     let standard = projection.is_some();
     header.axes(shape.len(), &mut wcs, projection);

@@ -42,7 +42,10 @@ IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit",
 }
-PARTIAL = {"calibrater": {"setmodel", "setsolve"}}
+PARTIAL = {
+    "calibrater": {"setmodel", "setsolve"},
+    "image": {"fromimage", "imageconcat", "newimagefromimage"},
+}
 
 IMPLEMENTED["coordsys"] = {
     "increment", "referencevalue",
@@ -58,10 +61,11 @@ IMPLEMENTED["coordsys"] = {
 IMPLEMENTED["image"] = {
     "coordmeasures", "topixel", "toworld",
     "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
-    "getchunk", "history", "isconform", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam",
+    "getchunk", "haslock", "history", "isconform", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
-    "makecomplex",
-    "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
+    "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",
+    "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "rotatebeam", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
+    "summary",
 }
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",
@@ -146,7 +150,7 @@ def test_calibrater_method_returns_before_open() -> None:
 
 
 IMAGER_CALIBRATION = {"open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft"}
-IMAGER_SETTINGS = {"defineimage", "setoptions", "setvp"}
+IMAGER_SETTINGS = {"defineimage", "setoptions", "setsdoptions", "setvp"}
 
 
 def test_imager_calibration_signatures() -> None:

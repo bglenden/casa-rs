@@ -55,7 +55,7 @@ mod flat;
 mod layout;
 mod modify;
 
-pub use add::add_components;
+pub use add::{ComponentEdit, ComponentEditReport, add_components, modify_components};
 pub use component_model::ComponentModel;
 pub use flat::flat_image;
 pub use layout::{SpectralSize, is_4d, spectral_size};

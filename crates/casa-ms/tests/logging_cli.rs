@@ -3,6 +3,7 @@
 use std::process::Command;
 
 use casa_logging::validate_log_table;
+use casa_ms::{MeasurementSet, MeasurementSetBuilder};
 use casa_tables::{Table, TableOptions};
 use casa_types::ScalarValue;
 
@@ -59,7 +60,12 @@ fn an_mstransform_run_writes_casa_log_table_without_stderr_noise() {
 #[test]
 fn flagdata_empty_selection_writes_warn_log_row() {
     let tempdir = tempfile::tempdir().expect("tempdir");
-    let ms_path = common::create_msexplore_fixture_ms(tempdir.path());
+    let ms_path = tempdir.path().join("empty.ms");
+    let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).expect("create MS");
+    common::populate_subtables(&mut ms);
+    ms.save().expect("save empty MS");
+    drop(ms);
+
     let log_table = tempdir.path().join("flagdata.log");
     let output = Command::new(env!("CARGO_BIN_EXE_flagdata"))
         .arg("--log-table")
@@ -70,8 +76,6 @@ fn flagdata_empty_selection_writes_warn_log_row() {
         .arg(&ms_path)
         .arg("--mode")
         .arg("summary")
-        .arg("--field")
-        .arg("999")
         .output()
         .expect("run flagdata summary with empty selection");
 
@@ -85,6 +89,29 @@ fn flagdata_empty_selection_writes_warn_log_row() {
     let table = Table::open(TableOptions::new(&log_table)).expect("open log table");
     validate_log_table(&table).expect("validate log table");
     assert_log_contains(&table, "WARN", "flagdata selected no rows");
+}
+
+#[test]
+fn flagdata_unknown_field_writes_severe_log_row() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_fixture_ms(tempdir.path());
+    let log_table = tempdir.path().join("flagdata.log");
+    let output = Command::new(env!("CARGO_BIN_EXE_flagdata"))
+        .arg("--log-table")
+        .arg(&log_table)
+        .arg("--log-stderr-priority")
+        .arg("off")
+        .arg("--vis")
+        .arg(&ms_path)
+        .args(["--mode", "summary", "--field", "999"])
+        .output()
+        .expect("run flagdata summary with an unknown field");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("did not match any existing fields"));
+    let table = Table::open(TableOptions::new(&log_table)).expect("open log table");
+    validate_log_table(&table).expect("validate log table");
+    assert_log_contains(&table, "SEVERE", "flagdata failed");
 }
 
 #[test]

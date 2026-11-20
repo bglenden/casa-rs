@@ -175,6 +175,7 @@ fn write_scratch(
         &entries,
         request.incremental,
         true,
+        None,
         &mut ms.lock,
     )
     .map_err(execution)

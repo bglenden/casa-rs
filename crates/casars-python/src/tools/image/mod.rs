@@ -5,26 +5,38 @@
 
 mod attachment;
 mod beam_edit;
+mod beam_rotate;
+mod beam_view;
 mod beams;
+mod concatenate;
 mod conformance;
 mod convertflux;
 mod coordinate_conversion;
+mod copy;
+mod copy_region;
 mod create;
+mod data_compat;
+mod deconvolve_components;
 mod default_record;
 mod fits_header;
 mod fits_import;
 mod fits_rename;
 mod handle;
 mod lifecycle;
+mod locking;
 mod makecomplex;
 mod mask_expression;
 mod masks;
 mod metadata;
+mod modify;
 mod pixels;
 mod point;
 mod records;
+mod replace_masked;
+mod serialization;
 mod stubs;
 mod subimage;
+mod summary;
 pub(crate) mod surface;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -65,6 +77,16 @@ impl PyImageTool {
 
     fn state(&self) -> MutexGuard<'_, ImageState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Drop for PyImageTool {
+    fn drop(&mut self) {
+        let state = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
+        if let Some(image) = state.image.take() {
+            // The last attachment may flush tiles and release table locks.
+            let _ = Python::try_attach(|py| py.detach(|| drop(image)));
+        }
     }
 }
 

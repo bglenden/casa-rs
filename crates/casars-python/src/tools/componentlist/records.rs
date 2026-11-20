@@ -265,14 +265,20 @@ fn flux(input: &RecordValue, lines: &mut Vec<LogLine>) -> Result<RecordValue, St
     Ok(flux.to_record())
 }
 
-fn angular(record: &RecordValue, key: &str) -> Result<Quantity, String> {
+pub(super) fn angular(record: &RecordValue, key: &str) -> Result<Quantity, String> {
     let value = record
         .get(key)
         .ok_or_else(|| format!("The '{key}' field does not exist\n"))?;
     let quantity=match value {
         Value::Scalar(ScalarValue::String(text))=>Quantity::read(text).map_err(|_|format!("in QuantumHolder::fromString with input string \"{text}\": Illegal input units or format\nProblem parsing the '{key}' string\n"))?,
         Value::Record(record)=>{
-            let unit=text(record,"unit");let value=record.get("value").and_then(scalar);
+            let unit = text(record, "unit");
+            let value = record.get("value").and_then(|value| match value {
+                Value::Array(ArrayValue::Float64(values)) if values.len() == 1 => values.iter().copied().next(),
+                Value::Array(ArrayValue::Float32(values)) if values.len() == 1 => values.iter().map(|&n| f64::from(n)).next(),
+                Value::Array(ArrayValue::Int32(values)) if values.len() == 1 => values.iter().map(|&n| f64::from(n)).next(),
+                scalar_value => scalar(scalar_value),
+            });
             match (unit,value) {
                 (Some(unit),Some(value))=>Quantity::new(value,unit).map_err(|e|e.to_string())?,
                 _=>return Err(format!("Illegal Quantum record in QuantumHolder::fromRecord\nProblem parsing the '{key}' record\n")),
@@ -416,14 +422,17 @@ fn spectrum(input: &RecordValue, lines: &mut Vec<LogLine>) -> Result<RecordValue
     Ok(record)
 }
 
-/// C++ throws these errors directly; failures returned by fromRecord carry
-/// the caller's add/fromrecord context instead.
-pub(super) fn import_error(message: String, adding: bool) -> ConvertError {
-    if message.starts_with("RecordRep::")
+/// C++ throws these errors directly. Each caller adds its own context to
+/// failures returned by `fromRecord`.
+pub(super) fn is_direct_import_error(message: &str) -> bool {
+    message.starts_with("RecordRep::")
         || message.starts_with("RecordInterface::")
         || message.starts_with("Unit::check ")
         || message.ends_with("The errors must be non-negative angular quantities.")
-    {
+}
+
+pub(super) fn import_error(message: String, adding: bool) -> ConvertError {
+    if is_direct_import_error(&message) {
         ConvertError::runtime(message)
     } else if adding {
         ConvertError::runtime(format!(

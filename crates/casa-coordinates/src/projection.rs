@@ -12,9 +12,9 @@
 //! | Code | Name | FITS keyword |
 //! |------|------|-------------|
 //! | SIN  | Slant orthographic | `-SIN` |
-//! | AZP  | Zenithal perspective with zero parameters | `-AZP` |
-//! | SZP  | Slant zenithal perspective with tclean parameters | `-SZP` |
-//! | AIR  | Airy with zero reference latitude parameter | `-AIR` |
+//! | AZP  | Zenithal perspective with a tilted plane | `-AZP` |
+//! | SZP  | Slant zenithal perspective | `-SZP` |
+//! | AIR  | Airy's zenithal projection | `-AIR` |
 //! | TAN  | Gnomonic (tangent plane) | `-TAN` |
 //! | ARC  | Zenithal equidistant | `-ARC` |
 //! | CAR  | Plate carree (cylindrical equidistant) | `-CAR` |
@@ -31,12 +31,17 @@
 //! | QSC  | Quadrilateralized spherical cube | `-QSC` |
 //! | NCP  | North Celestial Pole (SIN special case) | `-NCP` |
 
-use std::f64::consts::{FRAC_PI_2, LN_2, PI, SQRT_2};
+use std::f64::consts::{FRAC_PI_2, LN_2, PI, SQRT_2, TAU};
 use std::fmt;
 
 use crate::error::CoordinateError;
 
+mod azp;
 mod cube;
+mod szp;
+
+use azp::ZenithalPerspective;
+use szp::SlantZenithalPerspective;
 
 /// Degrees-to-radians conversion factor.
 const DEG_TO_RAD: f64 = PI / 180.0;
@@ -52,11 +57,11 @@ const RAD_TO_DEG: f64 = 180.0 / PI;
 pub enum ProjectionType {
     /// Slant orthographic projection.
     SIN,
-    /// Zenithal perspective with tclean's zero parameters.
+    /// Zenithal perspective with a tilted projection plane.
     AZP,
-    /// Slant zenithal perspective with tclean's `[0, 0, 90]` parameters.
+    /// Slant zenithal perspective with a displaced projection point.
     SZP,
-    /// Airy projection with tclean's zero latitude parameter.
+    /// Airy's zenithal projection.
     AIR,
     /// Gnomonic (tangent-plane) projection.
     TAN,
@@ -91,6 +96,18 @@ pub enum ProjectionType {
 }
 
 impl ProjectionType {
+    /// Defaults for the latitude-axis `PV` parameters supported by the
+    /// FITS reader and writer, in one-based parameter order.
+    #[must_use]
+    pub fn fits_parameter_defaults(self) -> &'static [f64] {
+        match self {
+            Self::AZP => &[0.0, 0.0],
+            Self::SZP => &[0.0, 0.0, 90.0],
+            Self::AIR => &[90.0],
+            _ => &[],
+        }
+    }
+
     /// Parses a projection name (case-insensitive) to a [`ProjectionType`].
     ///
     /// Returns `None` if the name is not recognised.
@@ -225,14 +242,11 @@ impl Projection {
     pub fn project(&self, phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => project_sin(phi, theta, &self.parameters),
-            ProjectionType::AZP | ProjectionType::SZP => {
-                self.validate_conversion_parameters()?;
-                project_tan(phi, theta)
+            ProjectionType::AZP => ZenithalPerspective::new(&self.parameters)?.project(phi, theta),
+            ProjectionType::SZP => {
+                SlantZenithalPerspective::new(&self.parameters)?.project(phi, theta)
             }
-            ProjectionType::AIR => {
-                self.validate_conversion_parameters()?;
-                project_air(phi, theta)
-            }
+            ProjectionType::AIR => project_air(phi, theta, self.airy_coefficient()?),
             ProjectionType::TAN => project_tan(phi, theta),
             ProjectionType::ARC => project_arc(phi, theta),
             ProjectionType::CAR => project_car(phi, theta),
@@ -256,14 +270,9 @@ impl Projection {
     pub fn deproject(&self, x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => deproject_sin(x, y, &self.parameters),
-            ProjectionType::AZP | ProjectionType::SZP => {
-                self.validate_conversion_parameters()?;
-                deproject_tan(x, y)
-            }
-            ProjectionType::AIR => {
-                self.validate_conversion_parameters()?;
-                deproject_air(x, y)
-            }
+            ProjectionType::AZP => ZenithalPerspective::new(&self.parameters)?.deproject(x, y),
+            ProjectionType::SZP => SlantZenithalPerspective::new(&self.parameters)?.deproject(x, y),
+            ProjectionType::AIR => deproject_air(x, y, self.airy_coefficient()?),
             ProjectionType::TAN => deproject_tan(x, y),
             ProjectionType::ARC => deproject_arc(x, y),
             ProjectionType::CAR => deproject_car(x, y),
@@ -282,33 +291,53 @@ impl Projection {
         }
     }
 
-    /// Confirm that a partially implemented projection uses the parameters
-    /// supported by coordinate conversion. Other projections are unchanged.
+    /// Confirm that the supported transform can use the stated parameters.
     ///
-    /// AZP and SZP give the gnomonic map at zero distance from the sphere's
-    /// centre (Calabretta & Greisen 2002, §§5.1.1–2). Casacore pads missing
-    /// SZP parameters with `[0, 0, 90]`. AIR requires an explicit zero
-    /// latitude parameter because casacore's missing-parameter default is 90°.
+    /// AZP reads the perspective distance and the plane tilt in degrees.
+    /// Casacore pads missing SZP parameters with `[0, 0, 90]`. AIR uses a
+    /// reference latitude in degrees, defaulting to 90°.
+    /// Surplus parameters are stored but have no effect on these projections.
     pub fn validate_conversion_parameters(&self) -> Result<(), CoordinateError> {
-        let required = match self.projection_type {
-            ProjectionType::AZP if self.parameters.iter().any(|&value| value != 0.0) => {
-                "the zero projection parameters written by tclean"
-            }
-            ProjectionType::SZP if ![0.0, 0.0, 90.0].starts_with(&self.parameters) => {
-                "the [0, 0, 90] projection parameters written by tclean"
-            }
-            ProjectionType::AIR
-                if self.parameters.is_empty() || ![0.0, 0.0].starts_with(&self.parameters) =>
-            {
-                "the zero latitude parameter written by tclean"
-            }
-            _ => return Ok(()),
-        };
-        Err(CoordinateError::ConversionFailed(format!(
-            "{} requires {required}",
-            self.name()
-        )))
+        match self.projection_type {
+            ProjectionType::AZP => ZenithalPerspective::new(&self.parameters).map(|_| ()),
+            ProjectionType::SZP => SlantZenithalPerspective::new(&self.parameters).map(|_| ()),
+            ProjectionType::AIR => self.airy_coefficient().map(|_| ()),
+            _ => Ok(()),
+        }
     }
+
+    fn airy_coefficient(&self) -> Result<f64, CoordinateError> {
+        let latitude = self.parameters.first().copied().unwrap_or(90.0);
+        let half_angle = (((90.0 - latitude) / 2.0) % 360.0).abs();
+        let half_angle = half_angle.min(360.0 - half_angle);
+        if !latitude.is_finite() || latitude <= -90.0 || half_angle > 90.0 {
+            return Err(CoordinateError::ConversionFailed(
+                "AIR requires a finite reference latitude above -90 degrees and a real coefficient"
+                    .into(),
+            ));
+        }
+        match half_angle {
+            0.0 => Ok(1.0),
+            45.0 => Ok(LN_2),
+            90.0 => Ok(0.0),
+            _ => {
+                let tangent = (half_angle * DEG_TO_RAD).tan();
+                Ok(airy_logarithmic_factor(tangent * tangent))
+            }
+        }
+    }
+}
+
+/// The intersection closer to the native pole on a tilted projection.
+fn planeward_latitude(midpoint: f64, offset: f64) -> f64 {
+    let wrap = |theta| {
+        if theta > FRAC_PI_2 {
+            theta - TAU
+        } else {
+            theta
+        }
+    };
+    wrap(midpoint - offset).max(wrap(midpoint + offset + PI))
 }
 
 // ---------------------------------------------------------------------------
@@ -442,16 +471,15 @@ fn deproject_tan(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
 }
 
 // ---------------------------------------------------------------------------
-// AIR (Airy with θ_b = 0)
+// AIR (Airy with θ_b = 0 or 90 degrees)
 // ---------------------------------------------------------------------------
 
 // WCSLIB uses the small-angle limit below this half-zenith angle.
 const AIR_LINEAR_LIMIT: f64 = 1e-4;
-const AIR_SLOPE: f64 = 1.0 + LN_2;
 
-/// Calabretta & Greisen (2002), Eq. 71, in radians. With t = tan(ξ)
-/// and ξ_b = π/4, the radius is ln(1 + t²)/t + ln(2)t.
-fn project_air(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+/// Calabretta & Greisen (2002), Eq. 71, in radians. With t = tan(ξ), the
+/// radius is ln(1 + t²)/t + kt. The latitude parameter sets k.
+fn project_air(phi: f64, theta: f64, coefficient: f64) -> Result<(f64, f64), CoordinateError> {
     if theta <= -FRAC_PI_2 {
         return Err(CoordinateError::ConversionFailed(
             "AIR project: the native south pole is outside the projection".into(),
@@ -459,33 +487,42 @@ fn project_air(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
     }
     let half_zenith = (FRAC_PI_2 - theta) / 2.0;
     let radius = if half_zenith < AIR_LINEAR_LIMIT {
-        AIR_SLOPE * half_zenith
+        (1.0 + coefficient) * half_zenith
     } else {
         let tangent = half_zenith.tan();
-        (tangent * tangent).ln_1p() / tangent + LN_2 * tangent
+        (tangent * tangent).ln_1p() / tangent + coefficient * tangent
     };
     Ok((radius * phi.sin(), -radius * phi.cos()))
 }
 
-/// Invert the monotone radius in t. The logarithm bounds t between
-/// radius/(1 + ln(2)) and radius/ln(2), which bracket the Newton steps.
-fn deproject_air(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+fn airy_logarithmic_factor(squared: f64) -> f64 {
+    squared.ln_1p() / squared
+}
+
+/// Invert the radius in t. A small coefficient can give several
+/// intersections, where the solution follows WCSLIB's branch selection.
+fn deproject_air(x: f64, y: f64, coefficient: f64) -> Result<(f64, f64), CoordinateError> {
     let radius = x.hypot(y);
     if radius == 0.0 {
         return Ok((0.0, FRAC_PI_2));
     }
     let phi = x.atan2(-y);
-    let linear = radius / AIR_SLOPE;
+    let linear = radius / (1.0 + coefficient);
     if linear < AIR_LINEAR_LIMIT {
         return Ok((phi, FRAC_PI_2 - 2.0 * linear));
     }
+    if coefficient < LN_2 {
+        return air_inverse_with_wcslib_branch(radius, coefficient)
+            .map(|half_zenith| (phi, FRAC_PI_2 - 2.0 * half_zenith));
+    }
 
-    let (mut low, mut high) = (linear, radius / LN_2);
+    // In this range the radius is monotone, with ln(1+t²)/t² in [0, 1].
+    let (mut low, mut high) = (linear, radius / coefficient);
     let mut tangent = low;
     for _ in 0..32 {
         let squared = tangent * tangent;
-        let logarithmic_factor = squared.ln_1p() / squared;
-        let error = tangent * (LN_2 + logarithmic_factor) - radius;
+        let logarithmic_factor = airy_logarithmic_factor(squared);
+        let error = tangent * (coefficient + logarithmic_factor) - radius;
         if error.abs() <= 4.0 * f64::EPSILON * radius {
             return Ok((phi, FRAC_PI_2 - 2.0 * tangent.atan()));
         }
@@ -494,7 +531,7 @@ fn deproject_air(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
         } else {
             high = tangent;
         }
-        let derivative = LN_2 + 2.0 / (1.0 + squared) - logarithmic_factor;
+        let derivative = coefficient + 2.0 / (1.0 + squared) - logarithmic_factor;
         let next = tangent - error / derivative;
         tangent = if low < next && next < high {
             next
@@ -504,6 +541,44 @@ fn deproject_air(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
     }
     Err(CoordinateError::ConversionFailed(
         "AIR deproject: no finite inverse radius".into(),
+    ))
+}
+
+fn air_inverse_with_wcslib_branch(radius: f64, coefficient: f64) -> Result<f64, CoordinateError> {
+    let radius_at = |cosine: f64| {
+        let tangent = (1.0 - cosine * cosine).sqrt() / cosine;
+        -2.0 * cosine.ln() / tangent + coefficient * tangent
+    };
+    // Several roots can share the first bracket. Follow WCSLIB's weighted
+    // division of the cosine interval to select the same intersection.
+    let (mut near_cosine, mut near_radius) = (1.0, 0.0);
+    let (mut far_cosine, mut far_radius) = (1.0, 0.0);
+    for _ in 0..30 {
+        far_cosine = near_cosine * 0.5;
+        far_radius = radius_at(far_cosine);
+        if far_radius >= radius {
+            break;
+        }
+        (near_cosine, near_radius) = (far_cosine, far_radius);
+    }
+    if far_radius >= radius {
+        for _ in 0..100 {
+            let fraction = ((far_radius - radius) / (far_radius - near_radius)).clamp(0.1, 0.9);
+            let cosine = far_cosine + fraction * (near_cosine - far_cosine);
+            let trial_radius = radius_at(cosine);
+            // WCSLIB tests against 1e-12 in units of half the radius.
+            if (trial_radius - radius).abs() < 2e-12 {
+                return Ok(cosine.acos());
+            }
+            if trial_radius < radius {
+                (near_cosine, near_radius) = (cosine, trial_radius);
+            } else {
+                (far_cosine, far_radius) = (cosine, trial_radius);
+            }
+        }
+    }
+    Err(CoordinateError::ConversionFailed(
+        "AIR deproject: pixel outside the projected region".into(),
     ))
 }
 
@@ -955,18 +1030,160 @@ mod tests {
     }
 
     #[test]
-    fn zenithal_transforms_refuse_parameters_outside_tclean() {
+    fn zenithal_transforms_refuse_unsupported_parameters() {
         for (kind, parameters) in [
-            (ProjectionType::AZP, vec![2.0, 0.0]),
-            (ProjectionType::AZP, vec![0.0, 10.0]),
-            (ProjectionType::SZP, vec![1.0, 0.0, 90.0]),
-            (ProjectionType::SZP, vec![0.0, 0.0, 45.0]),
-            (ProjectionType::AIR, vec![]),
-            (ProjectionType::AIR, vec![90.0]),
+            (ProjectionType::AZP, vec![-1.0, 0.0]),
+            (ProjectionType::AZP, vec![0.0, 90.0]),
+            (ProjectionType::SZP, vec![-1.0, 0.0, 90.0]),
+            (ProjectionType::SZP, vec![0.0, f64::NAN, 45.0]),
+            (ProjectionType::AIR, vec![-90.0]),
+            (ProjectionType::AIR, vec![300.0]),
         ] {
             let projection = Projection::with_parameters(kind, parameters);
             assert!(projection.project(0.4, 1.2).is_err(), "{kind:?}");
             assert!(projection.deproject(0.04, 0.03).is_err(), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn azp_matches_wcslib_for_tilted_planes() {
+        // WCSLIB through Astropy Sky2Pix_ZenithalPerspective, in degrees.
+        for (distance, tilt, phi, theta, x, y) in [
+            (
+                2.0,
+                30.0,
+                35.0,
+                55.0,
+                18.29823807694109,
+                -30.175318324704378,
+            ),
+            (
+                -2.0,
+                -35.0,
+                -52.0,
+                50.0,
+                -19.206219600866895,
+                -18.318385967910768,
+            ),
+            (0.7, 55.0, 115.0, 40.0, 76.80775157299566, 62.44336498899339),
+            (
+                0.0,
+                25.0,
+                25.0,
+                30.0,
+                24.215004766569404,
+                -57.29758261470182,
+            ),
+        ] {
+            let projection = Projection::with_parameters(ProjectionType::AZP, vec![distance, tilt]);
+            let (phi, theta) = (phi * DEG_TO_RAD, theta * DEG_TO_RAD);
+            let expected = (x * DEG_TO_RAD, y * DEG_TO_RAD);
+            let projected = projection.project(phi, theta).unwrap();
+            assert!((projected.0 - expected.0).abs() < TOL);
+            assert!((projected.1 - expected.1).abs() < TOL);
+            let actual = projection.deproject(expected.0, expected.1).unwrap();
+            assert!((actual.0 - phi).abs() < TOL);
+            assert!((actual.1 - theta).abs() < TOL);
+        }
+    }
+
+    #[test]
+    fn azp_rejects_points_beyond_the_visible_limb() {
+        let projection = Projection::with_parameters(ProjectionType::AZP, vec![2.0, 0.0]);
+        assert!(projection.project(0.0, -45.0 * DEG_TO_RAD).is_err());
+        assert!(projection.deproject(120.0 * DEG_TO_RAD, 0.0).is_err());
+    }
+
+    #[test]
+    fn szp_matches_wcslib_for_displaced_projection_points() {
+        // WCSLIB via Astropy's slant perspective transform, in degrees.
+        for (parameters, native, plane) in [
+            (
+                [2.0, 30.0, 45.0],
+                [35.0, 55.0],
+                [23.656763006284216, -34.782361134931605],
+            ),
+            (
+                [0.7, 55.0, 40.0],
+                [115.0, 40.0],
+                [61.0095691277204, 18.85213736129163],
+            ),
+            (
+                [3.0, 25.0, 90.0],
+                [25.0, 30.0],
+                [23.96588497000227, -51.395006174305884],
+            ),
+            (
+                [2.0, 30.0, 45.0],
+                [30.0, 89.9998],
+                [0.00010000010224184309, -0.00017320525784495465],
+            ),
+        ] {
+            let projection = Projection::with_parameters(ProjectionType::SZP, parameters.to_vec());
+            let [phi, theta] = native.map(|value| value * DEG_TO_RAD);
+            let [x, y] = plane.map(|value| value * DEG_TO_RAD);
+            let actual = projection.project(phi, theta).unwrap();
+            assert!((actual.0 - x).abs() < TOL);
+            assert!((actual.1 - y).abs() < TOL);
+            let actual = projection.deproject(x, y).unwrap();
+            assert!((actual.0 - phi).abs() < TOL);
+            assert!((actual.1 - theta).abs() < TOL);
+        }
+        let projection = Projection::with_parameters(ProjectionType::SZP, vec![-2.0, -35.0, 70.0]);
+        assert!(
+            projection
+                .project(-52.0 * DEG_TO_RAD, 50.0 * DEG_TO_RAD)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn airy_default_matches_its_analytic_equatorial_radius() {
+        for parameters in [vec![], vec![90.0]] {
+            let projection = Projection::with_parameters(ProjectionType::AIR, parameters);
+            let (x, y) = projection.project(FRAC_PI_2, 0.0).unwrap();
+            // At the native equator tan(xi) is 1, with k = 1 for theta_b = 90°.
+            assert!((x - (LN_2 + 1.0)).abs() < TOL);
+            assert!(y.abs() < TOL);
+            roundtrip(&projection, FRAC_PI_2, 0.0);
+        }
+    }
+
+    #[test]
+    fn airy_reference_latitudes_match_wcslib() {
+        // WCSLIB via Astropy's Airy transform, with all angles in degrees.
+        for (latitude, phi, theta, x, y) in [
+            (45.0, 29.0, 36.0, 25.645147655021365, -46.26507106064551),
+            (-82.0, -68.0, 45.0, -20.881351402380602, -8.436613597441491),
+            (-82.0, 37.0, -87.0, 40.86830631740053, -54.23407426690307),
+            (-45.0, -110.0, -28.0, -72.46483019384043, 26.37504122171267),
+        ] {
+            let projection = Projection::with_parameters(ProjectionType::AIR, vec![latitude]);
+            let expected = [x * DEG_TO_RAD, y * DEG_TO_RAD];
+            let actual = projection
+                .project(phi * DEG_TO_RAD, theta * DEG_TO_RAD)
+                .unwrap();
+            assert!((actual.0 - expected[0]).abs() < TOL);
+            assert!((actual.1 - expected[1]).abs() < TOL);
+            let (actual_phi, actual_theta) =
+                projection.deproject(expected[0], expected[1]).unwrap();
+            assert!((actual_phi - phi * DEG_TO_RAD).abs() < TOL);
+            assert!((actual_theta - theta * DEG_TO_RAD).abs() < TOL);
+        }
+    }
+
+    #[test]
+    fn airy_uses_wcslib_branch_when_the_radius_has_several_solutions() {
+        for (reference, plane, expected) in [
+            (-85.0, -35.91553840292542, 12.844743211493224),
+            (-76.48329678302335, 54.352917860275376, -60.7625099804296),
+        ] {
+            let projection = Projection::with_parameters(ProjectionType::AIR, vec![reference]);
+            let (_, latitude) = projection.deproject(0.0, plane * DEG_TO_RAD).unwrap();
+            assert!(
+                (latitude - expected * DEG_TO_RAD).abs() < 1e-9,
+                "{latitude}"
+            );
         }
     }
 

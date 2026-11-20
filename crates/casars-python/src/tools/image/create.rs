@@ -255,7 +255,7 @@ pub(super) fn publish_image(
     } else {
         rename_without_replacing(&product, &path).map_err(raised)?;
     }
-    match AttachedImage::open(&mut registry, &path) {
+    match AttachedImage::open_created(&mut registry, &path) {
         Ok(image) => {
             // The old table is inside the private staging directory after an exchange.
             drop(stage);

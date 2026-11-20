@@ -13,7 +13,7 @@ mod reference;
 mod stubs;
 pub(crate) mod surface;
 mod transform_many;
-mod world_reference;
+pub(super) mod world_reference;
 
 mod transform_single;
 pub(super) use transform_single::{WorldArgument, image_pixel_argument};

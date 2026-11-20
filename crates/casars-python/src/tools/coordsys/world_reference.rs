@@ -19,7 +19,7 @@ use crate::convert::value::CasaValue;
 use super::inspect::{coordinate_type, numbered_coordinates};
 use super::{CoordinateState, PyCoordsys};
 
-mod spectral_text;
+pub(in crate::tools) mod spectral_text;
 
 fn quantity(value: f64, unit: &str) -> CasaValue {
     CasaValue::record([
@@ -51,11 +51,7 @@ fn scalar_measure(kind: &str, frame: &str, value: f64, unit: &str) -> CasaValue 
     ])
 }
 
-fn scientific(value: f64) -> String {
-    scientific_with_precision(value, 8)
-}
-
-fn scientific_with_precision(value: f64, precision: usize) -> String {
+pub(in crate::tools) fn scientific_with_precision(value: f64, precision: usize) -> String {
     let text = format!("{value:.precision$e}");
     let Some((mantissa, exponent)) = text.split_once('e') else {
         return format_stream_value_with_precision(value, precision);
@@ -64,8 +60,21 @@ fn scientific_with_precision(value: f64, precision: usize) -> String {
     format!("{mantissa}e{exponent:+03}")
 }
 
-fn format_number(value: f64, increment: f64, scientific_style: bool) -> String {
-    let mut precision = if scientific_style { 8 } else { 6 };
+pub(in crate::tools) fn format_number(
+    value: f64,
+    increment: f64,
+    scientific_style: bool,
+) -> String {
+    let precision = if scientific_style { 8 } else { 6 };
+    format_number_with_precision(value, increment, scientific_style, precision)
+}
+
+pub(in crate::tools) fn format_number_with_precision(
+    value: f64,
+    increment: f64,
+    scientific_style: bool,
+    mut precision: usize,
+) -> String {
     if value.is_finite() && value.fract() != 0.0 && increment.is_finite() {
         let mut needed = 1;
         let mut scale = 1.0;
@@ -107,13 +116,14 @@ fn signed_angle(radians: f64) -> f64 {
     sin.atan2(cos)
 }
 
-fn direction_text(
+pub(in crate::tools) fn format_direction(
     frame: DirectionRef,
     axis: usize,
     radians: f64,
     absolute: bool,
     scientific_style: bool,
-) -> String {
+    precision: usize,
+) -> (String, &'static str) {
     let radians = if radians == 0.0 { 0.0 } else { radians };
     let name = frame.as_str();
     let angle_frame = matches!(
@@ -131,17 +141,23 @@ fn direction_text(
     let hour_axis = axis == 0 && name == "HADEC";
     if absolute && !scientific_style && !angle_frame {
         if axis != 0 {
-            return format_latitude_dms_with_precision(radians, 8);
+            return (format_latitude_dms_with_precision(radians, precision), "");
         }
         if hour_axis {
             let signed = signed_angle(radians);
             let sign = if signed.is_sign_negative() { '-' } else { '+' };
-            return format!(
-                "{sign}{}",
-                format_longitude_hours_with_precision(signed.abs(), 8)
+            return (
+                format!(
+                    "{sign}{}",
+                    format_longitude_hours_with_precision(signed.abs(), precision)
+                ),
+                "",
             );
         }
-        return format_longitude_hours_with_precision(radians, 8);
+        return (
+            format_longitude_hours_with_precision(radians, precision),
+            "",
+        );
     }
     let (number, unit) = if hour_axis {
         let hour_angle = if absolute {
@@ -164,10 +180,26 @@ fn direction_text(
         };
         (degrees, "deg")
     };
-    if scientific_style || !angle_frame {
-        format!("{} {unit}", scientific(number))
+    let text = if scientific_style || !angle_frame {
+        scientific_with_precision(number, precision)
     } else {
-        format!("{number:.8} {unit}")
+        format!("{number:.precision$}")
+    };
+    (text, unit)
+}
+
+fn direction_text(
+    frame: DirectionRef,
+    axis: usize,
+    radians: f64,
+    absolute: bool,
+    scientific_style: bool,
+) -> String {
+    let (text, unit) = format_direction(frame, axis, radians, absolute, scientific_style, 8);
+    if unit.is_empty() {
+        text
+    } else {
+        format!("{text} {unit}")
     }
 }
 
