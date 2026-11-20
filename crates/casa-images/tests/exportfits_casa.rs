@@ -766,6 +766,58 @@ fn exportfits_cli_flags_and_json_run() {
 }
 
 #[test]
+fn exportfits_remaps_azp_parameters_with_the_latitude_axis() {
+    use casa_coordinates::{CoordinateModel, CoordinateType};
+    use casa_images::read_fits_image;
+
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("azp.im");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    let direction = DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::with_parameters(ProjectionType::AZP, vec![2.0, 30.0]),
+        [1.0, 0.5],
+        [-0.1, 0.1],
+        [2.0, 2.0],
+    );
+    coordinates.add_coordinate(direction.clone());
+    let mut image = PagedImage::<f32>::create(vec![1, 6, 5], coordinates, &source).unwrap();
+    image.save().unwrap();
+    drop(image);
+
+    for (dropstokes, shape) in [(false, vec![6, 5, 1]), (true, vec![6, 5])] {
+        let destination = temp.path().join(format!("azp-{dropstokes}.fits"));
+        exportfits(&ExportFitsRequest {
+            imagename: source.clone(),
+            fitsimage: destination.clone(),
+            stokeslast: true,
+            dropstokes,
+            ..ExportFitsRequest::default()
+        })
+        .unwrap();
+        let (header, _, _) = parse_fits_cards_and_raw_i16(&destination);
+        assert_eq!(header.get_string("CTYPE2"), Some("DEC--AZP"));
+        assert_eq!(header.get_float("PV2_1"), Some(2.0));
+        assert_eq!(header.get_float("PV2_2"), Some(30.0));
+        assert!(header.get_float("PV3_1").is_none());
+        let restored = read_fits_image(&destination).unwrap();
+        assert_eq!(restored.shape, shape);
+        let restored = restored.coordinates;
+        let index = restored.find_coordinate(CoordinateType::Direction).unwrap();
+        let CoordinateModel::Direction(restored) = restored.coordinate(index) else {
+            panic!("expected direction coordinate");
+        };
+        let pixel = [1.4, 3.1];
+        let expected = direction.pixel_to_world(pixel).unwrap();
+        let actual = restored.pixel_to_world(pixel).unwrap();
+        for (actual, expected) in actual.into_iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+        }
+    }
+}
+
+#[test]
 fn exportfits_bitpix16_edge_cases_and_rotated_pc_remapping() {
     let tmp = tempfile::tempdir().unwrap();
 

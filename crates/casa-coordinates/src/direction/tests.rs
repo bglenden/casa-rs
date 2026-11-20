@@ -317,8 +317,8 @@ fn restricted_zenithal_records_accept_supported_parameters() {
     for (kind, allowed, rejected) in [
         (
             ProjectionType::AZP,
-            vec![vec![0.0, 0.0], vec![0.0, 0.0, 90.0]],
-            vec![vec![0.5, 0.0], vec![0.0, 1.0]],
+            vec![vec![0.0, 0.0], vec![0.0, 0.0, 90.0], vec![2.0, 30.0]],
+            vec![vec![-1.0, 0.0], vec![0.0, 90.0]],
         ),
         (
             ProjectionType::SZP,

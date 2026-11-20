@@ -133,7 +133,15 @@ impl Projection {
     #[must_use]
     pub fn of_coordinate(projection: &CoordinateProjection, latitude_rad: f64) -> Option<Self> {
         let restricted = match projection.projection_type() {
-            ProjectionType::AZP => Some(Self::Azp),
+            // The mask model reconstructs AZP at zero distance and tilt.
+            ProjectionType::AZP => {
+                return projection
+                    .parameters()
+                    .iter()
+                    .take(2)
+                    .all(|&value| value == 0.0)
+                    .then_some(Self::Azp);
+            }
             ProjectionType::SZP => Some(Self::Szp),
             // The model reconstructs AIR with tclean's explicit zero latitude.
             // A saved AIR coordinate with a missing latitude defaults to 90°.
