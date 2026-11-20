@@ -7499,3 +7499,12 @@ case in `crates/casa-images/tests/data/imregrid/expected.json` records a
 beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
 of the pixels being copied.
+
+## A zero-stride region aborts `image.modify`
+
+CASA 6.7.6.14 terminates with SIGABRT and an uncaught
+`casacore::ArraySlicerError` when `image.modify` uses an LCSlicer record
+whose increment is zero. A scratch probe used a 7 × 7 float image and a
+point component, with the first increment of a region covering [1, 1]
+through [5, 5] set to zero. Casa-rs raises a Python error during region
+validation and preserves the stored pixels and history (#1625).

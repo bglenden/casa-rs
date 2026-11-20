@@ -74,7 +74,15 @@ pub(super) fn parse_saved_region(
         }
         "LCSlicer" | "LCBox" => {
             let (blc, trc) = if class_name == "LCSlicer" {
-                decode_lc_slicer(region_name, rec, target_coords, full_shape)?
+                let section = decode_lc_slicer(region_name, rec, target_coords, full_shape)?;
+                if let Some((axis, stride)) =
+                    section.stride.iter().enumerate().find(|&(_, &s)| s != 1)
+                {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "saved region '{region_name}' has non-unit stride {stride} on axis {axis}"
+                    )));
+                }
+                (section.lower, section.upper)
             } else {
                 decode_lc_box(region_name, rec, full_shape)?
             };
@@ -131,12 +139,18 @@ pub(super) fn parse_saved_region(
     }
 }
 
-fn decode_lc_slicer(
+pub(in crate::analysis::imsubimage) struct SlicerSection {
+    pub(in crate::analysis::imsubimage) lower: Vec<usize>,
+    pub(in crate::analysis::imsubimage) upper: Vec<usize>,
+    pub(in crate::analysis::imsubimage) stride: Vec<usize>,
+}
+
+pub(in crate::analysis::imsubimage) fn decode_lc_slicer(
     name: &str,
     rec: &RecordValue,
     coords: &CoordinateSystem,
     full_shape: &[usize],
-) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
+) -> Result<SlicerSection, ImageError> {
     let numeric = |field| {
         read_numeric_vec(rec.get(field)).ok_or_else(|| {
             ImageError::InvalidMetadata(format!("saved region '{name}' missing numeric {field}"))
@@ -218,6 +232,7 @@ fn decode_lc_slicer(
         )));
     }
     let fractional_step = read_bool_vec(rec.get("fracinc"), step.len());
+    let mut strides = vec![1; full_shape.len()];
     for (axis, (&stored, fractional)) in step.iter().zip(fractional_step).enumerate() {
         let stride = if is_mimic_source(stored) {
             1.0
@@ -226,14 +241,19 @@ fn decode_lc_slicer(
         } else {
             stored as f32
         };
-        if !(1.0..2.0).contains(&(stride + 0.5)) {
+        if !stride.is_finite() || stride < 0.5 {
             return Err(ImageError::InvalidMetadata(format!(
-                "saved region '{name}' has non-unit stride {stride} on axis {axis}"
+                "saved region '{name}' requires a positive stride on axis {axis}"
             )));
         }
+        strides[axis] = (stride + 0.5) as usize;
     }
     let as_indices = |values: Vec<i64>| values.into_iter().map(|value| value as usize).collect();
-    Ok((as_indices(blc), as_indices(trc)))
+    Ok(SlicerSection {
+        lower: as_indices(blc),
+        upper: as_indices(trc),
+        stride: strides,
+    })
 }
 
 fn is_mimic_source(value: f64) -> bool {

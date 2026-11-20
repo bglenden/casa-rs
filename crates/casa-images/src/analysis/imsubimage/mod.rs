@@ -16,17 +16,18 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_lattices::{TraversalIter, TraversalSpec};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
-use casa_types::{ArrayD, RecordValue, Value};
+use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Axis, IxDyn, SliceInfoElem, Zip};
 use num_complex::Complex;
 
 use crate::image::{ImageHistoryEntry, append_image_history_entries, image_history_entries};
 use crate::{
-    AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, ImageSubimageSummary,
-    ImsubimageRequest, MutableImageInterface, PagedImage, TempImage, TempStoragePolicy,
-    read_fits_image,
+    AnyPagedImage, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
+    ImageSubimageSummary, ImsubimageRequest, MutableImageInterface, PagedImage, TempImage,
+    TempStoragePolicy, read_fits_image,
 };
 
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
@@ -93,6 +94,128 @@ impl SubimagePlan {
             options.dropdeg,
             options.keepaxes,
         )
+    }
+
+    /// Resolve a writable selection, including a positive-stride pixel slice.
+    /// Returns the packed pixel geometry and its stride in the parent image.
+    ///
+    /// # Errors
+    ///
+    /// A region, coordinate system or stride the image cannot represent.
+    pub fn for_edit<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        region: Option<SubimageRegion<'_>>,
+    ) -> Result<(Self, Vec<usize>), ImageError> {
+        let plan = |region| {
+            Self::new(
+                image,
+                None,
+                SubimageOptions {
+                    region,
+                    dropdeg: false,
+                    keepaxes: &[],
+                },
+            )
+        };
+        let Some(SubimageRegion::Record(record)) = region else {
+            return Ok((plan(region)?, vec![1; image.ndim()]));
+        };
+        if !matches!(record.get("name"),
+            Some(Value::Scalar(ScalarValue::String(name))) if name == "LCSlicer")
+        {
+            return Ok((plan(region)?, vec![1; image.ndim()]));
+        }
+        let section =
+            region::saved::decode_lc_slicer("region", record, image.coordinates(), image.shape())?;
+        if section.stride.iter().all(|&step| step == 1) {
+            return Ok((plan(region)?, section.stride));
+        }
+        let mut dense = record.clone();
+        dense.upsert(
+            "inc",
+            Value::Array(ArrayValue::from_f64_vec(vec![1.0; image.ndim()])),
+        );
+        dense.upsert(
+            "fracinc",
+            Value::Array(ArrayValue::from_bool_vec(vec![false; image.ndim()])),
+        );
+        let mut output = Self::new(
+            image,
+            None,
+            SubimageOptions {
+                region: Some(SubimageRegion::Record(&dense)),
+                dropdeg: false,
+                keepaxes: &[],
+            },
+        )?;
+        output.stride_edit_coordinates(image, &section.stride)?;
+        Ok((output, section.stride))
+    }
+
+    fn stride_edit_coordinates<T: ImagePixel>(
+        &mut self,
+        image: &dyn ImageInterface<T>,
+        stride: &[usize],
+    ) -> Result<(), ImageError> {
+        let mut record = self.coordinates.to_record();
+        let mut axis = 0;
+        for index in 0..self.coordinates.n_coordinates() {
+            let coordinate = self.coordinates.coordinate(index);
+            for local in 0..coordinate.n_pixel_axes() {
+                let step = stride[axis];
+                if step > 1 {
+                    if let CoordinateModel::Stokes(stokes) = coordinate {
+                        let labels = stokes
+                            .stokes()
+                            .iter()
+                            .step_by(step)
+                            .copied()
+                            .collect::<Vec<_>>();
+                        super::axes::replace_stokes_in_record(&mut record, &labels)?;
+                    } else {
+                        let (_, stored) = CoordinateSystem::set_increment_in_record(
+                            &mut record,
+                            axis,
+                            coordinate.increment()[local],
+                        )?;
+                        CoordinateSystem::set_increment_in_record(
+                            &mut record,
+                            axis,
+                            stored * step as f64,
+                        )?;
+                        CoordinateSystem::set_reference_pixel_in_record(
+                            &mut record,
+                            axis,
+                            coordinate.reference_pixel()[local] / step as f64,
+                        )?;
+                    }
+                }
+                axis += 1;
+            }
+        }
+        self.coordinates = CoordinateSystem::from_record(&record)?;
+        self.shape
+            .iter_mut()
+            .zip(stride)
+            .for_each(|(len, step)| *len = len.div_ceil(*step));
+        let beams = &self.image_info.beam_set;
+        if beams.is_multi() {
+            let step = |kind| image.find_axis(kind).map_or(1, |axis| stride[axis]);
+            let channels = step(CoordinateType::Spectral);
+            let stokes = step(CoordinateType::Stokes);
+            self.image_info.beam_set = ImageBeamSet::from_grid(
+                (0..beams.n_channels())
+                    .step_by(channels)
+                    .map(|channel| {
+                        (0..beams.n_stokes())
+                            .step_by(stokes)
+                            .map(|polarization| *beams.beam(channel, polarization))
+                            .collect()
+                    })
+                    .collect(),
+            );
+        }
+        Ok(())
     }
 
     pub(in crate::analysis) fn from_selection<T: ImagePixel>(
@@ -166,6 +289,12 @@ impl SubimagePlan {
         &self.image_info
     }
 
+    /// Whether the resolved selection consists of multiple regions or
+    /// nonconsecutive spectral or polarization intervals.
+    pub fn has_multiple_regions(&self) -> bool {
+        self.selection.has_multiple_regions
+    }
+
     /// Check an optional mask expression against the parent image. This also
     /// checks stretching along the selected axes. Operations that edit the
     /// underlying pixel values can validate a mask without materializing it.
@@ -179,15 +308,7 @@ impl SubimagePlan {
         mask: Option<&str>,
         stretch: bool,
     ) -> Result<(), ImageError> {
-        let shape = vec![1; self.selection.start.len()];
-        evaluate_mask(
-            mask,
-            image.shape(),
-            image.coordinates(),
-            stretch,
-            (&self.selection.start, &shape),
-        )?;
-        Ok(())
+        super::lel_mask::validate_mask(mask, image.shape(), image.coordinates(), stretch)
     }
 
     /// Copies selected pixels, image metadata and the combined mask into a

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::path::Path;
+
 use casa_simulation::simutil::skymodel::{ComponentEdit, modify_components};
-use casa_types::{ScalarValue, Value};
+use casa_tables::publication::check_write_access;
 use pyo3::exceptions::{PyNotImplementedError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -11,6 +13,25 @@ use crate::tools::{LogLine, componentlist::image_component_model, emit, table::c
 use super::PyImageTool;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::{Region, mask_argument};
+
+fn check_native_write(path: &Path, history: bool) -> std::io::Result<()> {
+    let check_table = |path: &Path| -> std::io::Result<()> {
+        check_write_access(path)?;
+        for entry in path.read_dir()? {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with("table.") {
+                check_write_access(&entry.path())?;
+            }
+        }
+        Ok(())
+    };
+    check_table(path)?;
+    let log = path.join("logtable");
+    if history && log.is_dir() {
+        check_table(&log)?;
+    }
+    Ok(())
+}
 
 #[pymethods]
 impl PyImageTool {
@@ -54,13 +75,14 @@ impl PyImageTool {
                 return Err(raised("Exception: This method only supports float valued images."));
             };
             let model = image_component_model(&model, &mut logs)?;
-            if matches!(&region, Some(Region::Record(record)) if
-                matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name))) if name == "WCUnion"))
-            {
-                return Err(raised("Exception: Only a single n-dimensional rectangular region is supported."));
-            }
             if fits {
                 return Err(raised("Failed AlwaysAssert to.isWritable()"));
+            }
+            if let Storage::Paged(native) = storage
+                && let Some(path) = native.name()
+            {
+                check_native_write(path, state.history)
+                    .map_err(|_| raised("Failed AlwaysAssert to.isWritable()"))?;
             }
             let options = ComponentEdit {
                 region: region.as_ref().map(Region::as_region),

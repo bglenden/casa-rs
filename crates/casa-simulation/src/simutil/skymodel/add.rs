@@ -40,12 +40,13 @@ use std::path::Path;
 
 use casa_components::{ComponentList, PixelGrid, ShapeKind, SkyComponent};
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate};
-use casa_images::analysis::{SubimageOptions, SubimagePlan, SubimageRegion};
-use casa_images::{ImageError, ImageInfo, MutableImageInterface, PagedImage};
+use casa_images::analysis::{SubimagePlan, SubimageRegion};
+use casa_images::{ImageError, ImageInfo, MutableImageInterface, PagedImage, SubImageMut};
+use casa_lattices::{Lattice, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy};
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::FrequencyRef;
-use ndarray::{Array3, ArrayD, IxDyn};
+use ndarray::{Array3, ArrayD, IxDyn, Slice};
 
 use super::{SkyModelError, pixel_axes, require_native_direction_frame};
 use crate::simutil::{SimutilError, qa};
@@ -175,14 +176,21 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
         "casa-rs does not yet add components to an image with a beam per plane",
     )?;
     let mut pixels = image.get()?;
-    apply_model(
-        &mut pixels,
+    render_model(
+        image.shape(),
         image.coordinates(),
         direction,
         axes,
         list,
-        scale,
-        false,
+        |value, _, _| multiply_scale(value, scale),
+        |origin, model| {
+            let mut output = pixels.slice_each_axis_mut(|axis| {
+                let axis = axis.axis.index();
+                Slice::from(origin[axis]..origin[axis] + model.shape()[axis])
+            });
+            output += model;
+            Ok(())
+        },
     )?;
     if let Some(warning) = warning {
         tracing::warn!("{warning}");
@@ -218,8 +226,8 @@ pub struct ComponentEditReport {
 ///
 /// Invalid selections or model geometry, unsupported image metadata, and
 /// failures to read or write the image section.
-pub fn modify_components(
-    image: &mut dyn MutableImageInterface<f32>,
+pub fn modify_components<I: MutableImageInterface<f32>>(
+    image: &mut I,
     list: &ComponentList,
     options: ComponentEdit<'_>,
 ) -> Result<ComponentEditReport, SkyModelError> {
@@ -236,37 +244,113 @@ pub fn modify_components(
         )));
     }
     require_components(list)?;
-    let plan = SubimagePlan::new(
-        image,
-        None,
-        SubimageOptions {
-            region: options.region,
-            dropdeg: false,
-            keepaxes: &[],
-        },
-    )?;
+    let (plan, stride) = SubimagePlan::for_edit(image, options.region)?;
+    if plan.has_multiple_regions() {
+        return Err(SkyModelError::Model(
+            "Exception: Only a single n-dimensional rectangular region is supported.".into(),
+        ));
+    }
     plan.validate_mask(image, options.mask, options.stretch)?;
+    if !(2..=4).contains(&plan.shape.len()) {
+        return Err(SkyModelError::Model(
+            "Exception: ComponentListImages must have 2, 3, or 4 dimensions.".into(),
+        ));
+    }
     let (direction, axes) = model_direction(&plan.coordinates)?;
-    let (scale, warning) = unit_scale(
-        image.units(),
-        plan.image_info(),
-        direction,
-        "LELCoordinates::getSpectralInfo - cannot extend lattice without coordinates",
-    )?;
+    let beams = &plan.image_info().beam_set;
+    let scale_planes = image.units().contains("beam")
+        && !image.units().contains("pixel")
+        && beams.has_multi_beam();
+    let multi_beam_error =
+        "LELCoordinates::getSpectralInfo - cannot extend lattice without coordinates";
+    let (scale, warning) = if scale_planes {
+        let mut beam_shape = vec![1; plan.shape.len()];
+        for (kind, extent) in [
+            (CoordinateType::Spectral, beams.n_channels()),
+            (CoordinateType::Stokes, beams.n_stokes()),
+        ] {
+            if let Some((_, axes)) = pixel_axes(&plan.coordinates, kind) {
+                beam_shape[axes[0]] = extent;
+            }
+        }
+        if beam_shape != plan.shape {
+            return Err(SkyModelError::Model(multi_beam_error.into()));
+        }
+        (None, None)
+    } else {
+        unit_scale(
+            image.units(),
+            plan.image_info(),
+            direction,
+            multi_beam_error,
+        )?
+    };
+    let delta = direction.increment();
+    let pixel_area = (delta[0] * delta[1]).abs();
+    let adjusted;
+    let list = if options.subtract {
+        adjusted = list
+            .iter()
+            .cloned()
+            .map(|mut component| {
+                let mut values = *component.flux().values();
+                // CASA's single-factor Flux::scaleValue scales the first
+                // element in the component's original polarization basis.
+                values[0] = -values[0];
+                component.flux_mut().set_values(values);
+                component
+            })
+            .collect::<ComponentList>();
+        &adjusted
+    } else {
+        list
+    };
     let (start, end) = plan.bounds();
-    let mut pixels = image
-        .get_slice(start, &plan.shape, &vec![1; plan.shape.len()])
-        .map_err(ImageError::from)?;
-    apply_model(
-        &mut pixels,
+    let mut section = SubImageMut::with_stride(image, start.to_vec(), plan.shape.clone(), stride)?;
+    let policy = TempStoragePolicy::Auto {
+        memory_budget_bytes: 4 * 1024 * 1024,
+        scratch: ScratchSpace::SystemTemp,
+    };
+    let mut staged =
+        TempLattice::<f32>::new(plan.shape.clone(), policy).map_err(ImageError::from)?;
+    let steps = vec![1; plan.shape.len()];
+    let mut edited = Vec::new();
+    // Finish model evaluation and source reads before writing the parent.
+    render_model(
+        &plan.shape,
         &plan.coordinates,
         direction,
         axes,
         list,
-        scale,
-        options.subtract,
+        |value, frequency, polarization| {
+            if scale_planes {
+                let scale = (beams.beam(frequency, polarization).area() / pixel_area) as f32;
+                value * scale
+            } else {
+                multiply_scale(value, scale)
+            }
+        },
+        |origin, model| {
+            let shape = model.shape();
+            let mut pixels = section
+                .get_slice(origin, shape, &steps)
+                .map_err(ImageError::from)?;
+            pixels += model;
+            staged
+                .put_slice(&pixels, origin)
+                .map_err(ImageError::from)?;
+            edited.push((origin.to_vec(), shape.to_vec()));
+            Ok(())
+        },
     )?;
-    image.put_slice(&pixels, start).map_err(ImageError::from)?;
+    for (origin, shape) in edited {
+        let pixels = staged
+            .get_slice(&origin, &shape, &steps)
+            .map_err(ImageError::from)?;
+        section
+            .put_slice(&pixels, &origin)
+            .map_err(ImageError::from)?;
+    }
     Ok(ComponentEditReport {
         bounds: (start.to_vec(), end),
         warning,
@@ -301,16 +385,19 @@ fn model_direction(
     Ok((direction, axes))
 }
 
-fn apply_model(
-    pixels: &mut ArrayD<f32>,
+fn multiply_scale(value: f32, scale: Option<f64>) -> f32 {
+    scale.map_or(value, |scale| (f64::from(value) * scale) as f32)
+}
+
+fn render_model(
+    shape: &[usize],
     coordinates: &casa_coordinates::CoordinateSystem,
     direction: &DirectionCoordinate,
     direction_axes: [usize; 2],
     list: &ComponentList,
-    scale: Option<f64>,
-    subtract: bool,
+    scale: impl Fn(f32, usize, usize) -> f32,
+    mut apply: impl FnMut(&[usize], &ArrayD<f32>) -> Result<(), SkyModelError>,
 ) -> Result<(), SkyModelError> {
-    let shape = pixels.shape();
     let increment = direction.increment();
     let mut placement = Placement {
         direction,
@@ -372,50 +459,81 @@ fn apply_model(
         }
     }
 
+    if extended.is_empty() && points.is_empty() {
+        return Ok(());
+    }
     let [nx, ny] = placement.shape;
     let frequency_axis = spectral.as_ref().map(|(_, axes)| axes[0]);
+    let mut origin = vec![0; shape.len()];
     let mut position = vec![0; shape.len()];
+    let mut tile_shape = shape.to_vec();
     // Bound the temporary double-precision model to about one MiB per batch.
-    let spatial_batch = (131_072 / (4 * nfreq)).max(1);
-    for first in (0..nx * ny).step_by(spatial_batch) {
-        let length = spatial_batch.min(nx * ny - first);
-        let samples = if extended.is_empty() {
-            None
-        } else {
-            let directions = (first..first + length)
-                .map(|pixel| placement.pixel_direction((pixel % nx) as f64, (pixel / nx) as f64))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut samples = Array3::<f64>::zeros((4, length, nfreq));
-            for (component, frequencies) in &extended {
-                component.sample_pixels(&mut samples, &directions, &placement.grid, frequencies)?;
+    let spatial_batch = (32_768 / nfreq).max(1);
+    let width = nx.min(spatial_batch);
+    let height = (spatial_batch / width).max(1);
+    for y in (0..ny).step_by(height) {
+        let rows = height.min(ny - y);
+        for x in (0..nx).step_by(width) {
+            let columns = width.min(nx - x);
+            if extended.is_empty()
+                && !points
+                    .range([x, 0]..[x + columns, 0])
+                    .any(|([_, row], _)| (y..y + rows).contains(row))
+            {
+                continue;
             }
-            Some(samples)
-        };
-        for local in 0..length {
-            let x = (first + local) % nx;
-            let y = (first + local) / nx;
-            let point = points.get(&[x, y]);
-            for frequency in 0..nfreq {
-                for (plane, &parameter) in stokes.planes.iter().enumerate() {
-                    position[direction_axes[0]] = x;
-                    position[direction_axes[1]] = y;
-                    if let Some(axis) = frequency_axis {
-                        position[axis] = frequency;
-                    }
-                    if let Some(axis) = stokes.axis {
-                        position[axis] = plane;
-                    }
-                    let mut value = samples
-                        .as_ref()
-                        .map_or(0.0, |samples| samples[[parameter, local, frequency]] as f32);
-                    if let Some(point) = point {
-                        value += point[frequency * nstokes + plane];
-                    }
-                    if let Some(scale) = scale {
-                        value = (f64::from(value) * scale) as f32;
-                    }
-                    pixels[IxDyn(&position)] += if subtract { -value } else { value };
+            let length = columns * rows;
+            origin[direction_axes[0]] = x;
+            origin[direction_axes[1]] = y;
+            tile_shape[direction_axes[0]] = columns;
+            tile_shape[direction_axes[1]] = rows;
+            let mut output = ArrayD::<f32>::zeros(IxDyn(&tile_shape));
+            let samples = if extended.is_empty() {
+                None
+            } else {
+                let directions = (0..length)
+                    .map(|i| {
+                        placement
+                            .pixel_direction((x + i % columns) as f64, (y + i / columns) as f64)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut samples = Array3::<f64>::zeros((4, length, nfreq));
+                for (component, frequencies) in &extended {
+                    component.sample_pixels(
+                        &mut samples,
+                        &directions,
+                        &placement.grid,
+                        frequencies,
+                    )?;
                 }
+                Some(samples)
+            };
+            for local in 0..length {
+                let column = local % columns;
+                let row = local / columns;
+                let point = points.get(&[x + column, y + row]);
+                position[direction_axes[0]] = column;
+                position[direction_axes[1]] = row;
+                for frequency in 0..nfreq {
+                    for (plane, &parameter) in stokes.planes.iter().enumerate() {
+                        if let Some(axis) = frequency_axis {
+                            position[axis] = frequency;
+                        }
+                        if let Some(axis) = stokes.axis {
+                            position[axis] = plane;
+                        }
+                        let mut value = samples
+                            .as_ref()
+                            .map_or(0.0, |samples| samples[[parameter, local, frequency]] as f32);
+                        if let Some(point) = point {
+                            value += point[frequency * nstokes + plane];
+                        }
+                        output[IxDyn(&position)] = scale(value, frequency, plane);
+                    }
+                }
+            }
+            if output.iter().any(|&value| value != 0.0) {
+                apply(&origin, &output)?;
             }
         }
     }
