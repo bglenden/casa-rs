@@ -8,6 +8,7 @@
 use std::str::FromStr;
 
 use casa_types::measures::direction_to_record;
+use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::epoch_to_record;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::position_to_record;
@@ -90,6 +91,8 @@ pub struct SpectralCoordinate {
     /// Every rest frequency the coordinate lists, the active one among them
     /// (C++ `restFrequencies()`).
     rest_frequencies: Vec<f64>,
+    /// Doppler convention used by this coordinate when expressing velocities.
+    velocity_convention: DopplerRef,
     /// Pixel-to-world mapping state.
     mapping: SpectralMapping,
     /// The world axis name.
@@ -121,6 +124,7 @@ impl SpectralCoordinate {
             conversion: None,
             rest_frequency,
             rest_frequencies: vec![rest_frequency],
+            velocity_convention: DopplerRef::RADIO,
             mapping: SpectralMapping::Linear {
                 crval,
                 cdelt,
@@ -158,6 +162,7 @@ impl SpectralCoordinate {
             conversion: None,
             rest_frequency,
             rest_frequencies: vec![rest_frequency],
+            velocity_convention: DopplerRef::RADIO,
             mapping: SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
@@ -452,6 +457,17 @@ impl SpectralCoordinate {
         &self.rest_frequencies
     }
 
+    /// The Doppler convention used when expressing the spectral grid as velocity.
+    pub fn velocity_convention(&self) -> DopplerRef {
+        self.velocity_convention
+    }
+
+    /// Set the Doppler convention without changing the frequency grid or rest frequency.
+    pub fn with_velocity_convention(mut self, convention: DopplerRef) -> Self {
+        self.velocity_convention = convention;
+        self
+    }
+
     /// Reconstructs a spectral coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         let undefined_frame;
@@ -558,6 +574,11 @@ impl SpectralCoordinate {
         } else {
             Self::new(frequency_ref, crval[0], cdelt[0], crpix[0], rest_frequency)
         };
+        if let Some(convention) =
+            get_optional_i32(rec, "velType").and_then(DopplerRef::from_casacore_code)
+        {
+            coord = coord.with_velocity_convention(convention);
+        }
         if let Some(name) = get_optional_string(rec, "name").or_else(|| {
             get_optional_vec_string(parameter_record, "axes")
                 .and_then(|names| names.into_iter().next())
@@ -730,7 +751,10 @@ impl SpectralCoordinate {
             "restfreqs",
             Value::Array(ArrayValue::from_f64_vec(self.rest_frequencies.clone())),
         );
-        rec.upsert("velType", Value::Scalar(ScalarValue::Int32(0)));
+        rec.upsert(
+            "velType",
+            Value::Scalar(ScalarValue::Int32(self.velocity_convention.casacore_code())),
+        );
         rec.upsert("nativeType", Value::Scalar(ScalarValue::Int32(0)));
         rec.upsert("velUnit", Value::Scalar(ScalarValue::String("km/s".into())));
         rec.upsert("waveUnit", Value::Scalar(ScalarValue::String("mm".into())));

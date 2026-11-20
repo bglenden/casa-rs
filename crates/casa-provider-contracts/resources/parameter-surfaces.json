@@ -27366,7 +27366,7 @@
     {
       "kind": "task",
       "id": "imregrid",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Image Regrid",
       "category": "Images",
       "summary": "Regrid a CASA image onto a template image",
@@ -27388,7 +27388,7 @@
                 "parameter": "output"
               },
               "cardinality": "one",
-              "optional": false,
+              "optional": true,
               "probe_supported": true
             }
           ]
@@ -27407,8 +27407,7 @@
             "provider": {"field": "asvelocity"},
             "python": {"name": "asvelocity"},
             "presentation": {"label": "As Velocity", "group": "Regrid", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "axes",
@@ -27426,8 +27425,7 @@
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "imregrid's axes are the pixel axes to regrid, distinct from imstat's axes to compute statistics over."
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "shape",
@@ -27441,11 +27439,6 @@
             "provider": {"field": "shape"},
             "python": {"name": "shape"},
             "presentation": {"label": "Shape", "group": "Regrid", "advanced": true}
-          },
-          "unimplemented": {
-            "issue": 977,
-            "equivalent": [{"kind": "array", "value": []}],
-            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "template", "value": {"kind": "string", "value": "get"}}}
           }
         },
         {
@@ -27460,8 +27453,7 @@
             "provider": {"field": "decimate"},
             "python": {"name": "decimate"},
             "presentation": {"label": "Decimate", "group": "Regrid", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "replicate",
@@ -27475,8 +27467,7 @@
             "provider": {"field": "replicate"},
             "python": {"name": "replicate"},
             "presentation": {"label": "Replicate", "group": "Regrid", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "imagename",
@@ -27532,7 +27523,7 @@
           "name": "template",
           "concept": {
             "id": "parameter.template",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 1,
           "default": {
@@ -27542,9 +27533,7 @@
               "value": "get"
             }
           },
-          "required_when": {
-            "kind": "always"
-          },
+          "required_when": {"kind": "never"},
           "active_when": {
             "kind": "always"
           },
@@ -27566,7 +27555,7 @@
             },
             "python": {
               "name": "template",
-              "type_hint": null
+              "type_hint": "StrPath | Mapping[str, ParameterData]"
             },
             "presentation": {
               "label": "Template",
@@ -27591,14 +27580,7 @@
               "value": ""
             }
           },
-          "required_when": {
-            "kind": "not",
-            "predicate": {
-              "kind": "equals",
-              "parameter": "template",
-              "value": {"kind": "string", "value": "get"}
-            }
-          },
+          "required_when": {"kind": "never"},
           "active_when": {
             "kind": "always"
           },
@@ -27660,7 +27642,8 @@
               "kind": "allowed_values",
               "values": [
                 "linear",
-                "nearest"
+                "nearest",
+                "cubic"
               ]
             }
           ],

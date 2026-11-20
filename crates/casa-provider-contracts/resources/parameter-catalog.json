@@ -7069,20 +7069,19 @@
     },
     {
       "id": "parameter.template",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "template",
       "value_domain": {
-        "kind": "path",
-        "resource_kind": "image"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "path"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Template CASA image path",
+        "summary": "Template CASA image path, get selector, or coordinate and shape record",
         "details": null,
         "examples": []
       },

@@ -1121,12 +1121,12 @@ def immath(
 
 def imregrid(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
-    template: StrPath = 'get',
+    template: StrPath | Mapping[str, ParameterData] = 'get',
     output: StrPath = '',
     asvelocity: bool = True,
     axes: int | list[int] | tuple[int, ...] = [-1],
     shape: int | list[int] | tuple[int, ...] = [-1],
-    interpolation: Literal['linear', 'nearest'] = 'linear',
+    interpolation: Literal['linear', 'nearest', 'cubic'] = 'linear',
     decimate: int = 10,
     replicate: bool = False,
     overwrite: bool = False,
@@ -1134,8 +1134,6 @@ def imregrid(
     """Regrid a CASA image onto a template image
 
     CASA's ``imregrid``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``asvelocity``, ``axes``, ``shape``, ``decimate``, ``replicate``.
     """
     return _call_casa(imregrid, locals())
 

@@ -7421,3 +7421,14 @@ pixels from the edges. Examples are a reversed horizontal cut from
 input direction plane before the same sky-coordinate cut restores the CASA
 result. casa-rs interpolates only the requested strip and agrees with the
 padded CASA reference without requiring callers to pad the input (#1024).
+
+## imregrid drops brightness units and the beam when broadcasting a channel
+
+In CASA 6.7.6.14, `imregrid` with a one-channel input, an explicitly selected
+spectral axis and a multi-channel output replicates the data and mask. During
+that copy it loses the brightness unit and restoring beam. The `singleton`
+case in `crates/casa-images/tests/data/imregrid/expected.json` records a
+`Jy/beam` image with a 4 by 3 arcsec beam becoming a unitless image without a
+beam. casa-rs matches the samples, mask and template frequency grid and retains
+the original units and beam. Copying channels does not change the calibration
+of the pixels being copied.

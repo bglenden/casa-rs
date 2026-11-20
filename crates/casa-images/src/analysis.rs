@@ -27,6 +27,7 @@ mod extrema;
 mod imhead_fits;
 mod immath;
 mod importfits;
+mod imregrid;
 mod imsubimage;
 pub use imsubimage::{
     SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
@@ -253,23 +254,7 @@ pub fn impbcor(request: &ImpbcorRequest) -> Result<PbcorSummary, ImageError> {
     impbcor::run(request)
 }
 
-/// Regrid an image onto a template image's shape and coordinates.
-pub fn imregrid(request: &ImregridRequest) -> Result<ImageRegridSummary, ImageError> {
-    let input = AnyPagedImage::open(&request.imagename)?;
-    let template = AnyPagedImage::open(&request.template)?;
-    match (&input, &template) {
-        (AnyPagedImage::Float32(input), AnyPagedImage::Float32(template)) => {
-            imregrid_typed(input, template, request)
-        }
-        (AnyPagedImage::Float64(input), AnyPagedImage::Float64(template)) => {
-            imregrid_typed(input, template, request)
-        }
-        _ => Err(ImageError::InvalidMetadata(
-            "imregrid tutorial support currently requires matching real-valued pixel types"
-                .to_string(),
-        )),
-    }
-}
+pub use self::imregrid::imregrid;
 
 /// Feather high- and low-resolution images on the high-resolution grid.
 pub fn feather(request: &FeatherRequest) -> Result<FeatherSummary, ImageError> {
@@ -3592,82 +3577,6 @@ pub(super) fn patch_saved_coords_keyword(
     table.keywords_mut().upsert("coords", Value::Record(coords));
     table.save_metadata_only(TableOptions::new(path))?;
     Ok(())
-}
-
-fn imregrid_typed<T>(
-    input: &PagedImage<T>,
-    template: &PagedImage<T>,
-    request: &ImregridRequest,
-) -> Result<ImageRegridSummary, ImageError>
-where
-    T: ImagePixel + Into<f64> + From<f32> + Copy,
-{
-    if request.output.exists() {
-        if request.overwrite {
-            fs::remove_dir_all(&request.output)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-        } else {
-            return Err(ImageError::Io(format!(
-                "imregrid output already exists: {}",
-                request.output.display()
-            )));
-        }
-    }
-    let method = RegridMethod::from_casa(&request.interpolation)?;
-    let output_shape = template.shape().to_vec();
-    let regridded = regrid(input, &RegridTemplate::of(template), method)?;
-    save_regridded_image(input, template, request, output_shape, regridded)
-}
-
-fn save_regridded_image<T>(
-    input: &PagedImage<T>,
-    template: &PagedImage<T>,
-    request: &ImregridRequest,
-    output_shape: Vec<usize>,
-    regridded: Regridded<T>,
-) -> Result<ImageRegridSummary, ImageError>
-where
-    T: ImagePixel + Into<f64> + From<f32> + Copy,
-{
-    let Regridded {
-        data: output_data,
-        mask: output_mask,
-        coordinates,
-        template_coordinates,
-        ..
-    } = regridded;
-    let mut output = TempImage::<T>::new(
-        output_shape.clone(),
-        coordinates,
-        casa_lattices::TempStoragePolicy::Auto {
-            memory_budget_bytes: 64 * 1024 * 1024,
-            scratch: casa_lattices::ScratchSpace::SystemTemp,
-        },
-    )?;
-    // The template's own record, kept verbatim unless a coordinate of one
-    // pixel came from the input.
-    let legacy_coordinates = template_coordinates
-        .then(|| template.table().keywords().get("coords").cloned())
-        .flatten();
-    output.set_units(input.units())?;
-    output.set_image_info(&input.image_info()?)?;
-    output.set_misc_info(input.misc_info())?;
-    output.put_slice(&output_data, &vec![0; output.ndim()])?;
-    if output_mask.iter().any(|valid| !*valid) {
-        output.put_mask("mask0", &output_mask)?;
-        output.set_default_mask("mask0")?;
-    }
-    output.save_as(&request.output)?;
-    if let Some(Value::Record(coords)) = legacy_coordinates {
-        patch_saved_coords_keyword(&request.output, coords)?;
-    }
-    Ok(ImageRegridSummary {
-        imagename: request.imagename.display().to_string(),
-        template: request.template.display().to_string(),
-        output: request.output.display().to_string(),
-        shape: output_shape,
-        valid_pixels: output_mask.iter().filter(|value| **value).count(),
-    })
 }
 
 fn feather_typed(
