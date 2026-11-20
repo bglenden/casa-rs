@@ -39,7 +39,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_components::{ComponentList, PixelGrid, ShapeKind, SkyComponent};
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate};
+use casa_coordinates::{
+    Coordinate, CoordinateError, CoordinateModel, CoordinateType, DirectionCoordinate,
+};
 use casa_images::analysis::{SubimagePlan, SubimageRegion};
 use casa_images::{ImageError, ImageInfo, MutableImageInterface, PagedImage, SubImageMut};
 use casa_lattices::{Lattice, LatticeMut, ScratchSpace, TempLattice, TempStoragePolicy};
@@ -117,7 +119,11 @@ impl Placement<'_> {
             .convert_to(self.grid.frame, &MeasFrame::default())
             .map_err(|error| SkyModelError::Model(error.to_string()))?;
         let (lon, lat) = direction.as_angles();
-        let pixel = self.direction.world_to_pixel([lon, lat])?;
+        let pixel = match self.direction.world_to_pixel([lon, lat]) {
+            Ok(pixel) => pixel,
+            Err(CoordinateError::OutsideProjectionDomain(_)) => return Ok(PointPlacement::Outside),
+            Err(error) => return Err(error.into()),
+        };
         let target = [(pixel[0] + 0.5).floor(), (pixel[1] + 0.5).floor()];
         let [nx, ny] = self.shape.map(|n| n as f64);
         if target[0] < -1.0 || target[1] < -1.0 || target[0] > nx || target[1] > ny {
