@@ -81,8 +81,13 @@ pub fn subtract_visibility_model_selected(
     if selection.is_some_and(<[usize]>::is_empty) {
         return Ok(());
     }
-    let selected = |row| selection.is_none_or(|rows| rows.binary_search(&row).is_ok());
     let create = !has_column(ms, CORRECTED);
+    let mut subtraction = Subtraction {
+        selection,
+        reverse,
+        initializing: create,
+        refusal: None,
+    };
     let input = if create {
         observed_column(ms)
     } else {
@@ -91,14 +96,16 @@ pub fn subtract_visibility_model_selected(
     let mut resolved =
         resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
     if !create {
-        resolved.selected_rows.retain(|row| selected(row.row_index));
+        resolved
+            .selected_rows
+            .retain(|row| subtraction.selected(row.row_index));
     }
     let model_rows;
     let rows_with_models = if create && selection.is_some() {
         model_rows = resolved
             .selected_rows
             .iter()
-            .filter(|row| selected(row.row_index))
+            .filter(|row| subtraction.selected(row.row_index))
             .cloned()
             .collect::<Vec<_>>();
         &model_rows
@@ -119,40 +126,45 @@ pub fn subtract_visibility_model_selected(
         lock,
     )?;
     let batch_rows = plan.batch_rows().max(1);
-    let mut prediction_error = None;
     MeasurementSetWriteSession::mutate_selected_rows_with_lock(ms, plan, lock, |session, ms| {
         for rows in resolved.selected_rows.chunks(batch_rows) {
-            let build = |predict| {
-                subtract_batch(
-                    ms,
-                    rows,
-                    input,
-                    &models,
-                    &correlations,
-                    &destinations[0],
-                    |row| (predict && selected(row)).then_some(reverse),
-                )
-            };
-            let batch = match build(prediction_error.is_none()) {
-                Err(error) if create && prediction_error.is_none() => {
-                    // CASA initializes a new corrected column before model
-                    // prediction. After a refusal, finish its initialization
-                    // without repeating any subtraction already written.
-                    prediction_error = Some(error);
-                    build(false)
-                }
-                result => result,
-            }
+            let batch = subtract_batch(
+                ms,
+                rows,
+                input,
+                &models,
+                &correlations,
+                &destinations[0],
+                &mut subtraction,
+            )
             .map_err(visibility_column_error)?;
             session.write_mutation_batch(ms, batch)?;
         }
         Ok(())
     })
     .map_err(invalid)?;
-    if let Some(error) = prediction_error {
+    if let Some(error) = subtraction.refusal {
         return Err(invalid(visibility_column_error(error)));
     }
     Ok(())
+}
+
+struct Subtraction<'a> {
+    selection: Option<&'a [usize]>,
+    reverse: bool,
+    initializing: bool,
+    refusal: Option<MsError>,
+}
+
+impl Subtraction<'_> {
+    fn selected(&self, row: usize) -> bool {
+        self.selection
+            .is_none_or(|rows| rows.binary_search(&row).is_ok())
+    }
+
+    fn predicts(&self, row: usize) -> bool {
+        self.refusal.is_none() && self.selected(row)
+    }
 }
 
 fn visibility_column_error(error: MsError) -> MeasurementSetWriteError {
@@ -166,7 +178,7 @@ fn subtract_batch(
     models: &VisibilityModels,
     correlations: &BTreeMap<i32, Vec<i32>>,
     destination: &ScratchDestination,
-    operation: impl Fn(usize) -> Option<bool>,
+    subtraction: &mut Subtraction<'_>,
 ) -> MsResult<MeasurementSetMutationBatch> {
     let row_indices: Vec<_> = rows.iter().map(|row| row.row_index).collect();
     let main = ms.main_table();
@@ -177,45 +189,54 @@ fn subtract_batch(
     let input_cells = read(input)?;
     let mut scratch = rows
         .iter()
-        .any(|row| operation(row.row_index).is_some() && models.reads_column(row.field_id))
+        .any(|row| subtraction.predicts(row.row_index) && models.reads_column(row.field_id))
         .then(|| read(MODEL.name()))
         .transpose()?;
     let flags = rows
         .iter()
-        .any(|row| operation(row.row_index).is_some() && models.uses_fourier(row.field_id))
+        .any(|row| subtraction.predicts(row.row_index) && models.uses_fourier(row.field_id))
         .then(|| read("FLAG"))
         .transpose()?;
     let no_flags = ArrayD::<bool>::default(IxDyn(&[0, 0]));
     let mut values = Vec::with_capacity(rows.len());
     for (offset, (row, data)) in rows.iter().zip(input_cells).enumerate() {
         let mut data = complex_cell(data, input)?;
-        let Some(reverse) = operation(row.row_index) else {
-            values.push(ArrayValue::Complex32(data));
-            continue;
-        };
-        let codes = correlations
-            .get(&row.polarization_id)
-            .ok_or_else(|| invalid("invalid POLARIZATION_ID"))?;
-        if data.ndim() != 2 || data.shape()[0] != codes.len() {
-            return Err(invalid("visibility array and correlation layout disagree"));
-        }
-        let model = if models.reads_column(row.field_id) {
-            let cell = scratch.as_mut().and_then(|cells| cells[offset].take());
-            Some(complex_cell(cell, MODEL.name())?)
-        } else {
-            let row_flags = if models.uses_fourier(row.field_id) {
-                match flags.as_ref().and_then(|cells| cells[offset].as_ref()) {
-                    Some(ArrayValue::Bool(flags)) => flags,
-                    _ => return Err(invalid("FLAG is undefined")),
+        if subtraction.predicts(row.row_index) {
+            let result = (|| {
+                let codes = correlations
+                    .get(&row.polarization_id)
+                    .ok_or_else(|| invalid("invalid POLARIZATION_ID"))?;
+                if data.ndim() != 2 || data.shape()[0] != codes.len() {
+                    return Err(invalid("visibility array and correlation layout disagree"));
                 }
-            } else {
-                &no_flags
-            };
-            models
-                .predict(ms, row.row_index, codes, row_flags)
-                .map_err(invalid)?
-        };
-        add_or_subtract(&mut data, model, codes, reverse)?;
+                let model = if models.reads_column(row.field_id) {
+                    let cell = scratch.as_mut().and_then(|cells| cells[offset].take());
+                    Some(complex_cell(cell, MODEL.name())?)
+                } else {
+                    let row_flags = if models.uses_fourier(row.field_id) {
+                        match flags.as_ref().and_then(|cells| cells[offset].as_ref()) {
+                            Some(ArrayValue::Bool(flags)) => flags,
+                            _ => return Err(invalid("FLAG is undefined")),
+                        }
+                    } else {
+                        &no_flags
+                    };
+                    models
+                        .predict(ms, row.row_index, codes, row_flags)
+                        .map_err(invalid)?
+                };
+                add_or_subtract(&mut data, model, codes, subtraction.reverse)
+            })();
+            if let Err(error) = result {
+                if !subtraction.initializing {
+                    return Err(error);
+                }
+                // CASA initializes a new corrected column before prediction.
+                // Keep earlier subtractions and write observed values from the
+                // refused row onward before returning the original error.
+                subtraction.refusal = Some(error);
+            }
+        }
         values.push(ArrayValue::Complex32(data));
     }
     let columns = destination.batch(ms, &row_indices, rows, &BTreeMap::new(), values)?;

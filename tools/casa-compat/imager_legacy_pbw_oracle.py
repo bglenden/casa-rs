@@ -17,10 +17,10 @@ from gaincal_oracle import relative_rms
 
 
 def ft(factory, dataset, model, cache, *, scratch, spw='', correction=True, limit=.05,
-       interp='nearest', accepts=True, machine='pbwproject'):
+       interp='nearest', accepts=True, machine='pbwproject', field=0):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
-    assert tool.selectvis(field=0, spw=spw)
+    assert tool.selectvis(field=field, spw=spw)
     assert tool.defineimage(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
                             phasecenter=0, stokes='IQUV', outframe='TOPO')
     assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
@@ -99,6 +99,11 @@ def read_virtual(dataset, *, name='nPBWProjectFT'):
 
 def reject_recipe(factory, dataset, reason):
     prior = corrected_or_data(dataset)
+    subtract_refused(factory, dataset, reason)
+    np.testing.assert_array_equal(corrected_or_data(dataset), prior)
+
+
+def subtract_refused(factory, dataset, reason):
     reader = factory()
     assert reader.open(str(dataset), nomodify=False)
     try:
@@ -108,7 +113,6 @@ def reject_recipe(factory, dataset, reason):
     else:
         raise AssertionError('the reader accepted the unsupported virtual recipe')
     assert reader.done()
-    np.testing.assert_array_equal(corrected_or_data(dataset), prior)
 
 
 def setup_controls(root, dataset, model, cache, expected):
@@ -246,9 +250,9 @@ def mosaic_control(root, dataset, model, cache):
     assert 'name' not in recipe(pinned_saved)
     pinned_refuses = root / 'pinned-refuses.ms'
     make_input(pinned_saved, pinned_refuses, scratch=False)
-    for dataset in (pinned_saved, pinned_refuses):
+    for refused in (pinned_saved, pinned_refuses):
         reader = table()
-        assert reader.open(str(dataset))
+        assert reader.open(str(refused))
         assert 'CORRECTED_DATA' not in reader.colnames()
         assert reader.done()
     reject_recipe(native_ms, pinned_saved, 'virtual model has no name string')
@@ -258,6 +262,44 @@ def mosaic_control(root, dataset, model, cache):
                                   data(pinned_refuses, 'CORRECTED_DATA'))
     subprocess.run([sys.executable, __file__, '--casa-reject', str(saved), 'Unsupported FTMachine'],
                    check=True)
+    mixed_refusal_control(root, dataset, model, root / 'unavailable-warm')
+
+
+def mixed_refusal_control(root, dataset, model, cache):
+    from casatools import ms as casa_ms
+    from casars.tools import ms as native_ms
+
+    initial, pinned, native = (root / f'mixed-{label}.ms'
+                              for label in ('initial', 'pinned', 'native'))
+    make_input(dataset, initial, scratch=False)
+    writer = table()
+    assert writer.open(str(initial), nomodify=False)
+    times = writer.getcol('TIME')
+    later = times != times.min()
+    assert later.any() and not later.all()
+    assert writer.putcol('FIELD_ID', later.astype('int32')) and writer.done()
+    for field, machine in ((0, 'ft'), (1, 'pbmosaic')):
+        subprocess.run([sys.executable, __file__, '--casa', str(initial), str(model),
+                        str(cache), '--saved', '--machine', machine, '--field', str(field)],
+                       check=True)
+    for target in (pinned, native):
+        make_input(initial, target, scratch=False)
+        reader = table()
+        assert reader.open(str(target))
+        assert 'CORRECTED_DATA' not in reader.colnames()
+        assert reader.done()
+    observed = data(initial, 'DATA')
+    subtract_refused(casa_ms, pinned, 'field name is unknown')
+    subtract_refused(native_ms, native, 'virtual model has no name string')
+    expected = data(pinned, 'CORRECTED_DATA')
+    actual = data(native, 'CORRECTED_DATA')
+    earlier = (..., ~later)
+    np.testing.assert_array_equal(expected[..., later], observed[..., later])
+    np.testing.assert_array_equal(actual[..., later], observed[..., later])
+    assert np.abs(expected[earlier] - observed[earlier]).max() > 1.
+    error = relative_rms(actual[earlier] - observed[earlier], expected[earlier] - observed[earlier])
+    print('uvsub earlier successful subtraction, later refused model', 'NRMS', error, flush=True)
+    assert error < 1.e-3
 
 
 def run(root, dataset, model, cache):
@@ -337,12 +379,13 @@ def main():
     parser.add_argument('--geometry', choices=('both', 'pinned'))
     parser.add_argument('--invalid-cache', action='store_true')
     parser.add_argument('--mosaic', action='store_true')
-    parser.add_argument('--machine', choices=('pbwproject', 'pbmosaic'), default='pbwproject')
+    parser.add_argument('--machine', choices=('ft', 'pbwproject', 'pbmosaic'), default='pbwproject')
+    parser.add_argument('--field', type=int, default=0)
     args = parser.parse_args()
     if args.casa:
         ft(imager, *(Path(path) for path in args.casa), scratch=not args.saved,
            correction=not args.without_correction, limit=args.limit, interp=args.interp,
-           machine=args.machine)
+           machine=args.machine, field=args.field)
     elif args.casa_reject:
         from casatools import ms
 
