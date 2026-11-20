@@ -14,19 +14,24 @@ use super::PyCalibrater;
 
 #[pymethods]
 impl PyCalibrater {
-    #[pyo3(signature = (wtmode = None, dowtsp = false, tsystable = None, gainfield = None, interp = None, spwmap = None), text_signature = "($self, wtmode='nyq', dowtsp=False, tsystable='', gainfield='', interp='', spwmap=[])")]
+    #[pyo3(signature = (wtmode = None, dowtsp = None, tsystable = None, gainfield = None, interp = None, spwmap = None), text_signature = "($self, wtmode='nyq', dowtsp=False, tsystable='', gainfield='', interp='', spwmap=[])")]
     #[allow(clippy::too_many_arguments)]
     fn initweights(
         &self,
         py: Python<'_>,
         #[pyo3(from_py_with = supplied)] wtmode: Option<Bound<'_, PyAny>>,
-        #[pyo3(from_py_with = strict_bool)] dowtsp: bool,
+        #[pyo3(from_py_with = supplied)] dowtsp: Option<Bound<'_, PyAny>>,
         #[pyo3(from_py_with = supplied)] tsystable: Option<Bound<'_, PyAny>>,
         #[pyo3(from_py_with = supplied)] gainfield: Option<Bound<'_, PyAny>>,
         #[pyo3(from_py_with = supplied)] interp: Option<Bound<'_, PyAny>>,
         #[pyo3(from_py_with = supplied)] spwmap: Option<Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         let wtmode = text(wtmode, "wtmode", "nyq")?;
+        let dowtsp = dowtsp
+            .as_ref()
+            .map(strict_bool)
+            .transpose()?
+            .unwrap_or(false);
         let tsystable = text(tsystable, "tsystable", "")?;
         let gainfield = text(gainfield, "gainfield", "")?;
         let interp = text(interp, "interp", "")?;
