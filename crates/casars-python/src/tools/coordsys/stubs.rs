@@ -139,12 +139,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn setepoch(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setepoch")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (value = None, r#type = None), text_signature = "($self, value=[], type='')")]
     fn setincrement(
         &self,

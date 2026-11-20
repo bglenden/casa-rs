@@ -389,6 +389,7 @@ pub struct MEpoch {
     value: MjdHighPrec,
     refer: EpochRef,
     razing: bool,
+    offset: Option<Box<Self>>,
 }
 
 impl MEpoch {
@@ -398,6 +399,7 @@ impl MEpoch {
             value,
             refer,
             razing: false,
+            offset: None,
         }
     }
 
@@ -422,12 +424,13 @@ impl MEpoch {
     /// The quantity is converted to days (MJD) before storing.
     pub fn from_quantity(q: &Quantity, refer: EpochRef) -> Result<Self, MeasureError> {
         let day_unit = Unit::new("d").expect("'d' is a valid unit");
-        let mjd = q
-            .get_value_in(&day_unit)
-            .map_err(|_| MeasureError::NonConformantUnit {
+        if q.unit().val().dim != day_unit.val().dim {
+            return Err(MeasureError::NonConformantUnit {
                 expected: "time",
                 got: q.unit().name().to_owned(),
-            })?;
+            });
+        }
+        let mjd = q.value() * (q.unit().val().factor / day_unit.val().factor);
         Ok(Self::from_mjd(mjd, refer))
     }
 
@@ -453,6 +456,17 @@ impl MEpoch {
         self.razing
     }
 
+    /// Attaches the time origin of this epoch's reference frame.
+    pub fn with_offset(mut self, offset: Self) -> Self {
+        self.offset = Some(Box::new(offset));
+        self
+    }
+
+    /// Returns the time origin of this epoch's reference frame, if present.
+    pub fn offset(&self) -> Option<&Self> {
+        self.offset.as_deref()
+    }
+
     /// Returns the epoch value as a [`Quantity`] in days.
     pub fn as_quantity(&self) -> Quantity {
         Quantity::new(self.value.as_mjd(), "d").expect("'d' is a valid unit")
@@ -468,6 +482,11 @@ impl MEpoch {
     /// - GMST1 ↔ LMST and GAST ↔ LAST: require `position` (for longitude)
     pub fn convert_to(&self, target: EpochRef, frame: &MeasFrame) -> Result<MEpoch, MeasureError> {
         let mut current = self.value;
+        if let Some(offset) = &self.offset {
+            let origin = offset.convert_to(self.refer, frame)?.value();
+            current =
+                MjdHighPrec::new(current.day() + origin.day(), current.frac() + origin.frac());
+        }
         if self.refer != target {
             let path = find_path(self.refer, target)?;
             let mut current_ref = self.refer;

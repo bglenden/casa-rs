@@ -259,7 +259,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("setepoch", &[param("value", K::Any, Required)], R::Any, No),
+    method("setepoch", &[param("value", K::Any, Required)], R::Any, Yes),
     method(
         "setincrement",
         &[
