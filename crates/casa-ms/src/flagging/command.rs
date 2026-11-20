@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_tables::{TableError, TableOptions};
+use casa_tables::TableError;
 use casa_types::{ScalarValue, Value};
 
 use super::FlaggingError;
@@ -38,9 +38,5 @@ pub fn append_flag_command(
     ] {
         row.upsert(name, Value::Scalar(value));
     }
-    table.add_row(row).map_err(fail)?;
-    table
-        .prepare_write()
-        .save(TableOptions::new(&path))
-        .map_err(fail)
+    table.append_rows_in_place(1, &row).map_err(fail)
 }

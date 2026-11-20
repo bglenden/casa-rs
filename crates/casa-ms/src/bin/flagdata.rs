@@ -49,7 +49,15 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         "calculate" => true,
         "" | "none" => {
             if save_parameters {
-                save_flag_parameters(task, &task.path("vis")?, &mode, &action)?;
+                let path = task.path("vis")?;
+                MeasurementSet::open(&path).map_err(|_| {
+                    TaskFailure::validation(format!(
+                        "Cannot open MeasurementSet {}",
+                        path.display()
+                    ))
+                    .at("vis")
+                })?;
+                save_flag_parameters(task, &path, &mode, &action)?;
             } else {
                 tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
             }
@@ -132,6 +140,10 @@ fn save_flag_parameters(
         "timerange",
         "intent",
     ] {
+        if let Some(text) = task.argument_text(name) {
+            arguments.push(format!("{name}={text}"));
+            continue;
+        }
         let text = if let Some(ParameterValue::String(value)) = task.session().given(name) {
             value.clone()
         } else {
@@ -166,7 +178,9 @@ fn save_flag_parameters(
         _ => return Err(not_yet("savepars", mode)),
     };
     for &field in fields {
-        if field == "datacolumn" {
+        if let Some(text) = task.argument_text(field) {
+            arguments.push(format!("{field}={text}"));
+        } else if field == "datacolumn" {
             let column = task.required_text(field)?.to_ascii_uppercase();
             push_command_argument(&mut arguments, field, &ParameterValue::String(column));
         } else {
@@ -181,17 +195,19 @@ fn save_flag_parameters(
             push_command_argument(&mut arguments, field, value);
         }
     }
-    if mode == "clip"
-        && let [minimum, maximum] = task.numbers("clipminmax")?.as_slice()
-    {
-        push_command_argument(
-            &mut arguments,
-            "clipminmax",
-            &ParameterValue::Array(vec![
-                ParameterValue::Float(*minimum),
-                ParameterValue::Float(*maximum),
-            ]),
-        );
+    if mode == "clip" {
+        if let Some(text) = task.argument_text("clipminmax") {
+            arguments.push(format!("clipminmax={text}"));
+        } else if let [minimum, maximum] = task.numbers("clipminmax")?.as_slice() {
+            push_command_argument(
+                &mut arguments,
+                "clipminmax",
+                &ParameterValue::Array(vec![
+                    ParameterValue::Float(*minimum),
+                    ParameterValue::Float(*maximum),
+                ]),
+            );
+        }
     }
     push_command_argument(
         &mut arguments,
@@ -220,7 +236,13 @@ fn save_flag_parameters(
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let save = || -> std::io::Result<()> {
-        let mut pending = tempfile::NamedTempFile::new_in(parent)?;
+        let mut builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o666));
+        }
+        let mut pending = builder.tempfile_in(parent)?;
         writeln!(pending, "{content}")?;
         if overwrite {
             pending.persist(path)?;
@@ -239,8 +261,13 @@ fn save_flag_parameters(
             }
             return TaskFailure::execution(message).at("outfile");
         }
+        let parameter = if error.kind() == ErrorKind::NotFound {
+            "outfile.not_found"
+        } else {
+            "outfile"
+        };
         TaskFailure::execution(format!("Error writing flag commands to {outfile}: {error}"))
-            .at("outfile")
+            .at(parameter)
     })
 }
 
@@ -713,7 +740,9 @@ mod tests {
 
     /// The request a `flagdata` command line resolves to.
     fn request_for(args: &[&str]) -> Result<FlagDataRequest, TaskFailure> {
-        read(args, flagdata_request)
+        read(args, |task| {
+            flagdata_request(task, channel_bin_widths(task)?)
+        })
     }
 
     #[test]

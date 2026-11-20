@@ -129,6 +129,63 @@ def compare_occupied_file(original):
     return len(cases)
 
 
+def compare_original_arguments():
+    common = {"vis": "source.ms", "savepars": True, "action": "none"}
+    cases = (
+        ({"field": ["FLUX"], "spw": ["0"], "scan": ("1", "2")},
+         "field=['FLUX'] spw=['0'] scan=['1', '2'] autocorr=False mode='manual'\n"),
+        ({"mode": "clip", "clipoutside": np.bool_(False), "channelavg": np.bool_(True),
+          "clipzeros": np.bool_(True), "chanbin": np.array(2), "clipminmax": [float("nan"), float("inf")]},
+         "datacolumn='DATA' clipoutside=False channelavg=True chanbin=2 timeavg=False "
+         "timebin='0s' clipzeros=True clipminmax=[nan, inf] mode='clip'\n"),
+    )
+    for index, (options, command) in enumerate(cases):
+        for name, task in TASKS:
+            path = Path(f"arguments-{index}-{name}.txt")
+            assert task(**common, **options, outfile=str(path)) == {}
+            assert path.read_text() == command
+
+
+def check_reader_resync():
+    vis = "reader.ms"
+    copytree("source.ms", vis)
+    options = {"vis": vis, "savepars": True, "action": "none"}
+    casatasks.flagdata(**options, field="FLUX")
+    command_table = f"{vis}/FLAG_CMD"
+    with table(command_table, lockoptions="usernoread", ack=False) as reader:
+        managers = reader.getdminfo()
+        assert list(reader.getcol("COMMAND")) == ["field='FLUX' autocorr=False mode='manual'"]
+        tasks.flagdata(**options, field="PHASE")
+        reader.resync()
+        assert reader.getdminfo() == managers
+        assert list(reader.getcol("COMMAND")) == [
+            "field='FLUX' autocorr=False mode='manual'", "field='PHASE' autocorr=False mode='manual'",
+        ]
+
+
+def check_output_paths():
+    empty = Path("empty-directory.ms")
+    empty.mkdir()
+    options = {"savepars": True, "action": "none"}
+    for name, task in TASKS:
+        path = Path(f"invalid-source-{name}.txt")
+        for vis, expected in (("missing.ms", AssertionError), (str(empty), ValueError)):
+            try:
+                task(**options, vis=vis, outfile=str(path))
+            except expected:
+                pass
+            else:
+                raise AssertionError((name, vis))
+            assert not path.exists()
+        outfile = f"missing-parent/{name}.txt"
+        try:
+            task(**options, vis="source.ms", outfile=outfile)
+        except FileNotFoundError as failure:
+            assert failure.filename == outfile
+        else:
+            raise AssertionError((name, outfile))
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="flagdata-savepars-") as directory, chdir(directory):
@@ -137,6 +194,9 @@ def main():
         commands = compare_table_commands(original)
         compare_ascii_commands(original)
         occupied = compare_occupied_file(original)
+        compare_original_arguments()
+        check_reader_resync()
+        check_output_paths()
     print(f"{commands} matched FLAG_CMD rows, two command files, ignored summary output and "
           f"{occupied} existing-file failures verified against CASA")
 

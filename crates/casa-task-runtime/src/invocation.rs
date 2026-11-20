@@ -87,6 +87,7 @@ pub fn project_provider_invocation_with_originals(
         surface: session.bundle().surface.id().to_string(),
         values: plain,
         typed_values,
+        argument_text: BTreeMap::new(),
     };
     let stdin = serde_json::to_string(&request)
         .map_err(|error| ProviderInvocationError::Request(error.to_string()))?;
