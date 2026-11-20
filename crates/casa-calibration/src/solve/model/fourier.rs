@@ -3,6 +3,7 @@
 //! using the same measurement operator as imaging.
 
 mod focus;
+mod legacy_pbw;
 mod mosaic;
 mod setjy;
 mod tracking;
@@ -20,6 +21,7 @@ use casa_imaging_operator::{
     PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel,
     SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
+use casa_imaging_runtime::Reservation;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, convert_frequency_to_frame};
 use casa_types::measures::MeasFrame;
@@ -153,6 +155,7 @@ struct PreparedFourierModel {
     weights: Vec<f32>,
     flags: Vec<bool>,
     frequencies: Vec<f64>,
+    _legacy_pbw_memory: Option<Reservation>,
 }
 
 impl PreparedFourierModel {
@@ -205,7 +208,11 @@ impl PreparedFourierModel {
         let axis = image_spectral_axis(image, channels)?;
         let (basis, resampler) = spectral_layout(record, &axis, continuum_basis, false)?;
         let tracking = tracking::Tracking::load(terms[0])?;
-        let (kernels, mosaic) = if mosaic::is_mosaic(terms[0]) {
+        let legacy_pbw = record_text(terms[0], "name")? == "nPBWProjectFT";
+        let (kernels, mosaic, legacy_pbw_memory) = if legacy_pbw {
+            let (kernels, memory) = legacy_pbw::load(terms[0], row, &geometry, &polarization)?;
+            (kernels, None, Some(memory))
+        } else if mosaic::is_mosaic(terms[0]) {
             let (kernels, layout) = MosaicLayout::load(
                 terms[0],
                 row,
@@ -218,13 +225,14 @@ impl PreparedFourierModel {
                 ),
                 scratch,
             )?;
-            (kernels, Some(layout))
+            (kernels, Some(layout), None)
         } else {
-            (grid_kernel(terms[0], &geometry, &polarization)?, None)
+            (grid_kernel(terms[0], &geometry, &polarization)?, None, None)
         };
-        let resampler = if mosaic
-            .as_ref()
-            .is_some_and(|layout| layout.autocorrelations)
+        let resampler = if legacy_pbw
+            || mosaic
+                .as_ref()
+                .is_some_and(|layout| layout.autocorrelations)
         {
             resampler.predicting_autocorrelations()
         } else {
@@ -242,12 +250,13 @@ impl PreparedFourierModel {
             None
         };
         let project = uses_projected_tangent(terms[0], row.ms)?;
-        let legacy_flags = terms[0].get("doconversion").is_some();
+        let legacy_flags = legacy_pbw || terms[0].get("doconversion").is_some();
         let channel_mask = match terms[0].get("spwchanselflag") {
             Some(Value::Array(ArrayValue::Int32(mask))) if !mask.is_empty() => Some(mask.clone()),
             _ => None,
         };
         Ok(Self {
+            _legacy_pbw_memory: legacy_pbw_memory,
             operator,
             resampler,
             grids,
@@ -689,7 +698,7 @@ fn image_spectral_axis(
 
 fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSolveError> {
     match record_text(record, "name")? {
-        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" => {
+        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" | "nPBWProjectFT" => {
             Ok((vec![record], Basis::Constant))
         }
         "MultiTermFT" => match record.get("subftm") {
@@ -760,7 +769,7 @@ fn open_grid(
 ) -> Result<PagedImage<Complex32>, GainSolveError> {
     if !matches!(
         record_text(record, "name")?,
-        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT"
+        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" | "nPBWProjectFT"
     ) {
         return Err(model_error(
             "unsupported Fourier image type in virtual model",

@@ -34,8 +34,8 @@ struct PreparedEpModel {
     _memory: Reservation,
 }
 
-struct FirstBuffer {
-    correlations: Vec<StokesType>,
+pub(crate) struct FirstBuffer {
+    pub(crate) correlations: Vec<StokesType>,
     frequency_hz: f64,
     angle_rad: f64,
 }
@@ -70,7 +70,15 @@ impl LegacyEpSolver {
             return Err(invalid("EP model contains non-finite IQUV values").into());
         }
         let buffer = attachment.with_write(|ms, selection, _| Ok(first_buffer(ms, selection)?))?;
-        let products = self.convolution(&host, &buffer, shape, cell_rad, &coordinates)?;
+        let products = convolution(
+            &self.cache,
+            self.angle_increment_deg,
+            &host,
+            &buffer,
+            shape,
+            cell_rad,
+            &coordinates,
+        )?;
         let fourier =
             LegacyEpConvolution::prepare_model(&pixels, &products.average_beam, products.sampling)
                 .map_err(invalid)?;
@@ -85,75 +93,76 @@ impl LegacyEpSolver {
         });
         Ok(())
     }
+}
 
-    fn convolution(
-        &self,
-        host: &HostResources,
-        buffer: &FirstBuffer,
-        shape: [usize; 4],
-        cell_rad: [f64; 2],
-        beam_coordinates: &CoordinateSystem,
-    ) -> MsResult<EpCacheProducts> {
-        let read = || {
-            self.cache.read(
-                host,
-                buffer.angle_rad,
-                self.angle_increment_deg,
-                &shape,
-                &buffer.correlations,
-            )
-        };
-        {
-            let _lock = NativeCacheLock::shared(self.cache.path()).map_err(invalid)?;
-            if let Some(products) = read()? {
-                return Ok(products);
-            }
-        }
-        let _lock = NativeCacheLock::exclusive(self.cache.path()).map_err(invalid)?;
-        self.cache.recover()?;
+pub(crate) fn convolution(
+    cache: &EpCache,
+    angle_increment_deg: f64,
+    host: &HostResources,
+    buffer: &FirstBuffer,
+    shape: [usize; 4],
+    cell_rad: [f64; 2],
+    beam_coordinates: &CoordinateSystem,
+) -> MsResult<EpCacheProducts> {
+    let read = || {
+        cache.read(
+            host,
+            buffer.angle_rad,
+            angle_increment_deg,
+            &shape,
+            &buffer.correlations,
+        )
+    };
+    {
+        let _lock = NativeCacheLock::shared(cache.path()).map_err(invalid)?;
         if let Some(products) = read()? {
             return Ok(products);
         }
-        let _screen_memory = admit(
-            host,
-            &ResourcePolicy::Balanced,
-            &Demand {
-                phase: "legacy EP convolution screen",
-                memory: 256 << 20,
-            },
-        )
-        .map_err(invalid)?;
-        let aperture = legacy_aperture()?;
-        let products = LegacyEpConvolution::vla_l_band(
-            &aperture,
-            shape[0],
-            cell_rad[0],
-            buffer.frequency_hz,
-            buffer.angle_rad,
-        )
-        .map_err(invalid)?;
-        self.cache.publish(
-            buffer.angle_rad,
-            cell_rad,
-            beam_coordinates,
-            shape,
-            &buffer.correlations,
-            &products,
-        )?;
-        // The persisted angle is single precision and written as decimal.
-        self.cache
-            .read(
-                host,
-                buffer.angle_rad,
-                self.angle_increment_deg.max(0.001),
-                &shape,
-                &buffer.correlations,
-            )?
-            .ok_or_else(|| invalid("legacy EP generated an unusable convolution cache"))
     }
+    let _lock = NativeCacheLock::exclusive(cache.path()).map_err(invalid)?;
+    cache.recover()?;
+    if let Some(products) = read()? {
+        return Ok(products);
+    }
+    let _screen_memory = admit(
+        host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy EP convolution screen",
+            memory: 256 << 20,
+        },
+    )
+    .map_err(invalid)?;
+    let aperture = legacy_aperture()?;
+    let products = LegacyEpConvolution::vla_l_band(
+        &aperture,
+        shape[0],
+        cell_rad[0],
+        buffer.frequency_hz,
+        buffer.angle_rad,
+    )
+    .map_err(invalid)?;
+    cache.publish(
+        buffer.angle_rad,
+        cell_rad,
+        beam_coordinates,
+        shape,
+        &buffer.correlations,
+        &products,
+    )?;
+    // The persisted angle is single precision and written as decimal.
+    cache
+        .read(
+            host,
+            buffer.angle_rad,
+            angle_increment_deg.max(0.001),
+            &shape,
+            &buffer.correlations,
+        )?
+        .ok_or_else(|| invalid("legacy EP generated an unusable convolution cache"))
 }
 
-fn reserve_model(host: &HostResources, side: usize) -> MsResult<Reservation> {
+pub(crate) fn reserve_model(host: &HostResources, side: usize) -> MsResult<Reservation> {
     // Model and average-beam pixels, four retained Fourier grids, and
     // the image-sized Jones, power and FFT workspace of the average beam.
     let memory = (side as u64)
@@ -171,7 +180,9 @@ fn reserve_model(host: &HostResources, side: usize) -> MsResult<Reservation> {
     .map_err(invalid)
 }
 
-fn model_geometry(image: &PagedImage<f32>) -> MsResult<([usize; 4], [f64; 2], CoordinateSystem)> {
+pub(crate) fn model_geometry(
+    image: &PagedImage<f32>,
+) -> MsResult<([usize; 4], [f64; 2], CoordinateSystem)> {
     let [side, ny, 4, 1] = *image.shape() else {
         return Err(invalid("legacy EP needs a single-channel IQUV image"));
     };
@@ -215,7 +226,10 @@ fn model_geometry(image: &PagedImage<f32>) -> MsResult<([usize; 4], [f64; 2], Co
     Ok(([side, ny, 4, 1], cell_rad, coordinates))
 }
 
-fn first_buffer(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResult<FirstBuffer> {
+pub(crate) fn first_buffer(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+) -> MsResult<FirstBuffer> {
     let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
     if telescope != "VLA" {
         return Err(invalid(
