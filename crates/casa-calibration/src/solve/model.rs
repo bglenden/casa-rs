@@ -603,9 +603,11 @@ fn decode_entries(record: &RecordValue) -> Result<Vec<Entry>, GainSolveError> {
                 // The SDGrid span also controls its single-channel bypass.
                 let saved_span = match entry.container.get("name") {
                     Some(Value::Scalar(ScalarValue::String(name))) => {
-                        matches!(name.as_str(), "nPBWProjectFT" | "PBMosaicFT")
-                            || (name == "SDGrid"
-                                && entry.container.get("casars_live_image_frequency").is_some())
+                        matches!(
+                            name.as_str(),
+                            "nPBWProjectFT" | "PBMosaicFT" | crate::ft::legacy_aw::MACHINE
+                        ) || (name == "SDGrid"
+                            && entry.container.get("casars_live_image_frequency").is_some())
                     }
                     _ => false,
                 };
