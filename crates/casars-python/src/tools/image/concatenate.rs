@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Paged image concatenation, including temporary returned images.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
@@ -20,7 +21,7 @@ use super::PyImageTool;
 use super::attachment;
 use super::beams::{image_info, image_info_record, plane_axes, stored_beam_record};
 use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::handle::{ImageHandle, Storage, raised, same_file_snapshot, with_pixels, with_storage};
 
 fn filename_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Variant> {
     let Some(value) = value else {
@@ -107,6 +108,32 @@ fn filenames(py: Python<'_>, files: &Variant) -> PyResult<Vec<PathBuf>> {
     Ok(result)
 }
 
+struct InputRevision {
+    file: fs::Metadata,
+    generation: Option<u32>,
+}
+
+impl InputRevision {
+    fn read(path: &Path, image: &ImageHandle) -> PyResult<Self> {
+        let file = fs::metadata(path).map_err(raised)?;
+        #[cfg(unix)]
+        let generation = with_pixels!(image, storage => match storage {
+            Storage::Paged(image) => Some(image.table().locked_modify_counter().map_err(raised)?),
+            Storage::Temp { .. } => None,
+        });
+        #[cfg(not(unix))]
+        let generation = {
+            let _ = image;
+            None
+        };
+        Ok(Self { file, generation })
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        self.generation == other.generation && same_file_snapshot(&self.file, &other.file)
+    }
+}
+
 struct Input<'a> {
     path: &'a Path,
     shape: Vec<usize>,
@@ -120,6 +147,7 @@ struct Input<'a> {
     history: Vec<ImageHistoryRow>,
     has_mask: bool,
     opened: Option<ImageHandle>,
+    revision: Option<InputRevision>,
 }
 
 impl<'a> Input<'a> {
@@ -136,6 +164,9 @@ impl<'a> Input<'a> {
             Storage::Paged(_) => image_history_rows(path).map_err(raised)?,
             Storage::Temp { image, .. } => image.history_rows().to_vec(),
         });
+        let revision = tempclose
+            .then(|| InputRevision::read(path, &image))
+            .transpose()?;
         Ok(Self {
             path,
             shape: image.shape().to_vec(),
@@ -149,6 +180,7 @@ impl<'a> Input<'a> {
             history,
             has_mask: has_mask || image.fits().is_some_and(|fits| fits.has_mask),
             opened: (!tempclose).then_some(image),
+            revision,
         })
     }
 
@@ -348,10 +380,14 @@ impl Request<'_> {
             let image = if let Some(opened) = &entry.opened {
                 opened
             } else {
-                reopened = ImageHandle::open(entry.path).map_err(raised)?;
+                reopened = ImageHandle::open_read(entry.path).map_err(raised)?;
                 &reopened
             };
-            if image.shape() != entry.shape || image.kind() != entry.kind {
+            let same_revision = match &entry.revision {
+                Some(revision) => revision.matches(&InputRevision::read(entry.path, image)?),
+                None => true,
+            };
+            if !same_revision || image.shape() != entry.shape || image.kind() != entry.kind {
                 return Err(raised(format!(
                     "Image {} changed while it was being concatenated",
                     entry.path.display()

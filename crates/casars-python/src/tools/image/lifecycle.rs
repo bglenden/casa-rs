@@ -21,7 +21,7 @@ pub(super) fn open_image(infile: &str) -> PyResult<AttachedImage> {
         return Err(raised(format!("Exception: File {infile} does not exist..")));
     }
     let path = std::path::absolute(path).map_err(raised)?;
-    AttachedImage::open(&mut attachment::registry(), &path)
+    AttachedImage::open(&path)
 }
 
 #[pymethods]

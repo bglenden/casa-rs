@@ -586,7 +586,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("haslock", &[], R::Any, No),
+    method("haslock", &[], R::Any, Yes),
     method(
         "histograms",
         &[
@@ -661,7 +661,7 @@ const METHODS: &[Method] = &[
             param("nattempts", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "makearray",
@@ -1215,7 +1215,7 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("type", &[], R::Any, Yes),
-    method("unlock", &[], R::Any, No),
+    method("unlock", &[], R::Any, Yes),
 ];
 
 /// The `image` tool's surface.

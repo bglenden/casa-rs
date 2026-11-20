@@ -13,7 +13,10 @@ use crate::fits_read::FitsToolImport;
 use crate::image_expr_lel::broadcast_shapes;
 use crate::{AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage};
 
-use super::{mask_expression, mask_parse_error, operand_path, stretch_axes, validate_mask_name};
+use super::{
+    mask_expression, mask_parse_error, open_mask_image, operand_path, stretch_axes,
+    validate_mask_name,
+};
 
 struct MaskGeometry {
     path: PathBuf,
@@ -43,7 +46,7 @@ impl MaskGeometry {
                 complex: false,
             });
         }
-        match AnyPagedImage::open(path)? {
+        match open_mask_image(path)? {
             AnyPagedImage::Float32(image) => Self::native(&image, path, mask, false),
             AnyPagedImage::Float64(_) if mask.is_some() => Err(ImageError::CasaSelection(format!(
                 "Input mask specification is incorrect: ImageExprParse: {} is a PagedImage with an unsupported data type",

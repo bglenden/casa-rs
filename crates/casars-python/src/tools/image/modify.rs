@@ -70,20 +70,21 @@ impl PyImageTool {
                 return Ok(false);
             };
             let mut image = attachment.lock();
-            let fits = image.fits().is_some();
-            let ImageHandle::Float(storage) = &mut *image else {
+            if !matches!(*image, ImageHandle::Float(_)) {
                 return Err(raised("Exception: This method only supports float valued images."));
-            };
+            }
             let model = image_component_model(&model, &mut logs)?;
-            if fits {
+            if image.fits().is_some() {
                 return Err(raised("Failed AlwaysAssert to.isWritable()"));
             }
-            if let Storage::Paged(native) = storage
-                && let Some(path) = native.name()
-            {
+            if let Some(path) = image.path() {
                 check_native_write(path, state.history)
                     .map_err(|_| raised("Failed AlwaysAssert to.isWritable()"))?;
             }
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
+            let ImageHandle::Float(storage) = &mut *image else {
+                unreachable!("float image checked");
+            };
             let options = ComponentEdit {
                 region: region.as_ref().map(Region::as_region),
                 mask: Some(&mask),

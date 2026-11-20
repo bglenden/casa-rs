@@ -188,14 +188,9 @@ impl PyImageTool {
                     DopplerRef::RADIO
                 })
             };
-            describe(
-                &attachment.lock(),
-                doppler,
-                list,
-                pixelorder,
-                verbose,
-                &mut logs,
-            )
+            let mut image = attachment.lock();
+            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
+            describe(&image, doppler, list, pixelorder, verbose, &mut logs)
         });
         emit(py, "casars.tools.image", &logs)?;
         result?.into_python(py)

@@ -350,8 +350,9 @@ impl PyImageTool {
         let beam = casa_record(py, beam)?;
         let message = py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else { return Ok(None) };
-            let mut image = image.lock();
+            let Some(attachment) = state.image.as_ref() else { return Ok(None) };
+            let mut image = attachment.lock();
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             let (info, message) = if !imagename.is_empty() {
                 if !major.is_empty_sequence() || !minor.is_empty_sequence()
                     || !matches!(&pa, Variant::Text(text) if text == UNSPECIFIED_PA)
