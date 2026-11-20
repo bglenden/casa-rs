@@ -212,3 +212,20 @@ def test_sampled_spectral_transform_is_folded_into_persisted_samples(casa):
         assert cs.fromrecord(record)
         np.testing.assert_array_equal(cs.lineartransform("spectral"), [[1.0]])
         np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [6e8])
+
+
+def test_later_spectral_edits_keep_the_live_sampled_matrix(casa):
+    source = casa.coordsys().newcoordsys(spectral=True)
+    assert source.setspectral(frequencies={"value": np.array([1e9, 1.2e9, 1.5e9]), "unit": "Hz"})
+    sample = source.torecord()
+    for backend in (tools, casa):
+        cs = backend.coordsys()
+        assert cs.fromrecord(sample)
+        assert cs.setlineartransform("spectral", [[2.0]])
+        assert cs.setnames(["Custom frequency"], "spectral")
+        assert cs.setrestfrequency(2e9)
+        np.testing.assert_array_equal(cs.lineartransform("spectral"), [[2.0]])
+        np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [1.4e9])
+        assert cs.setincrement([7.0], "spectral")
+        np.testing.assert_array_equal(cs.lineartransform("spectral"), [[2.0]])
+        np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [1e9 + 11.2], atol=1e-7, rtol=0.0)

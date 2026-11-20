@@ -25,6 +25,7 @@ CASA behaviours casa-rs does not follow:
 [an omitted or undersized coordinate offset](#coordsys-relative-conversions-can-abort-on-missing-values),
 [empty input to the spectral velocity conversions](#coordsys-spectral-velocity-conversions-can-crash-on-missing-input),
 [spectral vectors with non-native byte order](#coordsys-doppler-conversion-can-misread-byte-swapped-arrays),
+[coordinate matrices with invalid rank or collapsed samples](#coordsys-linear-transform-input-can-abort-or-make-a-record-unreadable),
 [a statistics logfile reused by a later call](#imagestatistics-can-overwrite-a-logfile-omitted-from-the-current-call),
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
@@ -8168,6 +8169,16 @@ On a little-endian host, CASA 6.7.6.14 treats a big-endian `float64` NumPy
 array such as `np.array([1.0, 2.0, 3.0], dtype='>f8')` as native-endian
 bytes in `frequencytofrequency`. The values become tiny subnormal numbers
 even at zero velocity. casa-rs respects the array dtype's byte order.
+
+## Coordsys linear transform input can abort or make a record unreadable
+
+CASA 6.7.6.14 can abort in `setlineartransform('linear', value)` on a
+three-dimensional numeric array. It can also accept a zero transform for
+a sampled tabular or spectral coordinate, then write constant lookup
+values that its record reader refuses to reopen. casa-rs raises
+`RuntimeError` before editing the coordinate in these cases. It also
+rejects non-finite matrix coefficients and reads byte-swapped arrays
+according to their declared byte order.
 
 ## `image.statistics` can overwrite a logfile omitted from the current call
 
