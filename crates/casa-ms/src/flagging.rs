@@ -45,11 +45,13 @@ use crate::{
 };
 use casa_numerics::solve_weighted_least_squares;
 
+mod clip;
 mod correlation;
 mod extend;
 mod summary;
 
-use correlation::{ClipMetric, CorrelationSelection};
+use clip::{ClipOptions, apply_clip_array};
+use correlation::CorrelationSelection;
 mod version_backup;
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{save_next_flag_backup, save_next_partition_flag_backup};
@@ -801,7 +803,7 @@ fn apply_clip_flags(
             .clipminmax
             .map(|bounds| bounds.map(|limit| f64::from(limit as f32))),
         outside,
-        planes: None,
+        projections: None,
         metric: correlations.and_then(CorrelationSelection::clip_metric),
     };
     // CASA flags non-finite data and, with clipzeros, near-zero samples.
@@ -858,11 +860,11 @@ fn apply_clip_flags(
             total_samples += flags.len();
             flagged_samples += flags.iter().filter(|flag| **flag).count();
             let ddid = ddids.as_ref().map(|values| values[row_slot]);
-            let planes = correlations
+            let projections = correlations
                 .zip(ddid)
-                .map(|(selection, ddid)| selection.clip_planes_for(ddid, &path))
+                .map(|(selection, ddid)| selection.clip_projections_for(ddid, &path))
                 .transpose()?;
-            if planes.is_some_and(|planes| planes.is_empty()) {
+            if projections.is_some_and(|projections| projections.is_empty()) {
                 continue;
             }
             let column = request.data_column.name();
@@ -899,13 +901,16 @@ fn apply_clip_flags(
                 data_value,
                 flags,
                 channels.as_deref(),
-                ClipOptions { planes, ..options },
+                ClipOptions {
+                    projections,
+                    ..options
+                },
                 &path,
                 row,
                 &mut row_changes,
             )?;
-            let row_changed = row_changes.len();
-            if row_changed > 0 {
+            if !row_changes.is_empty() {
+                let mut row_changed = 0;
                 let mut updated_flags = flags.clone();
                 {
                     let mut updated_flags = updated_flags
@@ -916,7 +921,9 @@ fn apply_clip_flags(
                         reason: format!("FLAG row {row} must be rank-2: {source}"),
                     })?;
                     for &(corr, chan) in &row_changes {
-                        updated_flags[(corr, chan)] = true;
+                        let already_flagged =
+                            std::mem::replace(&mut updated_flags[(corr, chan)], true);
+                        row_changed += usize::from(!already_flagged);
                     }
                 }
                 changed.changed_samples += row_changed;
@@ -1838,140 +1845,6 @@ fn push_sample(
         ant1: metadata.ant1,
         ant2: metadata.ant2,
     });
-}
-
-/// The unflagged samples of a row's `data`, in `channels` or in every
-/// channel, that clip mode flags with no clip range: CASA's clipping agent
-/// flags a NaN always, and with `zeros` an amplitude at or below
-/// `f32::EPSILON` too.
-#[derive(Debug, Clone, Copy)]
-struct ClipOptions<'a> {
-    zeros: bool,
-    bounds: Option<[f64; 2]>,
-    outside: bool,
-    planes: Option<&'a [usize]>,
-    metric: Option<ClipMetric>,
-}
-
-impl ClipMetric {
-    fn apply32(self, value: Complex32) -> f32 {
-        match self {
-            Self::Amplitude => value.norm(),
-            Self::Real => value.re,
-            Self::Imaginary => value.im,
-            Self::Phase => value.arg(),
-            Self::SquaredMagnitude => value.norm_sqr(),
-        }
-    }
-
-    fn apply64(self, value: Complex64) -> f64 {
-        match self {
-            Self::Amplitude => value.norm(),
-            Self::Real => value.re,
-            Self::Imaginary => value.im,
-            Self::Phase => value.arg(),
-            Self::SquaredMagnitude => value.norm_sqr(),
-        }
-    }
-}
-
-fn apply_clip_array(
-    data: &ArrayValue,
-    flags: &ArrayD<bool>,
-    channels: Option<&[usize]>,
-    options: ClipOptions<'_>,
-    path: &str,
-    row: usize,
-    changed: &mut Vec<(usize, usize)>,
-) -> Result<(), FlaggingError> {
-    let flags = flags
-        .view()
-        .into_dimensionality::<Ix2>()
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.to_string(),
-            reason: format!("FLAG row {row} must be rank-2: {source}"),
-        })?;
-    let ClipOptions {
-        zeros,
-        bounds,
-        outside,
-        planes,
-        metric,
-    } = options;
-    let matches_range = |value: f64, [lower, upper]: [f64; 2]| {
-        if outside {
-            value < lower || value > upper
-        } else {
-            value >= lower && value <= upper
-        }
-    };
-    let clip_scalar = |value: f64| {
-        is_casa_clip(value.abs(), zeros)
-            || bounds.is_some_and(|bounds| matches_range(value, bounds))
-    };
-    match data {
-        ArrayValue::Complex32(values) => {
-            clip_cells(values, flags, channels, planes, changed, |value| {
-                if let Some(metric) = metric {
-                    clip_scalar(f64::from(metric.apply32(value)))
-                } else {
-                    is_casa_clip_complex32(value, zeros)
-                        || bounds
-                            .is_some_and(|bounds| matches_range(f64::from(value.norm()), bounds))
-                }
-            })
-        }
-        ArrayValue::Complex64(values) => {
-            clip_cells(values, flags, channels, planes, changed, |value| {
-                if let Some(metric) = metric {
-                    clip_scalar(metric.apply64(value))
-                } else {
-                    is_casa_clip_complex64(value, zeros)
-                        || bounds.is_some_and(|bounds| matches_range(value.norm(), bounds))
-                }
-            })
-        }
-        ArrayValue::Float32(values) => {
-            clip_cells(values, flags, channels, planes, changed, |value| {
-                clip_scalar(f64::from(value))
-            })
-        }
-        ArrayValue::Float64(values) => {
-            clip_cells(values, flags, channels, planes, changed, clip_scalar)
-        }
-        _ => Ok(()),
-    }
-    .map_err(|source| FlaggingError::MutateFlags {
-        path: path.to_string(),
-        reason: format!("DATA row {row} must be rank-2: {source}"),
-    })
-}
-
-/// Each unflagged `(corr, chan)` of `values` that `clip` flags.
-fn clip_cells<T: Copy>(
-    values: &ArrayD<T>,
-    flags: ndarray::ArrayView2<'_, bool>,
-    channels: Option<&[usize]>,
-    planes: Option<&[usize]>,
-    changed: &mut Vec<(usize, usize)>,
-    clip: impl Fn(T) -> bool,
-) -> Result<(), ndarray::ShapeError> {
-    let values = values.view().into_dimensionality::<Ix2>()?;
-    let mut visit = |corr: usize, chan: usize| {
-        if !flags[(corr, chan)] && clip(values[(corr, chan)]) {
-            changed.push((corr, chan));
-        }
-    };
-    for corr in 0..values.shape()[0] {
-        if planes.is_some_and(|planes| !planes.contains(&corr)) {
-            continue;
-        }
-        match channels {
-            Some(channels) => channels.iter().for_each(|&chan| visit(corr, chan)),
-            None => (0..values.shape()[1]).for_each(|chan| visit(corr, chan)),
-        }
-    }
-    Ok(())
 }
 
 fn summarize_flags(
@@ -3584,7 +3457,7 @@ mod tests {
         zeros: true,
         bounds: None,
         outside: true,
-        planes: None,
+        projections: None,
         metric: None,
     };
 
