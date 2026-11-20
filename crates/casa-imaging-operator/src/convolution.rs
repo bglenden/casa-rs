@@ -715,8 +715,9 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
     fn pointing_ramp(&self) -> bool;
 
-    /// Sine and cosine of the fine-tap rotation when the prediction phase
-    /// and its kernel sum both use rotated pointing coordinates.
+    /// Sine and cosine of the fine-tap rotation when CPU prediction uses
+    /// rotated pointing coordinates for both the phase and the kernel sum.
+    /// Only dense prediction taps provide this rotation.
     fn prediction_pointing_rotation(&self, _key: CfKey) -> Option<(f64, f64)> {
         None
     }

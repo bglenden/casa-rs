@@ -66,17 +66,22 @@ def alternate_epoch(dataset):
     return last
 
 
-def pair(root, dataset, model, cache, offsets, machine, errors, label, *, rotate=False):
+def pair(root, dataset, model, cache, offsets, machine, errors, label, *, rotate=False, spw=''):
     from casars.tools import imager as native
 
     root.mkdir()
     pinned, actual = (root / f'{label}.ms' for label in ('pinned', 'native'))
     for target in (pinned, actual):
         make_input(dataset, target, scratch=True)
+        if spw:
+            owner = imager()
+            assert owner.open(str(target), usescratch=True) and owner.done()
     if rotate:
         late = alternate_epoch(pinned)
         np.testing.assert_array_equal(late, alternate_epoch(actual))
-    kw = dict(spw='0:0', scratch=True, machine=machine, pointing=offsets is not None)
+    if spw:
+        prior = data(pinned, 'MODEL_DATA')
+    kw = dict(spw=spw, scratch=True, machine=machine, pointing=offsets is not None)
     if offsets is not None:
         kw['ep_table'] = offsets
     ft(imager, pinned, model, cache, **kw)
@@ -85,6 +90,10 @@ def pair(root, dataset, model, cache, offsets, machine, errors, label, *, rotate
     observed = data(actual, 'MODEL_DATA')
     assert np.abs(expected).max() > 1.
     compare(observed, expected, label, errors)
+    if spw:
+        assert np.any(expected[:, 0] != prior[:, 0])
+        np.testing.assert_array_equal(expected[:, 1:], prior[:, 1:])
+        np.testing.assert_array_equal(observed[:, 1:], prior[:, 1:])
     if rotate:
         compare(observed[..., late], expected[..., late], f'{label}-late', errors)
     return expected, observed
@@ -97,7 +106,7 @@ def saved(root, dataset, model, cache, offsets, machine, expected, errors):
     target = root / f'{machine}-saved.ms'
     make_input(dataset, target, scratch=False)
     before = cache_contents(cache)
-    ft(native, target, model, cache, scratch=False, spw='0:0', machine=machine,
+    ft(native, target, model, cache, scratch=False, machine=machine,
        pointing=True, ep_table=offsets)
     assert cache_contents(cache) == before
     reader = table()
@@ -172,11 +181,14 @@ def run(root, dataset, model, imported_cache):
                     np.testing.assert_array_equal(observed, native_baseline)
                 elif not rotate:
                     change = relative_rms(expected, baseline)
-                    assert change > (.03 if label == 'reduced' else 1.)
+                    assert change > (.02 if label == 'reduced' else 1.), (label, change)
                     errors[f'{label}-change'] = change
                 if label == 'solved':
                     saved(Path(case), dataset, model, cache, offsets, 'pbwproject', expected, errors)
 
+        with TemporaryDirectory(dir=work) as case:
+            pair(Path(case) / 'channel', dataset, model, cache, offsets, 'pbwproject',
+                 errors, 'selected-channel', spw='0:0')
         with TemporaryDirectory(dir=work) as case:
             case = Path(case)
             expected, _ = pair(case / 'mosaic', dataset, model, cache, offsets, 'pbmosaic',

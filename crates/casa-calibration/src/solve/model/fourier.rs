@@ -540,17 +540,8 @@ impl PreparedFourierModel {
         } else {
             1.0
         };
-        let parallactic_angle = self
-            .legacy_pbw_angle
-            .as_mut()
-            .map_or(Ok(0.), |angles| angles.for_row(&row))?;
-        let pointing_offset_rad = if let Some(offsets) = &self.legacy_ep_offsets {
-            offsets
-                .baseline_offset([row.row.antenna1, row.row.antenna2])
-                .map_err(model_error)?
-        } else {
-            pointing_offset_rad
-        };
+        let (parallactic_angle, pointing_offset_rad) =
+            self.legacy_pbw_placement(&row, pointing_offset_rad)?;
         let native = NativeRow {
             uvw_m: uvw_m.map(|coordinate| coordinate * wavelength_scale),
             phase_shift_m: phase_shift_m * wavelength_scale,
@@ -591,6 +582,25 @@ impl PreparedFourierModel {
             .map_err(model_error)?;
         self.accumulate(row, output, lsrk_ratio, is_scratch.then_some(merge));
         Ok(())
+    }
+
+    fn legacy_pbw_placement(
+        &mut self,
+        row: &FourierRow<'_>,
+        centre: [f64; 2],
+    ) -> Result<(f64, [f64; 2]), GainSolveError> {
+        let angle = self
+            .legacy_pbw_angle
+            .as_mut()
+            .map_or(Ok(0.), |angles| angles.for_row(row))?;
+        let centre = self
+            .legacy_ep_offsets
+            .as_ref()
+            .map_or(Ok(centre), |offsets| {
+                offsets.baseline_offset([row.row.antenna1, row.row.antenna2])
+            })
+            .map_err(model_error)?;
+        Ok((angle, centre))
     }
 
     fn accumulate(

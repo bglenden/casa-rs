@@ -42,7 +42,9 @@ impl LegacyEpOffsets {
 
     fn open(path: &Path, antennas: usize, spw: i32) -> MsResult<Self> {
         let table = Table::open(TableOptions::new(path))?;
-        if table.info().sub_type != "EP Jones" || table.row_count() == 0 {
+        let info = table.info();
+        if info.table_type != "Calibration" || info.sub_type != "EP Jones" || table.row_count() == 0
+        {
             return Err(invalid(
                 "a legacy EP Jones pointing table with solutions is required",
             ));
