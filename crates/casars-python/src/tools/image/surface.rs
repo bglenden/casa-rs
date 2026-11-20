@@ -1126,7 +1126,7 @@ const METHODS: &[Method] = &[
             param("niter", K::Int, Int(3)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "subimage",

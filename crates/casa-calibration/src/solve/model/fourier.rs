@@ -226,7 +226,10 @@ impl PreparedFourierModel {
         let axis = image_spectral_axis(image, channels)?;
         let (basis, resampler) = spectral_layout(record, &axis, continuum_basis, false)?;
         let tracking = tracking::Tracking::load(terms[0])?;
-        let legacy_pbw = record_text(terms[0], "name")? == "nPBWProjectFT";
+        let legacy_pbw = matches!(
+            record_text(terms[0], "name")?,
+            "nPBWProjectFT" | "PBMosaicFT"
+        );
         let (kernels, mosaic, legacy_pbw_memory): (Box<dyn ConvolutionFunctionSet>, _, _) =
             if legacy_pbw {
                 let (kernels, memory) = legacy_pbw::load(terms[0], row, &geometry, &polarization)?;
@@ -737,9 +740,8 @@ fn image_spectral_axis(
 
 fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSolveError> {
     match record_text(record, "name")? {
-        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" | "nPBWProjectFT" => {
-            Ok((vec![record], Basis::Constant))
-        }
+        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" | "nPBWProjectFT"
+        | "PBMosaicFT" => Ok((vec![record], Basis::Constant)),
         "MultiTermFT" => match record.get("subftm") {
             Some(Value::Record(term)) => Ok((vec![term], Basis::Constant)),
             _ => Err(model_error("virtual MultiTermFT has no subftm record")),
@@ -808,7 +810,13 @@ fn open_grid(
 ) -> Result<PagedImage<Complex32>, GainSolveError> {
     if !matches!(
         record_text(record, "name")?,
-        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" | "nPBWProjectFT"
+        "GridFT"
+            | "WProjectFT"
+            | "MosaicFT"
+            | "MosaicFTNew"
+            | "SetJyGridFT"
+            | "nPBWProjectFT"
+            | "PBMosaicFT"
     ) {
         return Err(model_error(
             "unsupported Fourier image type in virtual model",
