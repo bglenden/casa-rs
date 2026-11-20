@@ -7344,6 +7344,11 @@ call leaves the original spectrum schema available for retry. The paired
 `calibration_initweights_tsys_oracle.py` cases cover both setup errors
 and the unchanged weight, sigma and flag values (#1524).
 
+The public `calibrater.initweights('ones', spwmap=None)` call can also set
+every weight to one before raising `SystemError`. casa-rs rejects the
+malformed window map before updating any columns. The direct-tool oracle
+checks both outcomes (#1524).
+
 ## `immath(mode="pola")` crashes with `UnboundLocalError` on unitless `polithresh`
 
 - Date noted: 2026-11-18

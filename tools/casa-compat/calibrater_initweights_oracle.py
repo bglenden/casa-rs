@@ -116,6 +116,24 @@ def compare_mms(root, seed, engines, tsys):
         compare(reference, actual, rtol=5e-7)
 
 
+def malformed_map_preserves_weights(root, seed, engines):
+    expected = (SystemError, '<built-in function calibrater_initweights> returned a result with an exception set')
+    for factory in engines:
+        with TemporaryDirectory(dir=root) as attempt:
+            vis = Path(attempt) / 'weights.ms'
+            copy_ms(seed, vis)
+            before = main_columns(vis)
+            tool = factory()
+            assert tool.open(str(vis), False, False, False)
+            assert outcome(tool, 'ones', spwmap=None) == expected and tool.done()
+            after = main_columns(vis)
+            if factory is calibrater:
+                assert not np.all(before[1]['WEIGHT'] == 1.)
+                np.testing.assert_array_equal(after[1]['WEIGHT'], 1.)
+            else:
+                compare(before, after)
+
+
 def run(root):
     from casars.tools import calibrater as native
 
@@ -161,8 +179,9 @@ def run(root):
         for options, resets in selection:
             compare_selection(work, seed, engines, options, resets)
         compare_mms(work, seed, engines, tsys)
+        malformed_map_preserves_weights(work, seed, engines)
     results = {'persisted_cases': 2 * len(cases), 'selection_cases': len(selection),
-               'argument_cases': controls, 'multi_ms_cases': 4}
+               'argument_cases': controls + 1, 'multi_ms_cases': 4}
     print(results, flush=True)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
