@@ -117,6 +117,24 @@ const METHODS: &[Method] = &[
         S::Partial,
     ),
     method(
+        "setsdoptions",
+        &[
+            param("scale", K::Float, D::Float(1.0)),
+            param("weight", K::Float, D::Float(1.0)),
+            param("convsupport", K::Int, D::Int(-1)),
+            param("pointingcolumntouse", K::Text, D::Text("DIRECTION")),
+            param("truncate", K::Quantity, D::Empty),
+            param("gwidth", K::Quantity, D::Empty),
+            param("jwidth", K::Quantity, D::Empty),
+            param("minweight", K::Float, D::Float(0.0)),
+            param("clipminmax", K::Bool, D::Bool(false)),
+            param("enablecache", K::Bool, D::Bool(false)),
+            param("convertfirst", K::Text, D::Text("NEVER")),
+        ],
+        R::Bool,
+        S::Partial,
+    ),
+    method(
         "settaylorterms",
         &[
             param("ntaylorterms", K::Int, D::Int(2)),

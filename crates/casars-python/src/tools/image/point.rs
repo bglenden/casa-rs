@@ -91,12 +91,21 @@ impl PyImageTool {
         let pixel = pixel.unwrap_or_else(|| DoubleList::of(&[-1.0])).0;
         let record = py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(CasaValue::empty_record());
             };
-            let image = image.lock();
+            let mut image = attachment.lock();
             image.check_single_precision("pixelvalue")?;
+            if image.coordinates().n_world_axes() == 0 {
+                return Err(raised(
+                    "WCBox: Failed AlwaysAssert itsCSys.nWorldAxes() > 0",
+                ));
+            }
             let pixel = pixel.into_iter().map(|p| p as i64).collect::<Vec<_>>();
+            if pixel_position(image.coordinates(), image.shape(), &pixel).is_none() {
+                return Ok(CasaValue::empty_record());
+            }
+            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
             if let ImageHandle::Float(Storage::Temp {
                 image,
                 fits: Some(fits),
@@ -116,7 +125,7 @@ impl PyImageTool {
                     CasaValue::Float(f64::from(value)),
                 ));
             }
-            match &*image {
+            let value = match &*image {
                 ImageHandle::Float(storage) => with_storage!(storage, image =>
                     pixel_record(image.as_ref(), &pixel, |v| CasaValue::Float(f64::from(v)))
                 ),
@@ -126,7 +135,9 @@ impl PyImageTool {
                     ))
                 ),
                 _ => unreachable!("double precision was rejected"),
-            }
+            }?;
+            image.release_requested_lock()?;
+            Ok(value)
         })?;
         record.into_python(py)
     }

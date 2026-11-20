@@ -11,7 +11,6 @@ use pyo3::prelude::*;
 
 use crate::convert::measures::{direction, frequency, frequency_reference};
 use crate::convert::{Variant, quantity_value};
-use crate::tools::not_yet_implemented_in;
 
 use super::runtime_error;
 
@@ -100,13 +99,17 @@ impl ImageArguments<'_> {
                 .ok_or_else(|| runtime_error("Could not interprete phasecenter parameter"))?,
             ),
         };
-        if self.facets > 1 || !empty(self.moving) {
-            return not_yet_implemented_in(
-                "imager",
-                "defineimage with facets or movingsource",
-                1520,
-            );
-        }
+        let moving_source = if empty(self.moving) {
+            None
+        } else {
+            Some(
+                direction(
+                    self.moving,
+                    &casa_ms::open_measures_runtime().map_err(runtime_error)?,
+                )?
+                .ok_or_else(|| runtime_error("Could not interprete phasecenter parameter"))?,
+            )
+        };
         let frame = (!self.frame.is_empty())
             .then(|| frequency_reference(self.frame))
             .transpose()?;
@@ -131,9 +134,11 @@ impl ImageArguments<'_> {
         )?;
         Ok(ImagerDefinitionRequest {
             shape: [nx, ny],
+            facets: usize::try_from(self.facets.max(1)).map_err(runtime_error)?,
             cell_rad: [-x, y],
             stokes,
             centre,
+            moving_source,
             projection,
             windows,
             rest_frequency_hz: (rest > 0.).then_some(rest),

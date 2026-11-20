@@ -22,6 +22,8 @@
 
 mod add;
 mod convertrefdir;
+mod image_records;
+pub(super) use image_records::{image_component_model, image_component_records};
 mod keywords;
 pub(crate) use keywords::{
     clear_locks as clear_keyword_locks, flush_pending as flush_pending_keywords,

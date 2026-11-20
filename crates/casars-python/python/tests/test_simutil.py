@@ -28,7 +28,8 @@ import numpy as np
 import pytest
 
 from casars import simutil
-from casars.data import Image, schema_bundle
+from casars._native_image import NativeImageView
+from casars.data import schema_bundle
 
 from _casa_tools import casa_signatures, close, describe
 
@@ -477,12 +478,12 @@ def modify(record: dict[str, Any], inputs: Path, name: str, out: Path, **options
 
 
 def pixels(path: Path) -> np.ndarray:
-    image = Image.open(path)
+    image = NativeImageView.open(path)
     return image.get_slice([0] * len(image.shape), list(image.shape)).flatten(order="F")
 
 
 def assert_casas_pixels(path: Path, expected: dict[str, Any]) -> None:
-    assert list(Image.open(path).shape) == expected["shape"]
+    assert list(NativeImageView.open(path).shape) == expected["shape"]
     wanted = np.array([np.nan if value is None else value for value in expected["pixels"]])
     assert np.allclose(pixels(path), wanted, rtol=0.0, atol=1e-6 * np.nanmax(np.abs(wanted)))
 
@@ -497,7 +498,7 @@ def test_modifymodel_returns_casas_tuple_and_image(skymodel: tuple[dict[str, Any
     found = modify(record, inputs, name, out)
     assert isinstance(found, tuple) and len(found) == 8
     same(found, case["result"])
-    assert Image.open(out).units == "Jy/pixel"
+    assert NativeImageView.open(out).units == "Jy/pixel"
     assert_casas_pixels(out, case["image"])
 
 
@@ -586,7 +587,7 @@ def test_cellsize_gives_casas_cells(analysis: tuple[dict[str, Any], Path]) -> No
 
 
 def assert_casas_masked_pixels(path: Path, expected: dict[str, Any]) -> None:
-    assert list(Image.open(path).shape) == expected["shape"]
+    assert list(NativeImageView.open(path).shape) == expected["shape"]
     wanted = np.array([np.nan if value is None else value for value in expected["pixels"]])
     found = pixels(path)
     valid = np.isfinite(wanted)
@@ -604,7 +605,7 @@ def test_convimage_regrids_and_convolves_as_casa_does(analysis: tuple[dict[str, 
         assert u.convimage(str(model), str(inputs / casa["image"])) is None
         assert_casas_masked_pixels(Path(f"{model}.regrid"), casa["regrid"])
         assert_casas_masked_pixels(Path(f"{model}.regrid.conv"), casa["convolved"])
-        assert Image.open(Path(f"{model}.regrid.conv")).units == casa["convolved"]["unit"]
+        assert NativeImageView.open(Path(f"{model}.regrid.conv")).units == casa["convolved"]["unit"]
     rotated = record["convimage"]["rotated"]
     model = tmp_path / "rotated" / rotated["model"]
     shutil.copytree(inputs / rotated["model"], model)

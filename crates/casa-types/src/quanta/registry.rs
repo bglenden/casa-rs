@@ -206,6 +206,27 @@ impl UnitRegistry {
     /// User definitions override built-in names. The immutable built-in maps
     /// remain lock-free until a caller explicitly overrides one.
     pub fn lookup_unit(&self, name: &str) -> Option<UnitVal> {
+        if let Some(value) = self.lookup_builtin_unit(name) {
+            return Some(value);
+        }
+        // A parse begun before FITS registration can finish after the cache
+        // is cleared. Any FITS alias can change an expression's meaning.
+        if let Some(cached) = self.cache.read().unwrap().get(name)
+            && cached.user_generation == self.user_generation()
+            && cached.fits_enabled == self.fits_enabled.load(Ordering::Acquire)
+        {
+            return Some(cached.value);
+        }
+        self.user.read().unwrap().get(name).map(|entry| entry.val)
+    }
+
+    /// A declared unit name, excluding cached compound and prefixed units.
+    pub(super) fn lookup_declared_unit(&self, name: &str) -> Option<UnitVal> {
+        self.lookup_builtin_unit(name)
+            .or_else(|| self.user.read().unwrap().get(name).map(|entry| entry.val))
+    }
+
+    fn lookup_builtin_unit(&self, name: &str) -> Option<UnitVal> {
         // FITS redefines `S` from siemens to seconds. CASA's user map takes
         // precedence for that name, even if a caller already defined it.
         if (self.has_builtin_overrides.load(Ordering::Acquire)
@@ -222,18 +243,6 @@ impl UnitRegistry {
             return Some(entry.val);
         }
         if let Some(entry) = self.customary.get(name) {
-            return Some(entry.val);
-        }
-        // A parse begun before FITS registration can finish after the cache
-        // is cleared. Any FITS alias can change an expression's meaning.
-        if let Some(cached) = self.cache.read().unwrap().get(name)
-            && cached.user_generation == self.user_generation()
-            && cached.fits_enabled == self.fits_enabled.load(Ordering::Acquire)
-        {
-            return Some(cached.value);
-        }
-        // User-defined units (rarely used).
-        if let Some(entry) = self.user.read().unwrap().get(name) {
             return Some(entry.val);
         }
         None

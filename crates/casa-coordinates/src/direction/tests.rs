@@ -310,25 +310,53 @@ fn record_roundtrip() {
     assert!((restored.latpole() - 1.2).abs() < TOL);
 }
 
-/// A tclean zenithal image reopens with its coordinate intact.
+#[test]
+fn b1950_vla_uses_the_casa_name_in_saved_direction_frames() {
+    for (frame, conversion) in [
+        (DirectionRef::B1950Vla, DirectionRef::J2000),
+        (DirectionRef::J2000, DirectionRef::B1950Vla),
+    ] {
+        let coordinate = DirectionCoordinate::new(
+            frame,
+            Projection::new(ProjectionType::SIN),
+            [0.2, 0.5],
+            [-1e-4, 1e-4],
+            [0.0, 0.0],
+        )
+        .with_conversion_direction_ref(conversion);
+        let restored = DirectionCoordinate::from_record(&coordinate.to_record()).unwrap();
+        assert_eq!(restored.direction_ref(), frame);
+        assert_eq!(restored.conversion_direction_ref(), conversion);
+    }
+}
+
+/// Supported zenithal images reopen with their coordinates intact.
 /// Unsupported parameters fail at open, before regridding.
 #[test]
-fn restricted_zenithal_records_open_only_for_tclean_parameters() {
+fn restricted_zenithal_records_accept_supported_parameters() {
     for (kind, allowed, rejected) in [
         (
             ProjectionType::AZP,
-            vec![0.0, 0.0],
-            vec![vec![0.5, 0.0], vec![0.0, 1.0]],
+            vec![vec![0.0, 0.0], vec![0.0, 0.0, 90.0], vec![2.0, 30.0]],
+            vec![vec![-1.0, 0.0], vec![0.0, 90.0]],
         ),
         (
             ProjectionType::SZP,
-            vec![0.0, 0.0, 90.0],
-            vec![vec![1.0, 0.0, 90.0], vec![0.0, 0.0, 45.0]],
+            vec![vec![0.0, 0.0, 90.0], vec![2.0, 30.0, 45.0]],
+            vec![vec![-1.0, 0.0, 90.0], vec![0.0, f64::NAN, 45.0]],
         ),
         (
             ProjectionType::AIR,
-            vec![0.0, 0.0],
-            vec![vec![], vec![45.0, 0.0]],
+            // WCSLIB defaults an omitted AIR latitude to 90 degrees.
+            vec![
+                vec![],
+                vec![90.0],
+                vec![0.0, 0.0],
+                vec![0.0, 0.0, 90.0],
+                vec![45.0],
+                vec![120.0],
+            ],
+            vec![vec![-90.0], vec![300.0]],
         ),
     ] {
         let record_with = |parameters| {
@@ -341,9 +369,12 @@ fn restricted_zenithal_records_open_only_for_tclean_parameters() {
             )
             .to_record()
         };
-        let restored = DirectionCoordinate::from_record(&record_with(allowed.clone())).unwrap();
-        assert_eq!(restored.projection().projection_type(), kind);
-        assert_eq!(restored.projection().parameters(), allowed);
+        for parameters in allowed {
+            let restored =
+                DirectionCoordinate::from_record(&record_with(parameters.clone())).unwrap();
+            assert_eq!(restored.projection().projection_type(), kind);
+            assert_eq!(restored.projection().parameters(), parameters);
+        }
         for parameters in rejected {
             assert!(matches!(
                 DirectionCoordinate::from_record(&record_with(parameters)),
