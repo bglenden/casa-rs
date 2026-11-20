@@ -8,10 +8,11 @@ import subprocess
 import sys
 
 import casatasks
-from casatools import imager, vpmanager
+from casatools import image, imager, vpmanager
 import numpy as np
 
 from gaincal_oracle import relative_rms
+from imager_facets_oracle import model_grids, model_recipe
 from imager_mosaic_oracle import fixture
 from imager_single_dish_oracle import correlations, model_image, prepare_ms, read_virtual
 
@@ -29,22 +30,65 @@ def predict(factory, path, model, mode, pattern, applied, *, scratch=True):
     assert tool.done()
 
 
+def pinned_predict(path, model, mode, pattern, applied, *, scratch=True):
+    command = [sys.executable, __file__, '--casa', str(path), str(model),
+               mode, str(pattern or ''), str(int(applied))]
+    if not scratch:
+        command.append('--saved')
+    proc = subprocess.run(command, check=False)
+    assert proc.returncode in (0, -11) and (path.parent / f'{path.name}.prediction-complete').exists()
+
+
+def apparent_sky(path):
+    entry, = (entry for entry in model_grids(model_recipe(path)) if entry['name'] == 'SDGrid')
+    tool = image()
+    assert tool.open(entry['diskimage'])
+    values = tool.getchunk()
+    assert tool.done()
+    return values
+
+
+def pinned_saved_reference(root, source, model, mode, pattern, native_stored, label):
+    saved = root / f'{label}-pinned-saved.ms'
+    prepare_ms(source, saved, mode, scratch=False)
+    pinned_predict(saved, model, mode, pattern, True, scratch=False)
+    pixels = apparent_sky(saved)
+    assert np.iscomplexobj(pixels) and not np.any(pixels.imag)
+    assert relative_rms(apparent_sky(native_stored), pixels) < 1.e-5
+
+    # CASA's reader cannot consume its SDGrid recipe. Run pinned scratch
+    # prediction with the first apparent sky that CASA actually saved.
+    apparent_model = root / f'{label}-apparent.im'
+    tool = image()
+    assert tool.open(str(model))
+    coords = tool.coordsys()
+    assert tool.done()
+    assert tool.fromarray(str(apparent_model), pixels.real.astype(np.float32), csys=coords.torecord())
+    assert coords.done() and tool.done()
+    reference = root / f'{label}-pinned-apparent.ms'
+    prepare_ms(source, reference, mode)
+    pinned_predict(reference, apparent_model, mode, pattern, False)
+    return correlations(reference)[1]
+
+
 def pair(root, source, model, mode, pattern, applied):
     from casars.tools import imager as native
 
-    label = f'{mode}-{int(pattern is not None)}-{int(applied)}'
+    label = f'{mode}-{pattern.stem if pattern else "default"}-{int(applied)}'
     pinned, scratch, stored = (root / f'{label}-{suffix}.ms'
                                for suffix in ('pinned', 'scratch', 'stored'))
     prepare_ms(source, pinned, mode)
     prepare_ms(source, scratch, mode)
     prepare_ms(source, stored, mode, scratch=False)
-    proc = subprocess.run([sys.executable, __file__, '--casa', str(pinned), str(model),
-                           mode, str(pattern or ''), str(int(applied))], check=False)
-    assert proc.returncode in (0, -11) and (root / f'{pinned.name}.prediction-complete').exists()
+    pinned_predict(pinned, model, mode, pattern, applied)
     auto, expected, _ = correlations(pinned)
     predict(native, scratch, model, mode, pattern, applied)
     _, actual, _ = correlations(scratch)
     predict(native, stored, model, mode, pattern, applied, scratch=False)
+    saved_reference = (
+        pinned_saved_reference(root, source, model, mode, pattern, stored, label)
+        if applied else expected
+    )
     if pattern is not None:
         unavailable = pattern.with_suffix('.outside')
         pattern.rename(unavailable)
@@ -56,10 +100,22 @@ def pair(root, source, model, mode, pattern, applied):
     for name, rows in [('autocorrelations', auto), ('cross-correlations', ~auto)]:
         if rows.any():
             reference = expected[..., rows]
-            errors = [relative_rms(samples[..., rows], reference) for samples in (actual, reopened)]
+            errors = [relative_rms(actual[..., rows], reference),
+                      relative_rms(reopened[..., rows], saved_reference[..., rows])]
             print(label, name, errors, float(np.abs(reference).max()), flush=True)
             assert np.abs(reference).max() > .01 and max(errors) < 1.e-3
     return expected
+
+
+def airy_control(root, source, model):
+    pattern = root / 'airy.vp'
+    manager = vpmanager()
+    assert manager.reset()
+    assert manager.setpbairy(telescope='ALMA', dishdiam='9m', blockagediam='.6m',
+                             maxrad='75arcsec', reffreq='100GHz')
+    assert manager.setuserdefault(vplistnum=0, telescope='ALMA')
+    assert manager.saveastable(str(pattern)) and manager.reset()
+    pair(root, source, model, 'sd', pattern, False)
 
 
 def run(root):
@@ -85,17 +141,19 @@ def run(root):
             assert relative_rms(custom, default) > .2
         assert relative_rms(applied, default) > .2
         assert relative_rms(applied_custom, applied) > .2
+    airy_control(root, source, model)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path)
     parser.add_argument('--casa', nargs=5)
+    parser.add_argument('--saved', action='store_true')
     args = parser.parse_args()
     if args.casa:
         path, model, mode, pattern, applied = args.casa
         predict(imager, Path(path), Path(model), mode, Path(pattern) if pattern else None,
-                applied == '1')
+                applied == '1', scratch=not args.saved)
     else:
         run(args.work.resolve())
 

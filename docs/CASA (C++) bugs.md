@@ -7700,6 +7700,14 @@ frequency setter updates the parent, so both children use nearest
 neighbour. In the pinned five-plane test, all four methods produce identical
 mixed-grid outputs. The native mixed-grid prediction follows that behavior.
 
+With `setvp(dovp=True)`, pinned scratch prediction applies the field's sky
+voltage pattern as it advances through the visibility buffers. Its virtual
+recipe stores the first apparent sky for the selected fields. The beam oracle
+compares the stored sky pixels with CASA, then uses that pinned image as input
+to a separate CASA scratch prediction to verify native readback. Standalone
+SDGrid takes custom gridding beams. GridBoth keeps its default gridding beam
+and can still apply a custom sky voltage pattern.
+
 SDGrid can include a cross-correlation when all of its UVW components
 are nonpositive. casa-rs applies the single-dish contribution to
 autocorrelations. In `both`, the ordinary GridFT path predicts the
@@ -7719,4 +7727,5 @@ track in the image frame.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
 [`imager_single_dish_oracle.py`](../tools/casa-compat/imager_single_dish_oracle.py) ·
 [`imager_single_dish_options_oracle.py`](../tools/casa-compat/imager_single_dish_options_oracle.py) ·
-[`imager_single_dish_spectral_oracle.py`](../tools/casa-compat/imager_single_dish_spectral_oracle.py)
+[`imager_single_dish_spectral_oracle.py`](../tools/casa-compat/imager_single_dish_spectral_oracle.py) ·
+[`imager_single_dish_beam_oracle.py`](../tools/casa-compat/imager_single_dish_beam_oracle.py)
