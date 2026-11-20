@@ -77,16 +77,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels, verbose = None), text_signature = "($self, pixels, verbose=True)")]
-    fn calc(
-        &self,
-        pixels: &Bound<'_, PyAny>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("calc")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (function = None, axes = None, outfile = None, region = None, r#box = None, chans = None, stokes = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, function='', axes=[], outfile='', region='', box='', chans='', stokes='', mask='', overwrite=False, stretch=False)")]
     fn collapse(
         &self,
@@ -450,19 +440,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("histograms")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, pixels = None, overwrite = None, imagemd = None, prec = None), text_signature = "($self, outfile='', pixels='', overwrite=False, imagemd='', prec='float')")]
-    fn imagecalc(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        pixels: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        imagemd: Option<&Bound<'_, PyAny>>,
-        prec: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("imagecalc")
     }
 
     /// Not yet implemented in casa-rs.

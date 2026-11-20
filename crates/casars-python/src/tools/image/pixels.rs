@@ -513,7 +513,7 @@ impl PyImageTool {
                 return Ok(CasaValue::Bools { shape: vec![0], values: Vec::new() });
             };
             let mut image = attachment.lock();
-            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
+            attachment.require_pixel_read_lock(&mut image)?;
             let shape = image.shape();
             if image.coordinates().n_pixel_axes() != shape.len() {
                 return Err(raised("LCSlicer::makeComplete - referencePixel and newLatticeShape vectors do not have same length"));
@@ -521,7 +521,7 @@ impl PyImageTool {
             let chunk = Chunk::read(shape, &blc.map_or_else(Vec::new, |arg| arg.0), &trc.map_or_else(Vec::new, |arg| arg.0), &inc.map_or_else(Vec::new, |arg| arg.0))?;
             let collapse = collapse_axes(axes.as_ref().map_or(&[], |axes| axes.0.as_slice()), shape.len())?;
             let value = chunk.read_from(&image, &ChunkRead { axes: &collapse, dropdeg, getmask }, None)?;
-            image.release_requested_lock()?;
+            attachment.release_requested_lock(&mut image)?;
             Ok(value)
         })?;
         value.into_python(py)
@@ -565,7 +565,7 @@ impl PyImageTool {
                 image.unlock_storage()?;
             } else {
                 image.save().map_err(raised)?;
-                image.release_requested_lock()?;
+                attachment.release_requested_lock(&mut image)?;
             }
             if history {
                 let command = format!(

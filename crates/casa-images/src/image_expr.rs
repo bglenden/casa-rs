@@ -699,6 +699,7 @@ pub(crate) struct ImageExprMeta {
     image_info: ImageInfo,
     name: Option<PathBuf>,
     legacy_coords: Option<RecordValue>,
+    raw_image_info: Option<RecordValue>,
 }
 
 impl ImageExprMeta {
@@ -718,6 +719,22 @@ impl ImageExprMeta {
                     })
             } else if let Some(mem) = any.downcast_ref::<MemorySnapshotImage<T>>() {
                 mem.legacy_coords.clone()
+            } else if let Some(expression) = any.downcast_ref::<ImageExpression<T>>() {
+                expression.legacy_coords_ref().cloned()
+            } else {
+                None
+            }
+        });
+        let raw_image_info = image.as_any().and_then(|any| {
+            if let Some(paged) = any.downcast_ref::<PagedImage<T>>() {
+                match paged.table().keywords().get("imageinfo") {
+                    Some(Value::Record(record)) => Some(record.clone()),
+                    _ => None,
+                }
+            } else if let Some(expression) = any.downcast_ref::<ImageExpression<T>>() {
+                expression.raw_image_info_ref().cloned()
+            } else if let Some(temp) = any.downcast_ref::<crate::TempImage<T>>() {
+                temp.image_info_record().cloned()
             } else {
                 None
             }
@@ -730,6 +747,7 @@ impl ImageExprMeta {
             image_info: image.image_info()?,
             name: image.name().map(Path::to_path_buf),
             legacy_coords,
+            raw_image_info,
         })
     }
 
@@ -737,14 +755,17 @@ impl ImageExprMeta {
         fits: &crate::fits_read::FitsToolImport,
         path: &Path,
     ) -> Result<Self, ImageError> {
+        let mut misc_info = fits.misc_info.clone();
+        misc_info.remove("object");
         Ok(Self {
             shape: fits.shape().to_vec(),
             coords: fits.coordinates().clone(),
             units: fits.units.clone(),
-            misc_info: fits.misc_info.clone(),
+            misc_info,
             image_info: ImageInfo::from_record(&fits.image_info)?,
             name: Some(path.to_path_buf()),
             legacy_coords: Some(fits.coordinate_record.clone()),
+            raw_image_info: Some(fits.image_info.clone()),
         })
     }
 }
@@ -776,6 +797,7 @@ struct SectionSource<T> {
 enum NumericExprNode<'a, T: ImageExprValue> {
     Source(&'a dyn ImageInterface<T>),
     Sections(SectionSource<T>),
+    Vector(Arc<ArrayD<T>>),
     Scalar(T),
     UnaryOp {
         op: ImageExprUnaryOp,
@@ -802,6 +824,7 @@ enum NumericExprNode<'a, T: ImageExprValue> {
         op: ReductionOp,
         child: Box<NumericExprNode<'a, T>>,
         child_shape: Vec<usize>,
+        empty_value: Option<T>,
     },
     /// Fractile (quantile) of the full child array — real types only.
     Fractile {
@@ -870,6 +893,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
         match self {
             Self::Source(_)
             | Self::Sections(_)
+            | Self::Vector(_)
             | Self::Scalar(_)
             | Self::StripMask { .. }
             | Self::TypeBridge { .. } => false,
@@ -895,6 +919,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
         match self {
             Self::Source(image) => Some(image.shape().to_vec()),
             Self::Sections(source) => Some(source.shape.clone()),
+            Self::Vector(values) => Some(values.shape().to_vec()),
             Self::Scalar(_) => Some(vec![]),
             Self::UnaryOp { child, .. }
             | Self::CustomUnary { child, .. }
@@ -938,7 +963,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 }
                 None => Ok(None),
             },
-            Self::Scalar(_) | Self::StripMask { .. } => Ok(None),
+            Self::Scalar(_) | Self::Vector(_) | Self::StripMask { .. } => Ok(None),
             Self::UnaryOp { child, .. } | Self::CustomUnary { child, .. } => {
                 child.propagated_mask()
             }
@@ -982,7 +1007,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
 
     fn kind_name(&self) -> &'static str {
         match self {
-            Self::Source(_) | Self::Sections(_) => "source",
+            Self::Source(_) | Self::Sections(_) | Self::Vector(_) => "source",
             Self::Scalar(_) => "scalar",
             Self::UnaryOp { .. } => "unary-op",
             Self::BinaryOp { .. } => "binary-op",
@@ -1316,6 +1341,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 image_info: ImageInfo::default(),
                 name: None,
                 legacy_coords: None,
+                raw_image_info: None,
             },
             expr_string: None,
         }
@@ -1332,6 +1358,16 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
             meta: ImageExprMeta::from_image(image)?,
             expr_string: None,
         })
+    }
+
+    pub(crate) fn from_vector(values: Vec<T>) -> Self {
+        let mut meta = Self::scalar(T::default_value()).meta;
+        meta.shape = vec![values.len()];
+        Self {
+            node: NumericExprNode::Vector(Arc::new(ndarray::Array1::from_vec(values).into_dyn())),
+            meta,
+            expr_string: None,
+        }
     }
 
     pub(crate) fn custom_unary(
@@ -1392,26 +1428,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         self,
         convert: impl Fn(T) -> U + Copy + Send + Sync + 'static,
     ) -> Result<ImageExprBuilder<'a, U>, ImageError> {
-        let compiled = Arc::new(self.compile()?);
-        let mask = if compiled.may_have_mask() {
-            let source = Arc::clone(&compiled);
-            Some(
-                Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
-                    ImageInterface::get_mask_slice(source.as_ref(), start, shape, stride)
-                }) as OwnedMaskReader,
-            )
-        } else {
-            None
-        };
-        Ok(ImageExprBuilder::from_section_readers(
-            self.meta,
-            Arc::new(move |start, shape, stride| {
-                compiled
-                    .get_slice_with_stride(start, shape, stride)
-                    .map(|pixels| pixels.mapv(convert))
-            }),
-            mask,
-        ))
+        Ok(self.compile()?.mapped_sections(convert))
     }
 
     pub(crate) fn from_section_readers(
@@ -1790,7 +1807,8 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 expr: Box::new(self.node),
                 scalar,
             },
-            shape: self.meta.shape,
+            shape: self.meta.shape.clone(),
+            metadata: Some(Box::new(self.meta)),
         }
     }
 
@@ -1802,6 +1820,13 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         op: ImageExprCompareOp,
     ) -> Result<MaskExprBuilder<'a, T>, ImageError> {
         let out_shape = broadcast_shapes(&self.meta.shape, &rhs.meta.shape)?;
+        let metadata = if choose_rhs_meta(&self.meta.shape, &rhs.meta.shape, &out_shape)
+            || (self.meta.coords.n_pixel_axes() == 0 && rhs.meta.coords.n_pixel_axes() != 0)
+        {
+            rhs.meta
+        } else {
+            self.meta
+        };
         Ok(MaskExprBuilder {
             node: MaskExprNode::CompareExpr {
                 op,
@@ -1809,6 +1834,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 rhs: Box::new(rhs.node),
             },
             shape: out_shape,
+            metadata: Some(Box::new(metadata)),
         })
     }
 
@@ -1871,6 +1897,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     {
         MaskExprBuilder {
             shape: self.meta.shape.clone(),
+            metadata: Some(Box::new(self.meta)),
             node: MaskExprNode::IsNan {
                 child: Box::new(self.node),
             },
@@ -1879,7 +1906,8 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
 
     pub(crate) fn validity(self) -> MaskExprBuilder<'a, T> {
         MaskExprBuilder {
-            shape: self.meta.shape,
+            shape: self.meta.shape.clone(),
+            metadata: Some(Box::new(self.meta)),
             node: MaskExprNode::Validity {
                 child: Box::new(self.node),
             },
@@ -1984,6 +2012,14 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     }
 
     pub(crate) fn make_reduction(self, op: ReductionOp) -> Self {
+        self.make_reduction_with_empty_value(op, None)
+    }
+
+    pub(crate) fn make_reduction_with_empty_value(
+        self,
+        op: ReductionOp,
+        empty_value: Option<T>,
+    ) -> Self {
         let child_shape = self.meta.shape.clone();
         let mut meta = self.meta;
         meta.shape = vec![];
@@ -1992,6 +2028,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 op,
                 child: Box::new(self.node),
                 child_shape,
+                empty_value,
             },
             meta,
             expr_string: None,
@@ -2059,6 +2096,12 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         } else {
             if_true.meta.clone()
         };
+        if meta.coords.n_pixel_axes() == 0
+            && !condition.shape.is_empty()
+            && let Some(metadata) = condition.metadata
+        {
+            meta = *metadata;
+        }
         meta.shape = out_shape;
         Ok(Self {
             node: NumericExprNode::Conditional {
@@ -2111,6 +2154,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 image_info: ImageInfo::default(),
                 name: None,
                 legacy_coords: None,
+                raw_image_info: None,
             },
             expr_string: None,
         }
@@ -2169,6 +2213,14 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     ///
     /// Corresponds to C++ LEL `spectralindex(expr1, expr2)`. Clears output units.
     pub fn spectral_index(self, rhs: Self) -> Result<Self, ImageError> {
+        self.spectral_index_with_metadata(rhs, true)
+    }
+
+    pub(crate) fn spectral_index_with_metadata(
+        self,
+        rhs: Self,
+        clear_units: bool,
+    ) -> Result<Self, ImageError> {
         let out_shape = broadcast_shapes(&self.meta.shape, &rhs.meta.shape)?;
         let (spec_axis_a, freqs_a) = spectral_frequencies_hz(&self.meta.coords, &self.meta.shape)?;
         let (spec_axis_b, freqs_b) = spectral_frequencies_hz(&rhs.meta.coords, &rhs.meta.shape)?;
@@ -2178,7 +2230,9 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
             self.meta
         };
         meta.shape = out_shape;
-        meta.units.clear();
+        if clear_units {
+            meta.units.clear();
+        }
         Ok(Self {
             node: NumericExprNode::SpectralIndex {
                 lhs: Box::new(self.node),
@@ -2198,6 +2252,14 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     /// Corresponds to C++ LEL `pa(u, q)`. Sets unit to `"deg"` and replaces any
     /// Stokes coordinate with `[StokesType::Pangle]`.
     pub fn pa(u: Self, q: Self) -> Result<Self, ImageError> {
+        Self::pa_with_metadata(u, q, true)
+    }
+
+    pub(crate) fn pa_with_metadata(
+        u: Self,
+        q: Self,
+        use_position_angle: bool,
+    ) -> Result<Self, ImageError> {
         let out_shape = broadcast_shapes(&u.meta.shape, &q.meta.shape)?;
         let mut meta = if choose_rhs_meta(&u.meta.shape, &q.meta.shape, &out_shape) {
             q.meta
@@ -2205,9 +2267,11 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
             u.meta
         };
         meta.shape = out_shape;
-        meta.units = "deg".to_string();
-        replace_stokes_with_pangle(&mut meta.coords);
-        meta.legacy_coords = None;
+        if use_position_angle {
+            meta.units = "deg".to_string();
+            replace_stokes_with_pangle(&mut meta.coords);
+            meta.legacy_coords = None;
+        }
         Ok(Self {
             node: NumericExprNode::Pa {
                 u: Box::new(u.node),
@@ -2309,6 +2373,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
                 image_info: meta.image_info,
                 name: meta.name,
                 legacy_coords: meta.legacy_coords,
+                raw_image_info: meta.raw_image_info,
             },
             expr_string: None,
         }
@@ -2339,6 +2404,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
                 image_info: meta.image_info,
                 name: meta.name,
                 legacy_coords: meta.legacy_coords,
+                raw_image_info: meta.raw_image_info,
             },
             expr_string: None,
         }
@@ -2369,6 +2435,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
                 image_info: meta.image_info,
                 name: meta.name,
                 legacy_coords: meta.legacy_coords,
+                raw_image_info: meta.raw_image_info,
             },
             expr_string: None,
         }
@@ -2399,6 +2466,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
                 image_info: meta.image_info,
                 name: meta.name,
                 legacy_coords: meta.legacy_coords,
+                raw_image_info: meta.raw_image_info,
             },
             expr_string: None,
         }
@@ -2427,6 +2495,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
                 image_info: meta.image_info,
                 name: meta.name,
                 legacy_coords: meta.legacy_coords,
+                raw_image_info: meta.raw_image_info,
             },
             expr_string: None,
         }
@@ -2455,6 +2524,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
                 image_info: meta.image_info,
                 name: meta.name,
                 legacy_coords: meta.legacy_coords,
+                raw_image_info: meta.raw_image_info,
             },
             expr_string: None,
         }
@@ -2499,6 +2569,7 @@ impl<'a> ImageExprBuilder<'a, f32> {
                 image_info: meta.image_info,
                 name: meta.name,
                 legacy_coords: meta.legacy_coords,
+                raw_image_info: meta.raw_image_info,
             },
             expr_string: None,
         })
@@ -2541,6 +2612,7 @@ impl<'a> ImageExprBuilder<'a, f64> {
                 image_info: meta.image_info,
                 name: meta.name,
                 legacy_coords: meta.legacy_coords,
+                raw_image_info: meta.raw_image_info,
             },
             expr_string: None,
         })
@@ -2551,6 +2623,7 @@ impl<'a> ImageExprBuilder<'a, f64> {
 pub struct MaskExprBuilder<'a, T: ImageExprValue> {
     node: MaskExprNode<'a, T>,
     shape: Vec<usize>,
+    metadata: Option<Box<ImageExprMeta>>,
 }
 
 impl<'a, T: ImageExprValue> Clone for MaskExprBuilder<'a, T> {
@@ -2558,6 +2631,7 @@ impl<'a, T: ImageExprValue> Clone for MaskExprBuilder<'a, T> {
         Self {
             node: self.node.clone(),
             shape: self.shape.clone(),
+            metadata: self.metadata.clone(),
         }
     }
 }
@@ -2574,6 +2648,7 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
     pub(crate) fn validity(self) -> Self {
         Self {
             shape: self.shape,
+            metadata: self.metadata,
             node: MaskExprNode::BooleanValidity {
                 child: Box::new(self.node),
             },
@@ -2588,6 +2663,11 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
     /// Combines two same-shaped masks with a logical operator.
     pub fn logical(self, rhs: Self, op: MaskLogicalOp) -> Result<Self, ImageError> {
         let out_shape = broadcast_shapes(&self.shape, &rhs.shape)?;
+        let metadata = if choose_rhs_meta(&self.shape, &rhs.shape, &out_shape) {
+            rhs.metadata.or(self.metadata)
+        } else {
+            self.metadata.or(rhs.metadata)
+        };
         Ok(Self {
             node: MaskExprNode::Logical {
                 op,
@@ -2595,6 +2675,7 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
                 rhs: Box::new(rhs.node),
             },
             shape: out_shape,
+            metadata,
         })
     }
 
@@ -2615,6 +2696,7 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
                 child: Box::new(self.node),
             },
             shape: self.shape,
+            metadata: self.metadata,
         }
     }
 
@@ -2627,6 +2709,7 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
         Self {
             node: MaskExprNode::ConstantMask { mask },
             shape,
+            metadata: None,
         }
     }
 
@@ -2641,6 +2724,7 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
                 child_shape,
             },
             shape: vec![],
+            metadata: None,
         }
     }
 
@@ -2655,6 +2739,7 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
                 child_shape,
             },
             shape: vec![],
+            metadata: None,
         }
     }
 
@@ -2665,6 +2750,7 @@ impl<'a, T: ImageExprValue + PartialOrd> MaskExprBuilder<'a, T> {
         Self {
             node: MaskExprNode::IndexIn { axis, indices },
             shape: vec![],
+            metadata: None,
         }
     }
 

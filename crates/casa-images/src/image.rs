@@ -440,7 +440,7 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
-        slice_mask_array(self.get_named_mask(name)?, start, shape, stride)
+        slice_mask_array(&self.get_named_mask(name)?, start, shape, stride)
     }
 
     /// Returns the history entries associated with the image.
@@ -572,7 +572,7 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
             )),
             None => self
                 .default_mask()?
-                .map(|mask| slice_mask_array(mask, start, shape, stride))
+                .map(|mask| slice_mask_array(&mask, start, shape, stride))
                 .transpose(),
         }
     }
@@ -2304,7 +2304,7 @@ impl<T: ImagePixel> PagedImage<T> {
         stride: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
         if let Some(mask) = self.temp_masks.get(name) {
-            return slice_mask_array(mask.clone(), start, shape, stride);
+            return slice_mask_array(mask, start, shape, stride);
         }
         let masks = match self.table.keywords().get(MASKS_KEYWORD) {
             Some(Value::Record(rec)) => rec,
@@ -2321,7 +2321,7 @@ impl<T: ImagePixel> PagedImage<T> {
                         got: array.shape().to_vec(),
                     });
                 }
-                slice_mask_array(array.clone(), start, shape, stride)
+                slice_mask_array(array, start, shape, stride)
             }
             Value::Record(record) => self.with_persistent_mask(name, record, |mask| {
                 mask.get_slice(start, shape, stride).map_err(Into::into)
@@ -3391,8 +3391,8 @@ fn make_lcbox_record(shape: &[usize]) -> RecordValue {
     record
 }
 
-fn slice_mask_array(
-    mask: ArrayD<bool>,
+pub(crate) fn slice_mask_array(
+    mask: &ArrayD<bool>,
     start: &[usize],
     shape: &[usize],
     stride: &[usize],
@@ -3415,7 +3415,10 @@ fn slice_mask_array(
                 got: start.to_vec(),
             });
         };
-        if shape[axis] > 0 && (start[axis] >= mask.shape()[axis] || last >= mask.shape()[axis]) {
+        if stride[axis] == 0
+            || (shape[axis] > 0
+                && (start[axis] >= mask.shape()[axis] || last >= mask.shape()[axis]))
+        {
             return Err(ImageError::ShapeMismatch {
                 expected: mask.shape().to_vec(),
                 got: start.to_vec(),
@@ -3428,11 +3431,11 @@ fn slice_mask_array(
         .zip(shape.iter())
         .zip(stride.iter())
         .map(|((&s, &n), &st)| {
-            let end = if n == 0 { s } else { s + n * st };
+            let end = s + (n - 1) * st + 1;
             SliceInfoElem::Slice {
                 start: s as isize,
                 end: Some(end as isize),
-                step: st as isize,
+                step: if n == 1 { 1 } else { st as isize },
             }
         })
         .collect();
