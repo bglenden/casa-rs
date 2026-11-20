@@ -51,7 +51,7 @@ fn converted_operand_keeps_writer_out_between_sections() {
         let AnyPagedImage::Float32(image) = open_mask_image(&path).unwrap() else {
             panic!("float image");
         };
-        let source = convert_paged_mask_source(image, name, f64::from).unwrap();
+        let source = convert_paged_mask_source(image, name, false, f64::from).unwrap();
         {
             let reader = source.as_interface();
             reader.get_slice(&[0, 0], &[2, 2], &[1, 1]).unwrap();

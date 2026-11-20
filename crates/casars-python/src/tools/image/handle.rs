@@ -198,6 +198,14 @@ impl ImageHandle {
         }
     }
 
+    pub(super) fn image_type_name(&self) -> &'static str {
+        if self.fits().is_some() {
+            "FITSImage"
+        } else {
+            with_pixels!(self, storage => with_storage!(storage, image => image.image_type_name()))
+        }
+    }
+
     pub(super) fn kind(&self) -> ImagePixelType {
         match self {
             Self::Float(_) => ImagePixelType::Float32,

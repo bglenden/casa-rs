@@ -23,6 +23,8 @@ CASA behaviours casa-rs does not follow:
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
 [calculating an expression with a mixed-precision vector](#calc-can-crash-on-a-mixed-precision-vector),
+[publishing image-calculator output before validating its metadata source](#imagecalc-can-publish-pixels-before-rejecting-the-metadata-source),
+[reading a same-named FITS file after changing the working directory](#imagecalc-can-read-a-different-fits-operand-after-a-directory-change),
 [FITS import of an empty primary HDU](#fits-import-can-abort-on-an-empty-primary-hdu),
 [restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
@@ -7639,6 +7641,12 @@ the old name and can abort while closing that stale handle. casa-rs refuses
 the move before changing either path while another tool holds the image.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+A lazy `imagecalc` result provides another reproduction. CASA 6.7.6.14
+permits renaming the native operand while the result is attached. Its next
+pixel read fails because the original tile path no longer exists. casa-rs
+retains the operand while the lazy result is open and refuses the rename
+before moving either path.
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values
@@ -7664,6 +7672,31 @@ precision scalars in an array literal.
 casa-rs promotes those elements using the expression's numeric types and
 stores the results `[2, 3.5, 5]` and `[-1.25, -20, 3.2]` as float pixels.
 [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+## `imagecalc` can publish pixels before rejecting the metadata source
+
+In CASA 6.7.6.14, evaluate
+`imagecalc('out.im', '"source.im" * 3', True, 'missing.im')` with a valid
+float `source.im` and a missing metadata image. CASA raises `RuntimeError`
+after writing the calculated pixels to `out.im`. If `out.im` already held
+an unrelated image, the same failed call replaces its original pixels.
+
+casa-rs validates the metadata source and stages the product before
+publication. The failed call preserves an existing output and leaves a new
+output path absent. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+## `imagecalc` can read a different FITS operand after a directory change
+
+Create two directories with an `input.fits` of the same shape in each. Give
+the first image pixel value 2 and the second image pixel value 21. In the
+first directory, create a lazy CASA 6.7.6.14 result using
+`imagecalc(pixels='"input.fits" * 3')`. Change to the second directory before
+the first pixel read. CASA returns 63 while keeping the first file's
+metadata. With a native image operand, CASA returns 6 in this sequence.
+
+casa-rs resolves the operand paths when creating the result and returns 6
+with the original FITS metadata. The FITS handle is opened on the first pixel
+read and retained for subsequent reads. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
 
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
@@ -7785,3 +7818,21 @@ track in the image frame.
 [`imager_single_dish_options_oracle.py`](../tools/casa-compat/imager_single_dish_options_oracle.py) ·
 [`imager_single_dish_spectral_oracle.py`](../tools/casa-compat/imager_single_dish_spectral_oracle.py) ·
 [`imager_single_dish_beam_oracle.py`](../tools/casa-compat/imager_single_dish_beam_oracle.py)
+
+## Legacy `pbwproject` virtual recipes lack a machine name
+
+CASA 6.7.6.14 predicts nonzero complex model visibilities in the legacy
+VLA single-W-plane case with a new or existing convolution cache.
+`nPBWProjectFT::toRecord` saves an image and
+transform geometry. It omits the Fourier-machine name and the convolution
+needed to repeat the prediction. Pinned `ms.uvsub` refuses that record
+with `field name is unknown`. Its virtual-model reader also lacks an
+`nPBWProjectFT` constructor.
+
+Casa-rs shares the cache generator with the legacy EP workflow and
+retains the Fourier image and its convolution in a native recipe.
+The CASA image tool opens both images. Native `ms.uvsub` reopens the model
+after the original cache is removed from its path. Both readers refuse
+the incomplete pinned recipe before subtracting a visibility model.
+[`imager_legacy_pbw_oracle.py`](../tools/casa-compat/imager_legacy_pbw_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)

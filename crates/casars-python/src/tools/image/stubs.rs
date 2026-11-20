@@ -458,19 +458,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, pixels = None, overwrite = None, imagemd = None, prec = None), text_signature = "($self, outfile='', pixels='', overwrite=False, imagemd='', prec='float')")]
-    fn imagecalc(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        pixels: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        imagemd: Option<&Bound<'_, PyAny>>,
-        prec: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("imagecalc")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (infile = None, region = None, locate = None, verbose = None), text_signature = "($self, infile='', region={}, locate=[-1.0], verbose=False)")]
     fn insert(
         &self,

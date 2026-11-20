@@ -22,6 +22,7 @@ mod fits_header;
 mod fits_import;
 mod fits_rename;
 mod handle;
+mod imagecalc;
 mod lifecycle;
 mod locking;
 mod makecomplex;

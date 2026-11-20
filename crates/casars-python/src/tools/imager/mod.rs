@@ -10,7 +10,8 @@ use std::sync::Mutex;
 
 use casa_calibration::{
     AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup, ImagerVoltagePattern,
+    ImagerLegacyPbWOptions, ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup,
+    ImagerVoltagePattern,
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -217,12 +218,8 @@ impl PyImager {
         // GridFT and WProjectFT do not use them.
         let _ = (
             epjtablename,
-            applypointingoffsets,
-            dopbgriddingcorrections,
-            cfcachedirname,
             rotpastep,
             pastep,
-            pblimit,
             imagetilevol,
             psterm,
             aterm,
@@ -247,10 +244,21 @@ impl PyImager {
                 threads: numthreads,
             }
             .options(state.prediction.transform_options())?;
-            state
-                .prediction
-                .configure_transform(settings)
-                .map_err(runtime_error)?;
+            if ftmachine.eq_ignore_ascii_case("pbwproject") {
+                state.prediction.configure_legacy_pbw(
+                    settings,
+                    ImagerLegacyPbWOptions {
+                        cache_directory: PathBuf::from(cfcachedirname),
+                        w_planes: wprojplanes,
+                        apply_pointing_offsets: applypointingoffsets,
+                        correct_primary_beam: dopbgriddingcorrections,
+                        primary_beam_limit: pblimit,
+                    },
+                )
+            } else {
+                state.prediction.configure_transform(settings)
+            }
+            .map_err(runtime_error)?;
             Ok(true)
         })
     }
