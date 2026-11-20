@@ -1748,7 +1748,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 808</li>
+<li>Concepts: 809</li>
 <li>Surfaces: 45 (45 task, 0 session)</li>
 <li>Surface bindings: 1089</li>
 </ul>
@@ -5204,11 +5204,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>chanbin</code></td>
-<td><code>parameter.chanbin@r1</code></td>
-<td><code>integer</code></td>
+<td><code>mstransform.chanbin@r1</code></td>
+<td><code>variant</code></td>
 <td><code>1</code>; optional</td>
 <td>Spectral</td>
-<td>Channel bin mode.<br><em>Surface:</em> Averages chanbin channels when chanaverage is True, as CASA's mstransform does.</td>
+<td>Channel-averaging width as a single integer or a per-SPW integer list.<br><em>Surface:</em> Averages chanbin channels when chanaverage is True. A list with more than one entry gives one width per selected spectral window.</td>
 </tr>
 <tr>
 <td><code>hanning</code></td>
@@ -5611,11 +5611,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>width</code></td>
-<td><code>ms.transform.width@r1</code></td>
-<td><code>integer</code></td>
+<td><code>ms.transform.width@r2</code></td>
+<td><code>variant</code></td>
 <td><code>1</code>; optional</td>
 <td>Selection</td>
-<td>Number of adjacent selected channels averaged into each output channel.</td>
+<td>Channel-averaging width as an integer, numeric string, or per-SPW integer list.</td>
 </tr>
 <tr>
 <td><code>timebin</code></td>

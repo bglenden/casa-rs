@@ -4500,6 +4500,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#channel-width-argument-variants-can-crash-both-measurementset-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel-width argument variants can crash both MeasurementSet tasks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#channel-averaging-can-leave-the-weights-of-float_data-or-lag_data-undefined" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channel averaging can leave the weights of FLOAT_DATA or LAG_DATA undefined
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selecting-defined-spectra-or-several-channel-ranges-can-crash-channel-averaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selecting defined spectra or several channel ranges can crash channel averaging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#transforming-an-ms-with-float_data-can-replace-the-requested-complex-data" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11237,6 +11270,36 @@ rejected call preserves the restoring beam and history. See
 pixel maps are <code>[0, -2]</code>. casa-rs raises <code>RuntimeError</code> before applying
 either name. Passing the one visible axis name without a coordinate type
 renames that axis and preserves the stored removed-axis name (#1626).</p>
+<h2 id="channel-width-argument-variants-can-crash-both-measurementset-tasks">Channel-width argument variants can crash both MeasurementSet tasks<a class="headerlink" href="#channel-width-argument-variants-can-crash-both-measurementset-tasks" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 <code>split</code> and <code>mstransform</code> leave a partial MeasurementSet after
+crashing on a zero-dimensional NumPy integer array or an active width list
+with a zero or negative width. <code>mstransform</code> also crashes on an empty
+<code>chanbin</code> list when <code>chanaverage=True</code>.</p>
+<p>The native tasks interpret a zero-dimensional integer array as its scalar
+value. They reject invalid active lists before creating output. The public
+channel-averaging oracle runs the crash cases in separate processes and checks
+the native outcomes. <a href="https://github.com/bglenden/casa-rs/issues/978#issuecomment-7018325259">Owner approval</a></p>
+<h2 id="channel-averaging-can-leave-the-weights-of-float_data-or-lag_data-undefined">Channel averaging can leave the weights of FLOAT_DATA or LAG_DATA undefined<a class="headerlink" href="#channel-averaging-can-leave-the-weights-of-float_data-or-lag_data-undefined" title="Permanent link">&para;</a></h2>
+<p>With only FLOAT_DATA or LAG_DATA selected, the CASA 6.7.6.14 channel-averaging
+writer can leave required WEIGHT and SIGMA cells undefined. The spectral
+statistics writer branches on DATA, CORRECTED_DATA and MODEL_DATA.</p>
+<p>The native tasks derive defined weights and sigmas from calibrated input
+weights and channel flags. LAG_DATA retains its independent lag axis. The
+channel-averaging oracle checks the derived numbers against the input.
+<a href="https://github.com/bglenden/casa-rs/issues/978#issuecomment-7018429826">Owner approval</a></p>
+<h2 id="selecting-defined-spectra-or-several-channel-ranges-can-crash-channel-averaging">Selecting defined spectra or several channel ranges can crash channel averaging<a class="headerlink" href="#selecting-defined-spectra-or-several-channel-ranges-can-crash-channel-averaging" title="Permanent link">&para;</a></h2>
+<p>Both CASA 6.7.6.14 tasks can terminate with SIGSEGV and leave an incomplete MS
+when physical row zero has undefined weight spectra and the selection starts
+with defined spectra. The output structure checks the physical first row for
+spectral columns, and the writer checks the first selected row.</p>
+<p>An active per-SPW width vector can also crash when an expression selects more
+than one channel range in a window. The upstream data handler compares the
+number of widths with the number of ranges, even when the vector covers every
+selected window.</p>
+<p>The native tasks allocate output columns for the selected spectra and apply
+the requested width to each selected SPW. The oracle verifies both crashes in
+subprocesses and compares native products against equivalent CASA selections.
+<a href="https://github.com/bglenden/casa-rs/issues/978#issuecomment-7019329916">Owner approval</a></p>
 <h2 id="transforming-an-ms-with-float_data-can-replace-the-requested-complex-data">Transforming an MS with FLOAT_DATA can replace the requested complex DATA<a class="headerlink" href="#transforming-an-ms-with-float_data-can-replace-the-requested-complex-data" title="Permanent link">&para;</a></h2>
 <p>For an input with separately populated DATA and FLOAT_DATA, CASA 6.7.6.14
 can fill output DATA from FLOAT_DATA, with zero imaginary components, when

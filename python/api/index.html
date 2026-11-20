@@ -7028,10 +7028,10 @@ Accepted only at CASA's default, where CASA reads them, until #977:
 <p>CASA's <code>mstransform</code>: its parameters, defaults and return value.
 Accepted only at CASA's default, where CASA reads them, until #978:
 <code>createmms</code>, <code>separationaxis</code>, <code>numsubms</code>, <code>tileshape</code>,
-<code>realmodelcol</code>, <code>usewtspectrum</code>, <code>combinespws</code>, <code>hanning</code>,
-<code>regridms</code>, <code>mode</code>, <code>nchan</code>, <code>start</code>, <code>width</code>, <code>nspw</code>,
-<code>interpolation</code>, <code>phasecenter</code>, <code>restfreq</code>, <code>outframe</code>,
-<code>veltype</code>, <code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>, <code>timespan</code>,
+<code>realmodelcol</code>, <code>combinespws</code>, <code>hanning</code>, <code>regridms</code>, <code>mode</code>,
+<code>nchan</code>, <code>start</code>, <code>width</code>, <code>nspw</code>, <code>interpolation</code>,
+<code>phasecenter</code>, <code>restfreq</code>, <code>outframe</code>, <code>veltype</code>,
+<code>preaverage</code>, <code>timeaverage</code>, <code>timebin</code>, <code>timespan</code>,
 <code>maxuvwdistance</code>, <code>docallib</code>, <code>callib</code>, <code>douvcontsub</code>,
 <code>fitspw</code>, <code>fitorder</code>, <code>want_cont</code>, <code>denoising_lib</code>,
 <code>nthreads</code>, <code>niter</code>, <code>disableparallel</code>, <code>ddistart</code>,
@@ -7135,7 +7135,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
     <span class="n">usewtspectrum</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">combinespws</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">chanaverage</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-    <span class="n">chanbin</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="n">chanbin</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
     <span class="n">hanning</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">regridms</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'channel'</span><span class="p">,</span>
@@ -7173,10 +7173,10 @@ Accepted only at CASA's default, where CASA reads them, until #978:
 <span class="sd">    CASA's ``mstransform``: its parameters, defaults and return value.</span>
 <span class="sd">    Accepted only at CASA's default, where CASA reads them, until #978:</span>
 <span class="sd">    ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,</span>
-<span class="sd">    ``realmodelcol``, ``usewtspectrum``, ``combinespws``, ``hanning``,</span>
-<span class="sd">    ``regridms``, ``mode``, ``nchan``, ``start``, ``width``, ``nspw``,</span>
-<span class="sd">    ``interpolation``, ``phasecenter``, ``restfreq``, ``outframe``,</span>
-<span class="sd">    ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,</span>
+<span class="sd">    ``realmodelcol``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,</span>
+<span class="sd">    ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,</span>
+<span class="sd">    ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,</span>
+<span class="sd">    ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,</span>
 <span class="sd">    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,</span>
 <span class="sd">    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,</span>
 <span class="sd">    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,</span>
@@ -8236,7 +8236,7 @@ Accepted only at CASA's default, where CASA reads them, until #978:
     <span class="n">feed</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="n">datacolumn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'corrected'</span><span class="p">,</span>
     <span class="n">keepflags</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-    <span class="n">width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="n">width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
     <span class="n">timebin</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'0s'</span><span class="p">,</span>
     <span class="n">combine</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
