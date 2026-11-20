@@ -6,7 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{AddAssign, DivAssign, Mul};
 
 use casa_tables::Table;
-use casa_types::{ArrayValue, ScalarValue, quanta::Quantity};
+use casa_types::{
+    ArrayValue, ScalarValue,
+    quanta::{Quantity, Unit, casacore::convert},
+};
 use ndarray::{Array2, ArrayD, Ix2, Zip};
 
 use super::clip::{ClipOptions, apply_clip_array};
@@ -44,11 +47,13 @@ impl ClipTimedRow {
 }
 
 pub(super) fn time_bin_seconds(text: &str) -> Option<f64> {
-    // Like casaQuantity(...).get("s"), use the SI scaling of recognized
-    // quantities. The task also accepts a unitless value as seconds.
+    let seconds = Unit::new("s").expect("seconds are a defined unit");
     Quantity::read(text)
         .ok()
-        .map(|value| value.get_si_value())
+        .map(|value| {
+            convert(&value, Some(&seconds))
+                .map_or_else(|_| value.get_si_value(), |time| time.value())
+        })
         .filter(|value| value.is_finite())
 }
 
@@ -96,12 +101,6 @@ pub(super) fn read_clip_times(
             }
         }
     }
-    timed.sort_unstable_by(|left, right| {
-        left.group
-            .cmp(&right.group)
-            .then_with(|| left.seconds.total_cmp(&right.seconds))
-            .then_with(|| left.row.cmp(&right.row))
-    });
     Ok(timed)
 }
 
@@ -142,7 +141,29 @@ impl TimeClip<'_> {
         ddid_to_spw: &BTreeMap<i32, i32>,
         read_plan: MsReadPlan,
     ) -> Result<ChangeSet, FlaggingError> {
-        let timed = read_clip_times(ms, selected, self.path)?;
+        let mut timed = read_clip_times(ms, selected, self.path)?;
+        if columns.uses_weight_spectrum() {
+            // Fallback belongs to the first selected row in each original
+            // window. Baseline ordering is only for time-bin membership.
+            let mut first = BTreeMap::new();
+            for row in &timed {
+                let description = row.description();
+                let spw = ddid_to_spw.get(&description).copied().ok_or_else(|| {
+                    FlaggingError::MutateFlags {
+                        path: self.path.to_string(),
+                        reason: format!("DATA_DESC_ID {description} has no SPW mapping"),
+                    }
+                })?;
+                first.entry(spw).or_insert(row.row);
+            }
+            columns.prepare_spectrum_fallbacks(ms.main_table(), &first, self.path)?;
+        }
+        timed.sort_unstable_by(|left, right| {
+            left.group
+                .cmp(&right.group)
+                .then_with(|| left.seconds.total_cmp(&right.seconds))
+                .then_with(|| left.row.cmp(&right.row))
+        });
         let rows_per_block = read_plan.rows_per_block.max(1);
         let mut changes = ChangeSet::default();
         let mut counts = FlagSummary {
@@ -279,8 +300,8 @@ fn apply_time_bin_flags(
     for block in members.chunks(block_size) {
         let rows = block.iter().map(|entry| entry.row).collect::<Vec<_>>();
         let flags = read_flags(ms.main_table(), &rows, path)?;
-        let mut updated = BTreeMap::new();
-        let mut touched = BTreeSet::new();
+        let mut partial = BTreeMap::new();
+        let mut complete = BTreeMap::new();
         for (row, mut flags) in rows.into_iter().zip(flags) {
             let new = matched
                 .iter()
@@ -288,11 +309,21 @@ fn apply_time_bin_flags(
                 .count();
             if new != 0 {
                 changed_samples += new;
-                updated.insert(row, flags);
-                touched.insert(row);
+                // The row flag covers the original MS axes, including all
+                // samples outside the channels and planes used for clipping.
+                if flags.iter().all(|flag| *flag) {
+                    complete.insert(row, flags);
+                } else {
+                    partial.insert(row, flags);
+                }
             }
         }
-        write_touched_flag_updates(ms, updated, touched, false, changes)?;
+        for (updates, set_row_flag) in [(partial, false), (complete, true)] {
+            if !updates.is_empty() {
+                let touched: BTreeSet<_> = updates.keys().copied().collect();
+                write_touched_flag_updates(ms, updates, touched, set_row_flag, changes)?;
+            }
+        }
     }
     Ok(changed_samples)
 }
@@ -374,6 +405,7 @@ pub(super) struct ClipTimeAccumulator {
     pub(super) data: ArrayValue,
     pub(super) model: Option<ArrayValue>,
     pub(super) mass: ArrayD<f32>,
+    started: bool,
 }
 
 impl ClipTimeAccumulator {
@@ -383,6 +415,7 @@ impl ClipTimeAccumulator {
             data: zero_samples(data),
             model: model.map(zero_samples),
             mass: ArrayD::zeros(flags.raw_dim()),
+            started: false,
         }
     }
 
@@ -417,6 +450,7 @@ impl ClipTimeAccumulator {
             }
             .weights()
         });
+        let first_row = !std::mem::replace(&mut self.started, true);
         let contributions = Array2::from_shape_fn(flags.dim(), |index| {
             let flagged = flags[index];
             let averaged = &mut accumulated_flags[index];
@@ -426,7 +460,7 @@ impl ClipTimeAccumulator {
             let factor = weights
                 .as_ref()
                 .map_or(1.0, |weights| weights.get(index) as f32);
-            let reset = *averaged && !flagged;
+            let reset = first_row || (*averaged && !flagged);
             *averaged = flagged;
             let normalization = &mut mass[index];
             if reset {
@@ -493,17 +527,19 @@ fn accumulate<T, F>(
     contributions: &ArrayD<Option<(f32, bool)>>,
     convert: impl Fn(f32) -> F,
 ) where
-    T: Copy + Default + AddAssign + Mul<F, Output = T>,
+    T: Copy + AddAssign + Mul<F, Output = T>,
 {
     Zip::from(sum)
         .and(data)
         .and(contributions)
         .for_each(|sum, &data, &contribution| {
             if let Some((weight, reset)) = contribution {
+                let data = data * convert(weight);
                 if reset {
-                    *sum = T::default();
+                    *sum = data;
+                } else {
+                    *sum += data;
                 }
-                *sum += data * convert(weight);
             }
         });
 }

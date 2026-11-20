@@ -4003,6 +4003,22 @@ and accumulates each weight spectrum over its actual contributing
 integrations. The test calculates the expected masks from the stored values,
 then compares flags and data using both CASA and casacore readback.
 
+## Time-averaged clipping can derive row flags from a subset of channels
+
+With `timeavg=True`, `channelavg=True` and `spw="0:1~2"` on a
+four-channel window, CASA 6.7.6.14 can set `FLAG_ROW` when the selected
+channels meet the clip range. This masks the original unselected
+channels even though their stored sample flags stay clear. CASA can
+also leave row flags clear for fully flagged original rows in an earlier
+time bin, and clear a pre-existing row flag while writing an averaged
+result.
+
+Native time-averaged clipping preserves pre-existing row flags and sets
+new row flags when all original cells in the changed row are flagged.
+The paired oracle computes both the selected sample flags and the
+original-axis row status, including a whole-scan control where CASA
+writes the same row flags.
+
 ## Weight clipping can ignore defined channel weights
 
 In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="WEIGHT_SPECTRUM")`

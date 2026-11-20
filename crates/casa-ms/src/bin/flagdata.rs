@@ -13,7 +13,7 @@ use casa_ms::{
     flagdata_empty_record, flagdata_named_summary_record, flagdata_path,
     flagdata_task_schema_bundle, ms_task_success, save_next_flag_backup, task_selection_text,
 };
-use casa_provider_contracts::{NumpyScalarType, ParameterValue, python_repr};
+use casa_provider_contracts::{NumpyScalarType, ParameterValue, TaskFailureKind, python_repr};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -55,10 +55,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
     };
     let request = flagdata_request(task).or_else(|error| {
-        if matches!(
-            error.parameter.as_deref(),
-            Some("datacolumn" | "channelavg" | "chanbin" | "timeavg")
-        ) {
+        let parameter = error.parameter.as_deref();
+        if parameter == Some("datacolumn")
+            || (matches!(parameter, Some("channelavg" | "timeavg"))
+                && error.kind == TaskFailureKind::Execution)
+        {
             backup_before_failed_apply(task, &action)?;
         }
         Err(error)
@@ -209,7 +210,11 @@ fn clip_time_bin(
     match task.value("timeavg") {
         Some(ParameterValue::Bool(false)) => Ok(None),
         Some(ParameterValue::Bool(true)) => task.required_text("timebin").map(Some),
-        Some(ParameterValue::Array(_)) => {
+        Some(ParameterValue::Array(values))
+            if values
+                .iter()
+                .all(|value| matches!(value, ParameterValue::Bool(_))) =>
+        {
             Err(TaskFailure::execution("RecordInterface::asBool - invalid data type").at("timeavg"))
         }
         _ => Err(
@@ -228,7 +233,11 @@ fn clip_channel_bins(
     match task.value("channelavg") {
         Some(ParameterValue::Bool(false)) => return Ok(None),
         Some(ParameterValue::Bool(true)) => {}
-        Some(ParameterValue::Array(_)) => {
+        Some(ParameterValue::Array(values))
+            if values
+                .iter()
+                .all(|value| matches!(value, ParameterValue::Bool(_))) =>
+        {
             return Err(
                 TaskFailure::execution("RecordInterface::asBool - invalid data type")
                     .at("channelavg"),

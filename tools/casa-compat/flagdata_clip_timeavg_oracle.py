@@ -55,22 +55,29 @@ def make_cases():
         ms.removecols("DATA")
 
 
-def check_flags(source, vis, times, channels=(0, 1, 2, 3), *, baseline=None, planes=(0,)):
+def check_flags(source, vis, times, channels=(0, 1, 2, 3), *, baseline=None, planes=(0,), row_times=()):
     with table(source, ack=False) as before, table(vis, ack=False) as after, casa_table(vis) as casa:
         timestamps = before.getcol("TIME")
         offsets = (timestamps - timestamps.min()).round().astype("i4")
         expected = before.getcol("FLAG")
+        expected_rows = before.getcol("FLAG_ROW") | np.isin(offsets, row_times)
         selected = np.isin(offsets, times)
         if baseline is not None:
             selected &= (before.getcol("ANTENNA1") == baseline[0]) & (before.getcol("ANTENNA2") == baseline[1])
         expected[np.ix_(selected, channels, planes)] = True
         np.testing.assert_array_equal(after.getcol("FLAG"), expected)
+        np.testing.assert_array_equal(after.getcol("FLAG_ROW"), expected_rows)
         for row in range(after.nrows()):
             np.testing.assert_array_equal(casa.getcell("FLAG", row).T, expected[row])
-            assert casa.getcell("FLAG_ROW", row) == before.getcell("FLAG_ROW", row)
+            assert casa.getcell("FLAG_ROW", row) == expected_rows[row]
         for column in (*UNCHANGED, "TIME"):
-            if column in before.colnames():
-                np.testing.assert_array_equal(after.getcol(column), before.getcol(column), err_msg=column)
+            if column != "FLAG_ROW" and column in before.colnames():
+                for row in range(before.nrows()):
+                    defined = before.iscelldefined(column, row)
+                    assert after.iscelldefined(column, row) == defined, (column, row)
+                    if defined:
+                        np.testing.assert_array_equal(after.getcell(column, row), before.getcell(column, row),
+                                                      err_msg=f"{column} row {row}")
 
 
 def compare_products():
@@ -85,6 +92,7 @@ def compare_products():
         ((0, 10), (2.59, 2.61), {"timebin": "20"}),
         ((0, 10), (2.59, 2.61), {"timebin": "20000ms"}),
         ((0, 10), (2.59, 2.61), {"timebin": "0.333333333333min"}),
+        ((0, 10), (2.59, 2.61), {"timebin": "5arcmin"}),
         ((0, 10, 20, 30), (3.79, 3.81), {"timebin": "10GHz"}),
         ((), (0, 100), {"timebin": "two integrations"}),
         ((0,), (0.9, 1.1), {"timebin": "0s"}),
@@ -96,18 +104,16 @@ def compare_products():
         ((0, 10), (2.59, 2.61), {"channelavg": True, "chanbin": 2, "spw": "0:1~3"}),
         ((0, 10), (2.59, 2.61), {"field": "FLUX"}),
         ((), (2.59, 2.61), {"field": "PHASE"}),
-        ((0, 10), (2.59, 2.61), {"correlation": ""}),
     )
     for index, (times, bounds, options) in enumerate(cases):
         channels = (1, 2, 3) if "spw" in options else (0, 1, 2, 3)
-        planes = (0, 1) if options.get("correlation") == "" else (0,)
         for name, task in TASKS:
             path = f"time-{index}-{name}.ms"
             copytree("visibility.ms", path)
             arguments = {**COMMON, **options, "clipminmax": list(bounds)}
             assert task(vis=path, **arguments) == {}, (name, arguments)
             try:
-                check_flags("visibility.ms", path, times, channels, planes=planes)
+                check_flags("visibility.ms", path, times, channels)
             except AssertionError as error:
                 raise AssertionError((name, arguments)) from error
     return len(cases)
@@ -162,6 +168,128 @@ def compare_preflags_and_refusals():
             assert_preserved(path, original, auxiliary)
 
 
+def check_signed_phase():
+    source = "signed-phase.ms"
+    copytree("visibility.ms", source)
+    with table(source, readonly=False, ack=False) as ms:
+        values = ms.getcol("DATA")
+        times = ms.getcol("TIME")
+        earliest = times == times.min()
+        values[earliest, :, 0] = np.complex64(complex(-1.0, -0.0))
+        ms.putcol("DATA", values)
+        assert np.signbit(ms.getcol("DATA")[earliest, :, 0].imag).all()
+    for name, task in TASKS:
+        vis = f"phase-{name}.ms"
+        copytree(source, vis)
+        assert task(vis=vis, **{**COMMON, "timebin": "1s", "correlation": "ARG_XX"},
+                    clipminmax=[-3.15, -3.13]) == {}
+        check_flags(source, vis, (0,))
+
+
+def check_combined_averages():
+    source = "distinct-channels.ms"
+    copytree("visibility.ms", source)
+    with table(source, readonly=False, ack=False) as ms:
+        times = ms.getcol("TIME")
+        first, second = (times == value for value in np.unique(times)[:2])
+        observed, sigma, flags = (ms.getcol(name) for name in ("DATA", "SIGMA_SPECTRUM", "FLAG"))
+        observed[first, :2, 0] = [1, 8]
+        observed[second, :2, 0] = [5, 10]
+        sigma[second, :2, 0] = [0.5, 2]
+        flags[first, 1, 0] = True
+        for name, values in (("DATA", observed), ("SIGMA_SPECTRUM", sigma), ("FLAG", flags)):
+            ms.putcol(name, values)
+    # Time-averaged channels are 4.2 and 10, with total weights 5 and 0.25.
+    # Only the subsequent weighted channel average lies in these bounds.
+    for name, task in TASKS:
+        vis = f"combined-{name}.ms"
+        copytree(source, vis)
+        assert task(vis=vis, **COMMON, channelavg=True, chanbin=2, spw="0:0~1",
+                    clipminmax=[4.47, 4.48]) == {}
+        check_flags(source, vis, (0, 10), (0, 1))
+
+
+def check_row_flags():
+    cases = (
+        ({"timebin": "100s"}, (0, 10, 20, 30), (0, 1, 2, 3), (0, 10, 20, 30)),
+        ({"timebin": "100s", "channelavg": True, "chanbin": 2, "spw": "0:1~2"},
+         (0, 10, 20, 30), (1, 2), (0, 10, 20, 30)),
+        ({"timebin": "20s"}, (0, 10), (0, 1, 2, 3), ()),
+    )
+    for index, (options, times, channels, casa_row_times) in enumerate(cases):
+        clipminmax = [2.59, 2.61] if options["timebin"] == "20s" else [3.79, 3.81]
+        for name, task in TASKS:
+            vis = f"full-planes-{index}-{name}.ms"
+            copytree("visibility.ms", vis)
+            assert task(vis=vis, **{**COMMON, **options, "correlation": ""}, clipminmax=clipminmax) == {}
+            expected = casa_row_times if name == "casa" else (times if len(channels) == 4 else ())
+            check_flags("visibility.ms", vis, times, channels, planes=(0, 1), row_times=expected)
+
+
+def check_provider_validation():
+    for parameter in ("timeavg", "channelavg"):
+        for index, value in enumerate((5, ["bad"], [True])):
+            vis = f"provider-{parameter}-{index}.ms"
+            copytree("visibility.ms", vis)
+            options = {**COMMON, "vis": vis, "flagbackup": True, parameter: value}
+            original, auxiliary = snapshot(vis), auxiliary_content(vis)
+            if index < 2:
+                try:
+                    tasks.run("flagdata", **options)
+                except tasks.TaskParameterError as failure:
+                    assert failure.completion.parameter == parameter
+                else:
+                    raise AssertionError(options)
+                assert_preserved(vis, original, auxiliary)
+            else:
+                try:
+                    tasks.run("flagdata", **options)
+                except tasks.TaskExecutionError as failure:
+                    assert failure.completion.parameter == parameter
+                else:
+                    raise AssertionError(options)
+                with table(f"{vis}.flagversions/flags.flagdata_1", ack=False) as backup:
+                    np.testing.assert_array_equal(backup.getcol("FLAG"), [row[1] for row in original])
+                check_flags("visibility.ms", vis, ())
+
+
+def check_spectrum_order():
+    for first_defined in (False, True):
+        source, vis = f"source-sparse-{first_defined}.ms", f"sparse-{first_defined}.ms"
+        with table("visibility.ms", ack=False) as template, template.selectrows([0, 1]) as selected:
+            selected.copy(source, deep=True, valuecopy=True).close()
+        with table(source, readonly=False, ack=False) as ms:
+            # Row 0 precedes row 1 in table and time order, but follows it
+            # in baseline order. The spectrum policy uses selected row order.
+            ms.putcol("ANTENNA1", [1, 0])
+            ms.putcol("ANTENNA2", [2, 1])
+            time = ms.getcell("TIME", 0)
+            ms.putcol("TIME", [time, time + 10.0])
+            values = ms.getcol("CORRECTED_DATA")
+            ms.putcol("CORRECTED_DATA", np.full_like(values, 2))
+            ms.putcol("WEIGHT", np.ones_like(ms.getcol("WEIGHT")))
+            ms.removecols("WEIGHT_SPECTRUM")
+            ms.addcols(maketabdesc(makearrcoldesc("WEIGHT_SPECTRUM", 0., ndim=2, valuetype="float")))
+            defined = 0 if first_defined else 1
+            ms.putcell("WEIGHT_SPECTRUM", defined, np.ones(values.shape[1:], dtype="f4"))
+            assert ms.iscelldefined("WEIGHT_SPECTRUM", 0) == first_defined
+        copytree(source, vis)
+        options = {**COMMON, "timebin": "1s", "datacolumn": "CORRECTED", "clipminmax": [1.9, 2.1]}
+        if first_defined:
+            original, auxiliary = snapshot(vis), auxiliary_content(vis)
+            try:
+                tasks.flagdata(vis=vis, **options)
+            except RuntimeError as failure:
+                assert "WEIGHT_SPECTRUM row 1 is undefined" in str(failure)
+            else:
+                raise AssertionError("time averaging used fallback after a defined first spectrum")
+            assert_preserved(vis, original, auxiliary)
+            check_flags(source, vis, ())
+        else:
+            assert tasks.flagdata(vis=vis, **options) == {}
+            check_flags(source, vis, (0, 10))
+
+
 def compare_preview_and_backups():
     options = {**COMMON, "clipminmax": [2.59, 2.61]}
     source = "visibility.ms"
@@ -195,9 +323,14 @@ def main():
         results = compare_products()
         check_averaged_operands()
         compare_preflags_and_refusals()
+        check_signed_phase()
+        check_combined_averages()
+        check_row_flags()
+        check_provider_validation()
+        check_spectrum_order()
         compare_preview_and_backups()
-    print(f"{results + 1} time-averaged products, four operand protections, three refusals, a preview "
-          "and two backups verified")
+    print(f"{results + 6} time-averaged products, four operand protections, a preview and two backups "
+          "verified, plus row flags, argument failures and both spectrum orders")
 
 
 if __name__ == "__main__":

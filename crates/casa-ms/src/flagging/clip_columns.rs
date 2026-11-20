@@ -180,6 +180,32 @@ impl ClipColumns {
                 .is_some_and(|weights| weights.scalar_fallback.is_some())
     }
 
+    pub(super) fn prepare_spectrum_fallbacks(
+        &mut self,
+        table: &Table,
+        first_rows: &BTreeMap<i32, usize>,
+        path: &str,
+    ) -> Result<(), FlaggingError> {
+        for operand in std::iter::once(&mut self.primary).chain(self.average_weights.iter_mut()) {
+            if operand.scalar_fallback.is_none() {
+                continue;
+            }
+            for (&spw, &row) in first_rows {
+                let value = table
+                    .column_accessor(operand.name)
+                    .and_then(|column| column.array_cells_owned(&[row]))
+                    .map_err(|source| FlaggingError::MutateFlags {
+                        path: path.to_string(),
+                        reason: format!("read first selected {} row {row}: {source}", operand.name),
+                    })?;
+                operand
+                    .fallback_windows
+                    .insert(spw, value.first().is_some_and(Option::is_none));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn read<'a>(
         &'a mut self,
         table: &Table,
