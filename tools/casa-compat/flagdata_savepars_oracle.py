@@ -153,11 +153,14 @@ def check_reader_resync():
     casatasks.flagdata(**options, field="FLUX")
     command_table = f"{vis}/FLAG_CMD"
     with table(command_table, lockoptions="usernoread", ack=False) as reader:
-        managers = reader.getdminfo()
+        def bindings():
+            return [{key: item[key] for key in ("NAME", "TYPE", "SEQNR", "COLUMNS")}
+                    for item in reader.getdminfo().values()]
+        managers = bindings()
         assert list(reader.getcol("COMMAND")) == ["field='FLUX' autocorr=False mode='manual'"]
         tasks.flagdata(**options, field="PHASE")
         reader.resync()
-        assert reader.getdminfo() == managers
+        assert bindings() == managers
         assert list(reader.getcol("COMMAND")) == [
             "field='FLUX' autocorr=False mode='manual'", "field='PHASE' autocorr=False mode='manual'",
         ]

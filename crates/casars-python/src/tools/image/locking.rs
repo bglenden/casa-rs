@@ -70,6 +70,23 @@ impl ImageHandle {
 }
 
 impl AttachedImage {
+    fn lock_with_inputs(
+        &self,
+        handle: &mut ImageHandle,
+        kind: LockType,
+        attempts: u32,
+    ) -> PyResult<bool> {
+        self.check_bound_name(handle)?;
+        for input in self.expression_inputs() {
+            let mut source = input.lock();
+            input.check_bound_name(&source)?;
+            if !source.lock_storage(kind, attempts)? {
+                return Ok(false);
+            }
+        }
+        handle.lock_storage(kind, attempts)
+    }
+
     pub(super) fn require_lock(&self, handle: &mut ImageHandle, kind: LockType) -> PyResult<()> {
         self.check_bound_name(handle)?;
         if handle.lock_storage(kind, 0)? {
@@ -77,6 +94,21 @@ impl AttachedImage {
         } else {
             Err(raised(format!("Could not acquire the image {kind:?} lock")))
         }
+    }
+
+    pub(super) fn require_pixel_read_lock(&self, handle: &mut ImageHandle) -> PyResult<()> {
+        if self.lock_with_inputs(handle, LockType::Read, 0)? {
+            Ok(())
+        } else {
+            Err(raised("Could not acquire the image Read lock"))
+        }
+    }
+
+    pub(super) fn release_requested_lock(&self, handle: &mut ImageHandle) -> PyResult<()> {
+        for input in self.expression_inputs() {
+            input.lock().release_requested_lock()?;
+        }
+        handle.release_requested_lock()
     }
 }
 
@@ -90,10 +122,17 @@ impl PyImageTool {
             };
             let handle = attachment.lock();
             handle.check_single_precision("haslock")?;
-            Ok::<_, PyErr>(vec![
-                handle.has_storage_lock(LockType::Read),
-                handle.has_storage_lock(LockType::Write),
-            ])
+            Ok::<_, PyErr>(
+                [LockType::Read, LockType::Write]
+                    .map(|kind| {
+                        handle.has_storage_lock(kind)
+                            && attachment
+                                .expression_inputs()
+                                .iter()
+                                .all(|input| input.lock().has_storage_lock(kind))
+                    })
+                    .to_vec(),
+            )
         })?;
         Ok(flags.into_pyarray(py))
     }
@@ -112,13 +151,12 @@ impl PyImageTool {
             };
             let mut handle = attachment.lock();
             handle.check_single_precision("lock")?;
-            attachment.check_bound_name(&handle)?;
             let kind = if writelock {
                 LockType::Write
             } else {
                 LockType::Read
             };
-            handle.lock_storage(kind, nattempts.max(0) as u32)
+            attachment.lock_with_inputs(&mut handle, kind, nattempts.max(0) as u32)
         })
     }
 
@@ -131,6 +169,11 @@ impl PyImageTool {
             let mut handle = attachment.lock();
             handle.check_single_precision("unlock")?;
             attachment.check_bound_name(&handle)?;
+            for input in attachment.expression_inputs() {
+                let mut source = input.lock();
+                input.check_bound_name(&source)?;
+                source.unlock_storage()?;
+            }
             handle.unlock_storage()?;
             Ok(true)
         })

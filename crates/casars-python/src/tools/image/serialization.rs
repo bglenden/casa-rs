@@ -193,7 +193,7 @@ impl PyImageTool {
                 return Ok(CasaValue::empty_record());
             };
             let mut image = attachment.lock();
-            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
+            attachment.require_pixel_read_lock(&mut image)?;
             let record = serialize_image(&image)?;
             image.release_requested_lock()?;
             Ok::<_, PyErr>(record)

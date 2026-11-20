@@ -64,7 +64,9 @@
 mod geometry;
 mod record;
 
-pub(crate) use record::{compound_children, map_world_region_axes, native_region_kind};
+pub(crate) use record::{
+    compound_children, map_world_region_axes, native_region_kind, parse_quantum_vector_field,
+};
 
 use casa_coordinates::CoordinateSystem;
 use casa_lattices::StatsElement;
@@ -129,6 +131,11 @@ struct PlaneSelection {
     start: Vec<usize>,
     extent: Vec<usize>,
     inside: Array2<bool>,
+}
+
+pub(crate) struct PolygonBounds {
+    pub(crate) start: Vec<usize>,
+    pub(crate) shape: Vec<usize>,
 }
 
 impl PolygonRegion {
@@ -202,6 +209,45 @@ impl PolygonRegion {
         Ok(mask)
     }
 
+    /// The bounds of selected pixels, computed one spatial plane at a time.
+    pub(crate) fn bounds(
+        &self,
+        coords: &CoordinateSystem,
+        shape: &[usize],
+    ) -> Result<Option<PolygonBounds>, ImageError> {
+        let [x_axis, y_axis] = self.pixel_axes;
+        let mut lower = shape.to_vec();
+        let mut upper = vec![0; shape.len()];
+        self.visit_planes(coords, shape, |plane| {
+            for ((x, y), &selected) in plane.inside.indexed_iter() {
+                if selected {
+                    for (axis, offset) in [(x_axis, x), (y_axis, y)] {
+                        let position = plane.start[axis] + offset;
+                        lower[axis] = lower[axis].min(position);
+                        upper[axis] = upper[axis].max(position + 1);
+                    }
+                }
+            }
+            for axis in (0..shape.len()).filter(|&axis| axis != x_axis && axis != y_axis) {
+                lower[axis] = lower[axis].min(plane.start[axis]);
+                upper[axis] = upper[axis].max(plane.start[axis] + 1);
+            }
+            Ok(())
+        })?;
+        if upper[x_axis] == 0 {
+            return Ok(None);
+        }
+        let count = upper
+            .iter()
+            .zip(&lower)
+            .map(|(end, start)| end - start)
+            .collect();
+        Ok(Some(PolygonBounds {
+            start: lower,
+            shape: count,
+        }))
+    }
+
     fn check_axes(&self, coords: &CoordinateSystem) -> Result<(), ImageError> {
         check_pixel_axes(self.pixel_axes, coords.n_pixel_axes())
     }
@@ -268,15 +314,23 @@ impl PolygonRegion {
         coords: &CoordinateSystem,
         base_pixel: &[f64],
     ) -> Result<PixelPolygons, ImageError> {
-        let [x_axis, y_axis] = self.pixel_axes;
         let base_world = coords.to_world(base_pixel)?;
+        self.pixel_polygons_at_world(coords, &base_world)
+    }
+
+    fn pixel_polygons_at_world(
+        &self,
+        coords: &CoordinateSystem,
+        base_world: &[f64],
+    ) -> Result<PixelPolygons, ImageError> {
+        let [x_axis, y_axis] = self.pixel_axes;
         self.polygons
             .iter()
             .map(|polygon| {
                 polygon
                     .iter()
                     .map(|vertex| {
-                        let mut world = base_world.clone();
+                        let mut world = base_world.to_vec();
                         world[x_axis] = vertex[0];
                         world[y_axis] = vertex[1];
                         let pixel = coords.to_pixel(&world)?;
@@ -292,6 +346,21 @@ impl PolygonRegion {
                     .collect()
             })
             .collect()
+    }
+
+    pub(crate) fn lattice_plane(
+        &self,
+        coords: &CoordinateSystem,
+        shape: &[usize],
+    ) -> Result<Option<PolygonPixelPlane>, ImageError> {
+        self.check_axes(coords)?;
+        // WCPolygon creates one LCPolygon at the reference world position.
+        // Unspecified axes extend that plane without multiplying its storage.
+        let reference = (0..coords.n_coordinates())
+            .flat_map(|i| coords.coordinate(i).reference_value())
+            .collect::<Vec<_>>();
+        let vertices = self.pixel_polygons_at_world(coords, &reference)?;
+        Ok(polygon_pixel_plane(&vertices, shape, self.pixel_axes))
     }
 }
 
@@ -412,6 +481,48 @@ fn statistics_of(mut values: Vec<f64>, unit: &str) -> Option<RegionStatistics> {
 
 /// Finds the pixels inside `polygons` (pixel coordinates on the region axes)
 /// within their bounding box, or `None` when the box misses the image.
+pub(crate) struct PolygonPixelPlane {
+    pub(crate) start: [usize; 2],
+    pub(crate) mask: Array2<bool>,
+}
+
+impl PolygonPixelPlane {
+    pub(crate) fn section(&self, shape: &[usize], [x, y]: [usize; 2]) -> (Vec<usize>, Vec<usize>) {
+        let mut start = vec![0; shape.len()];
+        start[x] = self.start[0];
+        start[y] = self.start[1];
+        let mut shape = shape.to_vec();
+        shape[x] = self.mask.nrows();
+        shape[y] = self.mask.ncols();
+        (start, shape)
+    }
+}
+
+pub(crate) fn polygon_pixel_plane(
+    polygons: &[Vec<[f64; 2]>],
+    shape: &[usize],
+    axes: [usize; 2],
+) -> Option<PolygonPixelPlane> {
+    let plane = select_plane(polygons, shape, axes)?;
+    let mut low = [plane.inside.nrows(), plane.inside.ncols()];
+    let mut high = [0, 0];
+    for ((x, y), &included) in plane.inside.indexed_iter() {
+        if included {
+            low[0] = low[0].min(x);
+            low[1] = low[1].min(y);
+            high[0] = high[0].max(x);
+            high[1] = high[1].max(y);
+        }
+    }
+    Some(PolygonPixelPlane {
+        start: [plane.start[axes[0]] + low[0], plane.start[axes[1]] + low[1]],
+        mask: plane
+            .inside
+            .slice(ndarray::s![low[0]..=high[0], low[1]..=high[1]])
+            .to_owned(),
+    })
+}
+
 fn select_plane(
     polygons: &[Vec<[f64; 2]>],
     shape: &[usize],

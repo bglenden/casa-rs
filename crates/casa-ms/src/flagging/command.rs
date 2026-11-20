@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use casa_tables::TableError;
-use casa_types::{ScalarValue, Value};
+use casa_types::{RecordValue, ScalarValue, Value};
 
 use super::FlaggingError;
 use crate::{SubtableId, transform::open_staged_subtable_for_write};
@@ -22,10 +22,7 @@ pub fn append_flag_command(
         reason: format!("append FLAG_CMD: {source}"),
     };
     let mut table = open_staged_subtable_for_write(&path).map_err(fail)?;
-    let mut row = table
-        .schema()
-        .ok_or_else(|| fail(TableError::PreparedRowRequiresSchema))?
-        .default_row();
+    let mut row = RecordValue::default();
     for (name, value) in [
         ("APPLIED", ScalarValue::Bool(applied)),
         ("COMMAND", ScalarValue::String(command.to_string())),
@@ -38,5 +35,5 @@ pub fn append_flag_command(
     ] {
         row.upsert(name, Value::Scalar(value));
     }
-    table.append_rows_in_place(1, &row).map_err(fail)
+    table.append_records_in_place(&[row]).map_err(fail)
 }

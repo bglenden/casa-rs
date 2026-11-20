@@ -5,7 +5,7 @@
 
 mod axis_labels;
 mod construction;
-pub(super) use construction::validate_coordinate_indices;
+pub(super) use construction::{append_coordinate, validate_coordinate_indices};
 mod frame_metadata;
 mod inspect;
 mod observation;
@@ -14,6 +14,9 @@ mod stubs;
 pub(crate) mod surface;
 mod transform_many;
 pub(super) mod world_reference;
+
+mod transform_single;
+pub(super) use transform_single::{WorldArgument, image_pixel_argument};
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

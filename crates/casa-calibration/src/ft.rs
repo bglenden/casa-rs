@@ -4,6 +4,8 @@
 pub(crate) mod image;
 mod imager;
 mod imager_definition;
+pub(crate) mod legacy_aw;
+pub(crate) mod legacy_pbw;
 pub(crate) mod moving_source;
 pub(crate) mod settings;
 pub(crate) mod single_dish;

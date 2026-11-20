@@ -74,8 +74,8 @@ mod weight_spectra;
 mod writer;
 
 pub use ft::settings::{
-    ImagerGridder, ImagerSingleDish, ImagerSingleDishKernel, ImagerSingleDishSetup,
-    ImagerTransformOptions,
+    ImagerGridder, ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerSingleDish,
+    ImagerSingleDishKernel, ImagerSingleDishSetup, ImagerTransformOptions,
 };
 pub use ft::{
     ImagerDefinitionRequest, ImagerImageDefinition, ImagerPhaseCentre, ImagerPrediction,

@@ -3,7 +3,9 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1027 (`stubs.rs`).
 
+mod add_axes;
 mod attachment;
+mod beam_deconvolution;
 mod beam_edit;
 mod beam_rotate;
 mod beam_view;
@@ -12,16 +14,20 @@ mod calc;
 mod concatenate;
 mod conformance;
 mod convertflux;
+mod coordinate_conversion;
 mod copy;
 mod copy_region;
 mod create;
 mod data_compat;
 mod deconvolve_components;
 mod default_record;
+mod fits_export;
 mod fits_header;
 mod fits_import;
 mod fits_rename;
 mod handle;
+mod imagecalc;
+mod insert;
 mod lifecycle;
 mod locking;
 mod makecomplex;
@@ -29,11 +35,15 @@ mod mask_expression;
 mod masks;
 mod metadata;
 mod modify;
+mod noise;
+mod pixel_edit;
 mod pixels;
 mod point;
 mod records;
+mod region_read;
 mod replace_masked;
 mod serialization;
+mod statistics;
 mod stubs;
 mod subimage;
 mod summary;

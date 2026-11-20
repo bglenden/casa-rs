@@ -48,6 +48,7 @@ use casa_numerics::solve_weighted_least_squares;
 mod clip;
 mod clip_average;
 mod clip_columns;
+mod clip_time;
 mod command;
 mod correlation;
 mod extend;
@@ -56,6 +57,7 @@ mod summary;
 use clip::{ClipOptions, apply_clip_array};
 use clip_average::{ChannelBins, check_channel_bins};
 use clip_columns::ClipColumns;
+use clip_time::{TimeClip, time_bin_seconds};
 pub use command::append_flag_command;
 use correlation::{ClipProjection, CorrelationSelection};
 mod version_backup;
@@ -193,6 +195,8 @@ pub struct FlagDataRequest {
     /// Average selected channels before clipping. A singleton width is used
     /// for all spectral windows. Zero passes through and one takes the whole window.
     pub clip_channel_bins: Option<Vec<u32>>,
+    /// Duration string used to average integrations on each baseline before clipping.
+    pub clip_time_bin: Option<String>,
     /// Quack interval in seconds.
     pub quackinterval: f64,
     /// Quack scan edge.
@@ -250,6 +254,7 @@ impl Default for FlagDataRequest {
             clipminmax: None,
             clipoutside: Some(true),
             clip_channel_bins: None,
+            clip_time_bin: None,
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
             quackincrement: false,
@@ -820,11 +825,17 @@ fn apply_clip_flags(
         clip_columns::require_physical_model(ms, request.data_column, selected_rows, &path)?;
     }
     let widths = request.clip_channel_bins.as_deref();
-    let average = widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
+    let time_average = request.clip_time_bin.as_deref().map(time_bin_seconds);
+    let average = time_average.is_some_and(|interval| interval.is_some())
+        || widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
     let Some(mut columns) = ClipColumns::bind(ms.main_table(), request.data_column, average)?
     else {
         return Ok(ChangeSet::default());
     };
+    if time_average == Some(None) {
+        tracing::warn!("unrecognized timebin disables the clip agent");
+        return Ok(ChangeSet::default());
+    }
     let Some(outside) = request.clipoutside else {
         tracing::warn!("clipoutside must be a scalar Boolean to start the clip agent");
         return Ok(ChangeSet::default());
@@ -854,6 +865,18 @@ fn apply_clip_flags(
         || columns.uses_weight_spectrum();
     let bytes_per_sample = columns.bytes_per_sample(ms.main_table(), &path)?;
     let read_plan = clip_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
+    if let Some(Some(seconds)) = time_average {
+        return TimeClip {
+            seconds,
+            column: request.data_column,
+            widths,
+            channels: channel_selections,
+            correlations,
+            options,
+            path: &path,
+        }
+        .apply(ms, selected_rows, &mut columns, &ddid_to_spw, read_plan);
+    }
     for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
         let table = ms.main_table();
         let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();

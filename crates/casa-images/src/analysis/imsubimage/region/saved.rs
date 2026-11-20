@@ -12,8 +12,9 @@ use crate::saved_region::map_world_region_axes;
 use crate::{AnyPagedImage, ImageError, PolygonRegion};
 
 mod compound;
+mod relative;
 
-use super::{ParsedRegion, SavedRegionMask, SpatialShape};
+use super::{ParsedRegion, SavedRegionMask, SpatialShape, StridedSection};
 
 pub(super) fn load_saved_region(
     image_path: &Path,
@@ -44,6 +45,9 @@ pub(super) fn parse_saved_region(
     };
 
     match class_name {
+        "WCPolygon" if relative::mode(rec).is_some() => {
+            relative::decode_polygon(region_name, rec, target_coords, full_shape)
+        }
         "WCPolygon" => polygon_region(
             region_name,
             PolygonRegion::from_record(region_name, rec, target_coords)?,
@@ -61,22 +65,21 @@ pub(super) fn parse_saved_region(
                 Err(_) => compound::decode(region_name, rec, target_coords, full_shape, plane),
             }
         }
-        "WCIntersection" | "WCDifference" | "WCComplement" => {
+        "WCIntersection" | "WCDifference" | "WCComplement" | "WCExtension" | "WCConcatenation" => {
             compound::decode(region_name, rec, target_coords, full_shape, plane)
         }
         "LCSlicer" | "LCBox" => {
-            let (blc, trc) = if class_name == "LCSlicer" {
+            let (blc, trc, stride) = if class_name == "LCSlicer" {
                 let section = decode_lc_slicer(region_name, rec, target_coords, full_shape)?;
-                if let Some((axis, stride)) =
-                    section.stride.iter().enumerate().find(|&(_, &s)| s != 1)
-                {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "saved region '{region_name}' has non-unit stride {stride} on axis {axis}"
-                    )));
-                }
-                (section.lower, section.upper)
+                let stride = section
+                    .stride
+                    .iter()
+                    .any(|&step| step != 1)
+                    .then_some(section.stride);
+                (section.lower, section.upper, stride)
             } else {
-                decode_lc_box(region_name, rec, full_shape)?
+                let (lower, upper) = decode_lc_box(region_name, rec, full_shape)?;
+                (lower, upper, None)
             };
             let shapes = if full_shape.len() >= 2 {
                 vec![
@@ -96,6 +99,7 @@ pub(super) fn parse_saved_region(
                 shapes,
                 saved_mask: None,
                 saved_bounds: Some((blc, shape)),
+                stride,
             })
         }
         "WCBox" => {
@@ -118,6 +122,7 @@ pub(super) fn parse_saved_region(
                 shapes,
                 saved_mask: None,
                 saved_bounds: Some((blc, shape)),
+                stride: None,
             })
         }
         "WCEllipsoid" => {
@@ -128,6 +133,7 @@ pub(super) fn parse_saved_region(
                 shapes: vec![ellipse.into()],
                 saved_mask: None,
                 saved_bounds: Some(bounds),
+                stride: None,
             })
         }
         other => Err(ImageError::InvalidMetadata(format!(
@@ -171,16 +177,46 @@ fn polygon_region(
         shapes: Vec::new(),
         saved_mask: Some(SavedRegionMask::Whole(mask)),
         saved_bounds: Some((min_pt, shape)),
+        stride: None,
     })
 }
 
-pub(in crate::analysis::imsubimage) struct SlicerSection {
-    pub(in crate::analysis::imsubimage) lower: Vec<usize>,
-    pub(in crate::analysis::imsubimage) upper: Vec<usize>,
-    pub(in crate::analysis::imsubimage) stride: Vec<usize>,
+pub(super) fn strided_lc_slicer(
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+    shape: &[usize],
+) -> Result<Option<StridedSection>, ImageError> {
+    if !matches!(
+        rec.get("name"),
+        Some(Value::Scalar(ScalarValue::String(name))) if name == "LCSlicer"
+    ) {
+        return Ok(None);
+    }
+    let section = decode_lc_slicer("region", rec, coords, shape)?;
+    if section.stride.iter().all(|&step| step == 1) {
+        return Ok(None);
+    }
+    let count = section
+        .lower
+        .iter()
+        .zip(&section.upper)
+        .zip(&section.stride)
+        .map(|((&first, &last), &step)| (last - first) / step + 1)
+        .collect();
+    Ok(Some(StridedSection {
+        start: section.lower,
+        count,
+        stride: section.stride,
+    }))
 }
 
-pub(in crate::analysis::imsubimage) fn decode_lc_slicer(
+struct SlicerSection {
+    lower: Vec<usize>,
+    upper: Vec<usize>,
+    stride: Vec<usize>,
+}
+
+fn decode_lc_slicer(
     name: &str,
     rec: &RecordValue,
     coords: &CoordinateSystem,
@@ -362,23 +398,51 @@ fn decode_wc_box(
     coords: &CoordinateSystem,
     full_shape: &[usize],
 ) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
+    decode_wc_box_axes(name, rec, coords, full_shape, |_| true)
+}
+
+fn decode_wc_box_axes(
+    name: &str,
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+    full_shape: &[usize],
+    include: impl Fn(usize) -> bool,
+) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
     let (axes, origin) = wc_pixel_axes(name, "WCBox", rec, coords)?;
     let mut modes = read_numeric_vec(rec.get("absrel")).unwrap_or_default();
     if modes.is_empty() {
         modes.resize(axes.len(), 1.0);
     }
+    let dimension_mismatch =
+        || ImageError::InvalidMetadata(format!("WCBox {name:?} dimension mismatch"));
+    if modes.len() != axes.len() {
+        return Err(dimension_mismatch());
+    }
+    let selected_axes = axes
+        .iter()
+        .copied()
+        .filter(|&axis| include(axis))
+        .collect::<Vec<_>>();
+    let modes = modes
+        .into_iter()
+        .zip(&axes)
+        .filter_map(|(mode, &axis)| include(axis).then_some(mode))
+        .collect::<Vec<_>>();
     let mut bounds = Vec::new();
     for (key, low) in [("blc", true), ("trc", false)] {
         let quantities = read_quantum_list(rec.get(key))?;
-        if quantities.len() != axes.len() || modes.len() != axes.len() {
-            return Err(ImageError::InvalidMetadata(format!(
-                "WCBox {name:?} dimension mismatch"
-            )));
+        if quantities.len() != axes.len() {
+            return Err(dimension_mismatch());
         }
+        let quantities = quantities
+            .into_iter()
+            .zip(&axes)
+            .filter_map(|(quantity, &axis)| include(axis).then_some(quantity))
+            .collect::<Vec<_>>();
         bounds.push(wc_box_corner(
             coords,
             full_shape,
-            &axes,
+            &selected_axes,
             &quantities,
             &modes,
             origin,
@@ -436,22 +500,39 @@ fn decode_wc_ellipsoid(
     let invalid =
         || ImageError::InvalidMetadata(format!("invalid direction-plane WCEllipsoid {name:?}"));
     let (axes, origin) = wc_pixel_axes(name, "WCEllipsoid", rec, coords)?;
-    if axes != plane
-        || !matches!(
-            rec.get("absrel"),
-            Some(Value::Scalar(ScalarValue::Int32(1)))
-        )
-    {
+    let mode = match rec.get("absrel") {
+        Some(Value::Scalar(ScalarValue::Int32(mode @ (1..=3)))) => f64::from(*mode),
+        _ => return Err(invalid()),
+    };
+    let [x, y] = plane;
+    let reversed = mode != 1.0 && axes == [y, x];
+    if axes != plane && !reversed {
         return Err(invalid());
     }
-    let [x, y] = plane;
     let center = read_quantum_list(rec.get("center"))?;
     let [first, second] = center.as_slice() else {
         return Err(invalid());
     };
     let rad = Unit::new("rad").expect("radians are a built-in unit");
     let in_radians = |quantity: &Quantity| quantity.get_value_in(&rad).map_err(|_| invalid());
-    let [cx, cy] = if matches!(first.unit().name(), "pix" | "frac")
+    let [cx, cy] = if mode != 1.0 {
+        // Casacore indexes the world center and radii by lattice axis. It
+        // applies pixel overrides in the record's order before returning the plane.
+        let mapped = if reversed { [y, x] } else { plane };
+        let mut projected = relative::project_points(
+            coords,
+            shape,
+            plane,
+            mapped,
+            [first.unit().name(), second.unit().name()],
+            [[first.value(), second.value()]],
+            &vec![mode; coords.n_world_axes()],
+        )?[0];
+        if reversed {
+            projected.reverse();
+        }
+        projected
+    } else if matches!(first.unit().name(), "pix" | "frac")
         && matches!(second.unit().name(), "pix" | "frac")
     {
         let pixel = |q: &Quantity, axis: usize| match q.unit().name() {
@@ -607,7 +688,8 @@ fn wc_box_corner(
         }
     }
     if has_world_bounds && modes.iter().any(|&mode| mode != 1.0) {
-        make_wc_box_world_absolute(coords, shape, modes, &reference, &mut world)?;
+        // WCBox passes its stored mode positions directly after mapping quantities.
+        make_region_world_absolute(coords, shape, modes, &reference, &mut world)?;
     }
     let converted = coords.to_pixel(&world)?;
     let mut result = shape
@@ -646,15 +728,13 @@ fn wc_box_corner(
     Ok(result)
 }
 
-fn make_wc_box_world_absolute(
+fn make_region_world_absolute(
     coords: &CoordinateSystem,
     shape: &[usize],
     modes: &[f64],
     reference: &[f64],
     world: &mut [f64],
 ) -> Result<(), ImageError> {
-    // WCBox maps the quantities to the target world axes, then passes the modes
-    // to WCRegion as stored. The mode positions are not remapped with the axes.
     let offsets = world
         .iter()
         .enumerate()

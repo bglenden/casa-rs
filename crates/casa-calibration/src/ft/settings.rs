@@ -196,6 +196,44 @@ impl Default for ImagerTransformOptions {
     }
 }
 
+/// Configuration accepted by the legacy nPBWProjectFT predictor.
+#[derive(Clone, Debug)]
+pub struct ImagerLegacyPbWOptions {
+    /// Use the legacy PBMosaicFT prediction variant.
+    pub mosaic: bool,
+    /// The convolution cache written by the CASA imager or EP solver.
+    pub cache_directory: PathBuf,
+    /// Requested W-plane count.
+    pub w_planes: i32,
+    /// Use an EP calibration table to apply antenna pointing offsets.
+    pub apply_pointing_offsets: bool,
+    /// Request correction using the cache's average primary beam.
+    pub correct_primary_beam: bool,
+    /// Minimum amplitude used in the primary-beam correction.
+    pub primary_beam_limit: f64,
+}
+
+/// Configuration for the legacy `awproject` and `mawproject` imager routes.
+#[derive(Clone, Debug)]
+pub struct ImagerLegacyAwOptions {
+    /// CASA CFS/WTCFS convolution cache.
+    pub cache_directory: PathBuf,
+    /// Requested W-plane count.
+    pub w_planes: i32,
+    /// Whether to apply antenna pointing calibration.
+    pub apply_pointing_offsets: bool,
+    /// Use the stored sensitivity image during model preparation.
+    pub correct_primary_beam: bool,
+    /// Minimum beam value used in the correction.
+    pub primary_beam_limit: f64,
+    /// Cache PA tolerance in degrees.
+    pub pa_step_deg: f64,
+    /// Convolution rotation step in degrees.
+    pub rotation_step_deg: f64,
+    /// Select the conjugate-beam frequency map in the catalog.
+    pub conjugate_beams: bool,
+}
+
 impl ImagerTransformOptions {
     pub(super) fn observatory_override(&self) -> Option<MPosition> {
         self.observatory.map(|[longitude, latitude, radius]| {

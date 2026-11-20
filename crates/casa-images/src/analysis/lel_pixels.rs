@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Sectioned evaluation and writing for the public image pixel calculator.
 
+use std::path::Path;
+
 use casa_lattices::{TiledShape, TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayD, Complex32, Complex64};
 use ndarray::{IxDyn, Zip};
@@ -10,6 +12,32 @@ use crate::{
     ImageError, ImageExpression, ImageInterface, MutableImageInterface, PagedImage, ScratchSpace,
     TempImage, TempStoragePolicy,
 };
+
+/// Write a public image calculator product to a new paged image.
+///
+/// # Errors
+/// Returns an error if evaluating or writing a section fails.
+pub fn materialize_image_tool_expression<T: ImageExprValue>(
+    expression: &ImageExpression<T>,
+    path: &Path,
+) -> Result<PagedImage<T>, ImageError> {
+    let (mut image, _) = expression.save_as_with_full_metadata(
+        path,
+        expression.coordinates(),
+        expression.units(),
+        expression.image_info_ref(),
+        expression.misc_info_ref(),
+        expression.legacy_coords_ref().cloned(),
+    )?;
+    if let Some(record) = expression.raw_image_info() {
+        image.set_image_info_record(record)?;
+    }
+    if expression.has_mask() && image.default_mask_name().is_none() {
+        initialize_default_mask(&mut image, Some("mask0"))?;
+    }
+    image.save()?;
+    Ok(image)
+}
 
 /// Apply a compiled real expression to an attached single-precision image.
 ///
@@ -40,6 +68,11 @@ fn calculate_pixels<S: ImageExprValue, T: ImageExprValue>(
     expression: &ImageExpression<S>,
     convert: impl Fn(S) -> T + Copy,
 ) -> Result<(), ImageError> {
+    if !image.is_writable() {
+        return Err(ImageError::CasaSelection(
+            "Failed AlwaysAssert to.isWritable()".into(),
+        ));
+    }
     let shape = image.shape().to_vec();
     let scalar = expression.shape().is_empty();
     if !scalar && expression.shape() != shape {

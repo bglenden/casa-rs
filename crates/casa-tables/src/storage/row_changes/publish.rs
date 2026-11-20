@@ -18,6 +18,11 @@ enum Update {
         old_len: u64,
         new_len: u64,
     },
+    Rewrite {
+        file: File,
+        original: File,
+        updated: File,
+    },
     Replace {
         staged: PathBuf,
         target: PathBuf,
@@ -39,6 +44,7 @@ impl Update {
                 old_len,
                 new_len,
             } => file.set_len((*new_len).max(*old_len)),
+            Self::Rewrite { file, updated, .. } => rewrite(file, updated),
             Self::Replace { staged, target, .. } => fs::rename(staged, target),
         }
     }
@@ -52,6 +58,7 @@ impl Update {
                 ..
             } => write_index(file, *offset, original),
             Self::Extend { file, old_len, .. } => file.set_len(*old_len),
+            Self::Rewrite { file, original, .. } => rewrite(file, original),
             Self::Replace {
                 target,
                 original: Some(original),
@@ -67,6 +74,13 @@ impl Update {
             },
         }
     }
+}
+
+fn rewrite(file: &mut File, source: &mut File) -> std::io::Result<()> {
+    file.seek(SeekFrom::Start(0))?;
+    source.seek(SeekFrom::Start(0))?;
+    let len = std::io::copy(source, file)?;
+    file.set_len(len)
 }
 
 fn write_index(file: &mut File, offset: u64, data: &[u8]) -> std::io::Result<()> {
@@ -119,7 +133,23 @@ impl StagedEdit<'_> {
             let name = entry.file_name();
             let staged = entry.path();
             let target = self.table.join(&name);
-            let original = match File::options().write(true).open(&target) {
+            let original = match File::options()
+                .read(self.preserve_file_identity)
+                .write(true)
+                .open(&target)
+            {
+                Ok(file) if self.preserve_file_identity => {
+                    // Retained casacore readers keep manager files open and
+                    // resync through those handles after the lock changes.
+                    let backup = backups.join(&name);
+                    fs::copy(&target, &backup)?;
+                    changes.push(Update::Rewrite {
+                        file,
+                        original: File::open(backup)?,
+                        updated: File::open(staged)?,
+                    });
+                    continue;
+                }
                 Ok(file) => {
                     let backup = backups.join(name);
                     fs::set_permissions(&staged, file.metadata()?.permissions())?;

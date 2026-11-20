@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from time import time
 
 import casatasks
-from casacore.tables import table
+from casacore.tables import makearrcoldesc, makescacoldesc, maketabdesc, table
 import numpy as np
 
 from casars import tasks
@@ -106,6 +106,43 @@ def compare_relocated_history(source):
     compare_new_rows(paths, original, 1, (start, end), subtable="PROVENANCE")
 
 
+def check_retained_reader(source):
+    for name, task in TASKS:
+        vis = f"retained-history-{name}.ms"
+        copytree(source, vis)
+        with table(f"{vis}/HISTORY", readonly=False, ack=False) as history:
+            history.addcols(maketabdesc(makearrcoldesc("EXTRA_TILED", 0.0, ndim=1)), {
+                "TYPE": "TiledShapeStMan", "NAME": "HISTORY_TILED", "COLUMNS": ["EXTRA_TILED"],
+                "SPEC": {"DEFAULTTILESHAPE": np.array([2, 32], dtype=np.int32)},
+            })
+            history.putcell("EXTRA_TILED", 0, np.array([3.0, 4.0]))
+            history.addcols(maketabdesc([makescacoldesc("EXTRA_ISM_TEXT", ""), makearrcoldesc("EXTRA_ISM_ARRAY", 0.0, ndim=1)]), {
+                "TYPE": "IncrementalStMan", "NAME": "HISTORY_ISM",
+                "COLUMNS": ["EXTRA_ISM_TEXT", "EXTRA_ISM_ARRAY"],
+            })
+            history.putcell("EXTRA_ISM_TEXT", 0, "inherited")
+            history.putcell("EXTRA_ISM_ARRAY", 0, np.array([4.5]))
+        with table(f"{vis}/HISTORY", lockoptions="usernoread", ack=False) as reader:
+            original = list(reader.getcol("MESSAGE"))
+            managers = {key: value["TYPE"] for key, value in reader.getdminfo().items()}
+            assert task(vis=vis, flagbackup=False) == {}
+            reader.resync()
+            assert {key: value["TYPE"] for key, value in reader.getdminfo().items()} == managers
+            current = list(reader.getcol("MESSAGE"))
+            assert current[:len(original)] == original and len(current) == len(original) + 78
+            assert current[len(original)] == "taskname=flagdata"
+            other = casatasks.flagdata if name == "native" else tasks.flagdata
+            assert other(vis=vis, field="FLUX", flagbackup=False) == {}
+            reader.resync()
+            final = list(reader.getcol("MESSAGE"))
+            assert final[:len(current)] == current and len(final) == len(current) + 78
+            assert final[len(current)] == "taskname=flagdata"
+            np.testing.assert_array_equal(reader.getcell("EXTRA_TILED", 0), [3.0, 4.0])
+            assert all(not reader.iscelldefined("EXTRA_TILED", row) for row in range(1, len(final)))
+            assert list(reader.getcol("EXTRA_ISM_TEXT")) == ["inherited"] * len(final)
+            np.testing.assert_array_equal(reader.getcol("EXTRA_ISM_ARRAY"), np.full((len(final), 1), 4.5))
+
+
 def compare_unchanged(source):
     cases = ({"mode": "summary"}, {"mode": "clip", "action": "calculate"},
              {"action": "none"}, {"action": ""}, {"field": "unavailable"})
@@ -132,6 +169,7 @@ def main():
         seed_history(source)
         applied = compare_applies(source)
         compare_relocated_history(source)
+        check_retained_reader(source)
         unchanged = compare_unchanged(source)
     print(f"{applied + 1} flagdata HISTORY products and {unchanged} unchanged inputs verified against CASA")
 

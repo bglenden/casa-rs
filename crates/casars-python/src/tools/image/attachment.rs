@@ -33,6 +33,8 @@ pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,
     beam_view: Mutex<BeamView>,
+    retained_inputs: Vec<Self>,
+    operand_paths: Vec<PathBuf>,
 }
 
 impl AttachedImage {
@@ -46,23 +48,42 @@ impl AttachedImage {
             }),
             key: None,
             beam_view: Mutex::new(beam_view),
+            retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         }
     }
 
     pub(super) fn open(path: &Path) -> PyResult<Self> {
+        Self::open_with_read_lock(path, true)
+    }
+
+    pub(super) fn open_for_ordered_read(path: &Path) -> PyResult<Self> {
+        Self::open_with_read_lock(path, false)
+    }
+
+    pub(super) fn native_path(&self) -> Option<&Path> {
+        self.key.as_deref()
+    }
+
+    fn open_with_read_lock(path: &Path, keep_read_lock: bool) -> PyResult<Self> {
         if path.is_file() {
             return ImageHandle::open(path).map(Self::temporary).map_err(raised);
         }
         let key = key(path)?;
         let shared = Self::shared(&registry(), &key);
         if let Some(shared) = shared {
-            shared.read_current_beams()?;
+            if keep_read_lock {
+                shared.read_current_beams()?;
+            }
             return Ok(shared);
         }
 
         // The data lock may wait for a different process. Keep the registry
         // available to other image names while this open is in progress.
         let opened = Self::open_native(path, &key, Some(0), TableUseLock::acquire_waiting)?;
+        if !keep_read_lock {
+            opened.lock().unlock_storage()?;
+        }
         let shared = {
             let mut registry = registry();
             if let Some(shared) = Self::shared(&registry, &key) {
@@ -73,7 +94,9 @@ impl AttachedImage {
             }
         };
         drop(opened);
-        shared.read_current_beams()?;
+        if keep_read_lock {
+            shared.read_current_beams()?;
+        }
         Ok(shared)
     }
 
@@ -114,6 +137,8 @@ impl AttachedImage {
                 image,
                 key: Some(key.to_path_buf()),
                 beam_view: Mutex::default(),
+                retained_inputs: Vec::new(),
+                operand_paths: Vec::new(),
             })
     }
 
@@ -158,6 +183,8 @@ impl AttachedImage {
             image,
             key: Some(key.to_path_buf()),
             beam_view: Mutex::new(beam_view),
+            retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         };
         opened.check_bound_name(&opened.lock())?;
         Ok(opened)
@@ -183,6 +210,28 @@ impl AttachedImage {
         self.beam_view
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn open_expression_inputs<'a>(
+        paths: impl Iterator<Item = &'a Path>,
+    ) -> PyResult<Vec<Self>> {
+        paths
+            .filter(|path| !path.is_file())
+            .map(Self::open)
+            .collect()
+    }
+
+    pub(super) fn retain_expression_inputs(&mut self, inputs: Vec<Self>, paths: Vec<PathBuf>) {
+        self.retained_inputs = inputs;
+        self.operand_paths = paths;
+    }
+
+    pub(super) fn expression_inputs(&self) -> &[Self] {
+        &self.retained_inputs
+    }
+
+    pub(super) fn operand_paths(&self) -> &[PathBuf] {
+        &self.operand_paths
     }
 
     pub(super) fn is_persistent(&self) -> bool {
@@ -306,6 +355,8 @@ impl AttachedImage {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
                 beam_view: Mutex::new(self.beam_view().clone()),
+                retained_inputs: Vec::new(),
+                operand_paths: Vec::new(),
             });
         }
         if old_name
@@ -381,6 +432,8 @@ impl AttachedImage {
             image,
             key: Some(target),
             beam_view: Mutex::new(beam_view),
+            retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         })
     }
 
