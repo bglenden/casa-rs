@@ -260,14 +260,14 @@ impl Coordinate for StokesCoordinate {
                 got: pixel.len(),
             });
         }
-        let idx = pixel[0].round() as i64;
-        if idx < 0 || idx as usize >= self.stokes.len() {
+        let index = (pixel[0] + 0.5).trunc();
+        if !index.is_finite() || index < 0.0 || index >= self.stokes.len() as f64 {
             return Err(CoordinateError::AxisOutOfRange {
-                index: idx.max(0) as usize,
+                index: index as usize,
                 naxes: self.stokes.len(),
             });
         }
-        Ok(vec![self.stokes[idx as usize].code() as f64])
+        Ok(vec![self.stokes[index as usize].code() as f64])
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
@@ -277,13 +277,23 @@ impl Coordinate for StokesCoordinate {
                 got: world.len(),
             });
         }
-        let code = world[0].round() as i32;
+        let world = world[0];
         let pos = self
             .stokes
             .iter()
-            .position(|s| s.code() == code)
+            .position(|stokes| {
+                // casacore::near uses a relative tolerance except at zero.
+                let code = f64::from(stokes.code());
+                if code == 0.0 {
+                    world.abs() <= (1.0 + 1.0e-13) * f64::MIN_POSITIVE
+                } else {
+                    world.is_finite() && (world - code).abs() <= 1.0e-13 * world.abs().max(code)
+                }
+            })
             .ok_or_else(|| {
-                CoordinateError::ConversionFailed(format!("Stokes code {code} not in coordinate"))
+                CoordinateError::ConversionFailed(format!(
+                    "Stokes value {world} is not contained in this StokesCoordinate"
+                ))
             })?;
         Ok(vec![pos as f64])
     }
@@ -407,7 +417,9 @@ mod tests {
     fn to_world_out_of_range() {
         let coord = make_iquv();
         assert!(coord.to_world(&[4.0]).is_err());
-        assert!(coord.to_world(&[-1.0]).is_err());
+        assert!(coord.to_world(&[-1.5]).is_err());
+        assert_eq!(coord.to_world(&[-1.0]).unwrap(), vec![1.0]);
+        assert_eq!(coord.to_world(&[0.5]).unwrap(), vec![2.0]);
     }
 
     #[test]
@@ -415,6 +427,8 @@ mod tests {
         let coord = make_iquv();
         // RR (code 5) is not in I/Q/U/V
         assert!(coord.to_pixel(&[5.0]).is_err());
+        assert!(coord.to_pixel(&[1.49]).is_err());
+        assert_eq!(coord.to_pixel(&[1.0 + 1e-14]).unwrap(), vec![0.0]);
     }
 
     #[test]

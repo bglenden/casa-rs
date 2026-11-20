@@ -11,6 +11,7 @@ mod observation;
 mod reference;
 mod stubs;
 pub(crate) mod surface;
+mod transform_many;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

@@ -5448,6 +5448,16 @@ controls alongside the raw shift results. This follows the standing rule
 for results that contradict the documented operation (#1252).
 [CASA measures documentation](https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html)
 
+## Batch coordinate conversion can reshape ragged inputs or misread byte order
+
+CASA 6.7.6.14 can pad or truncate a ragged sequence while converting it to
+the coordinate matrix used by `toworldmany` and `topixelmany`. NumPy arrays
+with non-native byte order can produce different numeric values from the
+same array in native byte order.
+
+casa-rs requires rectangular input and converts the array's byte order
+before interpreting its values (#1626).
+
 ## Frame display can discard the coordinate conversion context
 
 In CASA 6.7.6.14, `showframe()` fails to display many radial-velocity

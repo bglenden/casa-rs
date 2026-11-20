@@ -57,6 +57,13 @@ Use `cs.setobserver(name)` and `cs.settelescope(name)` to update observation
 metadata. An unknown telescope name is stored and the setter returns
 `False`. The record retains the last known telescope position.
 
+Use `cs.toworldmany(pixels)["numeric"]` and
+`cs.topixelmany(world)["numeric"]` to convert a floating-point matrix with
+one point per column. The rows follow the coordinate system's axis order.
+World values use the units reported by `cs.units()`.
+NumPy `float32`, `float64`, `longdouble`, `longlong`, and `ulonglong`
+matrices are converted to double precision, as in CASA.
+
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored

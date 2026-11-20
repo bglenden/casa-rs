@@ -294,12 +294,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
-    fn topixelmany(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("topixelmany")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (value = None, isworld = None), text_signature = "($self, value=[], isworld=-1)")]
     fn torel(
         &self,
@@ -327,12 +321,6 @@ impl PyCoordsys {
         format: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("toworld")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
-    fn toworldmany(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("toworldmany")
     }
 
     /// Not yet implemented in casa-rs.
