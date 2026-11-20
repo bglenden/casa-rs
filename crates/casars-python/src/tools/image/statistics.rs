@@ -20,6 +20,7 @@ use super::pixels::{Chunk, and_mask, collapse_axes};
 use super::region_read::region_argument;
 use super::{PyImageTool, stub};
 
+mod report;
 mod sampled;
 
 const BASIC: [(&str, Statistic); 8] = [
@@ -102,7 +103,7 @@ fn calculate<T: ImagePixel + StatsElement>(
     image: &impl ImageInterface<T>,
     chunk: &Chunk,
     mut options: StatsOptions,
-) -> PyResult<CasaValue> {
+) -> PyResult<(CasaValue, Vec<usize>)> {
     let selection = image
         .sub_image_with_stride(
             chunk.start.clone(),
@@ -117,7 +118,7 @@ fn calculate<T: ImagePixel + StatsElement>(
         && !matches!(options.algorithm, StatisticsAlgorithm::HingesFences { fence } if fence < 0.0)
     {
         let scale = flux_scale(image, chunk, &options.axes, global);
-        sampled::collect(
+        let iterations = sampled::collect(
             &selection,
             chunk,
             &options,
@@ -125,7 +126,7 @@ fn calculate<T: ImagePixel + StatsElement>(
             scale,
             &mut fields,
         )?;
-        return Ok(CasaValue::record(fields));
+        return Ok((CasaValue::record(fields), iterations));
     }
     let lattice: &dyn Lattice<T> =
         if chunk.size == image.shape() && chunk.stride.iter().all(|&step| step == 1) {
@@ -188,7 +189,7 @@ fn calculate<T: ImagePixel + StatsElement>(
             add_extrema(&mut fields, image.coordinates(), chunk, [min, max])?;
         }
     }
-    Ok(CasaValue::record(fields))
+    Ok((CasaValue::record(fields), Vec::new()))
 }
 
 fn region_fields(
@@ -360,7 +361,7 @@ impl PyImageTool {
         clmethod: &str,
         niter: i64,
     ) -> PyResult<Py<PyAny>> {
-        let _ = (force, append);
+        let _ = force;
         let region = region_argument(py, region, "statistics");
         let expression = stats_mask(mask);
         let (value, log) = py.detach(|| {
@@ -381,7 +382,7 @@ impl PyImageTool {
                 (zscore, maxiter),
                 niter,
             )?;
-            if disk || !logfile.is_empty() {
+            if disk {
                 return Err(stub("statistics").unwrap_err());
             }
             // casatools stores its public thresholds as Float even when the
@@ -424,7 +425,7 @@ impl PyImageTool {
                     )?)
                 };
                 let options = StatsOptions {
-                    axes,
+                    axes: axes.clone(),
                     include,
                     exclude,
                     robust,
@@ -433,23 +434,27 @@ impl PyImageTool {
                     single_precision,
                     fits_backed: image.fits().is_some(),
                 };
-                match &*image {
+                let (value, units) = match &*image {
                     ImageHandle::Float(Storage::Temp {
                         image,
                         fits: Some(fits),
                         ..
-                    }) => calculate(&fits.image_view(image), &chunk, options),
+                    }) => {
+                        let view = fits.image_view(image);
+                        (calculate(&view, &chunk, options), view.units().to_owned())
+                    }
                     ImageHandle::Float(storage) => {
-                        with_storage!(storage, image => calculate(image.as_ref(), &chunk, options))
+                        with_storage!(storage, image => (calculate(image.as_ref(), &chunk, options), image.units().to_owned()))
                     }
                     ImageHandle::Double(storage) => {
-                        with_storage!(storage, image => calculate(image.as_ref(), &chunk, options))
+                        with_storage!(storage, image => (calculate(image.as_ref(), &chunk, options), image.units().to_owned()))
                     }
                     _ => unreachable!("complex statistics were rejected"),
-                }
+                };
+                Ok::<_, PyErr>((value?, chunk, axes, units))
             })();
             let released = image.release_requested_lock();
-            let value = result?;
+            let ((value, iterations), chunk, axes, units) = result?;
             released?;
             let mut log = Vec::new();
             if verbose {
@@ -459,11 +464,17 @@ impl PyImageTool {
                 );
                 log.push(LogLine::info(format!("Determining stats for image {name}")));
             }
-            if list {
-                log.push(LogLine::info(format!(
-                    "Statistics calculated using {:?} algorithm",
-                    algorithm.kind()
-                )));
+            if list || verbose || !logfile.is_empty() {
+                report::StatisticsReport {
+                    coordinates: image.coordinates(),
+                    chunk: &chunk,
+                    collapsed_axes: &axes,
+                    values: &value,
+                    iterations: &iterations,
+                    units: &units,
+                    algorithm,
+                }
+                .publish(logfile, append, list, verbose, &mut log);
             }
             if robust && matches!(algorithm, StatisticsAlgorithm::Biweight { .. }) {
                 log.push(LogLine::warning(

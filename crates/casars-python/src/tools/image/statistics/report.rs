@@ -1,0 +1,450 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+use std::fmt::Write as _;
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write as _};
+
+use casa_coordinates::display::{
+    format_latitude_dms_with_precision, format_longitude_hours_with_precision, format_stream_value,
+    format_stream_value_with_precision,
+};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, StokesType};
+use casa_lattices::{StatisticsAlgorithm, StatisticsAlgorithmKind};
+use casa_types::measures::MeasFrame;
+use casa_types::measures::doppler::{DopplerRef, MDoppler};
+
+use crate::convert::holder::C_MPS;
+use crate::convert::value::CasaValue;
+use crate::tools::LogLine;
+
+use super::Chunk;
+
+const COLUMNS: [(&str, &str); 7] = [
+    ("Npts", "npts"),
+    ("Sum", "sum"),
+    ("Mean", "mean"),
+    ("Rms", "rms"),
+    ("Std_dev", "sigma"),
+    ("Minimum", "min"),
+    ("Maximum", "max"),
+];
+
+pub(super) struct StatisticsReport<'a> {
+    pub(super) coordinates: &'a CoordinateSystem,
+    pub(super) chunk: &'a Chunk,
+    pub(super) collapsed_axes: &'a [usize],
+    pub(super) values: &'a CasaValue,
+    pub(super) iterations: &'a [usize],
+    pub(super) units: &'a str,
+    pub(super) algorithm: StatisticsAlgorithm,
+}
+
+impl StatisticsReport<'_> {
+    fn field(&self, key: &str) -> Option<&CasaValue> {
+        let CasaValue::Record(fields) = self.values else {
+            return None;
+        };
+        fields
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value)
+    }
+
+    fn numbers(&self, key: &str) -> &[f64] {
+        match self.field(key) {
+            Some(CasaValue::Floats { values, .. }) => values,
+            _ => &[],
+        }
+    }
+
+    fn position(&self, key: &str) -> Option<String> {
+        match self.field(key)? {
+            CasaValue::Text(text) => Some(text.clone()),
+            CasaValue::Ints { values, .. } => Some(format!("{values:?}")),
+            _ => None,
+        }
+    }
+
+    fn summary(&self, global: bool) -> Vec<String> {
+        let algorithm = match self.algorithm.kind() {
+            StatisticsAlgorithmKind::Classic => "Classic",
+            StatisticsAlgorithmKind::HingesFences => "Hinges-Fences",
+            StatisticsAlgorithmKind::Chauvenet => "Chauvenet",
+            StatisticsAlgorithmKind::FitToHalf => "Fit-to-Half",
+            StatisticsAlgorithmKind::Biweight => "Biweight",
+        };
+        let mut lines = vec![
+            format!("Statistics calculated using {algorithm} algorithm"),
+            "Regions --- ".into(),
+        ];
+        for (key, prefix) in [
+            ("blc", "         -- bottom-left corner (pixel) [blc]:  "),
+            ("trc", "         -- top-right corner (pixel) [trc]:    "),
+            ("blcf", "         -- bottom-left corner (world) [blcf]: "),
+            ("trcf", "         -- top-right corner (world) [trcf]:   "),
+        ] {
+            if let Some(value) = self.position(key) {
+                lines.push(format!("{prefix}{value}"));
+            }
+        }
+        if !global || self.numbers("npts").is_empty() {
+            return lines;
+        }
+        lines.push("Values --- ".into());
+        let sumsq_unit = if self.units.is_empty() {
+            String::new()
+        } else {
+            format!("{}.{}", self.units, self.units)
+        };
+        let groups = [
+            (
+                "npts",
+                "         -- number of points [npts]:                ",
+                None,
+            ),
+            (
+                "max",
+                "         -- maximum value [max]:                    ",
+                Some(self.units),
+            ),
+            (
+                "min",
+                "         -- minimum value [min]:                    ",
+                Some(self.units),
+            ),
+            (
+                "maxpos",
+                "         -- position of max value (pixel) [maxpos]: ",
+                None,
+            ),
+            (
+                "minpos",
+                "         -- position of min value (pixel) [minpos]: ",
+                None,
+            ),
+            (
+                "maxposf",
+                "         -- position of max value (world) [maxposf]: ",
+                None,
+            ),
+            (
+                "minposf",
+                "         -- position of min value (world) [minposf]: ",
+                None,
+            ),
+            (
+                "sum",
+                "         -- Sum of pixel values [sum]:               ",
+                Some(self.units),
+            ),
+            (
+                "sumsq",
+                "         -- Sum of squared pixel values [sumsq]:     ",
+                Some(sumsq_unit.as_str()),
+            ),
+        ];
+        for (name, prefix, unit) in groups {
+            if let Some(&number) = self.numbers(name).first() {
+                lines.push(summary_number(prefix, number, unit));
+            } else if let Some(position) = self.position(name) {
+                lines.push(format!("{prefix}{position}"));
+            }
+        }
+        lines.push("Statistics --- ".into());
+        for (name, prefix) in [
+            (
+                "mean",
+                "        -- Mean of the pixel values [mean]:         ",
+            ),
+            (
+                "variance",
+                "        -- Variance of the pixel values :           ",
+            ),
+            (
+                "sigma",
+                "        -- Standard deviation of the Mean [sigma]:  ",
+            ),
+            (
+                "rms",
+                "        -- Root mean square [rms]:                  ",
+            ),
+            (
+                "median",
+                "        -- Median of the pixel values [median]:     ",
+            ),
+            (
+                "medabsdevmed",
+                "        -- Median of the deviations [medabsdevmed]: ",
+            ),
+            (
+                "quartile",
+                "        -- IQR [quartile]:                          ",
+            ),
+            ("q1", "        -- First quartile [q1]:                     "),
+            ("q3", "        -- Third quartile [q3]:                     "),
+        ] {
+            let value = if name == "variance"
+                && !matches!(self.algorithm, StatisticsAlgorithm::Biweight { .. })
+            {
+                self.numbers("sigma").first().map(|sigma| sigma * sigma)
+            } else {
+                self.numbers(name).first().copied()
+            };
+            if let Some(value) = value {
+                lines.push(summary_number(prefix, value, Some(self.units)));
+            }
+        }
+        lines
+    }
+
+    pub(super) fn publish(
+        &self,
+        path: &str,
+        append: bool,
+        list: bool,
+        verbose: bool,
+        log: &mut Vec<LogLine>,
+    ) {
+        let columns = self.axis_columns();
+        let mut file = (!path.is_empty()).then(|| {
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(append)
+                .truncate(!append)
+                .open(path)
+                .map(BufWriter::new)
+        });
+        let mut write_line = |prefix: &str, line: &str| {
+            if let Some(Ok(writer)) = &mut file
+                && let Err(error) = writeln!(writer, "{prefix}{line}")
+            {
+                file = Some(Err(error));
+            }
+        };
+        if list {
+            for line in self.summary(columns.is_empty()) {
+                write_line("# ", &line);
+                log.push(LogLine::info(line));
+            }
+        }
+        if self.numbers("npts").is_empty() {
+            let message = "NO UNMASKED POINTS FOUND, NO STATISTICS WERE COMPUTED";
+            write_line("", message);
+            log.push(LogLine::warning(message));
+        } else if !path.is_empty() || verbose {
+            self.details(&columns, |line, header| {
+                write_line(if header { "#" } else { " " }, &line);
+                if verbose {
+                    log.push(LogLine::info(line));
+                }
+            });
+        }
+        if let Some(Err(error)) = file.map(|writer| writer.and_then(|mut writer| writer.flush())) {
+            log.push(LogLine::warning(format!(
+                "Requested log file {path} could not be written: {error}"
+            )));
+        }
+    }
+
+    fn axis_columns(&self) -> Vec<AxisColumn<'_>> {
+        let mut axis = 0;
+        let mut columns = Vec::new();
+        for index in 0..self.coordinates.n_coordinates() {
+            let model = self.coordinates.coordinate(index);
+            for (local, label) in model.axis_names().into_iter().enumerate() {
+                if !self.collapsed_axes.is_empty()
+                    && !self.collapsed_axes.contains(&axis)
+                    && self.chunk.size[axis] > 1
+                {
+                    columns.push(AxisColumn {
+                        axis,
+                        local,
+                        model,
+                        label: label.to_ascii_uppercase(),
+                    });
+                }
+                axis += 1;
+            }
+        }
+        columns.sort_by_key(|column| match column.label.as_str() {
+            "RIGHT ASCENSION" => (0, 0),
+            "DECLINATION" => (1, 0),
+            "FREQUENCY" => (2, 0),
+            "STOKES" => (3, 0),
+            _ => (4, usize::MAX - column.axis),
+        });
+        columns
+    }
+
+    fn details(&self, columns: &[AxisColumn<'_>], mut line: impl FnMut(String, bool)) {
+        let npts = self.numbers("npts");
+        let stats: Vec<_> = COLUMNS
+            .iter()
+            .filter_map(|&(label, key)| self.field(key).map(|_| (label, self.numbers(key))))
+            .collect();
+        let mut header = String::new();
+        for column in columns {
+            if column.label == "FREQUENCY" {
+                let unit = if column.is_velocity() {
+                    "km/s".into()
+                } else {
+                    column.model.axis_units().remove(0)
+                };
+                line(format!("{} column unit = {unit}", column.name()), true);
+            }
+            let label = column.name();
+            let width = column.width();
+            let _ = write!(header, "{label:>width$}  {label}(Plane) ");
+        }
+        for (index, &(label, _)) in stats.iter().enumerate() {
+            if !matches!(label, "Npts" | "Rms") {
+                line(format!("{label} column unit = {}", self.units), true);
+            }
+            let width = if index + 1 == stats.len() { 12 } else { 14 };
+            let _ = write!(header, "{label:<width$}");
+        }
+        if !self.iterations.is_empty() {
+            header.push_str("  N Iter");
+        }
+        line(header, true);
+
+        let mut reference = (0..self.coordinates.n_coordinates())
+            .flat_map(|index| self.coordinates.coordinate(index).reference_pixel())
+            .collect::<Vec<_>>();
+        for &axis in self.collapsed_axes {
+            reference[axis] = self.chunk.start[axis] as f64;
+        }
+        let labels: Vec<Vec<_>> = columns
+            .iter()
+            .map(|column| {
+                (0..self.chunk.size[column.axis])
+                    .map(|plane| {
+                        let absolute =
+                            self.chunk.start[column.axis] + plane * self.chunk.stride[column.axis];
+                        let mut pixel = reference.clone();
+                        pixel[column.axis] = absolute as f64;
+                        (column.label_at(self.coordinates, &pixel), absolute)
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut strides = vec![0; self.chunk.size.len()];
+        let mut stride = 1;
+        for (axis, step) in strides.iter_mut().enumerate() {
+            if columns.iter().any(|column| column.axis == axis) {
+                *step = stride;
+                stride *= self.chunk.size[axis];
+            }
+        }
+        let mut position = vec![0; columns.len()];
+        for _ in 0..npts.len() {
+            let mut row = String::new();
+            let mut index = 0;
+            for ((column, labels), &plane) in columns.iter().zip(&labels).zip(&position) {
+                let (text, pixel) = &labels[plane];
+                let width = column.width();
+                let plane_width = column.name().len() + 8;
+                let _ = write!(row, "{text:>width$} {pixel:>plane_width$} ");
+                index += plane * strides[column.axis];
+            }
+            for (cell, &(_, values)) in stats.iter().enumerate() {
+                if cell != 0 {
+                    row.push(' ');
+                }
+                let text = scientific(values[index]);
+                let _ = write!(row, "{text:>13}");
+            }
+            if let Some(count) = self.iterations.get(index) {
+                let _ = write!(row, "      {count}");
+            }
+            line(row, false);
+            for (plane, labels) in position.iter_mut().zip(&labels).rev() {
+                *plane += 1;
+                if *plane < labels.len() {
+                    break;
+                }
+                *plane = 0;
+            }
+        }
+    }
+}
+
+fn summary_number(prefix: &str, value: f64, unit: Option<&str>) -> String {
+    let value = format_stream_value(value);
+    match unit {
+        Some(unit) => format!("{prefix}{value} {unit}"),
+        None => format!("{prefix}{value}"),
+    }
+}
+
+fn scientific(value: f64) -> String {
+    let text = format!("{value:.6e}");
+    let Some((mantissa, exponent)) = text.split_once('e') else {
+        return text.to_ascii_lowercase();
+    };
+    let exponent = exponent.parse::<i32>().expect("scientific exponent");
+    format!("{mantissa}e{exponent:+03}")
+}
+
+struct AxisColumn<'a> {
+    axis: usize,
+    local: usize,
+    model: &'a CoordinateModel,
+    label: String,
+}
+
+impl AxisColumn<'_> {
+    fn is_velocity(&self) -> bool {
+        self.label == "FREQUENCY"
+            && matches!(self.model, CoordinateModel::Spectral(spectral) if spectral.rest_frequency() > 0.0)
+    }
+
+    fn name(&self) -> &str {
+        if self.is_velocity() {
+            "VELOCITY"
+        } else {
+            &self.label
+        }
+    }
+
+    fn width(&self) -> usize {
+        match self.label.as_str() {
+            "STOKES" => 6,
+            "FREQUENCY" => 16,
+            _ => 15,
+        }
+    }
+
+    fn label_at(&self, coordinates: &CoordinateSystem, pixel: &[f64]) -> String {
+        let Ok(world) = coordinates.to_world(pixel) else {
+            return "?".into();
+        };
+        let value = world[self.axis];
+        match self.model {
+            CoordinateModel::Direction(_) => match self.label.as_str() {
+                "RIGHT ASCENSION" => format_longitude_hours_with_precision(value, 5),
+                "DECLINATION" => format_latitude_dms_with_precision(value, 5),
+                _ => format_stream_value_with_precision(value.to_degrees(), 5),
+            },
+            CoordinateModel::Stokes(_) => StokesType::from_code(value as i32)
+                .map_or_else(|| value.to_string(), |stokes| stokes.name().into()),
+            CoordinateModel::Spectral(spectral) if self.is_velocity() => {
+                let ratio = value.abs() / spectral.rest_frequency();
+                MDoppler::new(ratio, DopplerRef::RATIO)
+                    .convert_to(spectral.velocity_convention(), &MeasFrame::new())
+                    .map_or_else(
+                        |_| "?".into(),
+                        |shift| {
+                            format_stream_value_with_precision(shift.value() * C_MPS / 1000.0, 9)
+                        },
+                    )
+            }
+            CoordinateModel::Spectral(_) => format_stream_value_with_precision(value, 9),
+            _ => {
+                let unit = &self.model.axis_units()[self.local];
+                format!("{}{unit}", format_stream_value_with_precision(value, 5))
+            }
+        }
+    }
+}
