@@ -7259,6 +7259,15 @@ the per-scan output matched two independent single-field CASA controls.
 An independent SciPy natural spline matched 52 valid complex factors
 in the spline comparison (#1525).
 
+## Image record restore can crash or damage an existing output
+
+CASA 6.7.6.14 segfaults in `ia.fromrecord` if an otherwise valid image
+record has an empty outer `coordsys` record. A native restore of a record
+with a two-axis coordinate system and `shape=[2, 3, 2]` throws
+`Failed AlwaysAssert setCoordinateInfo` after replacing the output with
+an unreadable directory. Casa-rs reports both errors in Python and
+preserves the prior native image and its history (#1625).
+
 ## FITS import can abort on an empty primary HDU
 
 CASA 6.7.6.14 aborts in `ia.fromfits(infile=path, whichhdu=0)` when the FITS
