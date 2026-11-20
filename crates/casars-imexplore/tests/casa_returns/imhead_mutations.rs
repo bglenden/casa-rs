@@ -649,7 +649,9 @@ fn imhead_refuses_direction_increment_underflow_without_mutation() {
         "imhead",
         json!({"imagename": path, "mode": "summary"}),
     );
-    for value in ["1e-322deg", "1e-320deg"] {
+    // CASA refuses a singular transform both when the input is zero and
+    // when 1e-322 deg rounds to zero radians. 1e-320 deg remains nonzero.
+    for value in ["1e-322deg", "0deg"] {
         let (_, reply) = json_run(
             workspace.path(),
             "imhead",

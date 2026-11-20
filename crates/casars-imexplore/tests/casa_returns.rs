@@ -548,8 +548,15 @@ fn imhead_get_returns_casa_header_values() {
     let Some(TaskReply::Failed { message, .. }) = reply else {
         panic!("expected a refusal: {reply:?}");
     };
-    assert!(message.contains("Unknown keyword"), "{message}");
+    assert!(
+        message.contains("Unknown keyword unimplemented-user-key"),
+        "{message}"
+    );
+    assert!(message.contains("imhead summary dictionary"), "{message}");
 }
+
+#[path = "casa_returns/imhead_mask_edits.rs"]
+mod imhead_mask_edits;
 
 #[test]
 fn imhead_get_reads_metadata_on_complex_images() {

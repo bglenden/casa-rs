@@ -7,8 +7,8 @@ use casa_coordinates::{CoordinateModel, CoordinateType};
 use fitsio::images::ImageType as FitsImageType;
 
 use super::{
-    ImageExtrema, ImageHeaderSummary, ImageType, axis_summaries, format_beam, projection_header,
-    spectral_summary, summarize_beam_set, world_header,
+    ImageExtrema, ImageHeaderSummary, ImageType, axis_summaries, format_beam,
+    imhead_unknown_keyword, projection_header, spectral_summary, summarize_beam_set, world_header,
 };
 use crate::ImageError;
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
@@ -42,9 +42,7 @@ pub(super) fn custom_value(
             })
     });
     if internal.contains(&upper.as_str()) || axis_keyword || matrix_keyword {
-        return Err(ImageError::InvalidMetadata(format!(
-            "Unknown keyword {key}"
-        )));
+        return Err(imhead_unknown_keyword(key));
     }
     let cards = crate::fits_read::read_cards(path)?;
     let references = cards.iter().map(String::as_str).collect::<Vec<_>>();
@@ -58,9 +56,7 @@ pub(super) fn custom_value(
         Some(FitsValue::Logical(_)) => Err(ImageError::InvalidMetadata(
             "Unhandled data type Bool for user defined type. Send us a bug report".into(),
         )),
-        _ => Err(ImageError::InvalidMetadata(format!(
-            "Unknown keyword {key}"
-        ))),
+        _ => Err(imhead_unknown_keyword(key)),
     }
 }
 
