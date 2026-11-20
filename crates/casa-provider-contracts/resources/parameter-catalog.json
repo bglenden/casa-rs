@@ -9182,14 +9182,14 @@
       "id": "ms.selection.correlation",
       "semantic_revision": 3,
       "casa_name": "correlation",
-      "value_domain": {"kind": "string"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "casa_field"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
       "documentation": {
         "summary": "CASA flagging agent correlation selection.",
-        "details": "An empty selector uses every stored correlation. The agents find labels in the supplied text using the entire POLARIZATION table, and require each participating setup to contain all matched labels.",
+        "details": "An empty selector uses every stored correlation. The agents find supported receptor products and Stokes I in the supplied text using the entire POLARIZATION table, and require each participating setup to contain all matched labels. A string vector reaches the CASA task's attribute error.",
         "examples": ["XX", "XX,YY"]
       },
       "persistence_class": "profile"

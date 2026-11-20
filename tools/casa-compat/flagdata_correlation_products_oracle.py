@@ -61,6 +61,7 @@ def compare_products(vis, metadata):
         ({"correlation": np.str_("xx")}, linear_first, any_row, full),
         ({"correlation": "fooXXbar"}, linear_first, any_row, full),
         ({"correlation": "XX,QQ"}, linear_first, any_row, full),
+        ({"correlation": "XX,Q"}, linear_first, any_row, full),
         ({"correlation": "XX;YY"}, linear_both, any_row, full),
         ({"correlation": "XXYY"}, linear_both, any_row, full),
         ({"correlation": "YY,XX,YY"}, linear_both, any_row, full),
@@ -101,12 +102,14 @@ def compare_products(vis, metadata):
             np.testing.assert_array_equal(after[2], before[2])
     # The first NUL ends the selection text before the explicit filter,
     # which leaves the ordinary CASA row-flag updates active.
-    for path, module in (("nul-reference.ms", casatasks), ("nul-native.ms", tasks)):
-        copytree(vis, path)
-        assert module.flagdata(vis=path, correlation="\0XX", flagbackup=False) == {}
-        assert all(row_flag and flags.all() for row_flag, flags, _ in snapshot(path))
-    assert_equal("nul-reference.ms", "nul-native.ms")
-    return len(cases) + 1
+    for index, expr in enumerate(("\0XX", np.array(""))):
+        reference, native = f"default-reference-{index}.ms", f"default-native-{index}.ms"
+        for path, module in ((reference, casatasks), (native, tasks)):
+            copytree(vis, path)
+            assert module.flagdata(vis=path, correlation=expr, flagbackup=False) == {}
+            assert all(row_flag and flags.all() for row_flag, flags, _ in snapshot(path))
+        assert_equal(reference, native)
+    return len(cases) + 2
 
 
 def compare_missing_metadata_matches():
@@ -132,21 +135,53 @@ def compare_missing_metadata_matches():
 
 def compare_flagged_metadata(vis, metadata):
     source = snapshot(vis)
-    for subtable in ("POLARIZATION", "DATA_DESCRIPTION"):
-        reference, native = f"{subtable}-reference.ms", f"{subtable}-native.ms"
+    cases = (
+        ("POLARIZATION", "RR", False, {1: 1}),
+        ("DATA_DESCRIPTION", "RR", False, {}),
+        ("DATA_DESCRIPTION", "XX", True, {0: 0, 1: 0}),
+    )
+    for index, (subtable, correlation, shared, planes) in enumerate(cases):
+        reference, native = f"metadata-reference-{index}.ms", f"metadata-native-{index}.ms"
         for path, module in ((reference, casatasks), (native, tasks)):
             copytree(vis, path)
             with table(f"{path}/{subtable}", readonly=False, ack=False) as stored:
                 stored.putcell("FLAG_ROW", 1, True)
-            assert module.flagdata(vis=path, correlation="RR", flagbackup=False) == {}
+                if shared:
+                    stored.putcell("POLARIZATION_ID", 1, 0)
+            assert module.flagdata(vis=path, correlation=correlation, flagbackup=False) == {}
         assert_equal(reference, native)
         for ddid, before, after in zip(metadata["DATA_DESC_ID"], source, snapshot(native), strict=True):
             expected = before[1].copy()
-            if subtable == "POLARIZATION" and ddid == 1:
-                expected[:, 1] = True
+            if ddid in planes:
+                expected[:, planes[ddid]] = True
             np.testing.assert_array_equal(after[1], expected)
             assert before[0] == after[0]
-    return 2
+    return len(cases)
+
+
+def compare_stored_product_names(vis, metadata):
+    source = snapshot(vis)
+    cases = (
+        ([1, 2], 0, "Q", ()),
+        ([1, 2], 0, "I,Q", (0,)),
+        ([9, 9], 0, "XX", (0,)),
+        ([2, 3], 1, "XX,Q", (0,)),
+    )
+    for index, (types, pol, correlation, planes) in enumerate(cases):
+        reference, native = f"names-reference-{index}.ms", f"names-native-{index}.ms"
+        for path, module in ((reference, casatasks), (native, tasks)):
+            copytree(vis, path)
+            with table(f"{path}/POLARIZATION", readonly=False, ack=False) as stored:
+                stored.putcell("CORR_TYPE", pol, np.array(types, dtype=np.int32))
+            assert module.flagdata(vis=path, correlation=correlation, flagbackup=False) == {}
+        assert_equal(reference, native)
+        for ddid, before, after in zip(metadata["DATA_DESC_ID"], source, snapshot(native), strict=True):
+            expected = before[1].copy()
+            if ddid == 0:
+                expected[:, list(planes)] = True
+            np.testing.assert_array_equal(after[1], expected)
+            assert before[0] == after[0]
+    return len(cases)
 
 
 def compare_preview(vis):
@@ -170,15 +205,30 @@ def compare_preview(vis):
         assert_preserved(vis, before, auxiliary)
 
 
-def compare_no_match_backup(vis):
+def compare_backups(vis):
     before = snapshot(vis)
-    for path, module in (("backup-reference.ms", casatasks), ("backup-native.ms", tasks)):
-        copytree(vis, path)
-        assert module.flagdata(vis=path, correlation="XX,RR", flagbackup=True) == {}
-        assert_same_visibilities(path, before)
-        entries = casatasks.flagmanager(vis=path, mode="list")
-        names = [value["name"] for value in entries.values() if isinstance(value, dict)]
-        assert names == ["flagdata_1"], entries
+    for index, expression in enumerate(("XX,RR", ["XX"], np.array("XX"))):
+        for name, module in (("reference", casatasks), ("native", tasks)):
+            path = f"backup-{name}-{index}.ms"
+            copytree(vis, path)
+            if isinstance(expression, str):
+                assert module.flagdata(vis=path, correlation=expression) == {}
+            else:
+                try:
+                    module.flagdata(vis=path, correlation=expression)
+                except AttributeError as error:
+                    kind = "list" if isinstance(expression, list) else "numpy.ndarray"
+                    assert str(error) == f"'{kind}' object has no attribute 'upper'", error
+                else:
+                    raise AssertionError(f"{name} accepted {expression!r}")
+            assert_same_visibilities(path, before)
+            entries = casatasks.flagmanager(vis=path, mode="list")
+            names = [value["name"] for value in entries.values() if isinstance(value, dict)]
+            assert names == ["flagdata_1"], entries
+            with table(f"{path}.flagversions/flags.flagdata_1", ack=False) as version:
+                for row, (row_flag, flags, _) in enumerate(before):
+                    assert version.getcell("FLAG_ROW", row) == row_flag
+                    np.testing.assert_array_equal(version.getcell("FLAG", row), flags)
 
 
 def compare_refusals(vis):
@@ -207,10 +257,11 @@ def compare_refusals(vis):
                 assert_preserved(vis, before, auxiliary)
             assert errors[0] == errors[1], (action, value, errors)
     for module in (casatasks, tasks):
-        assert module.flagdata(vis=vis, correlation="XX", action="none") == {}
+        for expr in ("XX", np.array("")):
+            assert module.flagdata(vis=vis, correlation=expr, action="none") == {}
     assert_preserved(vis, before, auxiliary)
 
-    for mode, correlation in (("manual", "ABS_XX"), ("manual", "WVR"),
+    for mode, correlation in (("manual", "ABS_XX"), ("manual", "ABSXX"), ("manual", "WVR"),
                               ("summary", "XX"), ("clip", "XX"), ("rflag", "RR")):
         try:
             tasks.flagdata(vis=vis, mode=mode, correlation=correlation)
@@ -230,12 +281,13 @@ def main():
         products = compare_products(vis, metadata)
         products += compare_missing_metadata_matches()
         products += compare_flagged_metadata(vis, metadata)
+        products += compare_stored_product_names(vis, metadata)
         compare_preview(vis)
-        compare_no_match_backup(vis)
+        compare_backups(vis)
         refusals = compare_refusals(vis)
-    print(f"{products} flag products, three previews, one inactive call and "
-          f"{refusals} paired argument errors compared with CASA, plus one no-match backup "
-          "comparison and five guarded pending cases")
+    print(f"{products} flag products, three previews, two inactive calls and "
+          f"{refusals} paired argument errors compared with CASA, plus three backup "
+          "comparisons and six guarded pending cases")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ impl CorrelationSelection {
             return Ok(None);
         }
         if !matches!(mode, FlagDataMode::Manual | FlagDataMode::Quack)
-            || ["ABS_", "ARG_", "REAL_", "IMAG_", "NORM_", "WVR"]
+            || ["ABS", "ARG", "REAL", "IMAG", "NORM", "WVR"]
                 .iter()
                 .any(|prefix| text.contains(prefix))
         {
@@ -58,29 +58,53 @@ impl CorrelationSelection {
             .iter()
             .flatten()
             .copied()
-            .filter(|name| *name != "??" && text.contains(*name))
+            .filter(|name| {
+                ["RR", "LL", "RL", "LR", "XX", "YY", "XY", "YX", "I"].contains(name)
+                    && text.contains(*name)
+            })
             .collect();
         let by_polarization: Vec<Vec<usize>> = modes
             .iter()
             .map(|names| {
-                if !required.iter().all(|name| names.contains(name)) {
-                    return Vec::new();
-                }
-                names
+                let mut seen = BTreeSet::new();
+                let planes: Vec<_> = names
                     .iter()
                     .enumerate()
-                    .filter_map(|(plane, name)| required.contains(name).then_some(plane))
-                    .collect()
+                    .filter_map(|(plane, name)| {
+                        (required.contains(name) && seen.insert(name)).then_some(plane)
+                    })
+                    .collect();
+                if planes.len() == required.len() {
+                    planes
+                } else {
+                    Vec::new()
+                }
             })
             .collect();
 
         let descriptions = ms.data_description().map_err(failed)?;
-        let by_description = (0..descriptions.row_count())
+        let descriptions = (0..descriptions.row_count())
             .map(|row| {
-                if descriptions.flag_row(row).map_err(failed)? {
+                Ok((
+                    descriptions.polarization_id(row)?,
+                    descriptions.flag_row(row)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, MsError>>()
+            .map_err(failed)?;
+        // CASA enables the mask per polarization, including for a flagged
+        // description if another unflagged description references that setup.
+        let active: BTreeSet<_> = descriptions
+            .iter()
+            .filter_map(|&(id, flagged)| (!flagged).then_some(id))
+            .collect();
+        let by_description = descriptions
+            .into_iter()
+            .enumerate()
+            .map(|(row, (id, _))| {
+                if !active.contains(&id) {
                     return Ok(Vec::new());
                 }
-                let id = descriptions.polarization_id(row).map_err(failed)?;
                 by_polarization.get(id as usize).cloned().ok_or_else(|| {
                     FlaggingError::MutateFlags {
                         path: display_ms_path(ms),
