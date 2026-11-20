@@ -76,7 +76,9 @@ def test_putregion_validates_shape_before_creating_mask(casa, pixel_type, dtype)
             image.putregion(values, pixelmask=np.ones((3, 2), dtype=bool))
         assert image.maskhandler("default") == before
         pixels = image.getchunk()
-        assert pixels.dtype == dtype
+        assert pixels.dtype == (
+            np.complex128 if np.issubdtype(dtype, np.complexfloating) else np.float64
+        )
         np.testing.assert_array_equal(pixels, values)
         assert image.done()
 
