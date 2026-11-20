@@ -4,6 +4,15 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use super::ensure_outfile_does_not_alias_input;
+use crate::regrid::{
+    RegridMethod, RegridPixel, RegridTemplate, Regridded, TaskRegridOptions, frame_from_template,
+    regrid_direction_frame, regrid_task,
+};
+use crate::{
+    AnyPagedImage, ImageBeamSet, ImageError, ImageInfo, ImagePixel, ImageRegridSummary,
+    ImregridOutcome, ImregridRequest, ImregridTemplate, PagedImage,
+};
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_provider_contracts::{
     ParameterValue, casacore_value_to_casa, parameter_value_to_casacore,
@@ -12,17 +21,6 @@ use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::NdFloat;
-
-use super::ensure_outfile_does_not_alias_input;
-use crate::regrid::{
-    RegridMethod, RegridTemplate, Regridded, TaskRegridOptions, frame_from_template,
-    regrid_direction_frame, regrid_task,
-};
-use crate::{
-    AnyPagedImage, ImageBeamSet, ImageError, ImageInfo, ImagePixel, ImageRegridSummary,
-    ImregridOutcome, ImregridRequest, ImregridTemplate, PagedImage,
-};
 
 /// Return an image's coordinate template, or regrid its pixels onto a template.
 ///
@@ -66,7 +64,8 @@ pub fn imregrid(request: &ImregridRequest) -> Result<ImregridOutcome, ImageError
     match input {
         AnyPagedImage::Float32(image) => write_product(&image, request, &template),
         AnyPagedImage::Float64(image) => write_product(&image, request, &template),
-        _ => Err(invalid("imregrid requires real-valued input pixels")),
+        AnyPagedImage::Complex32(image) => write_product(&image, request, &template),
+        AnyPagedImage::Complex64(image) => write_product(&image, request, &template),
     }
     .map(ImregridOutcome::Product)
 }
@@ -137,7 +136,7 @@ fn read_template(template: &ImregridTemplate) -> Result<Template, ImageError> {
     Ok(Template::Grid(RegridTemplate { coordinates, shape }))
 }
 
-fn write_product<T: ImagePixel + NdFloat>(
+fn write_product<T: RegridPixel>(
     input: &PagedImage<T>,
     request: &ImregridRequest,
     template: &Template,
@@ -150,11 +149,23 @@ fn write_product<T: ImagePixel + NdFloat>(
         }
         _ => request.output.clone(),
     };
+    // The same-frame CASA path uses image.subimage with its overwrite default.
+    let same_frame = match template {
+        Template::Frame(reference) => input
+            .coordinates()
+            .find_coordinate(CoordinateType::Direction)
+            .is_some_and(|index| {
+                matches!(input.coordinates().coordinate(index),
+                CoordinateModel::Direction(direction) if direction.direction_ref() == *reference)
+            }),
+        Template::Grid(_) => false,
+    };
+    let overwrite = request.overwrite && !same_frame;
     let destination = if output.as_os_str().is_empty() {
         None
     } else {
         let path = std::path::absolute(&output).map_err(output_io)?;
-        check_output(request, &path)?;
+        check_output(request, &path, overwrite)?;
         Some(path)
     };
     let method = RegridMethod::from_casa(&request.interpolation)?;
@@ -229,8 +240,8 @@ fn write_product<T: ImagePixel + NdFloat>(
         image.save()?;
         drop(image);
         match rename_without_replacing(&product, &destination) {
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && request.overwrite => {
-                check_output(request, &destination)?;
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && overwrite => {
+                check_output(request, &destination, overwrite)?;
                 exchange_directories(&product, &destination).map_err(output_io)?;
             }
             result => result.map_err(output_io)?,
@@ -300,7 +311,11 @@ fn output_image_info(
     info
 }
 
-fn check_output(request: &ImregridRequest, destination: &Path) -> Result<(), ImageError> {
+fn check_output(
+    request: &ImregridRequest,
+    destination: &Path,
+    overwrite: bool,
+) -> Result<(), ImageError> {
     ensure_outfile_does_not_alias_input(destination, &request.imagename)?;
     if let ImregridTemplate::Image(path) = &request.template {
         ensure_outfile_does_not_alias_input(destination, path)?;
@@ -308,7 +323,7 @@ fn check_output(request: &ImregridRequest, destination: &Path) -> Result<(), Ima
     match destination.symlink_metadata() {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(output_io(error)),
-        Ok(_) if !request.overwrite => Err(invalid(format!(
+        Ok(_) if !overwrite => Err(invalid(format!(
             "imregrid output already exists: {}",
             destination.display()
         ))),
