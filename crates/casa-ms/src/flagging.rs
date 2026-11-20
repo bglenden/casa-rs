@@ -614,6 +614,8 @@ fn selected_rows(
                 request.selection.observation.as_deref(),
                 request.selection.array.as_deref(),
                 request.selection.feed.as_deref(),
+                request.selection.intent.as_deref(),
+                request.selection.uvrange.as_deref(),
             ]
             .into_iter()
             .flatten()
