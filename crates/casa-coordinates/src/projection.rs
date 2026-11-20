@@ -56,7 +56,7 @@ pub enum ProjectionType {
     AZP,
     /// Slant zenithal perspective with tclean's `[0, 0, 90]` parameters.
     SZP,
-    /// Airy projection with tclean's zero latitude parameter.
+    /// Airy projection with zero or the default 90-degree latitude.
     AIR,
     /// Gnomonic (tangent-plane) projection.
     TAN,
@@ -229,10 +229,7 @@ impl Projection {
                 self.validate_conversion_parameters()?;
                 project_tan(phi, theta)
             }
-            ProjectionType::AIR => {
-                self.validate_conversion_parameters()?;
-                project_air(phi, theta)
-            }
+            ProjectionType::AIR => project_air(phi, theta, self.airy_coefficient()?),
             ProjectionType::TAN => project_tan(phi, theta),
             ProjectionType::ARC => project_arc(phi, theta),
             ProjectionType::CAR => project_car(phi, theta),
@@ -260,10 +257,7 @@ impl Projection {
                 self.validate_conversion_parameters()?;
                 deproject_tan(x, y)
             }
-            ProjectionType::AIR => {
-                self.validate_conversion_parameters()?;
-                deproject_air(x, y)
-            }
+            ProjectionType::AIR => deproject_air(x, y, self.airy_coefficient()?),
             ProjectionType::TAN => deproject_tan(x, y),
             ProjectionType::ARC => deproject_arc(x, y),
             ProjectionType::CAR => deproject_car(x, y),
@@ -287,27 +281,40 @@ impl Projection {
     ///
     /// AZP and SZP give the gnomonic map at zero distance from the sphere's
     /// centre (Calabretta & Greisen 2002, §§5.1.1–2). Casacore pads missing
-    /// SZP parameters with `[0, 0, 90]`. AIR requires an explicit zero
-    /// latitude parameter because casacore's missing-parameter default is 90°.
+    /// SZP parameters with `[0, 0, 90]`. AIR defaults to 90° and also supports
+    /// the explicit zero latitude written by tclean. Surplus parameters are
+    /// stored by casacore but have no effect on these projections.
     pub fn validate_conversion_parameters(&self) -> Result<(), CoordinateError> {
         let required = match self.projection_type {
-            ProjectionType::AZP if self.parameters.iter().any(|&value| value != 0.0) => {
+            ProjectionType::AZP if self.parameters.iter().take(2).any(|&value| value != 0.0) => {
                 "the zero projection parameters written by tclean"
             }
-            ProjectionType::SZP if ![0.0, 0.0, 90.0].starts_with(&self.parameters) => {
+            ProjectionType::SZP
+                if self
+                    .parameters
+                    .iter()
+                    .zip([0.0, 0.0, 90.0])
+                    .any(|(value, default)| *value != default) =>
+            {
                 "the [0, 0, 90] projection parameters written by tclean"
             }
-            ProjectionType::AIR
-                if self.parameters.is_empty() || ![0.0, 0.0].starts_with(&self.parameters) =>
-            {
-                "the zero latitude parameter written by tclean"
-            }
+            ProjectionType::AIR => return self.airy_coefficient().map(|_| ()),
             _ => return Ok(()),
         };
         Err(CoordinateError::ConversionFailed(format!(
-            "{} requires {required}",
+            "{} requires {required} (#977)",
             self.name()
         )))
+    }
+
+    fn airy_coefficient(&self) -> Result<f64, CoordinateError> {
+        match self.parameters.first().copied().unwrap_or(90.0) {
+            0.0 => Ok(LN_2),
+            90.0 => Ok(1.0),
+            _ => Err(CoordinateError::ConversionFailed(
+                "AIR requires zero or the default 90-degree latitude (#977)".into(),
+            )),
+        }
     }
 }
 
@@ -442,16 +449,15 @@ fn deproject_tan(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
 }
 
 // ---------------------------------------------------------------------------
-// AIR (Airy with θ_b = 0)
+// AIR (Airy with θ_b = 0 or 90 degrees)
 // ---------------------------------------------------------------------------
 
 // WCSLIB uses the small-angle limit below this half-zenith angle.
 const AIR_LINEAR_LIMIT: f64 = 1e-4;
-const AIR_SLOPE: f64 = 1.0 + LN_2;
 
-/// Calabretta & Greisen (2002), Eq. 71, in radians. With t = tan(ξ)
-/// and ξ_b = π/4, the radius is ln(1 + t²)/t + ln(2)t.
-fn project_air(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
+/// Calabretta & Greisen (2002), Eq. 71, in radians. With t = tan(ξ), the
+/// radius is ln(1 + t²)/t + kt. The latitude parameter sets k.
+fn project_air(phi: f64, theta: f64, coefficient: f64) -> Result<(f64, f64), CoordinateError> {
     if theta <= -FRAC_PI_2 {
         return Err(CoordinateError::ConversionFailed(
             "AIR project: the native south pole is outside the projection".into(),
@@ -459,33 +465,33 @@ fn project_air(phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
     }
     let half_zenith = (FRAC_PI_2 - theta) / 2.0;
     let radius = if half_zenith < AIR_LINEAR_LIMIT {
-        AIR_SLOPE * half_zenith
+        (1.0 + coefficient) * half_zenith
     } else {
         let tangent = half_zenith.tan();
-        (tangent * tangent).ln_1p() / tangent + LN_2 * tangent
+        (tangent * tangent).ln_1p() / tangent + coefficient * tangent
     };
     Ok((radius * phi.sin(), -radius * phi.cos()))
 }
 
 /// Invert the monotone radius in t. The logarithm bounds t between
-/// radius/(1 + ln(2)) and radius/ln(2), which bracket the Newton steps.
-fn deproject_air(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
+/// radius/(1 + k) and radius/k, which bracket the Newton steps.
+fn deproject_air(x: f64, y: f64, coefficient: f64) -> Result<(f64, f64), CoordinateError> {
     let radius = x.hypot(y);
     if radius == 0.0 {
         return Ok((0.0, FRAC_PI_2));
     }
     let phi = x.atan2(-y);
-    let linear = radius / AIR_SLOPE;
+    let linear = radius / (1.0 + coefficient);
     if linear < AIR_LINEAR_LIMIT {
         return Ok((phi, FRAC_PI_2 - 2.0 * linear));
     }
 
-    let (mut low, mut high) = (linear, radius / LN_2);
+    let (mut low, mut high) = (linear, radius / coefficient);
     let mut tangent = low;
     for _ in 0..32 {
         let squared = tangent * tangent;
         let logarithmic_factor = squared.ln_1p() / squared;
-        let error = tangent * (LN_2 + logarithmic_factor) - radius;
+        let error = tangent * (coefficient + logarithmic_factor) - radius;
         if error.abs() <= 4.0 * f64::EPSILON * radius {
             return Ok((phi, FRAC_PI_2 - 2.0 * tangent.atan()));
         }
@@ -494,7 +500,7 @@ fn deproject_air(x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
         } else {
             high = tangent;
         }
-        let derivative = LN_2 + 2.0 / (1.0 + squared) - logarithmic_factor;
+        let derivative = coefficient + 2.0 / (1.0 + squared) - logarithmic_factor;
         let next = tangent - error / derivative;
         tangent = if low < next && next < high {
             next
@@ -955,18 +961,30 @@ mod tests {
     }
 
     #[test]
-    fn zenithal_transforms_refuse_parameters_outside_tclean() {
+    fn zenithal_transforms_refuse_unsupported_parameters() {
         for (kind, parameters) in [
             (ProjectionType::AZP, vec![2.0, 0.0]),
             (ProjectionType::AZP, vec![0.0, 10.0]),
             (ProjectionType::SZP, vec![1.0, 0.0, 90.0]),
             (ProjectionType::SZP, vec![0.0, 0.0, 45.0]),
-            (ProjectionType::AIR, vec![]),
-            (ProjectionType::AIR, vec![90.0]),
+            (ProjectionType::AIR, vec![45.0]),
+            (ProjectionType::AIR, vec![-90.0]),
         ] {
             let projection = Projection::with_parameters(kind, parameters);
             assert!(projection.project(0.4, 1.2).is_err(), "{kind:?}");
             assert!(projection.deproject(0.04, 0.03).is_err(), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn airy_default_matches_its_analytic_equatorial_radius() {
+        for parameters in [vec![], vec![90.0]] {
+            let projection = Projection::with_parameters(ProjectionType::AIR, parameters);
+            let (x, y) = projection.project(FRAC_PI_2, 0.0).unwrap();
+            // At the native equator tan(xi) is 1, with k = 1 for theta_b = 90°.
+            assert!((x - (LN_2 + 1.0)).abs() < TOL);
+            assert!(y.abs() < TOL);
+            roundtrip(&projection, FRAC_PI_2, 0.0);
         }
     }
 
