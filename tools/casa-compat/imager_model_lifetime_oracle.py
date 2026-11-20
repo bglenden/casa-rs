@@ -9,7 +9,7 @@ import shutil
 from tempfile import TemporaryDirectory
 
 import casatasks
-from casatools import imager, ms as casa_ms, table
+from casatools import image, imager, ms as casa_ms, table
 import numpy as np
 
 from calibration_ft_oracle import component, coordinates
@@ -95,6 +95,24 @@ def moved_source(root, dataset, factory, first, second, model, expected):
     assert tool.done()
 
 
+def retry_image(root, dataset, factory, options, model, expected):
+    root.mkdir()
+    target = root / 'retry.ms'
+    rejected = root / 'candidate.im'
+    make_input(dataset, target, scratch=True)
+    maker = image()
+    assert maker.fromshape(str(rejected), [32, 32]) and maker.done()
+    tool = configured_imager(factory, target, root / 'unused-cache', scratch=True, machine='ft')
+    assert tool.ft(**options['components'])
+    before = data(target, 'MODEL_DATA')
+    assert not tool.ft(str(rejected))
+    np.testing.assert_array_equal(data(target, 'MODEL_DATA'), before)
+    rejected.rename(root / 'rejected.im')
+    shutil.copytree(model, rejected)
+    assert tool.ft(str(rejected)) and tool.done()
+    np.testing.assert_array_equal(data(target, 'MODEL_DATA'), expected)
+
+
 def run(root, dataset, model):
     from casars.tools import imager as native, ms as native_ms
 
@@ -144,6 +162,8 @@ def run(root, dataset, model):
                         controls = case / engine
                         controls.mkdir()
                         scratch_controls(controls, dataset, factory, options, scratch[engine])
+                else:
+                    retry_image(case / 'retry', dataset, native, options, model, scratch['native'])
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
 

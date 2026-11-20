@@ -459,9 +459,19 @@ impl ImagerPrediction {
         model: ImagerPredictionModel<'_>,
         scratch: bool,
     ) -> Result<bool, AttachmentError> {
-        self.retained_sources
-            .get_or_insert_with(ModelSources::default);
-        self.predict_attached(attachments, model, scratch)
+        let previous = self
+            .retained_sources
+            .get_or_insert_with(ModelSources::default)
+            .paths();
+        let result = self.predict_attached(attachments, model, scratch);
+        if !matches!(result, Ok(true))
+            && self.partial_batch.is_none()
+            && self.pending_publication.is_none()
+            && let Some(sources) = &mut self.retained_sources
+        {
+            sources.retain(&previous.0, previous.1.as_deref());
+        }
+        result
     }
 
     /// Drop model inputs when a legacy sky equation is rebuilt.
@@ -711,7 +721,7 @@ impl ImagerPrediction {
             ));
         }
 
-        sources.retain_requested(model);
+        sources.retain(model.images, model.components);
         let requested = match self.definition.as_ref() {
             Some(ImageDefinition::Requested(request))
                 if model.images.iter().any(|path| sources.needs_image(path)) =>

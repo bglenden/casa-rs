@@ -10,7 +10,7 @@ use casa_images::PagedImage;
 use casa_ms::MsResult;
 use casa_types::RecordValue;
 
-use super::{ImagerPredictionModel, invalid};
+use super::invalid;
 
 #[derive(Default)]
 pub(super) struct ModelSources {
@@ -19,9 +19,16 @@ pub(super) struct ModelSources {
 }
 
 impl ModelSources {
-    pub(super) fn retain_requested(&mut self, model: &ImagerPredictionModel<'_>) {
-        self.images.retain(|path, _| model.images.contains(path));
-        if self.components.as_ref().map(|(path, _)| path.as_path()) != model.components {
+    pub(super) fn paths(&self) -> (Vec<PathBuf>, Option<PathBuf>) {
+        (
+            self.images.keys().cloned().collect(),
+            self.components.as_ref().map(|(path, _)| path.clone()),
+        )
+    }
+
+    pub(super) fn retain(&mut self, images: &[PathBuf], components: Option<&Path>) {
+        self.images.retain(|path, _| images.contains(path));
+        if self.components.as_ref().map(|(path, _)| path.as_path()) != components {
             self.components = None;
         }
     }
