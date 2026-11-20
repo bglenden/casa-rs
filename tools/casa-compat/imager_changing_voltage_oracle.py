@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from casars.tools import imager, ms
-from casatools import imager as casa_imager, measures, ms as casa_ms, table
+from casatools import image, imager as casa_imager, measures, ms as casa_ms, table
 
 from imager_legacy_pbw_oracle import data, make_input, relative_rms
 from imager_legacy_squint_oracle import compare, consume, fourier_grid
@@ -101,6 +101,80 @@ def within_buffer_control(root, source, model):
     compare('within-buffer feed edits leave the held result', actual, expected)
 
 
+def unwrapped_feed_control(root, source, model):
+    first, second, times = (data(source, column) for column in ('ANTENNA1', 'ANTENNA2', 'TIME'))
+    epochs = np.unique(times)
+    pairs = [set(zip(first[times == epoch], second[times == epoch])) for epoch in epochs]
+    antenna1, antenna2 = min(pair for pair in set.intersection(*pairs) if pair[0] != pair[1])
+    selected = root / 'unwrapped-feed-source.ms'
+    make_input(source, selected, scratch=True)
+    writer = table()
+    assert writer.open(str(selected), nomodify=False)
+    heads = [np.flatnonzero(times == epoch)[0] for epoch in epochs]
+    first[heads], second[heads] = antenna1, antenna2
+    assert writer.putcol('ANTENNA1', first) and writer.putcol('ANTENNA2', second)
+    assert writer.putcol('UVW', np.zeros_like(writer.getcol('UVW'))) and writer.done()
+    assert writer.open(str(selected / 'FEED'), nomodify=False)
+    feed_ids, angles = (writer.getcol(column) for column in ('ANTENNA_ID', 'RECEPTOR_ANGLE'))
+    angles[0, feed_ids == antenna1] = 3.5
+    angles[0, feed_ids == antenna2] = -3.5
+    assert writer.putcol('RECEPTOR_ANGLE', angles) and writer.done()
+    results = []
+    for engine, factory, angle in (('pinned-held', casa_imager, '360deg'),
+                                    ('pinned-immediate', casa_imager, '0deg'),
+                                    ('native-held', imager, '360deg')):
+        target = root / f'{engine}-unwrapped-feed.ms'
+        make_input(selected, target, scratch=True)
+        predict(factory, target, model, angle, '180deg', True)
+        results.append(data(target, 'MODEL_DATA')[:, 0, :])
+    expected, immediate, actual = results
+    assert relative_rms(expected[:, heads[-1]], expected[:, heads[0]]) > .1
+    np.testing.assert_array_equal(expected, immediate)
+    compare('default increment applies unwrapped feed offsets', actual, expected)
+
+
+def missing_continuum_control(root, source):
+    multispw = root / 'two-separated-windows.ms'
+    make_input(source, multispw, scratch=True)
+    writer = table()
+    for name in ('SPECTRAL_WINDOW', 'DATA_DESCRIPTION'):
+        assert writer.open(str(multispw / name), nomodify=False)
+        assert writer.nrows() == 1 and writer.addrows(1)
+        for column in writer.colnames():
+            if writer.iscelldefined(column, 0):
+                value = writer.getcell(column, 0)
+                if column in ('CHAN_FREQ', 'REF_FREQUENCY'):
+                    value += 250e6
+                elif column == 'SPECTRAL_WINDOW_ID':
+                    value = 1
+                assert writer.putcell(column, 1, value)
+        assert writer.done()
+    assert writer.open(str(multispw), nomodify=False)
+    times = writer.getcol('TIME')
+    assert writer.putcol('DATA_DESC_ID', (times == times.max()).astype(np.int32)) and writer.done()
+    axes = []
+    for engine, factory in (('pinned', casa_imager), ('native', imager)):
+        dataset, model = (root / f'{engine}-missing-model.{suffix}' for suffix in ('ms', 'im'))
+        make_input(multispw, dataset, scratch=True)
+        tool = factory()
+        assert tool.open(str(dataset), usescratch=True) and tool.selectvis(field=0, spw='0,1')
+        assert tool.defineimage(nx=64, ny=64, cellx='15arcsec', celly='15arcsec', phasecenter=0,
+                                mode='mfs', stokes='IQUV', outframe='TOPO')
+        assert tool.setoptions(ftmachine='ft', numthreads=1)
+        assert tool.setvp(dovp=True, dosquint=True, parangleinc='0deg')
+        assert tool.ft(str(model)) and tool.done()
+        reader = image()
+        assert reader.open(str(model))
+        coords = reader.coordsys()
+        spectral = coords.torecord()['spectral2']['wcs']
+        axes.append([spectral['crval'], spectral['cdelt']])
+        assert coords.done() and reader.done()
+    expected, actual = axes
+    assert expected[1] > 250e6
+    np.testing.assert_allclose(actual, expected, rtol=1.e-10)
+    print('missing continuum model reference and bandwidth in Hz', actual, flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -160,6 +234,8 @@ def main():
         actual = data(target, 'MODEL_DATA')[:, 0, :]
         compare(f'{engine} local-frame refresh with the default increment', actual, immediate)
     within_buffer_control(args.work, source, args.model)
+    unwrapped_feed_control(args.work, source, args.model)
+    missing_continuum_control(args.work, args.dataset)
 
 
 if __name__ == '__main__':

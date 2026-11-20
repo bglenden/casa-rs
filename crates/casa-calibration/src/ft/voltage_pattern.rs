@@ -176,35 +176,27 @@ pub(super) fn scratch_voltage_batches<'a>(
     local_pointings: bool,
 ) -> MsResult<impl Iterator<Item = Vec<ResolvedMsSelectionRow>> + use<'a>> {
     let host = HostResources::detect().map_err(invalid)?;
-    let order_bytes = size_of::<((i32, i32, i32), &ResolvedMsSelectionRow)>()
-        + 2 * size_of::<usize>()
-        + size_of::<ResolvedMsSelectionRow>();
     let order_charge = admit(
         &host,
         &ResourcePolicy::Balanced,
         &Demand {
             phase: "legacy voltage-pattern scratch batches",
-            memory: (selection.selected_rows.len() as u64).saturating_mul(order_bytes as u64),
-        },
-    )
-    .map_err(invalid)?;
-    let feed_rows = ms.feed().map_or(0, |feed| feed.row_count());
-    // Include hash buckets and the vector capacity for antenna/feed keys.
-    let _feed_charge = admit(
-        &host,
-        &ResourcePolicy::Balanced,
-        &Demand {
-            phase: "legacy voltage-pattern feed angles",
-            memory: (feed_rows as u64).saturating_mul(256),
+            memory: voltage_order_bytes(selection.selected_rows.len()),
         },
     )
     .map_err(invalid)?;
     let main = ms.main_table();
+    let observations = ms.observation()?.row_count();
     let key = |row: &ResolvedMsSelectionRow| -> MsResult<_> {
         let ScalarValue::Int32(array) = main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
         else {
             return Err(invalid("ARRAY_ID must be Int32"));
         };
+        if usize::try_from(*array).map_or(true, |id| id >= observations) {
+            return Err(invalid(
+                "ARRAY_ID has no observation for this voltage pattern",
+            ));
+        }
         Ok((*array, row.field_id, row.data_desc_id))
     };
     let mut ordered = selection
@@ -217,6 +209,22 @@ pub(super) fn scratch_voltage_batches<'a>(
             .then_with(|| left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds))
             .then_with(|| left.row_index.cmp(&right.row_index))
     });
+    let buffers = usize::from(!ordered.is_empty())
+        + ordered
+            .windows(2)
+            .filter(|pair| {
+                pair[0].0 != pair[1].0 || pair[0].1.time_mjd_seconds != pair[1].1.time_mjd_seconds
+            })
+            .count();
+    let _working_charge = admit(
+        &host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy voltage-pattern scheduling workspace",
+            memory: voltage_planning_bytes(ms, buffers, local_pointings),
+        },
+    )
+    .map_err(invalid)?;
     let feed_geometry = load_parallactic_angle_state(ms)?;
     let pointing = local_pointings.then(|| ms.pointing()).transpose()?;
     let mut buffer = None;
@@ -280,6 +288,33 @@ pub(super) fn scratch_voltage_batches<'a>(
         rows.sort_unstable_by_key(|row| row.row_index);
         rows
     }))
+}
+
+fn voltage_order_bytes(rows: usize) -> u64 {
+    let per_row = size_of::<((i32, i32, i32), &ResolvedMsSelectionRow)>()
+        + 2 * size_of::<usize>()
+        + size_of::<ResolvedMsSelectionRow>();
+    (rows as u64).saturating_mul(per_row as u64)
+}
+
+fn voltage_planning_bytes(ms: &MeasurementSet, buffers: usize, local_pointings: bool) -> u64 {
+    let feeds = ms.feed().map_or(0, |feed| feed.row_count()) as u64;
+    let antennas = ms.antenna().map_or(0, |antennas| antennas.row_count()) as u64;
+    let fields = ms.field().map_or(0, |fields| fields.row_count()) as u64;
+    let pointings = if local_pointings {
+        ms.pointing().map_or(0, |pointing| pointing.row_count()) as u64
+    } else {
+        0
+    };
+    // FEED hash buckets and per-key vector capacity, the engine's antenna
+    // and field state, and geometric caches for both antennas per buffer.
+    // The local pointing lookup can collect every timestamp for one antenna.
+    (128_u64 << 10)
+        .saturating_add(feeds.saturating_mul(256))
+        .saturating_add(antennas.saturating_mul(256))
+        .saturating_add(fields.saturating_mul(512))
+        .saturating_add((buffers as u64).saturating_mul(1024))
+        .saturating_add(pointings.saturating_mul(96))
 }
 
 struct HeldVoltageState {
@@ -630,6 +665,7 @@ mod tests {
     use super::*;
     use crate::imaging_memory_test::{isolated_test, peak_since, reset_peak};
     use casa_imaging_runtime::ReservationWindow;
+    use casa_types::ArrayValue;
 
     #[test]
     fn legacy_pattern_table_decode_fits_its_reservation() {
@@ -648,6 +684,64 @@ mod tests {
         let peak = peak_since(baseline);
         let charge = reservations.close();
         assert!(matches!(definition, PrimaryBeam::Gaussian { .. }));
+        assert!(peak <= charge, "{peak} bytes used over {charge}");
+    }
+
+    #[test]
+    fn sparse_voltage_schedule_accounts_for_large_local_pointing_table() {
+        if !isolated_test(
+            module_path!(),
+            "sparse_voltage_schedule_accounts_for_large_local_pointing_table",
+        ) {
+            return;
+        }
+        if casa_ms::open_measures_runtime().is_err() {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let archive = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../casa-ms/tests/fixtures/mssel_test_small.ms.tgz");
+        tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(archive).unwrap(),
+        ))
+        .unpack(root.path())
+        .unwrap();
+        let mut ms = MeasurementSet::open(root.path().join("mssel_test_small.ms")).unwrap();
+        let mut selection = crate::session::resolve_casa_calibration_selection(
+            &ms,
+            &casa_ms::MsSelection::default(),
+        )
+        .unwrap();
+        selection.selected_rows.truncate(1);
+        let row = &selection.selected_rows[0];
+        let first = row.time_mjd_seconds;
+        let mut pointing = ms.pointing_mut().unwrap();
+        for i in 1..=16_384 {
+            let time = first + f64::from(i);
+            let record = RecordValue::new(vec![
+                casa_types::RecordField::new(
+                    "ANTENNA_ID",
+                    Value::Scalar(ScalarValue::Int32(row.antenna2_id)),
+                ),
+                casa_types::RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
+                casa_types::RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(1.))),
+                casa_types::RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+                casa_types::RecordField::new(
+                    "DIRECTION",
+                    Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1]))),
+                ),
+            ]);
+            pointing.table_mut().add_row(record).unwrap();
+        }
+        let _ = HostResources::detect().unwrap();
+        let reservations = ReservationWindow::open();
+        let baseline = reset_peak();
+        let mut batches = scratch_voltage_batches(&ms, &selection, 0., true).unwrap();
+        assert_eq!(batches.next().unwrap()[0].row_index, row.row_index);
+        assert!(batches.next().is_none());
+        let peak = peak_since(baseline);
+        let charge = reservations.close();
+        assert!(peak > voltage_order_bytes(1) + voltage_planning_bytes(&ms, 1, false));
         assert!(peak <= charge, "{peak} bytes used over {charge}");
     }
 }

@@ -488,14 +488,15 @@ impl ImagerPrediction {
                 && self.legacy_aw.is_none()
                 && self.facet_count() <= 1
                 && self.taylor.0 <= 1;
-            let local_pointings = self.apply_voltage_pattern && scratch && supported_voltage_geometry && pointing_may_use_local_frame(ms);
-            if self.apply_voltage_pattern && (self.voltage_angle_increment != TAU || local_pointings) {
+            let apply_sky_voltage = self.apply_voltage_pattern && self.voltage_pattern.is_some();
+            if apply_sky_voltage && (supported_voltage_geometry || self.voltage_angle_increment != TAU) {
                 if !supported_voltage_geometry {
                     return Err(AttachmentError::PredictionPreparation(invalid(
                         "changing voltage patterns for this legacy Fourier mode are pending #1520",
                     )));
                 }
                 if scratch {
+                    let local_pointings = pointing_may_use_local_frame(ms);
                     let groups = scratch_voltage_batches(ms, selection, self.voltage_angle_increment, local_pointings)
                         .map_err(AttachmentError::PredictionPreparation)?;
                     let mut batch = selection.clone();
@@ -504,7 +505,7 @@ impl ImagerPrediction {
                     for rows in groups {
                         batch.selected_rows = rows;
                         let Some((mut components, mut images)) = self
-                            .prepare(ms, &batch, &model, true)
+                            .prepare(ms, &batch, selection, &model, true)
                             .map_err(AttachmentError::PredictionPreparation)?
                         else {
                             if writing_scratch {
@@ -524,7 +525,7 @@ impl ImagerPrediction {
                 }
             }
             let Some((mut components, mut images)) =
-                self.prepare(ms, selection, &model, scratch)
+                self.prepare(ms, selection, selection, &model, scratch)
                     .map_err(AttachmentError::PredictionPreparation)?
             else {
                 return Ok(false);
@@ -604,6 +605,7 @@ impl ImagerPrediction {
         &mut self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
+        image_selection: &ResolvedMsSelection,
         model: &ImagerPredictionModel<'_>,
         scratch: bool,
     ) -> MsResult<Option<(Vec<VirtualModelEntry>, Vec<ImageModel>)>> {
@@ -647,7 +649,7 @@ impl ImagerPrediction {
                 if model.images.iter().any(|path| !path.exists()) =>
             {
                 let location = self.options.observatory_override();
-                Some(request.build_for_selection(ms, selected, location)?)
+                Some(request.build_for_selection(ms, image_selection, location)?)
             }
             _ => None,
         };
