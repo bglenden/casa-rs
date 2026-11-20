@@ -158,26 +158,16 @@ fn selection<T: ImagePixel>(
         .filter(|s| !s.eq_ignore_ascii_case("all") && !s.eq_ignore_ascii_case("none"))
         .map(|s| s.replace(';', ","));
     let resolved = SubimageSelection::resolve(image, None, region, chans, stokes.as_deref())?;
+    if resolved.has_multiple_regions {
+        return Err(ImageError::CasaSelection(
+            "Only a single n-dimensional rectangular region is supported".into(),
+        ));
+    }
     if resolved.shape[plane[0]] != image.shape()[plane[0]]
         || resolved.shape[plane[1]] != image.shape()[plane[1]]
     {
         return Err(ImageError::CasaSelection(
             "You are not permitted to make a region selection in the direction coordinate".into(),
-        ));
-    }
-    if [
-        (&resolved.channel_indices, resolved.channel_axis),
-        (&resolved.stokes_indices, resolved.stokes_axis),
-    ]
-    .iter()
-    .any(|(indices, axis)| {
-        indices
-            .as_ref()
-            .zip(*axis)
-            .is_some_and(|(indices, axis)| indices.len() != resolved.shape[axis])
-    }) {
-        return Err(ImageError::CasaSelection(
-            "Only a single n-dimensional rectangular region is supported".into(),
         ));
     }
     Ok(resolved)

@@ -7,38 +7,41 @@ pub(super) use geometry::validate_mask;
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use casa_coordinates::CoordinateSystem;
 use casa_types::{ArrayD, Complex32, Complex64};
 
 use crate::analysis::mask_error_wording;
 use crate::expr_parser::{
-    HashMapResolver, ReplacementPixels, evaluate_replacement, parse_subimage_mask_expr,
-    referenced_images,
+    HashMapResolver, ImageToolPixelExpression, ReplacementPixels, compile_image_tool_pixels,
+    evaluate_replacement, parse_image_tool_mask, parse_subimage_mask_expr, referenced_images,
 };
+use crate::fits_read::{FitsSectionReader, FitsToolImport};
+use crate::image_expr::{ImageExprMeta, ImageExprValue};
 use crate::image_expr_lel::broadcast_array;
 use crate::{
-    AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage, TempImage,
-    TempStoragePolicy, read_fits_image,
+    AnyPagedImage, ImageError, ImageExprBuilder, ImageExpression, ImageInterface, ImagePixel,
+    PagedImage,
 };
 
-enum MaskSource<T: ImagePixel> {
+enum MaskSource<T: ImageExprValue> {
     Paged(Box<PagedImage<T>>),
-    Memory(Box<TempImage<T>>),
+    Sections(Box<ImageExpression<T>>),
 }
 
-impl<T: ImagePixel> MaskSource<T> {
+impl<T: ImageExprValue> MaskSource<T> {
     fn as_interface(&self) -> &dyn ImageInterface<T> {
         match self {
             Self::Paged(img) => img.as_ref(),
-            Self::Memory(img) => img.as_ref(),
+            Self::Sections(img) => img.as_ref(),
         }
     }
 }
 
 enum Operand {
     Real(MaskSource<f64>, bool),
-    Complex(MaskSource<Complex64>),
+    Complex(MaskSource<Complex64>, bool),
 }
 impl Operand {
     fn geometry(&self) -> (&[usize], &CoordinateSystem) {
@@ -47,7 +50,7 @@ impl Operand {
                 source.as_interface().shape(),
                 source.as_interface().coordinates(),
             ),
-            Self::Complex(source) => (
+            Self::Complex(source, _) => (
                 source.as_interface().shape(),
                 source.as_interface().coordinates(),
             ),
@@ -56,9 +59,62 @@ impl Operand {
 }
 
 fn is_single_precision(opened: &[(String, Operand)], name: &str) -> bool {
-    opened
-        .iter()
-        .any(|(source, value)| source == name && matches!(value, Operand::Real(_, true)))
+    opened.iter().any(|(source, value)| {
+        source == name && matches!(value, Operand::Real(_, true) | Operand::Complex(_, true))
+    })
+}
+
+/// Compile a real or complex LEL pixel expression for the public image tool.
+///
+/// # Errors
+/// Returns an error for invalid expressions, undefined operands, or Boolean results.
+pub fn compile_image_tool_expression(
+    expression: &str,
+) -> Result<ImageToolPixelExpression, ImageError> {
+    if expression.is_empty() {
+        return Err(ImageError::CasaSelection(
+            "Exception: You must specify an expression.".into(),
+        ));
+    }
+    let opened = image_operands(expression)?;
+    let (real, complex) = operand_resolvers(&opened);
+    compile_image_tool_pixels(expression, &real, &complex, &|name| {
+        is_single_precision(&opened, name)
+    })
+}
+
+/// Evaluate the Boolean mask used by the public image tool's `calcmask`.
+/// The expression must match the target shape or evaluate to a Boolean scalar.
+///
+/// # Errors
+/// Returns an error for invalid expressions, operands, or target shapes.
+pub fn evaluate_image_tool_mask(
+    expression: &str,
+    target_shape: &[usize],
+) -> Result<ArrayD<bool>, ImageError> {
+    let opened = image_operands(expression)?;
+    let (real, complex) = operand_resolvers(&opened);
+    let parsed = parse_image_tool_mask(expression, &real, &complex, &|name| {
+        is_single_precision(&opened, name)
+    })?;
+    if parsed.shape().is_empty() && !parsed.is_shape_polymorphic() {
+        return Ok(ArrayD::from_elem(
+            ndarray::IxDyn(target_shape),
+            parsed.get_at(&[])?,
+        ));
+    }
+    if parsed.shape() != target_shape {
+        return Err(ImageError::CasaSelection(format!(
+            "The shape of the expression does not conform with the shape of the output imageExpression shape = {:?}Image shape      = {target_shape:?}",
+            parsed.shape(),
+        )));
+    }
+    if parsed.is_shape_polymorphic() {
+        return Err(ImageError::CasaSelection(
+            "LatticeExprNode - shapes of operands mismatch".into(),
+        ));
+    }
+    parsed.get_in_sections()
 }
 
 pub(super) fn evaluate_replacement_pixels(
@@ -103,7 +159,7 @@ fn operand_resolvers(
             Operand::Real(source, _) => {
                 real.insert(name.clone(), source.as_interface());
             }
-            Operand::Complex(source) => {
+            Operand::Complex(source, _) => {
                 complex.insert(name.clone(), source.as_interface());
             }
         }
@@ -266,7 +322,7 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
 
 fn open_operand(spec: &str) -> Result<Operand, ImageError> {
     let (path, mask) = operand_path(spec)?;
-    open_path_with_mask_name(path, mask.map(str::to_owned), spec)
+    open_path_with_mask_name(path, mask.map(str::to_owned))
 }
 
 fn operand_path(spec: &str) -> Result<(&Path, Option<&str>), ImageError> {
@@ -287,57 +343,71 @@ fn operand_path(spec: &str) -> Result<(&Path, Option<&str>), ImageError> {
     )))
 }
 
-fn open_path_with_mask_name(
-    path: &Path,
-    mask_name: Option<String>,
-    spec: &str,
-) -> Result<Operand, ImageError> {
+fn open_path_with_mask_name(path: &Path, mask_name: Option<String>) -> Result<Operand, ImageError> {
+    let ignore_default = mask_name
+        .as_deref()
+        .is_some_and(|name| name.eq_ignore_ascii_case("nomask"));
     if path.is_file() {
-        if mask_name.is_some() {
+        if mask_name.is_some() && !ignore_default {
             return Err(ImageError::CasaSelection(format!(
-                "FITS image '{spec}' does not hold named masks"
+                "FITSImage {} has no named masks",
+                path.display(),
             )));
         }
-        let fits = read_fits_image(path)?;
-        let pixels = fits.pixels.mapv(f64::from);
-        let has_nan = fits.pixels.iter().any(|v| v.is_nan());
-        let mask = has_nan.then(|| fits.pixels.mapv(|v| !v.is_nan()));
-        let temp = make_temp_image(
-            fits.shape,
-            fits.coordinates,
-            &fits.units,
-            &fits.image_info,
-            pixels,
-            mask,
-        )?;
-        return Ok(Operand::Real(MaskSource::Memory(Box::new(temp)), true));
+        let fits = FitsToolImport::open(path, 0, -1)?;
+        if fits.is_tile_compressed() {
+            return Err(ImageError::CasaSelection(format!(
+                "No data in the zeroth or first extension of {}",
+                path.display(),
+            )));
+        }
+        let path_owned = path.to_path_buf();
+        let dimensions = fits.shape().to_vec();
+        let hdu = fits.hdu_index();
+        let read = move |start: &[usize], shape: &[usize], stride: &[usize]| {
+            FitsSectionReader::open(&path_owned, hdu, &dimensions)?.read(start, shape, stride)
+        };
+        let mask_reader = read.clone();
+        let mask_fn = (fits.has_implicit_mask() && !ignore_default).then(|| {
+            Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
+                let pixels = mask_reader(start, shape, stride)?;
+                Ok(pixels
+                    .iter()
+                    .any(|value| value.is_nan())
+                    .then(|| pixels.mapv(|value| !value.is_nan())))
+            }) as crate::image_expr::OwnedMaskReader
+        });
+        let expression = ImageExprBuilder::from_section_readers(
+            ImageExprMeta::from_fits(&fits, path)?,
+            Arc::new(move |start, shape, stride| {
+                read(start, shape, stride).map(|pixels| pixels.mapv(f64::from))
+            }),
+            mask_fn,
+        );
+        return Ok(Operand::Real(
+            MaskSource::Sections(Box::new(expression.compile()?)),
+            true,
+        ));
     }
 
     match open_mask_image(path)? {
-        AnyPagedImage::Float64(img) => {
-            if mask_name.is_some() {
-                return Err(ImageError::CasaSelection(format!(
-                    "Input mask specification is incorrect: ImageExprParse: {} is a PagedImage with an unsupported data type",
-                    path.display()
-                )));
-            }
-            Ok(Operand::Real(MaskSource::Paged(Box::new(img)), false))
+        AnyPagedImage::Float64(_) | AnyPagedImage::Complex64(_) if mask_name.is_some() => {
+            Err(ImageError::CasaSelection(format!(
+                "ImageExprParse: {} is a PagedImage with an unsupported data type",
+                path.display(),
+            )))
         }
-        AnyPagedImage::Float32(img) => {
-            convert_paged_mask_source(&img, mask_name.as_deref(), f64::from)
-                .map(|image| Operand::Real(image, true))
-        }
-        AnyPagedImage::Complex64(img) if mask_name.is_none() => {
-            Ok(Operand::Complex(MaskSource::Paged(Box::new(img))))
-        }
+        AnyPagedImage::Float64(img) => Ok(Operand::Real(MaskSource::Paged(Box::new(img)), false)),
+        AnyPagedImage::Float32(img) => convert_paged_mask_source(img, mask_name, f64::from)
+            .map(|image| Operand::Real(image, true)),
         AnyPagedImage::Complex64(img) => {
-            convert_paged_mask_source(&img, mask_name.as_deref(), |c| c).map(Operand::Complex)
+            Ok(Operand::Complex(MaskSource::Paged(Box::new(img)), false))
         }
         AnyPagedImage::Complex32(img) => {
-            convert_paged_mask_source(&img, mask_name.as_deref(), |c: Complex32| {
+            convert_paged_mask_source(img, mask_name, |c: Complex32| {
                 Complex64::new(f64::from(c.re), f64::from(c.im))
             })
-            .map(Operand::Complex)
+            .map(|image| Operand::Complex(image, true))
         }
     }
 }
@@ -349,26 +419,50 @@ fn open_mask_image(path: &Path) -> Result<AnyPagedImage, ImageError> {
     AnyPagedImage::open(path)
 }
 
-fn convert_paged_mask_source<S: ImagePixel, T: ImagePixel>(
-    img: &PagedImage<S>,
-    mask_name: Option<&str>,
-    convert: impl FnMut(S) -> T,
+fn convert_paged_mask_source<S: ImageExprValue, T: ImageExprValue>(
+    img: PagedImage<S>,
+    mask_name: Option<String>,
+    convert: impl Fn(S) -> T + Copy + Send + Sync + 'static,
 ) -> Result<MaskSource<T>, ImageError> {
-    validate_mask_name(img, mask_name)?;
-    let data = img.get()?.mapv(convert);
-    let mask = match mask_name {
-        Some(name) => Some(img.get_named_mask(name)?),
-        None => img.default_mask()?,
-    };
-    let temp = make_temp_image(
-        img.shape().to_vec(),
-        img.coordinates().clone(),
-        img.units(),
-        &img.image_info()?,
-        data,
+    let ignore_default = mask_name
+        .as_deref()
+        .is_some_and(|name| name.eq_ignore_ascii_case("nomask"));
+    if !ignore_default {
+        validate_mask_name(&img, mask_name.as_deref())?;
+    }
+    let meta = ImageExprMeta::from_image(&img)?;
+    let has_mask = !ignore_default && (mask_name.is_some() || img.has_pixel_mask());
+    // Pixel reads, mask reads and repeated passes observe one native generation.
+    let image = Arc::new(Mutex::new(img));
+    let mask = has_mask.then(|| {
+        let image = Arc::clone(&image);
+        Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
+            let image = image.lock().map_err(mask_source_lock_error)?;
+            match &mask_name {
+                Some(name) => image
+                    .get_named_mask_slice(name, start, shape, stride)
+                    .map(Some),
+                None => image.get_mask_slice(start, shape, stride),
+            }
+        }) as crate::image_expr::OwnedMaskReader
+    });
+    let expression = ImageExprBuilder::from_section_readers(
+        meta,
+        Arc::new(move |start, shape, stride| {
+            image
+                .lock()
+                .map_err(mask_source_lock_error)?
+                .get_slice_with_stride(start, shape, stride)
+                .map(|pixels| pixels.mapv(convert))
+        }),
         mask,
-    )?;
-    Ok(MaskSource::Memory(Box::new(temp)))
+    )
+    .compile()?;
+    Ok(MaskSource::Sections(Box::new(expression)))
+}
+
+fn mask_source_lock_error<T>(_: std::sync::PoisonError<T>) -> ImageError {
+    ImageError::CasaSelection("Could not read the mask image".into())
 }
 
 fn validate_mask_name<T: ImagePixel>(
@@ -385,22 +479,6 @@ fn validate_mask_name<T: ImagePixel>(
     Ok(())
 }
 
-fn make_temp_image<T: ImagePixel>(
-    shape: Vec<usize>,
-    coords: CoordinateSystem,
-    units: &str,
-    info: &ImageInfo,
-    data: ArrayD<T>,
-    mask: Option<ArrayD<bool>>,
-) -> Result<TempImage<T>, ImageError> {
-    let mut temp = TempImage::new(shape, coords, TempStoragePolicy::Memory)?;
-    temp.set_units(units)?;
-    temp.set_image_info(info)?;
-    let ndim = temp.ndim();
-    temp.put_slice(&data, &vec![0; ndim])?;
-    if let Some(m) = mask {
-        temp.put_mask("mask0", &m)?;
-        temp.set_default_mask("mask0")?;
-    }
-    Ok(temp)
-}
+#[cfg(all(test, unix))]
+#[path = "../../tests/support/mask_operand_lock.rs"]
+mod tests;

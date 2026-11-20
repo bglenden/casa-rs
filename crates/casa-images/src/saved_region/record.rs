@@ -60,7 +60,7 @@ pub(super) fn decode(
 ) -> Result<PolygonRegion, ImageError> {
     let mut polygons = Vec::new();
     let mut pixel_axes = None;
-    collect_polygons(saved_name, record, &mut pixel_axes, &mut polygons)?;
+    collect_polygons(saved_name, record, coords, &mut pixel_axes, &mut polygons)?;
     let Some(pixel_axes) = pixel_axes else {
         return Err(ImageError::InvalidMetadata(format!(
             "saved region '{saved_name}' does not contain any polygons"
@@ -84,12 +84,13 @@ type UnitPolygon = (Vec<[f64; 2]>, [String; 2]);
 fn collect_polygons(
     saved_name: &str,
     record: &RecordValue,
+    coords: &CoordinateSystem,
     pixel_axes: &mut Option<[usize; 2]>,
     polygons: &mut Vec<UnitPolygon>,
 ) -> Result<(), ImageError> {
     match native_region_kind(saved_name, record)? {
         WCPOLYGON_NAME => {
-            let (axes, polygon) = parse_wc_polygon_record(saved_name, record)?;
+            let (axes, polygon) = parse_wc_polygon_record(saved_name, record, coords)?;
             match pixel_axes {
                 Some(existing) if *existing != axes => {
                     return Err(ImageError::InvalidMetadata(format!(
@@ -102,31 +103,8 @@ fn collect_polygons(
             Ok(())
         }
         WCUNION_NAME => {
-            let Some(Value::Record(children)) = record.get("regions") else {
-                return Err(ImageError::InvalidMetadata(format!(
-                    "saved region '{saved_name}' is missing the regions subrecord"
-                )));
-            };
-            let child_count = match children.get("nr") {
-                Some(Value::Scalar(ScalarValue::Int32(value))) if *value >= 0 => *value as usize,
-                Some(_) => {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "saved region '{saved_name}' has a non-integer regions.nr field"
-                    )));
-                }
-                None => children.fields().len(),
-            };
-            for index in 0..child_count {
-                let child = children
-                    .get(&format!("*{}", index + 1))
-                    .or_else(|| children.get(&index.to_string()));
-                let Some(Value::Record(child)) = child else {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "saved region '{saved_name}' is missing child region {}",
-                        index + 1
-                    )));
-                };
-                collect_polygons(saved_name, child, pixel_axes, polygons)?;
+            for child in compound_children(saved_name, record)? {
+                collect_polygons(saved_name, child, coords, pixel_axes, polygons)?;
             }
             Ok(())
         }
@@ -136,9 +114,71 @@ fn collect_polygons(
     }
 }
 
+pub(crate) fn compound_children<'a>(
+    saved_name: &str,
+    record: &'a RecordValue,
+) -> Result<Vec<&'a RecordValue>, ImageError> {
+    let Some(Value::Record(children)) = record.get("regions") else {
+        return Err(ImageError::InvalidMetadata(format!(
+            "saved region '{saved_name}' is missing the regions subrecord"
+        )));
+    };
+    let child_count = match children.get("nr") {
+        Some(Value::Scalar(ScalarValue::Int32(value))) if *value >= 0 => *value as usize,
+        Some(_) => {
+            return Err(ImageError::InvalidMetadata(format!(
+                "saved region '{saved_name}' has a non-integer regions.nr field"
+            )));
+        }
+        None => children.fields().len(),
+    };
+    let mut records = Vec::new();
+    for index in 0..child_count {
+        let child = children
+            .get(&format!("*{}", index + 1))
+            .or_else(|| children.get(&index.to_string()));
+        let Some(Value::Record(child)) = child else {
+            return Err(ImageError::InvalidMetadata(format!(
+                "saved region '{saved_name}' is missing child region {}",
+                index + 1
+            )));
+        };
+        records.push(child);
+    }
+    Ok(records)
+}
+
+pub(crate) fn map_world_region_axes(
+    name: &str,
+    saved_coords: &CoordinateSystem,
+    target_coords: &CoordinateSystem,
+    axes: impl IntoIterator<Item = usize>,
+) -> Result<Vec<usize>, ImageError> {
+    let names = |system: &CoordinateSystem| {
+        (0..system.n_coordinates())
+            .flat_map(|i| system.coordinate(i).axis_names())
+            .collect::<Vec<_>>()
+    };
+    let saved_names = names(saved_coords);
+    let target_names = names(target_coords);
+    axes.into_iter()
+        .map(|axis| {
+            saved_names
+                .get(axis)
+                .and_then(|name| target_names.iter().position(|candidate| candidate == name))
+                .ok_or_else(|| {
+                    ImageError::InvalidMetadata(format!(
+                        "saved region {name:?} has an unmatched pixel axis {axis}"
+                    ))
+                })
+        })
+        .collect()
+}
+
 fn parse_wc_polygon_record(
     saved_name: &str,
     record: &RecordValue,
+    target_coords: &CoordinateSystem,
 ) -> Result<([usize; 2], UnitPolygon), ImageError> {
     let Some(Value::Scalar(ScalarValue::Bool(one_rel))) = record.get("oneRel") else {
         return Err(ImageError::InvalidMetadata(format!(
@@ -172,12 +212,13 @@ fn parse_wc_polygon_record(
             "saved region '{saved_name}' is missing coordinates"
         )));
     };
-    CoordinateSystem::from_record(coords_record).map_err(|error| {
+    let saved_coords = CoordinateSystem::from_record(coords_record).map_err(|error| {
         ImageError::InvalidMetadata(format!(
             "saved region '{saved_name}' has unreadable coordinates: {error}"
         ))
     })?;
 
+    let axes = map_world_region_axes(saved_name, &saved_coords, target_coords, [x_axis, y_axis])?;
     let (x_values, x_unit) = parse_quantum_vector_field(record, "x", saved_name)?;
     let (y_values, y_unit) = parse_quantum_vector_field(record, "y", saved_name)?;
     if x_values.len() != y_values.len() {
@@ -190,7 +231,7 @@ fn parse_wc_polygon_record(
         .zip(y_values)
         .map(|(x, y)| [x, y])
         .collect();
-    Ok(([x_axis, y_axis], (vertices, [x_unit, y_unit])))
+    Ok(([axes[0], axes[1]], (vertices, [x_unit, y_unit])))
 }
 
 fn wc_polygon_record(
@@ -251,7 +292,7 @@ fn quantum_vector_record(values: Vec<f64>, unit: &str) -> RecordValue {
     record
 }
 
-fn native_region_kind<'a>(
+pub(crate) fn native_region_kind<'a>(
     saved_name: &str,
     record: &'a RecordValue,
 ) -> Result<&'a str, ImageError> {

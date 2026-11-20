@@ -103,6 +103,13 @@ selected coordinate. Virtual modes are tracked in #1749.
 Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
 float or complex image. Use `update=True` to validate the selected native
 pixel mask after replacement.
+
+Use `ia.calc(pixels=...)` to evaluate a numeric expression into a writable
+float or complex image. An existing default mask limits writes to its valid
+pixels. The operation preserves the destination coordinates and metadata.
+Use `ia.calcmask(...)` to save a Boolean expression as a named native image
+mask. Expressions can combine real, complex, and FITS images and read named
+masks using `mask("image.im:maskname")` where CASA accepts that source type.
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
