@@ -11,6 +11,8 @@ use crate::derived::engine::resolve_direction_reference;
 use crate::schema::{self, SubtableId};
 use crate::{MsError, MsResult};
 
+mod single_dish;
+
 crate::subtables::define_generic_subtable!(
     read = MsPointing,
     write = MsPointingMut,

@@ -6,6 +6,7 @@ mod imager;
 mod imager_definition;
 pub(crate) mod moving_source;
 pub(crate) mod settings;
+pub(crate) mod single_dish;
 pub(crate) mod virtual_publication;
 mod voltage_pattern;
 

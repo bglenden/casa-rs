@@ -2,56 +2,17 @@
 //! Counting and scheduling law for the legacy imager's model-plane batches.
 
 use super::*;
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
-struct CountingHeap;
-
-#[global_allocator]
-static HEAP: CountingHeap = CountingHeap;
-static LIVE: AtomicUsize = AtomicUsize::new(0);
-static PEAK: AtomicUsize = AtomicUsize::new(0);
-
-// SAFETY: forward the original layout and pointer, counting only allocations
-// that successfully went through the system allocator.
-unsafe impl GlobalAlloc for CountingHeap {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let pointer = unsafe { System.alloc(layout) };
-        if !pointer.is_null() {
-            let after = LIVE.fetch_add(layout.size(), Ordering::SeqCst) + layout.size();
-            PEAK.fetch_max(after, Ordering::SeqCst);
-        }
-        pointer
-    }
-
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        LIVE.fetch_sub(layout.size(), Ordering::SeqCst);
-        unsafe { System.dealloc(pointer, layout) };
-    }
-}
+use crate::imaging_memory_test::{isolated_test, peak_since, reset_peak};
 
 #[test]
 fn model_planes_use_distinct_workers_within_their_charge() {
-    const CHILD: &str = "CASA_RS_MODEL_PLANE_HEAP_CHILD";
-    if std::env::var_os(CHILD).is_none() {
-        let test = format!(
-            "{}::model_planes_use_distinct_workers_within_their_charge",
-            module_path!()
-        );
-        let name = test.split_once("::").expect("test module").1;
-        let output = Command::new(std::env::current_exe().expect("test binary"))
-            .args(["--exact", name])
-            .env(CHILD, "1")
-            .output()
-            .expect("isolated counting test");
-        let receipt = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            output.status.success() && receipt.contains("1 passed"),
-            "{receipt}"
-        );
+    if !isolated_test(
+        module_path!(),
+        "model_planes_use_distinct_workers_within_their_charge",
+    ) {
         return;
     }
 
@@ -88,8 +49,7 @@ fn model_planes_use_distinct_workers_within_their_charge() {
     let ready = Condvar::new();
     let mut written = 0;
 
-    let baseline = LIVE.load(Ordering::SeqCst);
-    PEAK.store(baseline, Ordering::SeqCst);
+    let baseline = reset_peak();
     let team = WorkerTeam::new(workers).unwrap();
     let nonzero = prepare_model_planes(
         &team,
@@ -134,9 +94,6 @@ fn model_planes_use_distinct_workers_within_their_charge() {
     .unwrap();
     assert!(nonzero);
     assert_eq!(written, channels);
-    let measured = PEAK.load(Ordering::SeqCst) - baseline + workers * WORKER_STACK_BYTES;
-    assert!(
-        measured as u64 <= charge,
-        "{measured} bytes used over {charge}"
-    );
+    let measured = peak_since(baseline) + (workers * WORKER_STACK_BYTES) as u64;
+    assert!(measured <= charge, "{measured} bytes used over {charge}");
 }

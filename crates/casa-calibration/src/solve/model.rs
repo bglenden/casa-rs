@@ -3,6 +3,7 @@
 
 mod fourier;
 mod mosaic_pointing;
+mod single_dish;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -26,6 +27,7 @@ use super::grouping::{BucketedRow, SelectedSolveRow, VisibilityBuffer};
 use super::{GainSolveCombine, GainSolveError, GainSolveModelSource, get_i32};
 use fourier::{FourierMerge, FourierModel, FourierRow};
 use mosaic_pointing::{FeedOffsets, MosaicPointing};
+use single_dish::SingleDishModel;
 
 pub(super) struct ModelInputs {
     read_column: bool,
@@ -36,6 +38,8 @@ pub(super) struct ModelInputs {
     pub(super) phase_times: BTreeMap<usize, f64>,
     finite_fields: BTreeSet<i32>,
     model_buffers: BTreeMap<usize, Arc<ModelBuffer>>,
+    single_dish_pointings: Option<BTreeMap<usize, MDirection>>,
+    single_dish_feeds: FeedOffsets,
 }
 
 struct ModelBuffer {
@@ -74,6 +78,7 @@ impl EntrySelection {
 enum Prediction {
     Components(ComponentList),
     FourierGrid(Box<FourierModel>),
+    SingleDish(Box<SingleDishModel>),
 }
 
 impl ModelInputs {
@@ -152,6 +157,8 @@ impl ModelInputs {
             phase_times: BTreeMap::new(),
             finite_fields: BTreeSet::new(),
             model_buffers: BTreeMap::new(),
+            single_dish_pointings: None,
+            single_dish_feeds: FeedOffsets::default(),
         }
     }
 
@@ -202,6 +209,43 @@ impl ModelInputs {
             }
             self.geometry = Some(engine);
         }
+        if self.virtual_models.values().any(|entries| {
+            entries
+                .iter()
+                .any(|entry| matches!(entry.prediction, Prediction::SingleDish(_)))
+        }) {
+            let pointing = ms
+                .subtable(SubtableId::Pointing)
+                .is_some()
+                .then(|| ms.pointing())
+                .transpose()
+                .map_err(|error| read_error(ms, error))?;
+            if let Some(pointing) = pointing.filter(|pointing| pointing.row_count() > 0) {
+                let selected: Vec<_> = rows
+                    .iter()
+                    .filter(|row| row.antenna1 == row.antenna2 && !row.flag_row)
+                    .collect();
+                let requests: Vec<_> = selected
+                    .iter()
+                    .map(|row| (row.antenna1, row.time_seconds, row.interval_seconds))
+                    .collect();
+                let directions = pointing
+                    .single_dish_directions(&requests)
+                    .map_err(|error| read_error(ms, error))?;
+                self.single_dish_pointings = Some(
+                    selected
+                        .into_iter()
+                        .zip(directions)
+                        .filter_map(|(row, direction)| {
+                            direction.map(|direction| (row.row_index, direction))
+                        })
+                        .collect(),
+                );
+            } else {
+                self.single_dish_feeds =
+                    FeedOffsets::load(ms).map_err(|error| read_error(ms, error))?;
+            }
+        }
         Ok(())
     }
 
@@ -215,9 +259,12 @@ impl ModelInputs {
 
     pub(super) fn uses_fourier(&self, field: i32) -> bool {
         self.virtual_models.get(&field).is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| matches!(entry.prediction, Prediction::FourierGrid(_)))
+            entries.iter().any(|entry| {
+                matches!(
+                    entry.prediction,
+                    Prediction::FourierGrid(_) | Prediction::SingleDish(_)
+                )
+            })
         })
     }
 
@@ -379,23 +426,6 @@ impl ModelInputs {
             .with_direction(field.clone());
         let uvw = uvw(ms, row.row_index)?;
         let (frequencies, frequency_ref) = &self.frequencies[&row.data_spw_id];
-        let (basis, offset) = match correlations.first().copied() {
-            Some(5..=8) => (Polarisation::Circular, 5),
-            Some(9..=12) => (Polarisation::Linear, 9),
-            _ => {
-                return Err(model_error(
-                    "virtual component prediction requires linear or circular correlations",
-                ));
-            }
-        };
-        if correlations
-            .iter()
-            .any(|&code| !(offset..offset + 4).contains(&code))
-        {
-            return Err(model_error(
-                "virtual component prediction requires one correlation basis",
-            ));
-        }
         let shape = [correlations.len(), frequencies.len()];
         let mut model = match previous {
             Some(model) if model.shape() != shape => {
@@ -416,6 +446,26 @@ impl ModelInputs {
         let mut scratch_buffer = None;
         let mut components_written = false;
         for entry in matching {
+            let grid_row = || FourierRow {
+                ms,
+                row,
+                correlations,
+                frequencies,
+                raw_flags,
+                frequency_ref: *frequency_ref,
+                engine,
+                field: &field,
+                phase_time,
+                frame: &frame,
+                uvw,
+                focus_rows: &buffer.focus_rows,
+                legacy_mosaic_pointing: buffer.legacy_mosaic_pointing.as_ref(),
+                scratch_channels: entry
+                    .scratch_channels
+                    .iter()
+                    .find(|channels| channels[0] == row.data_spw_id)
+                    .copied(),
+            };
             let components = match &entry.prediction {
                 Prediction::Components(components) => {
                     if virtual_components.is_some_and(|active| !std::ptr::eq(active, entry)) {
@@ -423,6 +473,27 @@ impl ModelInputs {
                     }
                     components_written = true;
                     components
+                }
+                Prediction::SingleDish(dish) => {
+                    if row.antenna1 != row.antenna2 || row.flag_row {
+                        continue;
+                    }
+                    let corrected;
+                    let pointing = match &self.single_dish_pointings {
+                        Some(pointings) => pointings.get(&row.row_index),
+                        None if !self.single_dish_feeds.is_empty() => {
+                            corrected = self
+                                .single_dish_feeds
+                                .direction(ms, engine, row, Some(field.clone()))?
+                                .direction;
+                            Some(&corrected)
+                        }
+                        None => Some(&field),
+                    };
+                    if let Some(direction) = pointing {
+                        dish.predict(&grid_row(), direction, &mut model)?;
+                    }
+                    continue;
                 }
                 Prediction::FourierGrid(grid) => {
                     let merge = if !scratch_model {
@@ -439,34 +510,12 @@ impl ModelInputs {
                     } else {
                         FourierMerge::ScratchSum
                     };
-                    grid.predict(
-                        FourierRow {
-                            ms,
-                            row,
-                            correlations,
-                            frequencies,
-                            raw_flags,
-                            frequency_ref: *frequency_ref,
-                            engine,
-                            field: &field,
-                            phase_time,
-                            frame: &frame,
-                            uvw,
-                            focus_rows: &buffer.focus_rows,
-                            legacy_mosaic_pointing: buffer.legacy_mosaic_pointing.as_ref(),
-                            scratch_channels: entry
-                                .scratch_channels
-                                .iter()
-                                .find(|channels| channels[0] == row.data_spw_id)
-                                .copied(),
-                        },
-                        &mut model,
-                        merge,
-                    )?;
+                    grid.predict(grid_row(), &mut model, merge)?;
                     components_written = false;
                     continue;
                 }
             };
+            let (basis, offset) = component_basis(correlations)?;
             for component in components.iter() {
                 let projection =
                     UvwMachine::with_frame(component.shape().reference_direction(), &field, &frame)
@@ -491,6 +540,27 @@ impl ModelInputs {
         }
         Ok(Some(model))
     }
+}
+
+fn component_basis(correlations: &[i32]) -> Result<(Polarisation, i32), GainSolveError> {
+    let (basis, offset) = match correlations.first().copied() {
+        Some(5..=8) => (Polarisation::Circular, 5),
+        Some(9..=12) => (Polarisation::Linear, 9),
+        _ => {
+            return Err(model_error(
+                "virtual component prediction requires linear or circular correlations",
+            ));
+        }
+    };
+    if correlations
+        .iter()
+        .any(|&code| !(offset..offset + 4).contains(&code))
+    {
+        return Err(model_error(
+            "virtual component prediction requires one correlation basis",
+        ));
+    }
+    Ok((basis, offset))
 }
 
 fn decode_entries(record: &RecordValue) -> Result<Vec<Entry>, GainSolveError> {
@@ -543,6 +613,9 @@ fn decode_entry(
     let prediction = match kind {
         VirtualModelKind::ComponentList => {
             Prediction::Components(ComponentList::from_record(container).map_err(model_error)?)
+        }
+        VirtualModelKind::FtMachine if matches!(container.get("name"), Some(Value::Scalar(ScalarValue::String(name))) if name == "SDGrid") => {
+            Prediction::SingleDish(Box::new(SingleDishModel::new(container.clone())))
         }
         VirtualModelKind::FtMachine => {
             Prediction::FourierGrid(Box::new(FourierModel::new(container.clone())))
