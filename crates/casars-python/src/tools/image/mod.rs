@@ -10,6 +10,7 @@ mod create;
 mod default_record;
 mod fits_header;
 mod fits_import;
+mod fits_rename;
 mod handle;
 mod lifecycle;
 mod mask_expression;

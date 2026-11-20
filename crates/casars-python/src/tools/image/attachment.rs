@@ -92,8 +92,15 @@ impl AttachedImage {
             return Err(raised("Exception: new file name must be specified."));
         }
         let Some(source) = &self.key else {
-            if self.lock().fits().is_some() {
-                return Err(stub("rename").unwrap_err());
+            let fits_path = {
+                let image = self.lock();
+                image
+                    .fits()
+                    .and_then(|_| image.path())
+                    .map(Path::to_path_buf)
+            };
+            if let Some(old_name) = fits_path {
+                return super::fits_rename::rename(&old_name, name, overwrite, history);
             }
             return Err(raised(
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",

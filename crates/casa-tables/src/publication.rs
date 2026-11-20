@@ -1,9 +1,39 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Filesystem publication of staged casacore data products.
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(unix)]
 use std::ffi::CString;
 use std::path::Path;
+
+/// Check write access to an existing publication path as the current process.
+///
+/// # Errors
+/// Returns an I/O error if the path is absent or cannot be written.
+#[cfg(unix)]
+pub fn check_write_access(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::other("publication path contains NUL"))?;
+    // SAFETY: the C string is valid for the duration of the access check.
+    let status =
+        unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::W_OK, libc::AT_EACCESS) };
+    (status == 0)
+        .then_some(())
+        .ok_or_else(std::io::Error::last_os_error)
+}
+
+/// Check write access to an existing publication path.
+///
+/// # Errors
+/// Returns an I/O error if the path is absent or read-only.
+#[cfg(not(unix))]
+pub fn check_write_access(path: &Path) -> std::io::Result<()> {
+    if path.metadata()?.permissions().readonly() {
+        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+    } else {
+        Ok(())
+    }
+}
 
 /// Move a staged directory to a new path without replacing it on Linux or macOS.
 ///
