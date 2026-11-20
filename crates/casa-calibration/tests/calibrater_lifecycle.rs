@@ -10,9 +10,10 @@ use casa_calibration::{
     GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType,
     RefAntSelector,
 };
-use casa_ms::MsSelection;
+use casa_ms::{MeasurementSet, MsSelection};
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayValue, Complex32};
+use casa_types::{ArrayValue, Complex32, Value};
+use ndarray::{ArrayD, IxDyn};
 
 fn select_field(field: &str) -> MsSelection {
     MsSelection {
@@ -86,7 +87,7 @@ fn expect_no_solver(calibrater: &CalibraterLifecycle, path: &Path) {
 
 fn exercise_model_lifecycle(ms: &Path, other: &Path, outputs: &Path, legacy: bool) {
     let mut calibrater = CalibraterLifecycle::default();
-    calibrater.set_legacy_iterator(legacy);
+    assert!(calibrater.set_legacy_iterator(legacy));
     calibrater.open(ms).unwrap();
     calibrater.select(select_field("0")).unwrap();
 
@@ -100,6 +101,11 @@ fn exercise_model_lifecycle(ms: &Path, other: &Path, outputs: &Path, legacy: boo
     calibrater.reset(true, true).unwrap();
     let reset = configure(&mut calibrater, outputs.join("reset.g"));
     solve_without_product(&calibrater, &reset);
+
+    calibrater.set_point_model(&[1.]).unwrap();
+    let positive = configure(&mut calibrater, outputs.join("positive.g"));
+    calibrater.solve().unwrap();
+    assert!(!gains(&positive).is_empty());
 
     calibrater.set_point_model(&[0., 0., 0., 0.]).unwrap();
     let zeros = configure(&mut calibrater, outputs.join("zeros.g"));
@@ -211,6 +217,33 @@ fn calibrater_resets_apply_and_solve_independently() {
     assert_eq!(gains(&selected), expected);
 }
 
+fn samples(ms: &Path, column: &str) -> Vec<ArrayD<Complex32>> {
+    let ms = MeasurementSet::open(ms).unwrap();
+    let main = ms.main_table();
+    let cells = main.column_accessor(column).unwrap();
+    (0..main.row_count())
+        .map(|row| {
+            let ArrayValue::Complex32(values) = cells.array_cell(row).unwrap() else {
+                panic!("a visibility cell must be complex");
+            };
+            values.clone()
+        })
+        .collect()
+}
+
+fn place_corrected_sentinel(path: &Path, value: Complex32) {
+    let mut ms = MeasurementSet::open(path).unwrap();
+    let main = ms.main_table_mut();
+    for row in 0..main.row_count() {
+        let data = ArrayValue::Complex32(ArrayD::from_elem(IxDyn(&[2, 2]), value));
+        main.cell_accessor_mut(row, "CORRECTED_DATA")
+            .unwrap()
+            .set(Value::Array(data))
+            .unwrap();
+    }
+    ms.save().unwrap();
+}
+
 #[test]
 fn calibrater_keeps_the_legacy_iterator_across_reopens() {
     let root = tempfile::tempdir().unwrap();
@@ -222,6 +255,9 @@ fn calibrater_keeps_the_legacy_iterator_across_reopens() {
     let second = common::create_apply_fixture_ms(&second_dir, true);
     let mut calibrater = CalibraterLifecycle::default();
     calibrater.open(&first).unwrap();
+    assert!(!calibrater.set_legacy_iterator(true));
+    calibrater.close();
+    calibrater.open(&second).unwrap();
     assert!(
         calibrater
             .init_cal_set(0)
@@ -230,11 +266,35 @@ fn calibrater_keeps_the_legacy_iterator_across_reopens() {
             .contains("not implemented")
     );
     calibrater.close();
-    calibrater.set_legacy_iterator(true);
-    for path in [&first, &second, &first] {
+
+    assert!(calibrater.set_legacy_iterator(true));
+    for (path, other, sentinel) in [
+        (&first, &second, Complex32::new(3., 7.)),
+        (&second, &first, Complex32::new(5., -9.)),
+        (&first, &second, Complex32::new(-4., 3.)),
+    ] {
+        place_corrected_sentinel(path, sentinel);
+        let other_before = samples(other, "CORRECTED_DATA");
+        let data = samples(path, "DATA");
+        let selection = MsSelection {
+            spw: Some("0:1".into()),
+            ..select_field("0")
+        };
         calibrater.open(path).unwrap();
-        calibrater.select(select_field("0")).unwrap();
+        calibrater.select(selection).unwrap();
         calibrater.init_cal_set(0).unwrap();
         calibrater.close();
+        let corrected = samples(path, "CORRECTED_DATA");
+        for (row, values) in corrected.iter().enumerate() {
+            for (index, &value) in values.indexed_iter() {
+                let expected = if row == 0 && index[1] == 1 {
+                    data[row][index]
+                } else {
+                    sentinel
+                };
+                assert_eq!(value, expected);
+            }
+        }
+        assert_eq!(samples(other, "CORRECTED_DATA"), other_before);
     }
 }

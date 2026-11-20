@@ -24,7 +24,6 @@ pub struct CalibraterLifecycle {
 struct VisibilityEquation {
     attachment: CalibrationAttachment,
     model: CalibraterModel,
-    legacy_iterator: bool,
     apply: ApplyTerms,
     solve: Option<(CalibrationSolveRequest, CalibrationOutputMode)>,
 }
@@ -63,9 +62,16 @@ pub enum CalibraterLifecycleError {
 }
 
 impl CalibraterLifecycle {
-    /// Choose the legacy or modern visibility iterator for the next open.
-    pub fn set_legacy_iterator(&mut self, legacy: bool) {
+    /// Choose the visibility iterator before opening a MeasurementSet.
+    ///
+    /// Returns false when a MeasurementSet is already attached.
+    #[must_use]
+    pub fn set_legacy_iterator(&mut self, legacy: bool) -> bool {
+        if self.equation.is_some() {
+            return false;
+        }
         self.legacy_iterator = legacy;
+        true
     }
 
     /// Whether the calibrater is configured to open the legacy iterator.
@@ -92,7 +98,6 @@ impl CalibraterLifecycle {
         self.equation = Some(VisibilityEquation {
             attachment,
             model: CalibraterModel::FromMeasurementSet,
-            legacy_iterator: self.legacy_iterator,
             apply: ApplyTerms::default(),
             solve: None,
         });
@@ -186,7 +191,7 @@ impl CalibraterLifecycle {
             &mut opened.measurement_set,
             equation.attachment.selection(),
             calset,
-            equation.legacy_iterator,
+            self.legacy_iterator,
             opened.lock,
         )
         .map_err(AttachmentError::from)?;

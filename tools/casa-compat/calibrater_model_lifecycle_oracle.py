@@ -33,6 +33,7 @@ def run(root, native_test):
     cb = calibrater()
     assert cb.setvi(old=False, quiet=True)
     assert cb.open(str(inputs[0]), addcorr=False, addmodel=False)
+    assert not cb.setvi(old=True, quiet=True)
     assert cb.selectvis(field="0")
 
     def configure(name):
@@ -59,6 +60,8 @@ def run(root, native_test):
     solve("empty", False)
     assert cb.reset(apply=True, solve=True)
     solve("reset", False)
+    assert cb.setptmodel([1.])
+    solve("positive", True)
     assert cb.setptmodel([0., 0., 0., 0.])
     solve("zeros", False)
 
@@ -91,7 +94,7 @@ def run(root, native_test):
         check=True,
     )
     evidence = {}
-    for name in ["stored", "recovered", "reopened"]:
+    for name in ["stored", "positive", "recovered", "reopened"]:
         expected = contents(outputs / f"{name}.g")
         actual = contents(root / "native" / f"{name}.g")
         for column in ["ANTENNA1", "FIELD_ID", "SPECTRAL_WINDOW_ID", "FLAG"]:
