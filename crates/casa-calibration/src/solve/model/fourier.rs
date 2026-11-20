@@ -237,6 +237,12 @@ impl PreparedFourierModel {
                 (Box::new(kernels), None, Some(memory))
             } else if legacy_aw {
                 let path = complex_model_image_path(terms[0], row.ms)?.join(legacy_aw::CACHE);
+                if !path.is_dir() {
+                    return Err(model_error(format!(
+                        "legacy AW recipe has no cache at {}",
+                        path.display()
+                    )));
+                }
                 let conjugate = matches!(
                     terms[0].get("casars_legacy_aw_conjbeams"),
                     Some(Value::Scalar(ScalarValue::Bool(true)))
@@ -247,6 +253,8 @@ impl PreparedFourierModel {
                     &polarization,
                     axis.first_hz(),
                     conjugate,
+                    Some(legacy_aw::record_rotation(terms[0]).map_err(model_error)?),
+                    true,
                 )
                 .map_err(model_error)?;
                 (Box::new(kernels), None, Some(memory))

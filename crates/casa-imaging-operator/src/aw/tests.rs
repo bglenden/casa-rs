@@ -126,6 +126,7 @@ fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
         root: PathBuf::new(),
         prediction_frequency_scale: 1.0,
         prediction_uses_native_frequency: false,
+        legacy_prediction_origin: false,
         indexing: AwIndexing {
             conjugate_beams: false,
             image_reference_hz: 1.0e9,
@@ -507,7 +508,7 @@ fn an_odd_sampled_aw_cell_imports_both_endpoint_tap_rows() {
         weight: header,
     };
     let group = Group::new(std::slice::from_ref(&files), [false; 2]);
-    let loaded = load_group(std::slice::from_ref(&files), &group, 5, 0.0).unwrap();
+    let loaded = load_group(std::slice::from_ref(&files), &group, 5, 0.0, false).unwrap();
     let cell = &loaded.imaging;
     assert_eq!(loaded.weight.data(), cell.data());
     // CASA's endpoints are three fine pixels on each side at sampling 5.

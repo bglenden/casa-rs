@@ -728,6 +728,24 @@ impl AwCatalog {
         self.lru.lock().expect("cache lock").loads
     }
 
+    /// Read all groups up front so prediction can use only checked pixels.
+    /// Callers first admit memory for a bound retaining every group.
+    ///
+    /// # Errors
+    /// A group cannot be read or the current cache bound would evict it.
+    pub fn preload_cells(&self) -> Result<(), AwCatalogError> {
+        if self.cache_charge().every_bytes() > self.bound.bytes() as u64 {
+            return Err(cache_error(
+                &self.root,
+                "the cache bound cannot retain every group",
+            ));
+        }
+        for group in 0..self.groups() {
+            self.try_loaded(group)?;
+        }
+        Ok(())
+    }
+
     /// Bytes the catalog holds at most from its open on, with `holders`
     /// workers fetching cells, at its cache's bound now
     /// ([`CacheCharge::bytes`]).
@@ -887,6 +905,11 @@ impl AwCatalog {
     /// load that panics unmarks its group as it unwinds, so a waiter reads
     /// the group itself.
     fn loaded(&self, group: usize) -> (Arc<DenseCell>, Arc<DenseCell>) {
+        self.try_loaded(group)
+            .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"))
+    }
+
+    fn try_loaded(&self, group: usize) -> Result<(Arc<DenseCell>, Arc<DenseCell>), AwCatalogError> {
         let mut lru = self.lru.lock().expect("cache lock");
         loop {
             lru.clock += 1;
@@ -894,7 +917,7 @@ impl AwCatalog {
             match &mut lru.slots[group] {
                 Slot::Loaded(loaded) => {
                     loaded.last_use = now;
-                    return (loaded.imaging.clone(), loaded.weight.clone());
+                    return Ok((loaded.imaging.clone(), loaded.weight.clone()));
                 }
                 Slot::Empty => break,
                 Slot::Loading => {}
@@ -919,8 +942,7 @@ impl AwCatalog {
             self.oversampling,
             angle,
             self.legacy_prediction_origin,
-        )
-        .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
+        )?;
         let mut lru = self.lru.lock().expect("cache lock");
         lru.clock += 1;
         loaded.last_use = lru.clock;
@@ -951,7 +973,7 @@ impl AwCatalog {
             }
         }
         loading.cached(lru);
-        pair
+        Ok(pair)
     }
 }
 

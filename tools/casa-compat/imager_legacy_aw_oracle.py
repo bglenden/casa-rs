@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 
 from casars.tools import imager, ms
-from casatools import image, ms as casa_ms
+from casatools import image, imager as casa_imager, ms as casa_ms, table
 import numpy as np
 
 from imager_legacy_pbw_oracle import (
@@ -15,8 +15,9 @@ from imager_legacy_pbw_oracle import (
 )
 
 
-def predict(dataset, model, cache, machine, correction, *, scratch=True, limit=.05):
-    tool = imager()
+def predict(dataset, model, cache, machine, correction, *, scratch=True, limit=.05,
+            accepts=True, factory=imager):
+    tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
     assert tool.selectvis(field=0, spw='0:0')
     assert tool.defineimage(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
@@ -24,7 +25,8 @@ def predict(dataset, model, cache, machine, correction, *, scratch=True, limit=.
     assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
                            cfcachedirname=str(cache), applypointingoffsets=False,
                            dopbgriddingcorrections=correction, pblimit=limit)
-    assert tool.ft(str(model)) and tool.done()
+    assert tool.ft(str(model)) is accepts
+    assert tool.done()
 
 
 def complex_image(path):
@@ -40,11 +42,17 @@ def saved_control(root, dataset, model, cache, reference, expected, machine):
     make_input(dataset, target, scratch=False)
     owned_cache = root / f'{machine}-source-cache'
     shutil.copytree(cache, owned_cache)
+    tile = next(owned_cache.glob('CFS_*/table.f*_TSM*'))
+    original_tile = owned_cache / 'external-tile'
+    tile.rename(original_tile)
+    tile.symlink_to(original_tile.resolve())
     predict(target, model, owned_cache, machine, True, scratch=False)
     record = recipe(target)
     assert record['name'] == 'AWProjectWBFT'
     saved_image = Path(record['diskimage'])
     held = saved_image / 'CASARS_LEGACY_AW_CACHE'
+    held_tile = held / tile.relative_to(owned_cache)
+    assert held_tile.is_file() and not held_tile.is_symlink()
     kernel_names = sorted(path.name for path in owned_cache.glob('CFS_*'))
     assert kernel_names and all(complex_image(held / name).size for name in kernel_names)
     pinned = reference / f'{machine}.ms'
@@ -67,6 +75,56 @@ def saved_control(root, dataset, model, cache, reference, expected, machine):
     copied_reference = root / f'{machine}-pinned-saved.ms'
     make_input(pinned, copied_reference, scratch=False)
     reject_recipe(ms, copied_reference, 'CASARS_LEGACY_AW_CACHE')
+
+
+def autocorrelation_control(root, dataset, model, cache):
+    pinned, actual = (root / f'autos-{mode}.ms' for mode in ('pinned', 'native'))
+    reader = table()
+    assert reader.open(str(dataset))
+    selected = reader.query('ANTENNA1 == ANTENNA2')
+    copied = selected.copy(str(pinned), deep=True, valuecopy=True)
+    assert copied.done() and selected.done() and reader.done()
+    make_input(pinned, actual, scratch=True)
+    predict(pinned, model, cache, 'awproject', False, factory=casa_imager)
+    predict(actual, model, cache, 'awproject', False)
+    expected = data(pinned, 'MODEL_DATA')
+    assert np.abs(expected[:, 0, :]).max() > 1.
+    error = relative_rms(data(actual, 'MODEL_DATA')[:, 0, :], expected[:, 0, :])
+    print('autocorrelation-only selected channel NRMS', error, flush=True)
+    assert error < 1.e-3
+
+
+def corrupt_kernel(cache):
+    tool = image()
+    assert tool.open(str(next(cache.glob('CFS_*'))))
+    pixels = tool.getchunk()
+    pixels[0, 0, 0, 0] = complex('nan')
+    assert tool.putchunk(pixels) and tool.done()
+
+
+def malformed_control(root, dataset, model, cache):
+    bad = root / 'bad-cache'
+    shutil.copytree(cache, bad)
+    corrupt_kernel(bad)
+    for scratch in (False, True):
+        target = root / f'bad-input-{scratch}.ms'
+        make_input(dataset, target, scratch=scratch)
+        if scratch:
+            seed = casa_imager()
+            assert seed.open(str(target), usescratch=True) and seed.done()
+            prior = data(target, 'MODEL_DATA')
+        predict(target, model, bad, 'awproject', False, scratch=scratch, accepts=False)
+        if scratch:
+            np.testing.assert_array_equal(data(target, 'MODEL_DATA'), prior)
+        reader = table()
+        assert reader.open(str(target / 'SOURCE'))
+        assert 'definedmodel_field_0' not in reader.keywordnames() and reader.done()
+    saved = root / 'bad-owned-kernel.ms'
+    make_input(dataset, saved, scratch=False)
+    predict(saved, model, cache, 'awproject', False, scratch=False)
+    corrupt_kernel(Path(recipe(saved)['diskimage']) / 'CASARS_LEGACY_AW_CACHE')
+    reject_recipe(ms, saved, 'cell pixels must be finite')
+    print('invalid imported and saved kernel pixels refused without changing visibilities', flush=True)
 
 
 def main():
@@ -103,6 +161,8 @@ def main():
                               expected, machine)
         assert cache_contents(cache) == prior
     assert max(errors) < 1.e-3
+    autocorrelation_control(args.work, args.dataset, args.model, args.work / 'cache-False')
+    malformed_control(args.work, args.dataset, args.model, args.work / 'cache-False')
     if args.saved_reference:
         target = args.work / 'high-pblimit.ms'
         make_input(args.dataset, target, scratch=True)
