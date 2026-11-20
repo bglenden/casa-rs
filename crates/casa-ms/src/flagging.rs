@@ -3437,6 +3437,12 @@ fn _complex_norm64(value: Complex64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    const CLIP_ZEROS: ClipOptions = ClipOptions {
+        zeros: true,
+        bounds: None,
+        outside: true,
+    };
+
     use super::*;
     use ndarray::array;
 
@@ -3489,15 +3495,26 @@ mod tests {
             ]
             .into_dyn(),
         );
-        apply_clip_array(&c64, &flags, Some(&[0, 2]), true, "<test>", 4, &mut changed)
-            .expect("clip complex64");
+        apply_clip_array(
+            &c64,
+            &flags,
+            Some(&[0, 2]),
+            CLIP_ZEROS,
+            "<test>",
+            4,
+            &mut changed,
+        )
+        .expect("clip complex64");
         assert_eq!(changed, vec![(0, 0), (0, 2)]);
         changed.clear();
         apply_clip_array(
             &c64,
             &flags,
             Some(&[0, 2]),
-            false,
+            ClipOptions {
+                zeros: false,
+                ..CLIP_ZEROS
+            },
             "<test>",
             4,
             &mut changed,
@@ -3508,14 +3525,30 @@ mod tests {
         changed.clear();
         let flags_2x2 = ArrayD::from_elem(IxDyn(&[2, 2]), false);
         let f32s = ArrayValue::Float32(array![[0.0_f32, 1.0], [f32::EPSILON, 2.0]].into_dyn());
-        apply_clip_array(&f32s, &flags_2x2, None, true, "<test>", 5, &mut changed)
-            .expect("clip float32");
+        apply_clip_array(
+            &f32s,
+            &flags_2x2,
+            None,
+            CLIP_ZEROS,
+            "<test>",
+            5,
+            &mut changed,
+        )
+        .expect("clip float32");
         assert_eq!(changed, vec![(0, 0), (1, 0)]);
 
         changed.clear();
         let f64s = ArrayValue::Float64(array![[0.0_f64, 5.0], [f64::NAN, 6.0]].into_dyn());
-        apply_clip_array(&f64s, &flags_2x2, None, true, "<test>", 6, &mut changed)
-            .expect("clip float64");
+        apply_clip_array(
+            &f64s,
+            &flags_2x2,
+            None,
+            CLIP_ZEROS,
+            "<test>",
+            6,
+            &mut changed,
+        )
+        .expect("clip float64");
         assert_eq!(changed, vec![(0, 0), (1, 0)]);
 
         let mut samples = Vec::new();
@@ -3748,7 +3781,7 @@ mod tests {
                 &data_rank2,
                 &flags_rank1,
                 None,
-                true,
+                CLIP_ZEROS,
                 "<test>",
                 12,
                 &mut changed
@@ -3763,7 +3796,7 @@ mod tests {
                 &data_rank1,
                 &flags_rank2,
                 None,
-                true,
+                CLIP_ZEROS,
                 "<test>",
                 13,
                 &mut changed
