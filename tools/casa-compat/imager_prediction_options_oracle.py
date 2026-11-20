@@ -233,9 +233,9 @@ def definition_cases(root, reference_ms, factories):
                 assert reader.done()
             records.append(observed)
             if name == "channel":
+                tool = factory()
                 assert tool.open(str(path), usescratch=True)
                 assert tool.selectvis(field=0)
-                assert tool.setoptions(freqinterp="nearest")
                 assert tool.ft(str(model))
                 assert tool.done()
                 predictions.append(samples(path))
@@ -415,33 +415,43 @@ def short_cubic_cases(root, reference_ms, factories):
 
 def spline_plane_counts(root, reference_ms, factories):
     reports = {}
-    for planes in (2, 3, 6):
-        fixture = root / f"spline-{planes}-fixture.ms"
+    cases = [(f"{planes}-planes", planes,
+              dict(mode="channel", start=2, step=2), "ft") for planes in (2, 3, 6)]
+    cases.extend((f"descending-{machine}", 6,
+                  dict(mode="frequency", start="100.020GHz", step="-4MHz"), machine)
+                 for machine in ("ft", "wproject"))
+    for label, planes, spectral, machine in cases:
+        fixture = root / f"spline-{label}-fixture.ms"
         shutil.copytree(reference_ms, fixture)
-        model = root / f"spline-planes-{planes}.im"
-        arguments = dict(nx=32, mode="channel", nchan=planes, start=2, step=2, outframe="TOPO")
+        model = root / f"spline-{label}.im"
+        arguments = dict(nx=32, nchan=planes, outframe="TOPO", **spectral)
         maker = imager()
         assert maker.open(str(fixture), usescratch=True) and maker.selectvis(field=0)
         assert maker.defineimage(**arguments) and maker.ft(str(model)) and maker.done()
         with_image = image()
         assert with_image.open(str(model))
+        if label.startswith("descending"):
+            coords = with_image.coordsys()
+            assert coords.increment()["numeric"][-1] < 0.
+            assert coords.done()
         pixels = with_image.getchunk()
         pixels[21, 12, 0, :] = [2., .5, 1.5, .75, 3., .25][:planes]
         assert with_image.putchunk(pixels) and with_image.done()
         predictions = []
         for engine, factory in factories.items():
-            path = root / f"spline-planes-{planes}-{engine}.ms"
+            path = root / f"spline-{label}-{engine}.ms"
             shutil.copytree(reference_ms, path)
             tool = factory()
             assert tool.open(str(path), usescratch=True) and tool.selectvis(field=0)
-            assert tool.defineimage(**arguments) and tool.setoptions(freqinterp="spline")
+            assert tool.defineimage(**arguments)
+            assert tool.setoptions(ftmachine=machine, wprojplanes=16, freqinterp="spline")
             assert tool.ft(str(model)) and tool.done()
             predictions.append(samples(path))
         expected, actual = predictions
         assert np.max(np.abs(expected)) > 0.5
         error = relative_rms(actual, expected)
-        assert error < 1e-3, (planes, error)
-        reports[f"{planes}-planes-nrms"] = error
+        assert error < 1e-3, (label, error)
+        reports[f"{label}-nrms"] = error
     return reports
 
 
