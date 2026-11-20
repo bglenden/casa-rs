@@ -35,6 +35,7 @@ use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 /// finishes. The virtual model can keep it once its on-disk record is filed.
 pub(crate) struct ImageModel {
     pub(crate) entry: VirtualModelEntry,
+    pub(super) nonzero: bool,
     backing: GridLifetime,
 }
 
@@ -60,7 +61,11 @@ impl ImageModel {
         } else {
             entry.container.upsert("diskimage", path);
         }
-        Ok(Self { entry, backing })
+        Ok(Self {
+            entry,
+            nonzero: self.nonzero,
+            backing,
+        })
     }
 
     pub(crate) fn retain(&mut self) {
@@ -114,7 +119,7 @@ pub(crate) fn prepare_image(
         taylor,
         keep_zero,
         scratch,
-        PredictionGeometry::default(),
+        &mut PredictionGeometry::default(),
     )
     .map(|images| images.into_iter().next())
 }
@@ -126,7 +131,7 @@ pub(super) fn prepare_configured_images(
     taylor: Option<TaylorTerm>,
     keep_zero: bool,
     scratch: bool,
-    options: PredictionGeometry,
+    options: &mut PredictionGeometry,
 ) -> MsResult<Vec<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
     let [nx, ny, _, _] = *image.shape() else {
@@ -151,14 +156,13 @@ pub(super) fn prepare_configured_images(
             let layout =
                 ImageTransform::new(ms, selected, &image, scratch, options.clone(), window)?;
             outputs.extend(write_model_grid(
-                ms,
-                selected,
-                &image,
-                taylor,
-                keep_zero || facets > 1,
-                scratch,
-                layout,
+                ms, selected, &image, taylor, keep_zero, scratch, layout,
             )?);
+            if facets > 1 && matches!(options.settings.gridder, ImagerGridder::Mosaic) {
+                // CubeSkyEquation assigns the first image to MosaicFT and
+                // the remaining facets and outliers to independent GridFTs.
+                options.use_mosaic_outlier_grid();
+            }
         }
     }
     Ok(outputs)
@@ -185,7 +189,8 @@ fn write_model_grid(
         path,
         retained: false,
     };
-    if !layout.grid(image, &backing.path)? && !keep_zero {
+    let nonzero = layout.grid(image, &backing.path)?;
+    if !nonzero && !keep_zero {
         return Ok(None);
     }
     let record = layout.record(ms, selected, &backing.path, scratch)?;
@@ -194,7 +199,11 @@ fn write_model_grid(
         None => record,
     };
     let entry = model_entry(ms, selected, VirtualModelKind::FtMachine, container)?;
-    Ok(Some(ImageModel { entry, backing }))
+    Ok(Some(ImageModel {
+        entry,
+        nonzero,
+        backing,
+    }))
 }
 
 #[derive(Clone, Copy)]
@@ -542,12 +551,18 @@ impl ImageTransform {
             .pixel_to_world([reference[0] as f64, reference[1] as f64])
             .map_err(invalid)?;
         let mut coordinates = CoordinateSystem::new();
-        coordinates.add_coordinate(
+        let grid_direction = if scratch && matches!(options.settings.gridder, ImagerGridder::Mosaic)
+        {
+            // The live pointing test uses the subimage WCS. The saved image
+            // has its reference direction at the center of the Fourier grid.
+            direction.clone()
+        } else {
             direction
                 .clone()
                 .with_reference_value(phase_center)
-                .with_reference_pixel([(gx / 2) as f64, (gy / 2) as f64]),
-        );
+                .with_reference_pixel([(gx / 2) as f64, (gy / 2) as f64])
+        };
+        coordinates.add_coordinate(grid_direction);
         coordinates.add_coordinate(StokesCoordinate::new(
             routing
                 .grid()

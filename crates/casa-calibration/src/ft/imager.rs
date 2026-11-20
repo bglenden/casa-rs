@@ -144,6 +144,13 @@ impl ImagerPrediction {
         self.definition.is_some()
     }
 
+    fn facet_count(&self) -> usize {
+        match &self.definition {
+            Some(ImageDefinition::Requested(definition)) => definition.facets,
+            _ => 1,
+        }
+    }
+
     /// Replace the options used by the next Fourier transform.
     pub fn set_options(&mut self, options: ImagerTransformOptions) {
         self.options = options;
@@ -329,12 +336,25 @@ impl ImagerPrediction {
             if scratch && !has_column(ms, ModelData) {
                 return Ok(false);
             }
-            let Some((mut components, images)) = self
-                .prepare(ms, selection, &model, scratch)
-                .map_err(AttachmentError::PredictionPreparation)?
+            let Some((mut components, mut images)) =
+                self.prepare(ms, selection, &model, scratch)
+                    .map_err(AttachmentError::PredictionPreparation)?
             else {
                 return Ok(false);
             };
+            if self.facet_count() > 1
+                && !images.is_empty()
+                && images.iter().all(|image| !image.nonzero)
+                && (!scratch || model.incremental || !components.is_empty())
+            {
+                // An empty image set contributes nothing to an increment or
+                // a component prediction. CASA keeps the past virtual model
+                // when there are no components to publish.
+                images.clear();
+                if components.is_empty() {
+                    return Ok(true);
+                }
+            }
             if scratch {
                 components.extend(images.iter().map(|image| image.entry.clone()));
                 let prepared = if !images.is_empty()
@@ -424,7 +444,10 @@ impl ImagerPrediction {
             ));
         }
         let (terms, explicit_reference) = self.taylor;
-        if terms > 1 && model.images.len() != terms as usize {
+        if terms > 1 && mosaic {
+            return Ok(None);
+        }
+        if terms > 1 && self.facet_count() <= 1 && model.images.len() != terms as usize {
             return Err(invalid(
                 "the number of model images must match the Taylor terms",
             ));
@@ -493,7 +516,7 @@ impl ImagerPrediction {
                     });
             }
         }
-        let reference_hz = if terms == 1 {
+        let reference_hz = if terms == 1 || model.images.is_empty() {
             None
         } else {
             Some(match explicit_reference {
@@ -564,11 +587,14 @@ impl ImagerPrediction {
         voltage_pattern: Option<super::voltage_pattern::PreparedVoltagePattern>,
     ) -> MsResult<Vec<ImageModel>> {
         let terms = self.taylor.0;
-        let (facets, tangent) = match &self.definition {
-            Some(ImageDefinition::Requested(definition)) => {
-                (definition.facets, definition.tangent_point(ms)?)
+        let facets = self.facet_count();
+        let tangent = match &self.definition {
+            Some(ImageDefinition::Requested(definition))
+                if !matches!(self.options.gridder, ImagerGridder::Mosaic) =>
+            {
+                definition.tangent_point(ms)?
             }
-            _ => (1, None),
+            _ => None,
         };
         let mut geometry = PredictionGeometry {
             settings: self.options,
@@ -582,17 +608,20 @@ impl ImagerPrediction {
         for (index, path) in model.images.iter().enumerate() {
             let taylor = reference_hz.map(|reference_hz| TaylorTerm {
                 count: terms,
-                index: index as i32,
+                // The faceted sky model has one Taylor plane per image.
+                index: if facets > 1 { 0 } else { index as i32 },
                 reference_hz,
             });
+            let keep_zero = facets > 1
+                || (scratch && !model.incremental && model.components.is_none() && index == 0);
             images.extend(prepare_configured_images(
                 ms,
                 selected,
                 path,
                 taylor,
-                scratch && !model.incremental && model.components.is_none() && index == 0,
+                keep_zero,
                 scratch,
-                geometry.clone(),
+                &mut geometry,
             )?);
             // WFCleanImageSkyModel subdivides the first model image.
             geometry.facets = 1;

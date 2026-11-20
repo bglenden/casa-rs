@@ -1891,6 +1891,28 @@ within 1.84e-6 normalized RMS. The fixture is in
 `tools/casa-compat/imager_mosaic_oracle.py`.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
+## Faceted MosaicFT can omit its first facet in later scratch buffers
+
+With CASA 6.7.6.14, `imager.defineimage(facets=2)` and
+`imager.setoptions(ftmachine='mosaic')` assign MosaicFT to the first
+facet and ordinary GridFT to the others. In a heterogeneous ALMA
+MeasurementSet with measured POINTING rows, a bulk scratch prediction
+retained the MosaicFT contribution in its first integration and omitted
+it in the other eleven. The GridFT contribution was present throughout.
+
+`CubeSkyEquation::getSlice` gives the per-facet transforms a copy of the
+visibility buffer. The copy constructor does not initialize or copy the
+first antenna's cached direction flag. The original buffer's first
+direction is available to the initialization and the virtual reader.
+
+casa-rs evaluates the first antenna's pointing for each integration and
+keeps the working visibility buffer across facet transforms. The oracle
+compares a native bulk scratch prediction with independent CASA calls
+selecting one integration each. It also compares both virtual writers
+and readers against a CASA virtual prediction over both fields.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_facets_oracle.py`](../tools/casa-compat/imager_facets_oracle.py)
+
 ## The simulator's mosaic machine is not tclean's
 
 - Date noted: 2026-10-23
