@@ -310,7 +310,9 @@ assert image.done()
         else:
             table = tools.table()
             assert table.open(target)
-        with pytest.raises(RuntimeError, match="still open"):
+        # Pinned CASA reports an already-open table for same-process holders.
+        message = "still open in another process" if external else "already opened"
+        with pytest.raises(RuntimeError, match=message):
             writer.adddegaxes(target, spectral=True, overwrite=True)
         reader = tools.image()
         assert reader.open(target)

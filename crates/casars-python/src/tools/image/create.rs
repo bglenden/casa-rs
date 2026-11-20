@@ -200,15 +200,6 @@ pub(super) fn publish_image(
     overwrite: bool,
     build: impl FnOnce(Option<&Path>) -> PyResult<ImageHandle>,
 ) -> PyResult<AttachedImage> {
-    publish_image_checked(outfile, overwrite, |_| Ok(()), build)
-}
-
-pub(super) fn publish_image_checked<L>(
-    outfile: &str,
-    overwrite: bool,
-    replacement_lease: impl FnOnce(&Path) -> PyResult<L>,
-    build: impl FnOnce(Option<&Path>) -> PyResult<ImageHandle>,
-) -> PyResult<AttachedImage> {
     if outfile.is_empty() {
         return build(None).map(AttachedImage::temporary);
     }
@@ -259,7 +250,6 @@ pub(super) fn publish_image_checked<L>(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(raised(error)),
     };
-    let _lease = existed.then(|| replacement_lease(&path)).transpose()?;
     if existed {
         exchange_directories(&product, &path).map_err(raised)?;
     } else {

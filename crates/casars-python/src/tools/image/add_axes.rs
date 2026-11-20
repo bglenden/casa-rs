@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
@@ -9,7 +8,6 @@ use casa_coordinates::{
 use casa_images::analysis::ensure_outfile_does_not_alias_input;
 use casa_images::image::image_history_rows;
 use casa_images::{ImageInterface, ImagePixel};
-use casa_tables::TableWriteLock;
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, Dimension, IxDyn, indices};
 use pyo3::prelude::*;
@@ -18,9 +16,8 @@ use crate::tools::coordsys::{append_coordinate, validate_coordinate_indices};
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 use super::PyImageTool;
-use super::attachment::{key, lock_table_tree};
 use super::beams::image_info_record;
-use super::create::publish_image_checked;
+use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::masks::validate_name;
 
@@ -109,21 +106,6 @@ fn expand<T>(mut block: ArrayD<T>, ndim: usize) -> ArrayD<T> {
         block = block.insert_axis(Axis(axis));
     }
     block
-}
-
-fn lock_replacement(path: &Path) -> PyResult<BTreeMap<PathBuf, TableWriteLock>> {
-    let path = key(path)?;
-    if crate::tools::table::path_is_in_use(&path) {
-        return Err(raised(format!(
-            "Output table {} is still open in this process",
-            path.display()
-        )));
-    }
-    let mut leases = BTreeMap::new();
-    if path.join("table.dat").is_file() {
-        lock_table_tree(&path, &mut leases)?;
-    }
-    Ok(leases)
 }
 
 fn copy_pixels<T: ImagePixel>(
@@ -267,7 +249,7 @@ impl PyImageTool {
                     "File {outfile} exists, and the user does not want to remove it."
                 )));
             }
-            publish_image_checked(outfile, overwrite, lock_replacement, |path| {
+            publish_image(outfile, overwrite, |path| {
                 let mut original = attachment.lock();
                 if !outfile.is_empty() {
                     for source in original
