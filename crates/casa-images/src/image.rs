@@ -1993,6 +1993,57 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Saves image metadata with history while holding the native log write lock.
+    /// With `info == None` the operation appends history only.
+    ///
+    /// # Errors
+    /// Returns an error if the record is invalid or if the image or its log
+    /// cannot be read, locked or written.
+    pub fn save_image_info_with_history(
+        &mut self,
+        info: Option<&RecordValue>,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        let path = Self::logtable_path(self.path.as_ref().ok_or(ImageError::NotPersistent)?);
+        self.ensure_logtable()?;
+        let mut lock = TableWriteLock::acquire_to_reread(&path, 0)?;
+        let mut log = Table::open(TableOptions::new(&path))?;
+        let time = ImageHistoryEntry::current_time()?;
+        Self::add_logtable_entries(
+            &mut log,
+            messages
+                .iter()
+                .map(|message| (time, location, message.as_str(), "INFO", "")),
+        )?;
+        let previous = self.table.keywords().get("imageinfo").cloned();
+        if let Some(info) = info {
+            self.set_image_info_record(info.clone())?;
+        }
+        let publish = self
+            .save()
+            .and_then(|()| log.save(TableOptions::new(&path)).map_err(ImageError::from));
+        if let Err(error) = publish {
+            if info.is_some() {
+                let keywords = self.table.keywords_mut();
+                if let Some(previous) = previous {
+                    keywords.upsert("imageinfo", previous);
+                } else {
+                    keywords.remove("imageinfo");
+                }
+                if let Err(restore) = self.save() {
+                    return Err(ImageError::Io(format!(
+                        "{error}; restoring the previous image metadata also failed: {restore}"
+                    )));
+                }
+            }
+            return Err(error);
+        }
+        lock.record_write();
+        lock.release()?;
+        Ok(())
+    }
+
     /// Append imported history with its original location and MJD time.
     ///
     /// # Errors
@@ -2688,6 +2739,17 @@ impl<T: ImagePixel> PagedImage<T> {
         // `logtable` CASA wrote unreadable to it.
         let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
+        Self::add_logtable_entries(&mut table, entries)?;
+        table.save(TableOptions::new(path))?;
+        lock.record_write();
+        lock.release()?;
+        Ok(())
+    }
+
+    fn add_logtable_entries<'a>(
+        table: &mut Table,
+        entries: impl IntoIterator<Item = (f64, &'a str, &'a str, &'a str, &'a str)>,
+    ) -> Result<(), ImageError> {
         for (time, location, message, priority, object_id) in entries {
             table.add_row(RecordValue::new(vec![
                 RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
@@ -2709,9 +2771,6 @@ impl<T: ImagePixel> PagedImage<T> {
                 ),
             ]))?;
         }
-        table.save(TableOptions::new(path))?;
-        lock.record_write();
-        lock.release()?;
         Ok(())
     }
 

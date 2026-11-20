@@ -1028,7 +1028,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("rotatebeam", &[param("angle", K::Any, Empty)], R::Any, No),
+    method("rotatebeam", &[param("angle", K::Any, Empty)], R::Any, Yes),
     method(
         "sepconvolve",
         &[

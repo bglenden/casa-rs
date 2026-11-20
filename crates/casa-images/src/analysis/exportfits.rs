@@ -28,7 +28,7 @@ use crate::{AnyPagedImage, ImageError, ImageInterface, ImagePixel, PagedImage};
 
 mod tool_header;
 
-pub use tool_header::{ImageFitsHeader, image_fits_header};
+pub use tool_header::{ImageFitsHeader, image_fits_header, image_fits_header_with_beams};
 
 /// Minimum blank sentinel value in scaled 16-bit FITS images.
 const SHORT_BLANK: i16 = i16::MIN;

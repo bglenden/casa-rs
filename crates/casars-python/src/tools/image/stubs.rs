@@ -667,12 +667,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (angle = None), text_signature = "($self, angle=[])")]
-    fn rotatebeam(&self, angle: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("rotatebeam")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, axes = None, types = None, widths = None, scale = None, region = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', axes=[-1], types=[''], widths=[], scale=-1.0, region={}, mask='', overwrite=False, stretch=False)")]
     fn sepconvolve(
         &self,
