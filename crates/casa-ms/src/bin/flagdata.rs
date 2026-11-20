@@ -4,13 +4,15 @@
 //! returns (#931): the summary dictionary in summary mode, `{}` otherwise.
 //! The CASA values it does not implement yet are refused naming #978.
 
+use std::io::{ErrorKind, Write};
+use std::path::Path;
 use std::process::ExitCode;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
     FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
-    append_task_history, calculate_flagdata_path, flagdata_empty_record,
+    append_flag_command, append_task_history, calculate_flagdata_path, flagdata_empty_record,
     flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
     save_next_flag_backup, task_selection_text,
 };
@@ -39,12 +41,17 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     check_correlation_argument(task, &action)?;
+    let mode = task.required_text("mode")?;
+    let save_parameters = task.flag("savepars")? && mode != "summary";
     let calculate = match action.as_str() {
         "apply" => false,
         "calculate" => true,
         "" | "none" => {
-            // CASA saves parameters for these actions when savepars is set.
-            tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
+            if save_parameters {
+                save_flag_parameters(task, &task.path("vis")?, &mode, &action)?;
+            } else {
+                tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
+            }
             return ms_task_success(flagdata_empty_record(), &None::<FlagDataReport>);
         }
         _ => {
@@ -90,6 +97,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
+    if save_parameters {
+        save_flag_parameters(task, &path, &mode, &action)?;
+    }
     if !calculate
         && request.mode != FlagDataMode::Summary
         && let Err(error) = append_task_history(&path, &flagdata_history(task))
@@ -101,6 +111,141 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         None => flagdata_empty_record(),
     };
     ms_task_success(value, &Some(report))
+}
+
+fn save_flag_parameters(
+    task: &TaskInvocation<'_>,
+    vis: &Path,
+    mode: &str,
+    action: &str,
+) -> Result<(), TaskFailure> {
+    let mut arguments = Vec::new();
+    for name in [
+        "field",
+        "spw",
+        "array",
+        "feed",
+        "scan",
+        "antenna",
+        "uvrange",
+        "timerange",
+        "intent",
+    ] {
+        let text = task_selection_text(task, name)?;
+        push_command_argument(&mut arguments, name, &ParameterValue::String(text));
+    }
+    if let Some(observation) = observation_text(task)? {
+        push_command_argument(
+            &mut arguments,
+            "observation",
+            &ParameterValue::String(observation),
+        );
+    }
+    let mode = match mode {
+        "" | "manualflag" => "manual",
+        mode => mode,
+    };
+    let fields: &[&str] = match mode {
+        "manual" => &["autocorr"],
+        "unflag" => &[],
+        "clip" => &[
+            "datacolumn",
+            "clipoutside",
+            "channelavg",
+            "chanbin",
+            "timeavg",
+            "timebin",
+            "clipzeros",
+        ],
+        "quack" => &["quackmode", "quackinterval", "quackincrement"],
+        _ => return Err(not_yet("savepars", mode)),
+    };
+    for &field in fields {
+        if field == "datacolumn" {
+            let column = task.required_text(field)?.to_ascii_uppercase();
+            push_command_argument(&mut arguments, field, &ParameterValue::String(column));
+        } else {
+            let value = if field == "chanbin" {
+                task.session()
+                    .given(field)
+                    .unwrap_or(&ParameterValue::Integer(1))
+            } else {
+                task.value(field)
+                    .expect("flagdata has a literal default for the agent parameter")
+            };
+            push_command_argument(&mut arguments, field, value);
+        }
+    }
+    if mode == "clip"
+        && let [minimum, maximum] = task.numbers("clipminmax")?.as_slice()
+    {
+        push_command_argument(
+            &mut arguments,
+            "clipminmax",
+            &ParameterValue::Array(vec![
+                ParameterValue::Float(*minimum),
+                ParameterValue::Float(*maximum),
+            ]),
+        );
+    }
+    push_command_argument(
+        &mut arguments,
+        "mode",
+        &ParameterValue::String(mode.to_owned()),
+    );
+    let correlation = task_selection_text(task, "correlation")?.to_ascii_uppercase();
+    push_command_argument(
+        &mut arguments,
+        "correlation",
+        &ParameterValue::String(correlation),
+    );
+
+    let reason = task.required_text("cmdreason")?;
+    let outfile = task.required_text("outfile")?;
+    if outfile.is_empty() {
+        return append_flag_command(vis, &arguments.join(" "), &reason, action == "apply")
+            .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"));
+    }
+    push_command_argument(&mut arguments, "reason", &ParameterValue::String(reason));
+    let content = arguments.join(" ");
+    let overwrite = task.flag("overwrite")?;
+    let path = Path::new(&outfile);
+    let parent = path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let save = || -> std::io::Result<()> {
+        let mut pending = tempfile::NamedTempFile::new_in(parent)?;
+        writeln!(pending, "{content}")?;
+        if overwrite {
+            pending.persist(path)?;
+        } else {
+            pending.persist_noclobber(path)?;
+        }
+        Ok(())
+    };
+    save().map_err(|error| {
+        if !overwrite && error.kind() == ErrorKind::AlreadyExists {
+            let message = format!(
+                "You have set overwrite to False. Remove {outfile} before saving the flag commands"
+            );
+            if matches!(action, "none" | "") {
+                return TaskFailure::validation(message).at("outfile");
+            }
+            return TaskFailure::execution(message).at("outfile");
+        }
+        TaskFailure::execution(format!("Error writing flag commands to {outfile}: {error}"))
+            .at("outfile")
+    })
+}
+
+fn push_command_argument(arguments: &mut Vec<String>, name: &str, value: &ParameterValue) {
+    let text = match value {
+        ParameterValue::String(text) if text.is_empty() => return,
+        ParameterValue::String(text) => format!("'{}'", text.trim_matches('\'')),
+        value => python_repr(value),
+    };
+    arguments.push(format!("{name}={text}"));
 }
 
 fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {

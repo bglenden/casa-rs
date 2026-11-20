@@ -2259,7 +2259,7 @@ fn is_visibility_column(column: &str) -> bool {
     )
 }
 
-fn open_staged_subtable_for_write(path: &Path) -> Result<Table, TableError> {
+pub(crate) fn open_staged_subtable_for_write(path: &Path) -> Result<Table, TableError> {
     let options = TableOptions::new(path);
     #[cfg(unix)]
     return Table::open_with_lock(

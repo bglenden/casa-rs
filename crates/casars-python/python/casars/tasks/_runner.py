@@ -331,6 +331,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if (completion.parameter == "datacolumn"
                     and completion.message == "Failed to parse parameters for mode clip"):
                 raise ValueError(completion.message) from error
+            if completion.parameter == "outfile":
+                raise ValueError(completion.message) from error
             raise
         except TaskExecutionError as error:
             completion = error.completion
@@ -339,7 +341,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
                 if completion.message == "no flagdata summary report for the selected correlations":
                     raise KeyError("nreport") from error
-            if completion.parameter in ("channelavg", "chanbin"):
+            if completion.parameter in ("channelavg", "chanbin", "outfile"):
                 raise RuntimeError(completion.message) from error
             raise
     return run(name, **values).value
