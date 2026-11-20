@@ -15,8 +15,9 @@ impl PyImageTool {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else { return Ok(false) };
             let mut image = attachment.lock();
-            if !mask.is_empty() && image.fits().is_some() {
-                return Err(raised("Exception: Cannot make requested mask for this image type which is FITSImage."));
+            let kind = image.image_type_name();
+            if !mask.is_empty() && matches!(kind, "FITSImage" | "ImageExpr") {
+                return Err(raised(format!("Exception: Cannot make requested mask for this image type which is {kind}.")));
             }
             if mask.is_empty() {
                 return Err(raised("Exception: You must specify an expression."));

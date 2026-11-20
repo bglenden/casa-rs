@@ -44,6 +44,27 @@ def test_export_uses_the_open_tools_beams_and_reacquires_read_lock(casa, tmp_pat
         assert writer.done()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_lazy_imagecalc_export_reads_native_operand(casa, tmp_path):
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    for backend, peer in ((casa, tools), (tools, casa)):
+        path = str(tmp_path / f"{backend.__name__}.im")
+        destination = str(tmp_path / f"{backend.__name__}.fits")
+        source = backend.image()
+        assert source.fromarray(path, pixels)
+        assert source.done()
+        result = source.imagecalc(pixels=f'"{path}" + 1')
+        assert result.unlock()
+        np.testing.assert_array_equal(result.haslock(), [False, False])
+        assert result.tofits(destination)
+        np.testing.assert_array_equal(result.haslock(), [True, False])
+        reader = peer.image()
+        assert reader.open(destination)
+        np.testing.assert_array_equal(reader.getchunk(), pixels + 1)
+        assert reader.done()
+        assert result.done()
+
+
 @pytest.mark.parametrize("persistent", [False, True])
 @pytest.mark.parametrize("bitpix", [-32, 16])
 def test_export_cross_reads_pixels_and_metadata(casa, tmp_path, persistent, bitpix):

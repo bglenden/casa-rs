@@ -66,7 +66,7 @@ impl PyImageTool {
                     "Only writing float-valued images to FITS is supported",
                 ));
             }
-            attachment.require_lock(&mut handle, casa_tables::LockType::Read)?;
+            attachment.require_pixel_read_lock(&mut handle)?;
             let ImageHandle::Float(storage) = &*handle else {
                 unreachable!("image storage stays fixed while locked");
             };

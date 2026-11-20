@@ -300,6 +300,7 @@ enum CompiledNumericExprNode<T: ImageExprValue> {
         op: ReductionOp,
         child: Box<Self>,
         child_shape: Vec<usize>,
+        empty_value: Option<T>,
     },
     Fractile {
         child: Box<Self>,
@@ -588,6 +589,9 @@ impl<T: ImageExprValue> CompileCtx<T> {
             NumericExprNode::Sections(source) => {
                 CompiledNumericExprNode::Source(self.register_section_source(source.clone()))
             }
+            NumericExprNode::Vector(values) => CompiledNumericExprNode::Source(
+                self.register_shared_snapshot_source(values.clone(), None),
+            ),
             NumericExprNode::Source(image) => {
                 CompiledNumericExprNode::Source(self.register_image_source(*image)?)
             }
@@ -634,10 +638,12 @@ impl<T: ImageExprValue> CompileCtx<T> {
                 op,
                 child,
                 child_shape,
+                empty_value,
             } => CompiledNumericExprNode::Reduction {
                 op: *op,
                 child: Box::new(self.compile_numeric(child, child_shape)?),
                 child_shape: child_shape.clone(),
+                empty_value: *empty_value,
             },
             NumericExprNode::Fractile {
                 child,
@@ -967,8 +973,66 @@ impl<T: ImageExprValue> std::fmt::Debug for MaskExpression<T> {
 }
 
 impl<T: ImageExprValue> ImageExpression<T> {
-    pub(super) fn may_have_mask(&self) -> bool {
+    pub(crate) fn may_have_mask(&self) -> bool {
         self.node.may_have_mask(&self.arena)
+    }
+
+    /// Converts pixels lazily while retaining the expression's geometry and validity.
+    ///
+    /// # Errors
+    /// Returns an error if the conversion cannot be compiled.
+    pub fn convert_pixels<U: ImageExprValue>(
+        self,
+        convert: impl Fn(T) -> U + Copy + Send + Sync + 'static,
+    ) -> Result<ImageExpression<U>, ImageError> {
+        self.mapped_sections(convert).compile()
+    }
+
+    pub(super) fn mapped_sections<'a, U: ImageExprValue>(
+        self,
+        convert: impl Fn(T) -> U + Copy + Send + Sync + 'static,
+    ) -> ImageExprBuilder<'a, U> {
+        let meta = self.meta.clone();
+        let compiled = Arc::new(self);
+        let mask = compiled.may_have_mask().then(|| {
+            let source = Arc::clone(&compiled);
+            Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
+                ImageInterface::get_mask_slice(source.as_ref(), start, shape, stride)
+            }) as super::OwnedMaskReader
+        });
+        ImageExprBuilder::from_section_readers(
+            meta,
+            Arc::new(move |start, shape, stride| {
+                compiled
+                    .get_slice_with_stride(start, shape, stride)
+                    .map(|pixels| pixels.mapv(convert))
+            }),
+            mask,
+        )
+    }
+
+    pub(crate) fn visit_pixel_sections(
+        &self,
+        mut visit: impl FnMut(&[usize], ArrayD<T>) -> Result<(), ImageError>,
+    ) -> Result<(), ImageError> {
+        let shape = self.shape();
+        let chunk = bounded_read_cursor(shape.to_vec())?;
+        let stride = vec![1; shape.len()];
+        let mut ctx = CompiledEvalContext::new(self.arena.sources.len());
+        for cursor in
+            TraversalCursorIter::new(shape.to_vec(), chunk.clone(), TraversalSpec::chunks(chunk))
+        {
+            let cursor = cursor?;
+            let pixels = self.node.eval_slice(
+                &self.arena,
+                &mut ctx,
+                &cursor.position,
+                &cursor.shape,
+                &stride,
+            )?;
+            visit(&cursor.position, pixels)?;
+        }
+        Ok(())
     }
 
     /// Overrides the execution policy used by [`get`](Self::get),
@@ -1137,14 +1201,14 @@ impl<T: ImageExprValue> ImageExpression<T> {
         legacy_coords: Option<RecordValue>,
     ) -> Result<(PagedImage<T>, usize), ImageError> {
         let full_shape = self.meta.shape.clone();
-        let cursor_shape = clamp_cursor_shape(
+        let cursor_shape = bounded_read_cursor(clamp_cursor_shape(
             &self.node.preferred_cursor_shape(
                 &full_shape,
                 &self.arena,
                 self.execution_resources.worker_limit,
             )?,
             &full_shape,
-        );
+        ))?;
         let strategy = compiled_map_strategy::<T>(CompiledMapInputs {
             policy: self.execution_policy,
             full_shape: &full_shape,
@@ -1267,6 +1331,22 @@ impl<T: ImageExprValue> ImageExpression<T> {
 
     pub(crate) fn legacy_coords_ref(&self) -> Option<&RecordValue> {
         self.meta.legacy_coords.as_ref()
+    }
+
+    pub(super) fn raw_image_info_ref(&self) -> Option<&RecordValue> {
+        self.meta.raw_image_info.as_ref()
+    }
+
+    pub(crate) fn raw_image_info(&self) -> Option<RecordValue> {
+        self.raw_image_info_ref().cloned()
+    }
+
+    /// Returns the original coordinate record when it is available.
+    pub fn coordinate_record(&self) -> RecordValue {
+        self.meta
+            .legacy_coords
+            .clone()
+            .unwrap_or_else(|| self.meta.coords.to_record())
     }
 
     /// Returns `true` if any expression branch can produce a non-trivial pixel mask.
@@ -1714,6 +1794,10 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
                 op: ReductionOp::Sum,
                 ..
             }
+            | Self::Reduction {
+                empty_value: Some(_),
+                ..
+            }
             | Self::MaskCount { .. }
             | Self::StripMask { .. } => false,
             Self::UnaryOp { child, .. }
@@ -2117,9 +2201,10 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
                 op,
                 child,
                 child_shape,
+                empty_value,
             } => Ok(ArrayD::from_elem(
                 IxDyn(shape),
-                reduce_numeric_child(*op, child, child_shape, arena)?,
+                reduce_numeric_child(*op, child, child_shape, arena, *empty_value)?,
             )),
             Self::Fractile {
                 child,
@@ -2884,11 +2969,15 @@ fn reduce_numeric_child<T: ImageExprValue>(
     child: &CompiledNumericExprNode<T>,
     child_shape: &[usize],
     arena: &CompiledImageArena<T>,
+    empty_value: Option<T>,
 ) -> Result<T, LatticeError> {
     if child_shape.is_empty() {
         let mut ctx = CompiledEvalContext::new(arena.sources.len());
         let scalar = child.eval_slice(arena, &mut ctx, &[], &[], &[])?;
-        return Ok(scalar.iter().copied().next().unwrap_or_default());
+        return Ok(match op {
+            ReductionOp::Variance | ReductionOp::Stddev | ReductionOp::Avdev => T::default_value(),
+            _ => scalar[IxDyn(&[])],
+        });
     }
 
     match op {
@@ -2936,74 +3025,36 @@ fn reduce_numeric_child<T: ImageExprValue>(
                 Ok(())
             })?;
             Ok(if count == 0 {
-                T::default_value()
+                empty_value.unwrap_or_else(T::default_value)
             } else {
                 sum * T::from_f64_lossy(1.0 / count as f64)
             })
         }
-        ReductionOp::Min => {
-            let mut seen = false;
-            let mut min = T::default_value();
+        ReductionOp::Min | ReductionOp::Max => {
+            let mut result = None;
+            let combine = if matches!(op, ReductionOp::Min) {
+                T::expr_min
+            } else {
+                T::expr_max
+            };
             for_each_compiled_numeric_and_mask_chunk(child, child_shape, arena, |chunk, mask| {
-                match mask {
-                    Some(m) => {
-                        for (&value, &valid) in chunk.iter().zip(m.iter()) {
-                            if valid {
-                                min = if !seen {
-                                    seen = true;
-                                    value
-                                } else {
-                                    min.expr_min(value)
-                                };
-                            }
+                let mut include = |value| {
+                    result = Some(result.map_or(value, |previous| combine(previous, value)));
+                };
+                if let Some(mask) = mask {
+                    for (&value, &valid) in chunk.iter().zip(mask) {
+                        if valid {
+                            include(value);
                         }
                     }
-                    None => {
-                        for &value in chunk {
-                            min = if !seen {
-                                seen = true;
-                                value
-                            } else {
-                                min.expr_min(value)
-                            };
-                        }
+                } else {
+                    for &value in chunk {
+                        include(value);
                     }
                 }
                 Ok(())
             })?;
-            Ok(if seen { min } else { T::default_value() })
-        }
-        ReductionOp::Max => {
-            let mut seen = false;
-            let mut max = T::default_value();
-            for_each_compiled_numeric_and_mask_chunk(child, child_shape, arena, |chunk, mask| {
-                match mask {
-                    Some(m) => {
-                        for (&value, &valid) in chunk.iter().zip(m.iter()) {
-                            if valid {
-                                max = if !seen {
-                                    seen = true;
-                                    value
-                                } else {
-                                    max.expr_max(value)
-                                };
-                            }
-                        }
-                    }
-                    None => {
-                        for &value in chunk {
-                            max = if !seen {
-                                seen = true;
-                                value
-                            } else {
-                                max.expr_max(value)
-                            };
-                        }
-                    }
-                }
-                Ok(())
-            })?;
-            Ok(if seen { max } else { T::default_value() })
+            Ok(result.unwrap_or_else(|| empty_value.unwrap_or_else(T::default_value)))
         }
         ReductionOp::Variance | ReductionOp::Stddev => {
             let mut acc = WelfordAccum::default();
@@ -3076,7 +3127,8 @@ fn reduce_numeric_child<T: ImageExprValue>(
         }
         ReductionOp::Median => {
             let mut values = collect_numeric_child(child, child_shape, arena)?;
-            Ok(fractile_in_place(&mut values, 0.5).unwrap_or_else(T::default_value))
+            Ok(fractile_in_place(&mut values, 0.5)
+                .unwrap_or_else(|| empty_value.unwrap_or_else(T::default_value)))
         }
     }
 }
