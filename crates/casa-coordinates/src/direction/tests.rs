@@ -322,8 +322,8 @@ fn restricted_zenithal_records_accept_supported_parameters() {
         ),
         (
             ProjectionType::SZP,
-            vec![vec![0.0, 0.0, 90.0]],
-            vec![vec![1.0, 0.0, 90.0], vec![0.0, 0.0, 45.0]],
+            vec![vec![0.0, 0.0, 90.0], vec![2.0, 30.0, 45.0]],
+            vec![vec![-1.0, 0.0, 90.0], vec![0.0, f64::NAN, 45.0]],
         ),
         (
             ProjectionType::AIR,

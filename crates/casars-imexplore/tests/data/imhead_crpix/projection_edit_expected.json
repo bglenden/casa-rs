@@ -979,6 +979,61 @@
           -0.0002959591164652507
         ]
       ]
+    },
+    {
+      "get": "AZP",
+      "history": [
+        "Modified projection from \"SZP\" to \"AZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AZP\", verbose=False)"
+      ],
+      "image": "projection_slant_zenithal",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        2.0,
+        30.0,
+        45.0
+      ],
+      "value": "AZP",
+      "world": [
+        [
+          0.0005818328826766533,
+          -0.0005038819860805669
+        ],
+        [
+          6.283039856020506,
+          -0.0002519287913300276
+        ]
+      ]
+    },
+    {
+      "get": "SZP",
+      "history": [
+        "Modified projection from \"AZP\" to \"SZP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"SZP\", verbose=False)"
+      ],
+      "image": "projection_slant_zenithal",
+      "initial": "AZP",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        2.0,
+        30.0,
+        45.0
+      ],
+      "value": "SZP",
+      "world": [
+        [
+          0.0005816773794279344,
+          -0.0005816047438649073
+        ],
+        [
+          6.283039847583937,
+          -0.0002908613799788206
+        ]
+      ]
     }
   ]
 }
