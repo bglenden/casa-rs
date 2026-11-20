@@ -22,6 +22,7 @@
 
 mod accumulate;
 mod antpos_vla;
+mod attachment;
 mod bandpass;
 mod calibration_service;
 mod callib;
@@ -78,6 +79,9 @@ pub use uvsub::{
 };
 
 pub use accumulate::{CalibrationAccumulationRequest, accumulate_calibration};
+pub use attachment::{
+    AttachmentError, AttachmentMode, AttachmentOptions, CalibrationAttachment, ImagerAttachments,
+};
 pub use output::CalibrationOutputMode;
 pub use table_maintenance::{create_calibration_table, update_calibration_table};
 
