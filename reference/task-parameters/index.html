@@ -1991,7 +1991,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imregrid">Image Regrid</a><br><code>imregrid</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>image_analysis</code></td>
 <td style="text-align: right;">10</td>
 <td>Regrid a CASA image onto a template image</td>
@@ -9414,7 +9414,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="image-regrid-imregrid">Image Regrid (<code>imregrid</code>)<a class="headerlink" href="#image-regrid-imregrid" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Regrid a CASA image onto a template image</li>
@@ -9441,17 +9441,17 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>template</code></td>
-<td><code>parameter.template@r1</code></td>
-<td><code>path (image)</code></td>
-<td><code>"get"</code>; required</td>
+<td><code>parameter.template@r2</code></td>
+<td><code>variant</code></td>
+<td><code>"get"</code>; optional</td>
 <td>Input</td>
-<td>Template CASA image path</td>
+<td>Template CASA image path, get selector, or coordinate and shape record</td>
 </tr>
 <tr>
 <td><code>output</code></td>
 <td><code>imregrid.output@r1</code></td>
 <td><code>path (image)</code></td>
-<td><code>""</code>; required when not (template="get")</td>
+<td><code>""</code>; optional</td>
 <td>Output</td>
 <td>Output CASA image path</td>
 </tr>
@@ -9482,7 +9482,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><code>interpolation</code></td>
 <td><code>parameter.interpolation@r1</code></td>
-<td><code>choice (2 values; surface-narrowed)</code></td>
+<td><code>choice (3 values; surface-narrowed)</code></td>
 <td><code>"linear"</code>; optional</td>
 <td>Regrid</td>
 <td>Spectral interpolation mode for cube gridding</td>

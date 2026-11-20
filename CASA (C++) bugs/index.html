@@ -4631,6 +4631,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#imregrid-drops-brightness-units-and-the-beam-when-broadcasting-a-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imregrid drops brightness units and the beam when broadcasting a channel
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -11416,6 +11427,15 @@ pixels from the edges. Examples are a reversed horizontal cut from
 input direction plane before the same sky-coordinate cut restores the CASA
 result. casa-rs interpolates only the requested strip and agrees with the
 padded CASA reference without requiring callers to pad the input (#1024).</p>
+<h2 id="imregrid-drops-brightness-units-and-the-beam-when-broadcasting-a-channel">imregrid drops brightness units and the beam when broadcasting a channel<a class="headerlink" href="#imregrid-drops-brightness-units-and-the-beam-when-broadcasting-a-channel" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>imregrid</code> with a one-channel input, an explicitly selected
+spectral axis and a multi-channel output replicates the data and mask. During
+that copy it loses the brightness unit and restoring beam. The <code>singleton</code>
+case in <code>crates/casa-images/tests/data/imregrid/expected.json</code> records a
+<code>Jy/beam</code> image with a 4 by 3 arcsec beam becoming a unitless image without a
+beam. casa-rs matches the samples, mask and template frequency grid and retains
+the original units and beam. Copying channels does not change the calibration
+of the pixels being copied.</p>
 
 
 
