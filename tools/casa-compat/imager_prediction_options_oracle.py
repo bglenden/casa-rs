@@ -210,13 +210,8 @@ def definition_cases(root, reference_ms, factories):
                     else:
                         raise AssertionError((engine, convolution))
                 assert tool.setoptions()
-            if name == "channel" and engine == "native":
+            if name == "channel":
                 assert tool.setoptions(freqinterp="spline")
-                before = samples(path)
-                assert tool.ft(str(model)) is False
-                assert not model.exists()
-                np.testing.assert_array_equal(samples(path), before)
-                assert tool.setoptions(freqinterp="nearest")
             assert tool.ft(str(model)), (name, engine)
             assert tool.done()
             observed = empty_image(model)
@@ -240,13 +235,7 @@ def definition_cases(root, reference_ms, factories):
             if name == "channel":
                 assert tool.open(str(path), usescratch=True)
                 assert tool.selectvis(field=0)
-                if engine == "native":
-                    assert tool.defineimage(**arguments)
-                    before = samples(path)
-                    assert tool.setoptions(freqinterp="spline")
-                    assert tool.ft(str(model)) is False
-                    np.testing.assert_array_equal(samples(path), before)
-                    assert tool.setoptions(freqinterp="nearest")
+                assert tool.setoptions(freqinterp="nearest")
                 assert tool.ft(str(model))
                 assert tool.done()
                 predictions.append(samples(path))
@@ -271,6 +260,7 @@ def definition_cases(root, reference_ms, factories):
     reports.update(legacy_cube_interpolation(root, reference_ms, factories))
     reports["legacy_incremental_zero_assignment"] = legacy_incremental_assignment(root, reference_ms, factories)
     reports["short_cubic"] = short_cubic_cases(root, reference_ms, factories)
+    reports["spline_planes"] = spline_plane_counts(root, reference_ms, factories)
     return reports
 
 
@@ -309,7 +299,7 @@ def legacy_cube_interpolation(root, reference_ms, factories):
     cases = {"whole": ("0", np.arange(12)), "stepped": ("0:2~10^2", np.arange(2, 11, 2)),
              "single": ("0:4", np.array([4])), "created": ("0", np.arange(12))}
     reports = {}
-    for method in ("linear", "cubic"):
+    for method in ("linear", "cubic", "spline"):
         for case, (selector, channels) in cases.items():
             predictions = []
             for engine, factory in factories.items():
@@ -342,6 +332,10 @@ def legacy_cube_interpolation(root, reference_ms, factories):
             error = relative_rms(actual, expected)
             assert error < 1e-3, (method, case, error)
             reports[f"{method}-{case}-nrms"] = error
+    for engine in factories:
+        cubic = samples(root / f"interpolation-cubic-whole-{engine}.ms")
+        spline = samples(root / f"interpolation-spline-whole-{engine}.ms")
+        assert relative_rms(spline, cubic) > 1e-3, engine
     return reports
 
 
@@ -349,7 +343,7 @@ def legacy_incremental_assignment(root, reference_ms, factories):
     model = root / "definition-channel-casa.im"
     sentinel = np.complex64(11. + 23.j)
     reports = {}
-    for interpolation in ("nearest", "linear", "cubic"):
+    for interpolation in ("nearest", "linear", "cubic", "spline"):
         for engine, factory in factories.items():
             path = root / f"interpolation-incremental-{interpolation}-{engine}.ms"
             shutil.copytree(reference_ms, path)
@@ -416,6 +410,38 @@ def short_cubic_cases(root, reference_ms, factories):
                 if not expected_success:
                     np.testing.assert_array_equal(samples(path), before)
             reports[f"{planes}-{name}"] = expected_success
+    return reports
+
+
+def spline_plane_counts(root, reference_ms, factories):
+    reports = {}
+    for planes in (2, 3, 6):
+        fixture = root / f"spline-{planes}-fixture.ms"
+        shutil.copytree(reference_ms, fixture)
+        model = root / f"spline-planes-{planes}.im"
+        arguments = dict(nx=32, mode="channel", nchan=planes, start=2, step=2, outframe="TOPO")
+        maker = imager()
+        assert maker.open(str(fixture), usescratch=True) and maker.selectvis(field=0)
+        assert maker.defineimage(**arguments) and maker.ft(str(model)) and maker.done()
+        with_image = image()
+        assert with_image.open(str(model))
+        pixels = with_image.getchunk()
+        pixels[21, 12, 0, :] = [2., .5, 1.5, .75, 3., .25][:planes]
+        assert with_image.putchunk(pixels) and with_image.done()
+        predictions = []
+        for engine, factory in factories.items():
+            path = root / f"spline-planes-{planes}-{engine}.ms"
+            shutil.copytree(reference_ms, path)
+            tool = factory()
+            assert tool.open(str(path), usescratch=True) and tool.selectvis(field=0)
+            assert tool.defineimage(**arguments) and tool.setoptions(freqinterp="spline")
+            assert tool.ft(str(model)) and tool.done()
+            predictions.append(samples(path))
+        expected, actual = predictions
+        assert np.max(np.abs(expected)) > 0.5
+        error = relative_rms(actual, expected)
+        assert error < 1e-3, (planes, error)
+        reports[f"{planes}-planes-nrms"] = error
     return reports
 
 

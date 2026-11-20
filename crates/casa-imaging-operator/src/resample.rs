@@ -16,6 +16,7 @@ mod fine_grid;
 mod prediction;
 #[cfg(test)]
 mod reporting_axis_tests;
+mod spline;
 mod stencil;
 mod tabular;
 
@@ -752,6 +753,7 @@ impl WeightSlots<'_> {
 struct LegacyPredictionMap {
     axis: SpectralAxis,
     selection: Option<[usize; 3]>,
+    spline: bool,
 }
 
 /// Turns native rows into placed, weighted samples for one operator.
@@ -817,8 +819,24 @@ impl SpectralResampler {
         self.legacy_prediction_map = Some(LegacyPredictionMap {
             axis,
             selection: None,
+            spline: false,
         });
         self
+    }
+
+    /// Legacy spline prediction uses the cubic channel map and interpolates
+    /// the original image frequencies with casacore's second derivatives.
+    /// Use the row prediction methods for this resampler. The bounded
+    /// backend stencil cannot express a spline across the whole image axis.
+    #[must_use]
+    pub fn legacy_spline(output: SpectralAxis, matching: SpectralAxis) -> Self {
+        let mut resampler = Self::channel_local(output, SpectralKernel::Cubic);
+        resampler.legacy_prediction_map = Some(LegacyPredictionMap {
+            axis: matching,
+            selection: None,
+            spline: true,
+        });
+        resampler
     }
 
     /// Set the original channel `start`, `count`, and `stride` of the next
