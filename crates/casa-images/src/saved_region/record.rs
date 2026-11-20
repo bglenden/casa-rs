@@ -7,7 +7,8 @@
 //! on the one-relative `pixelAxes`, and a union holds its members as `*1`,
 //! `*2`, … under `regions`, with their count in `regions.nr`.
 
-use casa_coordinates::CoordinateSystem;
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
@@ -148,27 +149,55 @@ pub(crate) fn compound_children<'a>(
     Ok(records)
 }
 
+#[derive(PartialEq)]
+enum RegionAxis {
+    Direction(usize, DirectionRef),
+    Spectral(Option<FrequencyRef>),
+    Named(CoordinateType, usize, String),
+}
+
+fn region_axes(coords: &CoordinateSystem) -> Vec<RegionAxis> {
+    (0..coords.n_coordinates())
+        .flat_map(|index| {
+            let coord = coords.coordinate(index);
+            coord
+                .axis_names()
+                .into_iter()
+                .enumerate()
+                .map(move |(axis, name)| match coord {
+                    CoordinateModel::Direction(direction) => {
+                        RegionAxis::Direction(axis, direction.conversion_direction_ref())
+                    }
+                    CoordinateModel::Spectral(spectral) => {
+                        let reference = spectral.conversion_frequency_ref().or_else(|| {
+                            (!spectral.has_undefined_frame()).then(|| spectral.frequency_ref())
+                        });
+                        RegionAxis::Spectral(reference)
+                    }
+                    _ => RegionAxis::Named(coord.coordinate_type(), axis, name),
+                })
+        })
+        .collect()
+}
+
 pub(crate) fn map_world_region_axes(
     name: &str,
     saved_coords: &CoordinateSystem,
     target_coords: &CoordinateSystem,
     axes: impl IntoIterator<Item = usize>,
 ) -> Result<Vec<usize>, ImageError> {
-    let names = |system: &CoordinateSystem| {
-        (0..system.n_coordinates())
-            .flat_map(|i| system.coordinate(i).axis_names())
-            .collect::<Vec<_>>()
-    };
-    let saved_names = names(saved_coords);
-    let target_names = names(target_coords);
+    // WCRegion::makeAxisDesc identifies celestial and spectral axes by
+    // coordinate type, local axis, and reference frame. Other axes use names.
+    let saved_axes = region_axes(saved_coords);
+    let target_axes = region_axes(target_coords);
     axes.into_iter()
         .map(|axis| {
-            saved_names
+            saved_axes
                 .get(axis)
-                .and_then(|name| target_names.iter().position(|candidate| candidate == name))
+                .and_then(|description| target_axes.iter().position(|candidate| candidate == description))
                 .ok_or_else(|| {
                     ImageError::InvalidMetadata(format!(
-                        "saved region {name:?} has an unmatched pixel axis {axis}"
+                        "saved region {name:?}: region axis is unknown or inconsistent in target coordinate system (pixel axis {axis})"
                     ))
                 })
         })
