@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from casars import tools
+from test_image_fits import _hdu
 
 
 @pytest.fixture
@@ -78,3 +79,32 @@ def test_putregion_validates_shape_before_creating_mask(casa, pixel_type, dtype)
         assert pixels.dtype == dtype
         np.testing.assert_array_equal(pixels, values)
         assert image.done()
+
+
+def test_putregion_mask_only_controls_later_default_masking(casa):
+    values = np.arange(12, dtype=np.float32).reshape(3, 4)
+    region = casa.regionmanager().box([1, 1], [2, 3])
+    valid = np.ones(values.shape, dtype=bool)
+    valid[1:, 1:] = [[True, False, True], [False, True, False]]
+    for backend in (casa, tools):
+        image = backend.image()
+        assert image.fromarray(pixels=values)
+        assert image.putregion(pixelmask=valid[1:, 1:], region=region)
+        np.testing.assert_array_equal(image.getchunk(), values)
+        assert image.putregion(np.full(values.shape, 4, dtype=np.float32))
+        np.testing.assert_array_equal(image.getchunk(), np.where(valid, 4, values))
+        np.testing.assert_array_equal(image.getchunk(getmask=True), valid)
+        assert image.done()
+
+
+def test_putregion_rejects_read_only_fits_without_modifying_the_file(tmp_path):
+    path = tmp_path / "image.fits"
+    original = _hdu(True, [1, 2, 3, 4])
+    path.write_bytes(original)
+    image = tools.image()
+    assert image.open(str(path))
+    with pytest.raises(RuntimeError, match="not writable"):
+        image.putregion(np.full((2, 2), 9, dtype=np.float32))
+    assert path.read_bytes() == original
+    np.testing.assert_array_equal(image.getchunk(), [[1, 3], [2, 4]])
+    assert image.done()
