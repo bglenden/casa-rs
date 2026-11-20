@@ -22,7 +22,7 @@ use pyo3::{
 };
 
 use crate::convert::{Variant, quantity, quantity_value};
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::tools::{LogLine, emit};
 
 const LOGGER: &str = "casars.tools.imager";
 
@@ -335,9 +335,6 @@ impl PyImager {
         };
         let parallactic = angle(&parangleinc, 360.)?;
         let threshold = angle(&skyposthreshold, 180.)?;
-        if dovp && (parallactic, threshold) != (360., 180.) {
-            return not_yet_implemented_in("imager", "setvp for varying voltage patterns", 1520);
-        }
         // SkyEquation chooses its default pattern from the attached observation.
         let _ = telescope;
         self.with_state(py, |state| {
@@ -346,7 +343,12 @@ impl PyImager {
             });
             state
                 .prediction
-                .configure_voltage_pattern_squint(pattern, dovp, dosquint)
+                .configure_voltage_pattern_rotation(
+                    pattern,
+                    dovp,
+                    dosquint,
+                    parallactic.to_radians(),
+                )
                 .map_err(runtime_error)?;
             state.model_in_sky_equation = false;
             Ok(())

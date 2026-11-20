@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_images::analysis::evaluate_image_tool_mask;
+use casa_images::analysis::{evaluate_image_tool_mask, open_fits_expression};
 use casa_images::{
     AnyPagedImage, ImageInterface,
     expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr, referenced_images},
@@ -153,28 +154,36 @@ pub(super) fn evaluate_mask(expression: &str, target: MaskTarget<'_>) -> PyResul
     if expression.is_empty() {
         return Err(raised("Exception: You must specify an expression."));
     }
-    let images = referenced_images(expression).map_err(raised)?
-        .into_iter()
-        .map(|name| {
-            #[cfg(unix)]
-            let opened = if target.section.is_some() {
-                AnyPagedImage::open_with_lock(&name, 0)
-            } else {
-                AnyPagedImage::open(&name)
-            };
-            #[cfg(not(unix))]
-            let opened = AnyPagedImage::open(&name);
-            let image = opened.map_err(|_| {
-                raised(format!("ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"))
-            })?;
-            Ok((name, image))
-        })
-        .collect::<PyResult<Vec<_>>>()?;
+    let unknown = |name: &str| {
+        raised(format!(
+            "ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"
+        ))
+    };
+    let mut images = Vec::new();
+    let mut fits_images = Vec::new();
+    for name in referenced_images(expression).map_err(raised)? {
+        let path = Path::new(&name);
+        if path.is_file() {
+            let image = open_fits_expression::<f32>(path, true).map_err(raised)?;
+            fits_images.push((name, image));
+            continue;
+        }
+        #[cfg(unix)]
+        let opened = if target.section.is_some() {
+            AnyPagedImage::open_with_lock(path, 0)
+        } else {
+            AnyPagedImage::open(path)
+        };
+        #[cfg(not(unix))]
+        let opened = AnyPagedImage::open(path);
+        let image = opened.map_err(|_| unknown(&name))?;
+        images.push((name, image));
+    }
     if images
         .iter()
         .all(|(_, image)| matches!(image, AnyPagedImage::Float32(_)))
     {
-        let images = images
+        let sources = images
             .iter()
             .filter_map(|(name, image)| match image {
                 AnyPagedImage::Float32(image) => {
@@ -182,11 +191,17 @@ pub(super) fn evaluate_mask(expression: &str, target: MaskTarget<'_>) -> PyResul
                 }
                 _ => None,
             })
+            .chain(
+                fits_images
+                    .iter()
+                    .map(|(name, image)| (name.clone(), image as &dyn ImageInterface<f32>)),
+            )
             .collect();
-        evaluate_typed(expression, images, &target)
-    } else if images
-        .iter()
-        .all(|(_, image)| matches!(image, AnyPagedImage::Float64(_)))
+        evaluate_typed(expression, sources, &target)
+    } else if fits_images.is_empty()
+        && images
+            .iter()
+            .all(|(_, image)| matches!(image, AnyPagedImage::Float64(_)))
     {
         let images = images
             .iter()
