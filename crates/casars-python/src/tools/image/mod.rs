@@ -20,6 +20,7 @@ mod makecomplex;
 mod mask_expression;
 mod masks;
 mod metadata;
+mod modify;
 mod pixels;
 mod point;
 mod records;

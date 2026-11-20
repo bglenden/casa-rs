@@ -7559,3 +7559,12 @@ owns a copy of the voltage-pattern table with the alias. A real-only
 pattern uses a zero-valued imaginary image owned by the same grid.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
 [`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
+
+## A zero-stride region aborts `image.modify`
+
+CASA 6.7.6.14 terminates with SIGABRT and an uncaught
+`casacore::ArraySlicerError` when `image.modify` uses an LCSlicer record
+whose increment is zero. A scratch probe used a 7 × 7 float image and a
+point component, with the first increment of a region covering [1, 1]
+through [5, 5] set to zero. Casa-rs raises a Python error during region
+validation and preserves the stored pixels and history (#1625).

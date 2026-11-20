@@ -22,6 +22,8 @@
 
 mod add;
 mod convertrefdir;
+mod image_records;
+pub(super) use image_records::{image_component_model, image_component_records};
 mod keywords;
 pub(crate) use keywords::{
     clear_locks as clear_keyword_locks, flush_pending as flush_pending_keywords,
@@ -52,50 +54,13 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyString};
 
 use crate::convert::value::CasaValue;
-use crate::convert::{ConvertError, ConvertResult, DoubleList, Variant};
+use crate::convert::{ConvertResult, DoubleList, Variant};
 use crate::tools::{LogLine, emit};
 use add::AddComponent;
-use casa_components::ShapeType;
-use casa_types::RecordValue;
-use casa_types::quanta::Quantity;
 use ops::State;
 
 /// The Python logger CASA's `cl` messages go to.
 const LOGGER: &str = "casars.tools.componentlist";
-
-pub(super) struct ImageComponentRecord {
-    pub(super) shape: ShapeType,
-    pub(super) gaussian_axes: Option<[Quantity; 3]>,
-    pub(super) value: CasaValue,
-}
-
-/// Read a CASA list for the image tool, retaining its record units and offsets.
-pub(super) fn image_component_records<'a>(
-    record: &'a RecordValue,
-    logs: &mut Vec<LogLine>,
-) -> ConvertResult<impl ExactSizeIterator<Item = ConvertResult<ImageComponentRecord>> + use<'a>> {
-    let components = State::image_components(record, logs)?;
-    Ok((0..components.length() as usize).map(move |index| {
-        let shape = components.checked(index as i64)?.shape().shape_type();
-        let gaussian_axes = if shape == ShapeType::Gaussian {
-            let Some(casa_types::Value::Record(raw_shape)) =
-                records::item(record, index)?.get("shape")
-            else {
-                unreachable!("validated Gaussian record");
-            };
-            let [major, minor, pa] = ["majoraxis", "minoraxis", "positionangle"]
-                .map(|key| records::angular(raw_shape, key).map_err(ConvertError::runtime));
-            Some([major?, minor?, pa?])
-        } else {
-            None
-        };
-        Ok(ImageComponentRecord {
-            shape,
-            gaussian_axes,
-            value: components.getcomponent(index as i64)?,
-        })
-    }))
-}
 
 /// Keep a supplied Python `None` distinct from an omitted argument.
 fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {

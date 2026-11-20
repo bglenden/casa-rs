@@ -2,6 +2,9 @@
 //! LEL mask evaluation, `image:maskname` resolution, and `stretch` handling
 //! for image tasks.
 
+mod geometry;
+pub(super) use geometry::validate_mask;
+
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -121,24 +124,7 @@ pub(super) fn evaluate_mask(
         return Ok(None);
     };
 
-    let mut expr = raw.to_string();
-    if Path::new(raw).exists() {
-        // Quote bare file names that include spaces or punctuation.
-        expr = format!("\"{raw}\"");
-    } else if let Some((left, _)) = raw.split_once(':')
-        && !raw.contains([' ', '>', '<', '=', '!', '&', '|', '(', ')'])
-        && Path::new(left).exists()
-    {
-        // Unquoted path:maskname expression in top-level `mask=` parameter.
-        expr = format!("mask(\"{raw}\")");
-    } else if let Some(operator) = raw.find(['<', '>', '=', '!'])
-        && let (name, suffix) = raw.split_at(operator)
-        && Path::new(name.trim()).exists()
-    {
-        // These tasks accept an unquoted image path before a comparison,
-        // including an absolute path that would otherwise lex as division.
-        expr = format!("\"{}\"{suffix}", name.trim());
-    }
+    let expr = mask_expression(raw);
     let opened = referenced_images(&expr)
         .map_err(mask_parse_error)?
         .into_iter()
@@ -155,6 +141,28 @@ pub(super) fn evaluate_mask(
         window,
         &opened,
     )
+}
+
+fn mask_expression(raw: &str) -> String {
+    if Path::new(raw).exists() {
+        // Quote bare file names that include spaces or punctuation.
+        format!("\"{raw}\"")
+    } else if let Some((left, _)) = raw.split_once(':')
+        && !raw.contains([' ', '>', '<', '=', '!', '&', '|', '(', ')'])
+        && Path::new(left).exists()
+    {
+        // Unquoted path:maskname expression in top-level `mask=` parameter.
+        format!("mask(\"{raw}\")")
+    } else if let Some(operator) = raw.find(['<', '>', '=', '!'])
+        && let (name, suffix) = raw.split_at(operator)
+        && Path::new(name.trim()).exists()
+    {
+        // These tasks accept an unquoted image path before a comparison,
+        // including an absolute path that would otherwise lex as division.
+        format!("\"{}\"{suffix}", name.trim())
+    } else {
+        raw.to_string()
+    }
 }
 
 fn evaluate(
@@ -257,16 +265,21 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
 }
 
 fn open_operand(spec: &str) -> Result<Operand, ImageError> {
+    let (path, mask) = operand_path(spec)?;
+    open_path_with_mask_name(path, mask.map(str::to_owned), spec)
+}
+
+fn operand_path(spec: &str) -> Result<(&Path, Option<&str>), ImageError> {
     let direct_path = Path::new(spec);
     if direct_path.exists() {
-        return open_path_with_mask_name(direct_path, None, spec);
+        return Ok((direct_path, None));
     }
     if let Some((left, right)) = spec.rsplit_once(':')
         && !left.is_empty()
         && !right.trim().is_empty()
         && Path::new(left).exists()
     {
-        return open_path_with_mask_name(Path::new(left), Some(right.trim().to_string()), spec);
+        return Ok((Path::new(left), Some(right.trim())));
     }
     Err(ImageError::CasaSelection(format!(
         "Input mask specification is incorrect: ImageExprParse: '{spec}' is an unknown \
