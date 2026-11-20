@@ -672,7 +672,7 @@ impl ImagerPrediction {
                 let mut field = selected.clone();
                 for (_, rows) in fields {
                     field.selected_rows = rows;
-                    let voltage_pattern = pattern.prepare(ms, &field, self.voltage_squint)?;
+                    let voltage_pattern = pattern.prepare(ms, &field, self.voltage_squint, true)?;
                     images.extend(self.prepare_images(
                         ms,
                         &field,
@@ -688,7 +688,7 @@ impl ImagerPrediction {
                 // virtual combinations. Its scratch iterator can change
                 // the beam as it advances to another field.
                 let voltage_pattern = pattern
-                    .map(|pattern| pattern.prepare(ms, selected, self.voltage_squint))
+                    .map(|pattern| pattern.prepare(ms, selected, self.voltage_squint, scratch))
                     .transpose()?;
                 images = self.prepare_images(
                     ms,

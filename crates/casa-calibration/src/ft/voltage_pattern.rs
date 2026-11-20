@@ -12,7 +12,10 @@ use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, SubtableId, voltage
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::ephemeris::offset_true_angle;
-use casa_types::measures::{MeasFrame, direction::MDirection};
+use casa_types::measures::{
+    MeasFrame,
+    direction::{DirectionRef, MDirection},
+};
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
 
@@ -166,6 +169,7 @@ impl ImagerVoltagePattern {
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
         squint: bool,
+        scratch: bool,
     ) -> MsResult<PreparedVoltagePattern> {
         let main = ms.main_table();
         let mut first = None;
@@ -226,6 +230,24 @@ impl ImagerVoltagePattern {
             if self.table.is_some() || telescope != "VLA" {
                 return Err(invalid(
                     "this legacy voltage-pattern squint is pending #1520",
+                ));
+            }
+            if scratch
+                && matches!(
+                    centre.refer(),
+                    DirectionRef::HADEC
+                        | DirectionRef::AZEL
+                        | DirectionRef::AZELSW
+                        | DirectionRef::AZELGEO
+                        | DirectionRef::AZELSWGEO
+                )
+                && selected
+                    .selected_rows
+                    .iter()
+                    .any(|row| row.time_mjd_seconds != time)
+            {
+                return Err(invalid(
+                    "legacy voltage-pattern squint with changing local pointing is pending #1520",
                 ));
             }
             let (beam, frequency) = default_beam
@@ -304,7 +326,8 @@ impl PreparedVoltagePattern {
         direction: &DirectionCoordinate,
         [nx, ny]: [usize; 2],
     ) -> MsResult<Array2<f64>> {
-        self.separations_from(direction, [nx, ny], &self.centre)
+        let centre = self.centre_in_image_frame(direction)?;
+        Self::separations_from(direction, [nx, ny], &centre)
     }
 
     pub(super) fn has_squint(&self) -> bool {
@@ -325,10 +348,11 @@ impl PreparedVoltagePattern {
         else {
             return Ok(None);
         };
+        let centre = self.centre_in_image_frame(direction)?;
         let shifted = |right| {
             let offset = beam.squint_displacement_rad(reference_hz, frequency, angle, right);
-            let centre = offset_true_angle(&self.centre, offset).map_err(invalid)?;
-            self.separations_from(direction, shape, &centre)
+            let shifted_centre = offset_true_angle(&centre, offset).map_err(invalid)?;
+            Self::separations_from(direction, shape, &shifted_centre)
         };
         Ok(Some([shifted(true)?, shifted(false)?]))
     }
@@ -373,15 +397,17 @@ impl PreparedVoltagePattern {
             .collect())
     }
 
+    fn centre_in_image_frame(&self, direction: &DirectionCoordinate) -> MsResult<MDirection> {
+        self.centre
+            .convert_to(direction.direction_ref(), &self.frame)
+            .map_err(invalid)
+    }
+
     fn separations_from(
-        &self,
         direction: &DirectionCoordinate,
         [nx, ny]: [usize; 2],
         centre: &MDirection,
     ) -> MsResult<Array2<f64>> {
-        let centre = centre
-            .convert_to(direction.direction_ref(), &self.frame)
-            .map_err(invalid)?;
         let (lon0, lat0) = centre.as_angles();
         Ok(Array2::from_shape_fn((ny, nx), |(y, x)| {
             let Ok([lon, lat]) = direction.pixel_to_world([x as f64, y as f64]) else {
