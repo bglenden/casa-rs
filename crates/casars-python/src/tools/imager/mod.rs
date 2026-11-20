@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Python adapter for legacy, calibration-facing imager operations.
 
+mod geometry;
+mod options;
 pub(crate) mod surface;
 
 use std::path::{Path, PathBuf};
@@ -8,7 +10,7 @@ use std::sync::Mutex;
 
 use casa_calibration::{
     AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerPrediction, ImagerPredictionModel,
+    ImagerPrediction, ImagerPredictionModel, ImagerVoltagePattern,
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -18,8 +20,8 @@ use pyo3::{
     types::{PyFloat, PyInt, PyList, PyString},
 };
 
-use crate::convert::Variant;
-use crate::tools::{LogLine, emit};
+use crate::convert::{Variant, quantity_value};
+use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 const LOGGER: &str = "casars.tools.imager";
 
@@ -127,6 +129,189 @@ impl PyImager {
 
     fn done(&self, py: Python<'_>) -> PyResult<bool> {
         self.close(py)
+    }
+
+    #[pyo3(signature = (nx = 128, ny = -1, cellx = Variant::Empty, celly = Variant::Empty, stokes = "I", phasecenter = Variant::Empty, mode = "mfs", nchan = -1, start = Variant::Empty, step = Variant::Empty, spw = ChannelVector::Default, restfreq = Variant::Empty, outframe = "LSRK", veltype = "radio", facets = 1, movingsource = Variant::Empty, distance = Variant::Empty, projection = "SIN"), text_signature = "($self, nx=128, ny=-1, cellx=[], celly=[], stokes='I', phasecenter=[], mode='mfs', nchan=-1, start=[], step=[], spw=[0], restfreq=[], outframe='LSRK', veltype='radio', facets=1, movingsource=[], distance=[], projection='SIN')")]
+    #[allow(clippy::too_many_arguments)]
+    fn defineimage(
+        &self,
+        py: Python<'_>,
+        nx: i64,
+        ny: i64,
+        cellx: Variant,
+        celly: Variant,
+        stokes: &str,
+        phasecenter: Variant,
+        mode: &str,
+        nchan: i64,
+        start: Variant,
+        step: Variant,
+        spw: ChannelVector,
+        restfreq: Variant,
+        outframe: &str,
+        veltype: &str,
+        facets: i64,
+        movingsource: Variant,
+        distance: Variant,
+        projection: &str,
+    ) -> PyResult<bool> {
+        self.attached(py, |state| {
+            let request = geometry::ImageArguments {
+                size: [nx, ny],
+                cell: [&cellx, &celly],
+                stokes,
+                centre: &phasecenter,
+                mode,
+                nchan,
+                start: &start,
+                step: &step,
+                windows: spw.values("spw", 0)?,
+                rest: &restfreq,
+                frame: outframe,
+                velocity: veltype,
+                facets,
+                moving: &movingsource,
+                distance: &distance,
+                projection,
+            }
+            .request()?;
+            state
+                .prediction
+                .define_model_geometry(request)
+                .map_err(runtime_error)?;
+            state.model_in_sky_equation = false;
+            Ok(true)
+        })
+    }
+
+    #[pyo3(signature = (ftmachine = "ft", cache = -1, tile = 16, gridfunction = "SF", location = Variant::Empty, padding = 1.0, freqinterp = "nearest", wprojplanes = -1, epjtablename = "", applypointingoffsets = false, dopbgriddingcorrections = true, cfcachedirname = "", rotpastep = 5.0, pastep = 360.0, pblimit = 0.05, imagetilevol = 0, singleprecisiononly = false, numthreads = -1, psterm = true, aterm = true, mterm = true, wbawp = false, conjbeams = true), text_signature = "($self, ftmachine='ft', cache=-1, tile=16, gridfunction='SF', location=[], padding=1.0, freqinterp='nearest', wprojplanes=-1, epjtablename='', applypointingoffsets=False, dopbgriddingcorrections=True, cfcachedirname='', rotpastep=5.0, pastep=360.0, pblimit=0.05, imagetilevol=0, singleprecisiononly=False, numthreads=-1, psterm=True, aterm=True, mterm=True, wbawp=False, conjbeams=True)")]
+    #[allow(clippy::too_many_arguments)]
+    fn setoptions(
+        &self,
+        py: Python<'_>,
+        ftmachine: &str,
+        cache: i64,
+        tile: i32,
+        gridfunction: &str,
+        location: Variant,
+        padding: f64,
+        freqinterp: &str,
+        wprojplanes: i32,
+        epjtablename: &str,
+        applypointingoffsets: bool,
+        dopbgriddingcorrections: bool,
+        cfcachedirname: &str,
+        rotpastep: f64,
+        pastep: f64,
+        pblimit: f64,
+        imagetilevol: i64,
+        singleprecisiononly: bool,
+        numthreads: i32,
+        psterm: bool,
+        aterm: bool,
+        mterm: bool,
+        wbawp: bool,
+        conjbeams: bool,
+    ) -> PyResult<bool> {
+        // The A/W controls are consumed by their Fourier machines. Ordinary
+        // GridFT and WProjectFT do not use them.
+        let _ = (
+            epjtablename,
+            applypointingoffsets,
+            dopbgriddingcorrections,
+            cfcachedirname,
+            rotpastep,
+            pastep,
+            pblimit,
+            imagetilevol,
+            psterm,
+            aterm,
+            mterm,
+            wbawp,
+            conjbeams,
+        );
+        self.attached(py, |state| {
+            if !state.prediction.has_image_definition() {
+                return Ok(false);
+            }
+            let settings = options::TransformArguments {
+                machine: ftmachine,
+                cache,
+                tile,
+                convolution: gridfunction,
+                location: &location,
+                padding,
+                interpolation: freqinterp,
+                planes: wprojplanes,
+                single_precision: singleprecisiononly,
+                threads: numthreads,
+            }
+            .options(state.prediction.transform_options())?;
+            state
+                .prediction
+                .configure_transform(settings)
+                .map_err(runtime_error)?;
+            Ok(true)
+        })
+    }
+
+    #[pyo3(signature = (dovp = false, usedefaultvp = true, vptable = "", dosquint = false, parangleinc = Variant::Empty, skyposthreshold = Variant::Empty, telescope = "", verbose = true), text_signature = "($self, dovp=False, usedefaultvp=True, vptable='', dosquint=False, parangleinc=[], skyposthreshold=[], telescope='', verbose=True)")]
+    #[allow(clippy::too_many_arguments)]
+    fn setvp(
+        &self,
+        py: Python<'_>,
+        dovp: bool,
+        usedefaultvp: bool,
+        vptable: &str,
+        dosquint: bool,
+        parangleinc: Variant,
+        skyposthreshold: Variant,
+        telescope: &str,
+        verbose: bool,
+    ) -> PyResult<bool> {
+        let angle = |value: &Variant, default| {
+            if value.is_empty_sequence() || matches!(value, Variant::Text(text) if text.is_empty())
+            {
+                Ok(default)
+            } else {
+                quantity_value(value, "deg")
+            }
+        };
+        let parallactic = angle(&parangleinc, 360.)?;
+        let threshold = angle(&skyposthreshold, 180.)?;
+        if dovp && (dosquint || (parallactic, threshold) != (360., 180.)) {
+            return not_yet_implemented_in(
+                "imager",
+                "setvp for varying or squinted voltage patterns",
+                1520,
+            );
+        }
+        // SkyEquation chooses its default pattern from the attached observation.
+        let _ = telescope;
+        self.with_state(py, |state| {
+            let pattern = dovp.then(|| ImagerVoltagePattern {
+                table: (!usedefaultvp).then(|| PathBuf::from(vptable)),
+            });
+            state
+                .prediction
+                .configure_voltage_pattern(pattern)
+                .map_err(runtime_error)?;
+            state.model_in_sky_equation = false;
+            Ok(())
+        })?;
+        let mut lines = vec![LogLine::info("Setting voltage pattern parameters")];
+        if verbose {
+            lines.push(LogLine::info(format!(
+                "Sky position tolerance is {threshold} degrees"
+            )));
+            lines.push(LogLine::info(if usedefaultvp {
+                "Using system default voltage patterns for each telescope".to_owned()
+            } else {
+                format!("Using user defined voltage patterns in Table {vptable}")
+            }));
+        }
+        emit(py, LOGGER, &lines)?;
+        Ok(true)
     }
 
     #[pyo3(signature = (vis = "", nchan = ChannelVector::Default, start = ChannelVector::Default, step = ChannelVector::Default, spw = Variant::Empty, field = Variant::Empty, baseline = Variant::Empty, time = Variant::Empty, scan = Variant::Empty, intent = "", observation = Variant::Empty, uvrange = Variant::Empty, taql = "", usescratch = false, datainmemory = false, writeaccess = true), text_signature = "($self, vis='', nchan=[-1], start=[0], step=[1], spw=[], field=[], baseline=[], time=[], scan=[], intent='', observation=[], uvrange=[], taql='', usescratch=False, datainmemory=False, writeaccess=True)")]
@@ -255,7 +440,8 @@ impl PyImager {
         phasecentertime: f64,
     ) -> PyResult<bool> {
         let images = model_images(model)?;
-        self.attached(py, |state| {
+        let mut preparation_error = None;
+        let result = self.attached(py, |state| {
             let has_model = !images.is_empty() || !complist.is_empty();
             // The legacy sky equation rejects a second model addition until
             // the caller rebuilds its data or image selection.
@@ -276,10 +462,17 @@ impl PyImager {
                     state.model_in_sky_equation |= has_model;
                     Ok(true)
                 }
-                Err(AttachmentError::PredictionPreparation(_)) => Ok(false),
+                Err(AttachmentError::PredictionPreparation(error)) => {
+                    preparation_error = Some(error.to_string());
+                    Ok(false)
+                }
                 result => result.map_err(runtime_error),
             }
-        })
+        })?;
+        if let Some(error) = preparation_error {
+            emit(py, LOGGER, &[LogLine::error(error)])?;
+        }
+        Ok(result)
     }
 }
 

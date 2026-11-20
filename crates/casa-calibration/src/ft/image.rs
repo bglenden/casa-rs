@@ -19,13 +19,14 @@ use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral, legacy_multi_term};
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
-    virtual_model_image_path,
+    convert_frequency_to_frame_with_frame, virtual_model_image_path,
 };
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
 use super::settings::{ImagerGridder, PredictionGeometry};
-use super::{channel_span, invalid, model_entry};
+use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 
 /// An uncommitted Fourier image. The scratch path uses it until the write
 /// finishes. The virtual model can keep it once its on-disk record is filed.
@@ -124,6 +125,14 @@ pub(super) fn prepare_configured_image(
     options: PredictionGeometry,
 ) -> MsResult<Option<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
+    if scratch
+        && options.settings.frequency_interpolation != 0
+        && image.shape().get(3).is_some_and(|&channels| channels > 1)
+    {
+        return Err(invalid(
+            "legacy scratch cube prediction with non-nearest frequency interpolation is pending in #1520",
+        ));
+    }
     let layout = ImageTransform::new(ms, selected, &image, options)?;
     let mut path = virtual_model_image_path(ms)?;
     if scratch {
@@ -256,12 +265,63 @@ fn effective_padding(options: &PredictionGeometry) -> MsResult<GridPadding> {
     // Its GridFT factory uses unit padding even when setoptions supplies
     // another value.
     let factor = match options.settings.gridder {
-        ImagerGridder::WProject(_) => options.settings.padding,
+        ImagerGridder::WProject(_) | ImagerGridder::AutoWProject => options.settings.padding,
         ImagerGridder::Spheroidal | ImagerGridder::Boxcar => 1.0,
     };
     Ok(GridPadding::CasaComposite(
         PaddingFactor::new(factor).map_err(invalid)?,
     ))
+}
+
+fn automatic_w_planes(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+) -> MsResult<WPlaneCount> {
+    let velocity = 299_792_458.0;
+    let spectral = ms.spectral_window()?;
+    let windows = selected
+        .selected_rows
+        .iter()
+        .map(|row| row.spectral_window_id)
+        .collect::<BTreeSet<_>>();
+    let mut min_frequency = f64::INFINITY;
+    let mut max_frequency: f64 = 0.;
+    for window in windows {
+        let frequencies = spectral.chan_freq(window as usize)?;
+        let channels = match selected.channel_selections.get(&window) {
+            Some(selection) => selection.indices(frequencies.len())?,
+            None => (0..frequencies.len()).collect(),
+        };
+        for channel in channels {
+            min_frequency = min_frequency.min(frequencies[channel]);
+            max_frequency = max_frequency.max(frequencies[channel]);
+        }
+    }
+    let uvw = ms.main_table().column_accessor("UVW")?;
+    let mut min_w = f64::INFINITY;
+    let mut max_w: f64 = 0.;
+    let mut square_sum: f64 = 0.;
+    for rows in selected.selected_rows.chunks(256) {
+        let row_ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+        for value in uvw.array_cells_owned_uncached(&row_ids)? {
+            let Some(ArrayValue::Float64(values)) = value else {
+                return Err(invalid("UVW must contain three doubles"));
+            };
+            let w = values
+                .iter()
+                .nth(2)
+                .ok_or_else(|| invalid("UVW must contain a W coordinate"))?
+                .abs();
+            min_w = min_w.min(w);
+            max_w = max_w.max(w);
+            square_sum += w * w;
+        }
+    }
+    Ok(WPlaneCount::Auto {
+        min_w: min_w * min_frequency / velocity,
+        max_w: max_w * max_frequency / velocity,
+        rms_w: (square_sum / selected.selected_rows.len() as f64).sqrt() * max_frequency / velocity,
+    })
 }
 
 impl ImageTransform {
@@ -289,6 +349,7 @@ impl ImageTransform {
         let CoordinateModel::Spectral(spectral) = coords.coordinate(spectral) else {
             unreachable!()
         };
+        let spectral = spectral_with_runtime(spectral)?;
         if npol != stokes.n_stokes() {
             return Err(invalid(
                 "the model image's Stokes axis does not match its planes",
@@ -342,7 +403,7 @@ impl ImageTransform {
                 .map(grid_stokes)
                 .collect::<MsResult<_>>()?,
         ));
-        coordinates.add_coordinate(CoordinateModel::Spectral(spectral.clone()));
+        coordinates.add_coordinate(spectral.clone().into_owned());
         *coordinates.obs_info_mut() = ObsInfo::new("UNKNOWN").with_observer("UNKNOWN");
         let frequencies = (0..channels)
             .map(|index| spectral.world_frequency_hz(index as f64).map_err(invalid))
@@ -354,7 +415,12 @@ impl ImageTransform {
         let kernels: Box<dyn ConvolutionFunctionSet> = match options.settings.gridder {
             ImagerGridder::Spheroidal => Box::new(Spheroidal::new(&geometry, &routing)),
             ImagerGridder::Boxcar => Box::new(Boxcar::new(&geometry, &routing)),
-            ImagerGridder::WProject(planes) => {
+            gridder => {
+                let planes = match gridder {
+                    ImagerGridder::WProject(planes) => planes,
+                    ImagerGridder::AutoWProject => automatic_w_planes(ms, selected)?,
+                    _ => unreachable!("ordinary gridders were already constructed"),
+                };
                 let kernels = WPlanes::new(&geometry, &routing, planes).map_err(invalid)?;
                 w_record = Some(WRecord::new(&kernels, planes));
                 Box::new(kernels)
@@ -494,12 +560,27 @@ impl ImageTransform {
         let (lon, lat, radius) = engine.observatory_position().as_spherical();
         let row = &selected.selected_rows[0];
         let spectral = ms.spectral_window()?;
-        let channels = spectral.chan_freq(row.spectral_window_id as usize)?;
+        let window = row.spectral_window_id as usize;
+        let mut channels = spectral.chan_freq(window)?;
         let routing = self.operator.polarization();
         let axis = coordinate_index(&self.coordinates, CoordinateType::Spectral)?;
         let CoordinateModel::Spectral(axis) = self.coordinates.coordinate(axis) else {
             unreachable!();
         };
+        let frequency_frame_valid = axis.conversion_frequency_ref() == Some(FrequencyRef::LSRK);
+        if frequency_frame_valid {
+            let frame =
+                engine.spectral_frame_observatory(row.time_mjd_seconds, row.field_id as usize)?;
+            let ratio = convert_frequency_to_frame_with_frame(
+                spectral.frequency_reference(window)?,
+                FrequencyRef::LSRK,
+                1.,
+                Some(&frame),
+            )?;
+            for frequency in &mut channels {
+                *frequency *= ratio;
+            }
+        }
         let channel_map = match_channels(axis, self.frequencies.len(), &channels);
         let buffer = FirstBuffer {
             field: row.field_id,
@@ -529,7 +610,7 @@ impl ImageTransform {
             spectral: spectral_record,
             buffer: &buffer,
             interpolation: self.options.settings.frequency_interpolation,
-            frequency_frame_valid: false,
+            frequency_frame_valid,
         }
         .record();
         let settings = self.options.settings;
@@ -557,11 +638,6 @@ impl ImageTransform {
         }
         if let Some(distance) = self.distance_m {
             record.upsert("distance", Value::Scalar(ScalarValue::Float64(distance)));
-        }
-        if scratch && settings.frequency_interpolation != 0 {
-            // This temporary record represents the live iterator, which
-            // keeps its configured interpolation when sampling MODEL_DATA.
-            record.upsert("tovis", Value::Scalar(ScalarValue::Bool(false)));
         }
         if matches!(settings.gridder, ImagerGridder::Boxcar) {
             record.upsert("convtype", Value::Scalar(ScalarValue::String("BOX".into())));

@@ -15,6 +15,19 @@ pub enum ImagerGridder {
     Boxcar,
     /// W projection and its fixed, automatic or restored plane policy.
     WProject(WPlaneCount),
+    /// Measure W over the active visibility selection before choosing planes.
+    AutoWProject,
+}
+
+impl ImagerGridder {
+    /// W projection with an explicit plane count or CASA's automatic choice.
+    pub fn w_project(planes: i32) -> Self {
+        if planes > 0 {
+            Self::WProject(WPlaneCount::Fixed(planes as u32))
+        } else {
+            Self::AutoWProject
+        }
+    }
 }
 
 /// Settings applied when preparing new model grids.
@@ -26,7 +39,7 @@ pub struct ImagerTransformOptions {
     pub padding: f32,
     /// FFT and gridding precision.
     pub precision: GridPrecision,
-    /// CASA interpolation code (nearest 0, linear 1, cubic 2).
+    /// CASA interpolation code (nearest 0, linear 1, cubic 2, spline 3).
     pub frequency_interpolation: i32,
     /// Requested cache size in complex pixels, or the CASA default.
     pub cache_size: i64,
@@ -51,6 +64,17 @@ impl Default for ImagerTransformOptions {
             threads: -1,
             observatory: None,
         }
+    }
+}
+
+impl ImagerTransformOptions {
+    /// Use the same gridding precision CASA selects through setoptions.
+    pub fn use_single_precision(&mut self, single: bool) {
+        self.precision = if single {
+            GridPrecision::F32
+        } else {
+            GridPrecision::F64
+        };
     }
 }
 

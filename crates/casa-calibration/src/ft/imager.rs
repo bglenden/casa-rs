@@ -11,12 +11,14 @@ use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
 use casa_ms::{
     MeasurementSet, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
+use casa_types::measures::position::MPosition;
 use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
 use super::image::{ImageModel, TaylorTerm, prepare_configured_image, reference_frequency};
+use super::imager_definition::ImagerDefinitionRequest;
 use super::settings::{ImagerTransformOptions, PredictionGeometry};
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::ImagerVoltagePattern;
@@ -47,13 +49,18 @@ pub struct ImagerPredictionModel<'a> {
 
 /// Image and transform settings retained across predictions by the imager.
 pub struct ImagerPrediction {
-    definition: Option<ImagerImageDefinition>,
+    definition: Option<ImageDefinition>,
     options: ImagerTransformOptions,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
     ambiguous_scratch_write: bool,
+}
+
+enum ImageDefinition {
+    Coordinates(ImagerImageDefinition),
+    Requested(ImagerDefinitionRequest),
 }
 
 struct PendingPublication {
@@ -112,7 +119,27 @@ impl Default for ImagerPrediction {
 impl ImagerPrediction {
     /// Set the image definition used to create an absent model image.
     pub fn define_image(&mut self, definition: ImagerImageDefinition) {
-        self.definition = Some(definition);
+        self.definition = Some(ImageDefinition::Coordinates(definition));
+    }
+
+    /// Set the image request. Coordinates are resolved against the selected
+    /// MeasurementSet only if the next model image needs to be created.
+    ///
+    /// # Errors
+    /// A previous prediction has an unfinished publication.
+    pub fn define_model_geometry(&mut self, request: ImagerDefinitionRequest) -> MsResult<()> {
+        if self.partial_batch.is_some() || self.pending_publication.is_some() {
+            return Err(invalid(
+                "finish publishing the previous imager prediction before changing image geometry",
+            ));
+        }
+        self.definition = Some(ImageDefinition::Requested(request));
+        Ok(())
+    }
+
+    /// Whether an image has been defined on this object.
+    pub fn has_image_definition(&self) -> bool {
+        self.definition.is_some()
     }
 
     /// Replace the options used by the next Fourier transform.
@@ -120,9 +147,45 @@ impl ImagerPrediction {
         self.options = options;
     }
 
+    /// The current settings, including prior buffer sizes retained by setoptions.
+    pub fn transform_options(&self) -> ImagerTransformOptions {
+        self.options
+    }
+
+    /// Replace Fourier settings for future predictions.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_transform(&mut self, options: ImagerTransformOptions) -> MsResult<()> {
+        if self.partial_batch.is_some() || self.pending_publication.is_some() {
+            return Err(invalid(
+                "finish publishing the previous imager prediction before changing Fourier settings",
+            ));
+        }
+        self.set_options(options);
+        Ok(())
+    }
+
     /// Enable a configured voltage pattern, or disable it with `None`.
     pub fn set_voltage_pattern(&mut self, pattern: Option<ImagerVoltagePattern>) {
         self.voltage_pattern = pattern;
+    }
+
+    /// Update the voltage pattern for future predictions.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_voltage_pattern(
+        &mut self,
+        pattern: Option<ImagerVoltagePattern>,
+    ) -> MsResult<()> {
+        if self.partial_batch.is_some() || self.pending_publication.is_some() {
+            return Err(invalid(
+                "finish publishing the previous imager prediction before changing the voltage pattern",
+            ));
+        }
+        self.set_voltage_pattern(pattern);
+        Ok(())
     }
 
     /// Set the number of Taylor terms and their frequency. With no explicit
@@ -327,9 +390,32 @@ impl ImagerPrediction {
                 "the number of model images must match the Taylor terms",
             ));
         }
+        let requested = match self.definition.as_ref() {
+            Some(ImageDefinition::Requested(request))
+                if model.images.iter().any(|path| !path.exists()) =>
+            {
+                let location = self
+                    .options
+                    .observatory
+                    .map(|[longitude, latitude, radius]| {
+                        let horizontal = radius * latitude.cos();
+                        MPosition::new_itrf(
+                            horizontal * longitude.cos(),
+                            horizontal * longitude.sin(),
+                            radius * latitude.sin(),
+                        )
+                    });
+                Some(request.build_for_selection(ms, selected, location)?)
+            }
+            _ => None,
+        };
         for path in model.images {
             if !path.exists() {
-                let Some(definition) = &self.definition else {
+                let definition = match &self.definition {
+                    Some(ImageDefinition::Coordinates(definition)) => Some(definition),
+                    _ => requested.as_ref(),
+                };
+                let Some(definition) = definition else {
                     return Ok(None);
                 };
                 let mut image = PagedImage::<f32>::create(
