@@ -243,8 +243,7 @@ def test_decimate_tabular_lookup_values_in_native_output(casa, tmp_path, start, 
         for reader in (casa, tools):
             reopened = reader.image()
             assert reopened.open(path)
-            coordinates = reopened.coordsys()
             for pixel, expected in enumerate(world):
-                np.testing.assert_allclose(coordinates.toworld([float(pixel)])["numeric"], [expected])
+                np.testing.assert_allclose(reopened.toworld([float(pixel)])["numeric"], [expected])
             np.testing.assert_array_equal(reopened.getchunk(), values[start::2 * stride])
             assert reopened.done()
