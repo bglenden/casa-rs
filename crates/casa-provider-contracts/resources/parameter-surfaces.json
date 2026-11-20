@@ -22120,7 +22120,7 @@
             "python": {"name": "correlation", "type_hint": "str"},
             "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
           },
-          "surface_note": "Selects stored correlation planes for manual, unflag and quack. Other modes and correlation expressions remain on #978.",
+          "surface_note": "Selects stored correlation planes for manual, unflag, quack and summary. Summary reads all stored planes when given a complex visibility operator. Other modes and expressions remain on #978.",
           "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata selects stored correlation planes inside its agents using literal expressions."}
         },
         {
