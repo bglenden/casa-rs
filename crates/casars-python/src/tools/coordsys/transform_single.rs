@@ -30,10 +30,14 @@ pub(super) fn numeric_record_value(value: &Value) -> PyResult<Vec<f64>> {
     match value {
         Value::Scalar(ScalarValue::Float64(value)) => Ok(vec![*value]),
         Value::Scalar(ScalarValue::Float32(value)) => Ok(vec![f64::from(*value)]),
-        Value::Array(ArrayValue::Float64(values)) if values.ndim() == 1 => {
+        Value::Array(ArrayValue::Float64(values))
+            if values.shape().iter().filter(|&&size| size != 1).count() <= 1 =>
+        {
             Ok(values.iter().copied().collect())
         }
-        Value::Array(ArrayValue::Float32(values)) if values.ndim() == 1 => {
+        Value::Array(ArrayValue::Float32(values))
+            if values.shape().iter().filter(|&&size| size != 1).count() <= 1 =>
+        {
             Ok(values.iter().copied().map(f64::from).collect())
         }
         Value::Array(ArrayValue::Float32(_) | ArrayValue::Float64(_)) => {

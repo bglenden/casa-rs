@@ -254,6 +254,7 @@ impl<'a> Values<'a> {
         native: &[f64],
         visible_axes: Vec<usize>,
         full_coordinate: Option<CoordinateModel>,
+        converted: bool,
     ) -> PyResult<Self> {
         let units = match coordinate {
             CoordinateModel::Direction(direction) => direction.visible_world_units(),
@@ -286,7 +287,7 @@ impl<'a> Values<'a> {
             native: native.to_vec(),
             declared,
             units,
-            converted: true,
+            converted,
             visible_axes,
             full_measure,
         })
@@ -496,7 +497,15 @@ pub(super) fn format_transformed_world(
     velocities: bool,
     coordinate_tags: bool,
 ) -> PyResult<CasaValue> {
-    format_world_at(state, world, format, true, velocities, coordinate_tags)
+    format_world_at(
+        state,
+        world,
+        format,
+        true,
+        velocities,
+        coordinate_tags,
+        true,
+    )
 }
 
 pub(super) fn format_world_offsets(
@@ -518,7 +527,7 @@ pub(super) fn format_world_offsets(
             )));
         }
     }
-    let mut result = format_world_at(state, world, format, absolute, true, true)?;
+    let mut result = format_world_at(state, world, format, absolute, true, true, false)?;
     if !absolute
         && let CasaValue::Record(fields) = &mut result
         && let Some((_, tag)) = fields.iter_mut().find(|(name, _)| name == "ar_type")
@@ -535,6 +544,7 @@ fn format_world_at(
     absolute: bool,
     velocities: bool,
     coordinate_tags: bool,
+    converted: bool,
 ) -> PyResult<CasaValue> {
     let format = format.to_ascii_lowercase();
     let placements = if format.contains('s') || format.contains('m') {
@@ -575,6 +585,7 @@ fn format_world_at(
             &world[offset..end],
             visible_axes,
             full_coordinate,
+            converted,
         )?);
         offset = end;
     }

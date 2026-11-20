@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem};
+use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Ix2;
 use pyo3::exceptions::PyRuntimeError;
@@ -156,79 +156,42 @@ impl OutputFrame {
             };
             let slice = &mut values[offset..offset + count];
             offset += count;
-            if world {
-                match model {
-                    CoordinateModel::Stokes(_) => continue,
-                    CoordinateModel::Direction(direction) => {
-                        let reference = direction.reference_value();
-                        let [longitude, latitude] = slice else {
-                            return Err(raised(
-                                "Relative direction with removed axes requires axis maps (#1002)",
-                            ));
-                        };
-                        [*longitude, *latitude] = direction_offset(
-                            reference[0],
-                            reference[1],
-                            *longitude,
-                            *latitude,
-                            self.absolute(),
-                        );
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
             let reference = if world {
                 model.reference_value()
             } else {
                 model.reference_pixel()
             };
+            match (world, model) {
+                (true, CoordinateModel::Stokes(_)) => continue,
+                (true, CoordinateModel::Direction(direction)) => {
+                    direction
+                        .convert_world_offset(slice, self.absolute())
+                        .map_err(|error| raised(error.to_string()))?;
+                    continue;
+                }
+                (false, CoordinateModel::Stokes(stokes)) => {
+                    let absolute = if self.absolute() {
+                        slice[0] + reference[0]
+                    } else {
+                        slice[0]
+                    };
+                    let index = (absolute + 0.5).trunc();
+                    let count = stokes.n_stokes();
+                    if !(0.0..count as f64).contains(&index) {
+                        return Err(raised(format!(
+                            "Absolute pixel {index} is out of range [0..{}]",
+                            count.saturating_sub(1)
+                        )));
+                    }
+                }
+                _ => {}
+            }
             for (value, reference) in slice.iter_mut().zip(reference) {
                 *value = self.difference(*value, reference);
             }
         }
         Ok(())
     }
-}
-
-fn direction_offset(ref_lon: f64, ref_lat: f64, lon: f64, lat: f64, absolute: bool) -> [f64; 2] {
-    let (sin_lon, cos_lon) = ref_lon.sin_cos();
-    let (sin_lat, cos_lat) = ref_lat.sin_cos();
-    let (longitude, latitude) = if absolute {
-        (lon / lat.cos(), lat)
-    } else {
-        (lon, lat)
-    };
-    let (sin_longitude, cos_longitude) = longitude.sin_cos();
-    let (z, cos_latitude) = latitude.sin_cos();
-    let x = cos_latitude * cos_longitude;
-    let y = cos_latitude * sin_longitude;
-    // Unit vectors pointing to the reference, east and north form the local frame.
-    let [x, y, z] = if absolute {
-        let meridian = x * cos_lat - z * sin_lat;
-        [
-            meridian * cos_lon - y * sin_lon,
-            meridian * sin_lon + y * cos_lon,
-            x * sin_lat + z * cos_lat,
-        ]
-    } else {
-        let meridian = x * cos_lon + y * sin_lon;
-        [
-            meridian * cos_lat + z * sin_lat,
-            -x * sin_lon + y * cos_lon,
-            -meridian * sin_lat + z * cos_lat,
-        ]
-    };
-    let latitude = z.atan2(x.hypot(y));
-    let longitude = y.atan2(x);
-    [
-        if absolute {
-            longitude
-        } else {
-            longitude * latitude.cos()
-        },
-        latitude,
-    ]
 }
 
 fn scalar_transform(
@@ -271,9 +234,10 @@ fn scalar_transform(
             WorldArgument::Unset => Vec::new(),
             WorldArgument::Numeric(values) => values,
             WorldArgument::Record(record) => {
-                if ["quantity", "measure", "string"]
-                    .iter()
-                    .any(|field| record.get(field).is_some())
+                let numeric = record.get("numeric");
+                if record.get("quantity").is_some()
+                    || record.get("measure").is_some()
+                    || (numeric.is_none() && record.get("string").is_none())
                 {
                     return if output.absolute() {
                         Ok(CasaValue::empty_record())
@@ -284,8 +248,7 @@ fn scalar_transform(
                     };
                 }
                 numeric_record_value(
-                    record
-                        .get("numeric")
+                    numeric
                         .ok_or_else(|| raised("Input does not appear to be a pixel coordinate"))?,
                 )?
             }

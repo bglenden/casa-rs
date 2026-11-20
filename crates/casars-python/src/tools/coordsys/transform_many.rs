@@ -113,8 +113,8 @@ pub(super) fn world_scale(coordinates: &CoordinateSystem) -> PyResult<Vec<f64>> 
     for index in 0..coordinates.n_coordinates() {
         match coordinates.coordinate(index) {
             CoordinateModel::Direction(direction) => {
-                for unit in direction.world_units() {
-                    let unit = Unit::new(unit).map_err(|error| raised(error.to_string()))?;
+                for unit in direction.visible_world_units() {
+                    let unit = Unit::new(&unit).map_err(|error| raised(error.to_string()))?;
                     result.push(1.0 / unit.val().factor);
                 }
             }

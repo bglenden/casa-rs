@@ -56,6 +56,76 @@ def test_world_offsets_reuse_supplied_record_representations(casa):
         _assert_value(left.toabs(argument, 1), right.toabs(argument, 1))
 
 
+def test_scalar_pixel_records_keep_numeric_values_alongside_strings(casa):
+    for backend in (tools, casa):
+        cs = _linear(backend)
+        pixel = {"pw_type": "pixel", "numeric": [6.0, 8.0], "string": ["x", "y"]}
+        np.testing.assert_array_equal(cs.torel(pixel)["numeric"], [1, 1])
+        np.testing.assert_array_equal(cs.toabs(pixel)["numeric"], [11, 15])
+        assert cs.toabs({"pw_type": "pixel"}) == {}
+        del pixel["numeric"]
+        for method in (cs.toabs, cs.torel):
+            with pytest.raises(RuntimeError, match="Input does not appear to be a pixel coordinate"):
+                method(pixel)
+        for numeric in (np.array([[6.0, 8.0]]), np.array([[6.0], [8.0]])):
+            np.testing.assert_array_equal(cs.torel({"numeric": numeric}, 1)["numeric"], [-104, -182])
+
+
+def test_stokes_pixel_offsets_require_a_defined_polarization(casa):
+    for backend in (tools, casa):
+        cs = backend.coordsys().newcoordsys(stokes="I,Q")
+        for method in (cs.toabs, cs.torel, cs.toabsmany, cs.torelmany):
+            many = method.__name__.endswith("many")
+            for value, index in ((2.0, 2), (-1.6, -1)):
+                pixel = np.array([[value]] if many else [value])
+                with pytest.raises(RuntimeError, match=rf"Absolute pixel {index} is out of range \[0\.\.1\]"):
+                    method(pixel, 0)
+            pixel = np.array([[-1.4]] if many else [-1.4])
+            np.testing.assert_array_equal(method(pixel, 0)["numeric"], pixel)
+
+
+@pytest.mark.parametrize("axes", [[0, -2], [-2, 0]])
+def test_world_offsets_of_a_sliced_direction_axis(casa, axes):
+    original = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    original.setunits(["deg", "deg"], "direction")
+    original.setreferencevalue([40.0, 23.0], "direction")
+    record = original.torecord()
+    record["pixelmap0"] = record["worldmap0"] = np.array(axes, dtype=np.int32)
+    record["pixelmap1"] = record["worldmap1"] = np.array([1], dtype=np.int32)
+    left, right = (backend.coordsys() for backend in (tools, casa))
+    assert left.fromrecord(record) and right.fromrecord(record)
+    world = np.array([38.0, 1.4e9])
+    for name in ("toabs", "torel", "toabsmany", "torelmany"):
+        value = world[:, None] if name.endswith("many") else world
+        _assert_value(getattr(left, name)(value, 1), getattr(right, name)(value, 1))
+
+
+def test_absolute_offset_measures_keep_the_native_frames(casa):
+    original = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    record = original.torecord()
+    record["direction0"]["conversionSystem"] = "GALACTIC"
+    record["spectral1"]["conversion"]["system"] = "BARY"
+    left, right = (backend.coordsys() for backend in (tools, casa))
+    assert left.fromrecord(record) and right.fromrecord(record)
+    value = {"numeric": [0.1, 0.2, 3.0], "measure": {}}
+    actual = left.toabs(value, 1)
+    assert actual["measure"]["direction"]["refer"] == "J2000"
+    assert actual["measure"]["spectral"]["frequency"]["refer"] == "LSRK"
+    _assert_value(actual, right.toabs(value, 1))
+
+
+def test_spherical_offsets_near_the_pole(casa):
+    for backend in (tools, casa):
+        cs = backend.coordsys().newcoordsys(direction=True)
+        cs.setunits(["deg", "deg"])
+        np.testing.assert_allclose(
+            cs.torel([0.0, 89.999999], 1)["numeric"],
+            [0.0, 89.99999914622636],
+            rtol=0.0,
+            atol=1e-11,
+        )
+
+
 def _mixed(api):
     cs = api.coordsys().newcoordsys(direction=True, stokes=["I", "Q"], spectral=True)
     assert cs.setunits(["deg", "deg"], "direction")
