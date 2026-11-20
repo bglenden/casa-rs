@@ -15,22 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, direction = None, spectral = None, stokes = None, linear = None, tabular = None, overwrite = None, silent = None), text_signature = "($self, outfile='', direction=False, spectral=False, stokes='', linear=False, tabular=False, overwrite=False, silent=False)")]
-    fn adddegaxes(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        tabular: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        silent: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("adddegaxes")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type = None, pars = None, region = None, zero = None, seeds = None), text_signature = "($self, type='normal', pars=[0.0, 1.0], region={}, zero=False, seeds=[])")]
     fn addnoise(
         &self,
