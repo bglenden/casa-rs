@@ -23,6 +23,18 @@ use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
 
+const STRING_SELECTORS: [&str; 9] = [
+    "field",
+    "spw",
+    "array",
+    "feed",
+    "scan",
+    "antenna",
+    "uvrange",
+    "timerange",
+    "intent",
+];
+
 fn main() -> ExitCode {
     TaskFrontEnd::new_with_deferred_schema(
         "flagdata",
@@ -73,6 +85,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             ));
         }
     };
+    check_selector_arguments(task, &action)?;
     let request = flagdata_request(task, channel_bins).or_else(|error| {
         let parameter = error.parameter.as_deref();
         if parameter == Some("datacolumn")
@@ -132,27 +145,17 @@ fn save_flag_parameters(
     action: &str,
 ) -> Result<(), TaskFailure> {
     let mut arguments = Vec::new();
-    for name in [
-        "field",
-        "spw",
-        "array",
-        "feed",
-        "scan",
-        "antenna",
-        "uvrange",
-        "timerange",
-        "intent",
-    ] {
+    for name in STRING_SELECTORS {
         if let Some(text) = task.argument_text(name) {
             arguments.push(format!("{name}={text}"));
             continue;
         }
-        let text = if let Some(ParameterValue::String(value)) = task.session().given(name) {
+        let argument = if let Some(value) = task.session().given(name) {
             value.clone()
         } else {
-            task_selection_text(task, name)?
+            ParameterValue::String(task_selection_text(task, name)?)
         };
-        push_command_argument(&mut arguments, name, &ParameterValue::String(text));
+        push_command_argument(&mut arguments, name, &argument);
     }
     if let Some(observation) = observation_text(task)? {
         push_command_argument(
@@ -366,6 +369,31 @@ fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result
                 .at("correlation"),
         ),
     }
+}
+
+fn check_selector_arguments(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
+    for name in STRING_SELECTORS {
+        match task.value(name) {
+            None | Some(ParameterValue::String(_)) => {}
+            Some(ParameterValue::Array(items))
+                if items
+                    .iter()
+                    .all(|item| matches!(item, ParameterValue::String(_))) =>
+            {
+                backup_before_failed_apply(task, action)?;
+                return Err(
+                    TaskFailure::execution(format!("argument _{name} must be a string")).at(name),
+                );
+            }
+            _ => {
+                return Err(TaskFailure::validation(format!(
+                    "{name} must be a string or string vector"
+                ))
+                .at(name));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
