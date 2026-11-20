@@ -5806,6 +5806,14 @@ controls alongside the raw shift results. This follows the standing rule
 for results that contradict the documented operation (#1252).
 [CASA measures documentation](https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html)
 
+## A rejected increment edit can leave a singular coordinate system
+
+In CASA 6.7.6.14, create a coordinate tool with `cs.newcoordsys(linear=2)`.
+The call `cs.setincrement([3.0, 0.0])` raises a singular-matrix error and
+leaves the increments at `[3.0, 0.0]`. Casa-rs validates the edited record
+before replacing the active system, so a rejected edit leaves the original
+increments and the transform usable.
+
 ## Batch coordinate conversion can reshape ragged inputs or misread byte order
 
 CASA 6.7.6.14 can pad or truncate a ragged sequence while converting it to

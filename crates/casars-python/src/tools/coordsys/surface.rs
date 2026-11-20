@@ -267,7 +267,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setlineartransform",
@@ -344,7 +344,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setrestfrequency",

@@ -119,16 +119,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None, r#type = None), text_signature = "($self, value=[], type='')")]
-    fn setincrement(
-        &self,
-        value: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setincrement")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type = None, value = None), text_signature = "($self, type='', value=[])")]
     fn setlineartransform(
         &self,
@@ -168,16 +158,6 @@ impl PyCoordsys {
         mask: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("setreferencelocation")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None, r#type = None), text_signature = "($self, value=[], type='')")]
-    fn setreferencevalue(
-        &self,
-        value: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setreferencevalue")
     }
 
     /// Not yet implemented in casa-rs.
