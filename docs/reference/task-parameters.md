@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 820
+- Concepts: 821
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -1073,7 +1073,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"DATA"</code>; optional | Data | Visibility data column used by the surface.<br><em>Surface:</em> Used as the visibility data column for automatic flagging modes. |
 | <code>clipoutside</code> | <code>flagdata.clipoutside@r1</code> | <code>variant</code> | <code>true</code>; optional | Clip | Flag samples outside the closed clip range when true, or inside it when false. |
 | <code>channelavg</code> | <code>flagdata.channelavg@r2</code> | <code>variant</code> | <code>false</code>; optional | Clip | Average selected channels before clipping. |
-| <code>chanbin</code> | <code>parameter.chanbin@r2</code> | <code>array&lt;integer&gt;</code> | <code>1</code>; optional | Clip | Channel averaging width for clipping. |
+| <code>chanbin</code> | <code>parameter.chanbin@r3</code> | <code>variant</code> | <code>1</code>; optional | Clip | Channel averaging width for clipping. |
 | <code>timeavg</code> | <code>flagdata.timeavg@r1</code> | <code>bool</code> | <code>false</code>; optional | Clip | Average time before clipping. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Clip | Averaging time bin, a time quantity as CASA writes it. |
 | <code>clipzeros</code> | <code>parameter.clipzeros@r1</code> | <code>bool</code> | <code>false</code>; optional | Flagging | Flag exact zero amplitudes in clip mode. |

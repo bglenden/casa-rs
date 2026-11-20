@@ -22,8 +22,8 @@ from record_casa_returns import make_cal_ms
 TASKS = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
 
 
-def compare_new_rows(paths, original, calls, wall_time):
-    history_paths = [f"{path}/HISTORY" for path in paths]
+def compare_new_rows(paths, original, calls, wall_time, subtable="HISTORY"):
+    history_paths = [f"{path}/{subtable}" for path in paths]
     with (table(history_paths[0], ack=False) as casa,
           table(history_paths[1], ack=False) as native,
           casa_table(history_paths[1]) as reopen):
@@ -67,6 +67,11 @@ def compare_applies(source):
         ({"action": "apply", "writeflags": False}, 1),
         ({"mode": "clip", "channelavg": True, "chanbin": [2]}, 1),
         ({"mode": "clip", "channelavg": True, "chanbin": 2, "flagbackup": True}, 1),
+        ({"mode": "clip", "channelavg": True, "chanbin": []}, 1),
+        ({"mode": "clip", "channelavg": True, "chanbin": np.int64(2)}, 1),
+        ({"spw": " 0:1 ~ 2 "}, 1),
+        ({"mode": "rflag"}, 1),
+        ({"mode": "rflag", "timedev": 2, "freqdev": 3}, 1),
     )
     with table(f"{source}/HISTORY", ack=False) as history:
         original = history.nrows()
@@ -80,6 +85,25 @@ def compare_applies(source):
         end = time() + MJD_UNIX_EPOCH_S
         compare_new_rows(paths, original, calls, (start, end))
     return len(cases)
+
+
+def compare_relocated_history(source):
+    paths = [f"relocated-{name}.ms" for name, _ in TASKS]
+    with table(f"{source}/HISTORY", ack=False) as history:
+        original = history.nrows()
+    start = time() + MJD_UNIX_EPOCH_S
+    for path, (_, task) in zip(paths, TASKS, strict=True):
+        copytree(source, path)
+        history = Path(path, "HISTORY")
+        relocated = history.rename(history.with_name("PROVENANCE"))
+        with table(path, readonly=False, ack=False) as ms:
+            ms.putkeyword("HISTORY", f"Table: {relocated.resolve()}")
+        copytree(f"{source}/HISTORY", history)
+        assert task(vis=path, flagbackup=False) == {}
+        with table(str(history), ack=False) as unused:
+            assert unused.nrows() == original
+    end = time() + MJD_UNIX_EPOCH_S
+    compare_new_rows(paths, original, 1, (start, end), subtable="PROVENANCE")
 
 
 def compare_unchanged(source):
@@ -107,8 +131,9 @@ def main():
         make_cal_ms(str(source), channels=4, scan_seconds=20)
         seed_history(source)
         applied = compare_applies(source)
+        compare_relocated_history(source)
         unchanged = compare_unchanged(source)
-    print(f"{applied} flagdata HISTORY products and {unchanged} unchanged inputs verified against CASA")
+    print(f"{applied + 1} flagdata HISTORY products and {unchanged} unchanged inputs verified against CASA")
 
 
 if __name__ == "__main__":

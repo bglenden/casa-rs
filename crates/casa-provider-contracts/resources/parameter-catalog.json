@@ -9303,6 +9303,18 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.chanbin",
+      "semantic_revision": 3,
+      "casa_name": "chanbin",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Channel averaging width for clipping.", "details": "Use one integer for all spectral windows or one width per spectral-window row. A width of zero passes through channels. A width of one averages the whole selected window. CASA accepts Boolean and NumPy integer scalars and uses the default width for them.", "examples": ["1", "[2, 0]"]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "flagdata.timeavg",
       "semantic_revision": 1,
       "casa_name": "timeavg",

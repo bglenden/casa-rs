@@ -600,21 +600,15 @@ def _coerce_flagdata_channel_bins(
     if value is None:
         errors["chanbin"] = ["null value not allowed"] * 3
         return
-    if isinstance(value, (bool, np.int32, np.int64)):
-        # CASA accepts these scalars but uses the default width.
-        values["chanbin"] = 1
-        return
-    if isinstance(value, int):
+    if isinstance(value, integer):
         return
     if isinstance(value, np.ndarray) and value.ndim == 0:
         if value.dtype.type in integer:
-            # The binding passes the zero-dimensional array as an empty integer vector.
-            values["chanbin"] = []
             return
     elif isinstance(value, Iterable) and not isinstance(value, str):
         items = list(value)
         if all(isinstance(item, integer) for item in items):
-            values["chanbin"] = 1 if not items or all(isinstance(item, bool) for item in items) else [int(item) for item in items]
+            values["chanbin"] = [item if isinstance(item, bool) else int(item) for item in items]
             return
     errors["chanbin"] = ["must be of cInt type", "must be of cIntVec type"]
 

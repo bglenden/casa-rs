@@ -4,10 +4,10 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use casa_tables::{TableError, TableOptions};
+use casa_tables::{Table, TableError, TableOptions};
 use casa_types::{ArrayValue, ScalarValue, Value};
 
-use crate::SubtableId;
+use crate::{SubtableId, ms::subtable_path_from_main};
 
 use super::{MsTransformError, open_staged_subtable_for_write};
 
@@ -26,7 +26,15 @@ pub fn append_task_history(
     output: &Path,
     history: &TransformTaskHistory,
 ) -> Result<(), MsTransformError> {
-    let path = output.join(SubtableId::History.name());
+    let main = Table::open(TableOptions::new(output)).map_err(|source| {
+        MsTransformError::MutateMeasurementSet {
+            path: output.display().to_string(),
+            source: Box::new(source),
+        }
+    })?;
+    let path = subtable_path_from_main(&main, output, SubtableId::History)
+        .unwrap_or_else(|| output.join(SubtableId::History.name()));
+    drop(main);
     let failure = |source| MsTransformError::MutateMeasurementSet {
         path: path.display().to_string(),
         source: Box::new(source),
