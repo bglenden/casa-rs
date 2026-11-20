@@ -357,7 +357,7 @@ def imstat(
 def immoments(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     moments: int | list[int] | tuple[int, ...] = ...,
-    axis: str = ...,
+    axis: int | str = ...,
     region: str = ...,
     box: str = ...,
     chans: str = ...,

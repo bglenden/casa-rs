@@ -3,9 +3,8 @@
 //! types, FITS/CASA inputs, full spatial/spectral/Stokes/mask selection, and
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
-mod coords;
-mod mask;
-mod region;
+pub(super) mod coords;
+pub(super) mod region;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -22,8 +21,8 @@ use crate::{
 };
 
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
-use self::mask::evaluate_subimage_mask;
 use self::region::SubimageSelection;
+use super::lel_mask::evaluate_mask;
 
 enum SourceData<T: ImagePixel> {
     Paged {
@@ -205,7 +204,7 @@ fn run_typed<T: ImagePixel + Copy>(
 
     let mut mask = img.get_mask_slice(&selection.start, &selection.shape, &vec![1; ndim])?;
     selection.apply_selection_masks(&mut mask);
-    if let Some(expr_mask) = evaluate_subimage_mask(
+    if let Some(expr_mask) = evaluate_mask(
         request.mask.as_deref(),
         &full_shape,
         img.coordinates(),

@@ -76,26 +76,26 @@ impl From<SpatialShape> for QualifiedShape {
     }
 }
 
-pub(super) struct SubimageSelection {
-    pub(super) start: Vec<usize>,
-    pub(super) shape: Vec<usize>,
-    pub(super) plane: [usize; 2],
+pub(in crate::analysis) struct SubimageSelection {
+    pub(in crate::analysis) start: Vec<usize>,
+    pub(in crate::analysis) shape: Vec<usize>,
+    pub(in crate::analysis) plane: [usize; 2],
     /// Precomputed spatial mask (shape `[shape[plane[0]], shape[plane[1]]]`) if
     /// the selection is non-rectangular or a union of multiple shapes.
-    pub(super) spatial_mask: Option<Array2<bool>>,
+    pub(in crate::analysis) spatial_mask: Option<Array2<bool>>,
     qualified_shapes: Vec<QualifiedShape>,
     /// Full-dimensional mask from saved `WCPolygon` / `WCUnion`, if any,
     /// covering the entire parent image (sliced lazily to `[start, shape]`).
-    pub(super) saved_polygon_mask: Option<ArrayD<bool>>,
-    pub(super) channel_axis: Option<usize>,
-    pub(super) channel_indices: Option<Vec<usize>>,
-    pub(super) stokes_axis: Option<usize>,
-    pub(super) stokes_indices: Option<Vec<usize>>,
-    pub(super) selected_stokes: Option<Vec<StokesType>>,
+    pub(in crate::analysis) saved_polygon_mask: Option<ArrayD<bool>>,
+    pub(in crate::analysis) channel_axis: Option<usize>,
+    pub(in crate::analysis) channel_indices: Option<Vec<usize>>,
+    pub(in crate::analysis) stokes_axis: Option<usize>,
+    pub(in crate::analysis) stokes_indices: Option<Vec<usize>>,
+    pub(in crate::analysis) selected_stokes: Option<Vec<StokesType>>,
 }
 
 impl SubimageSelection {
-    pub(super) fn resolve<T: ImagePixel>(
+    pub(in crate::analysis) fn resolve<T: ImagePixel>(
         image: &dyn ImageInterface<T>,
         box_arg: Option<&str>,
         region_arg: Option<&str>,
@@ -214,7 +214,7 @@ impl SubimageSelection {
         })
     }
 
-    pub(super) fn apply_selection_masks(&self, mask: &mut Option<ArrayD<bool>>) {
+    pub(in crate::analysis) fn apply_selection_masks(&self, mask: &mut Option<ArrayD<bool>>) {
         let [px, py] = self.plane;
         let box_mask = self.spatial_mask.as_ref().map(|spatial| {
             ArrayD::from_shape_fn(IxDyn(&self.shape), |idx| spatial[[idx[px], idx[py]]])

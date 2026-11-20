@@ -889,6 +889,8 @@ pub enum ManagedResultDecoder {
     CalibrationReportV1,
     #[serde(rename = "imager-run-v1")]
     ImagerRunV1,
+    #[serde(rename = "immoments-run-v1")]
+    ImmomentsRunV1,
     #[serde(rename = "plotms-run-v1")]
     PlotmsRunV1,
     #[serde(rename = "simobserve-run-v1")]

@@ -71,7 +71,7 @@ fn find_system_axis(coords: &CoordinateSystem, kind: CoordinateType) -> Option<u
     None
 }
 
-fn subset_beam_set(
+pub(in crate::analysis) fn subset_beam_set(
     beam_set: &ImageBeamSet,
     input_coords: &CoordinateSystem,
     ndim: usize,

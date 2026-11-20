@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, StokesType,
@@ -18,7 +18,7 @@ use casa_provider_contracts::ParameterValue;
 use casa_tables::{Table, TableOptions};
 use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
 use fitsio::images::ImageType as FitsImageType;
-use ndarray::{Array2, Axis, Dimension, IxDyn, ShapeBuilder, Zip};
+use ndarray::{Array2, Dimension, IxDyn, ShapeBuilder, Zip};
 use num_complex::Complex32;
 
 mod axes;
@@ -36,6 +36,9 @@ mod schema;
 mod summary_log;
 mod task_contract;
 mod world_header;
+
+mod immoments;
+mod lel_mask;
 
 use self::axes::{direction_plane_axes, other_axes};
 pub use self::extrema::imhead_extrema;
@@ -197,8 +200,8 @@ fn is_fits_file(path: &Path) -> Result<bool, ImageError> {
 pub fn immoments(request: &ImmomentsRequest) -> Result<MomentMapSummary, ImageError> {
     let image = AnyPagedImage::open(&request.imagename)?;
     match &image {
-        AnyPagedImage::Float32(image) => immoments_typed(image, request),
-        AnyPagedImage::Float64(image) => immoments_typed(image, request),
+        AnyPagedImage::Float32(image) => immoments::run(image, request),
+        AnyPagedImage::Float64(image) => immoments::run(image, request),
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
             Err(ImageError::InvalidMetadata(
                 "immoments currently supports real-valued images".to_string(),
@@ -2643,7 +2646,6 @@ fn offset_pos(start: &[usize], pos: Vec<usize>) -> Vec<usize> {
 
 #[derive(Debug, Clone)]
 pub(super) struct Selection {
-    full_shape: Vec<usize>,
     start: Vec<usize>,
     shape: Vec<usize>,
     /// The spectral axis its named channels belong to.
@@ -2710,7 +2712,6 @@ impl Selection {
                 (None, None)
             };
         Ok(Self {
-            full_shape: image.shape().to_vec(),
             start,
             shape,
             channel_axis,
@@ -3572,212 +3573,31 @@ fn collapsed_image_info<T: ImagePixel>(image: &PagedImage<T>) -> Result<ImageInf
     Ok(info)
 }
 
-fn immoments_typed<T>(
+fn combined_moment_mask<T: ImagePixel>(
     image: &PagedImage<T>,
-    request: &ImmomentsRequest,
-) -> Result<MomentMapSummary, ImageError>
-where
-    T: ImagePixel + Into<f64> + Copy,
-{
-    if !(-1..=3).contains(&request.moments) {
-        return Err(ImageError::InvalidMetadata(format!(
-            "immoments support is limited to moments -1 through 3, got {}",
-            request.moments
-        )));
-    }
-    if request.outfile.exists() {
-        if request.overwrite {
-            fs::remove_dir_all(&request.outfile)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-        } else {
-            return Err(ImageError::Io(format!(
-                "moment output already exists: {}",
-                request.outfile.display()
-            )));
-        }
-    }
-    let spectral_axis = image.find_axis(CoordinateType::Spectral).ok_or_else(|| {
-        ImageError::InvalidMetadata("immoments requires a spectral axis".to_string())
-    })?;
-    let selection = Selection::new(image, None, request.chans.as_deref(), None)?;
-    let input = image.get_slice(&selection.start, &selection.shape)?;
-    let mask = combined_moment_mask(image, &selection, request.mask.as_deref())?;
-    let local_axis = spectral_axis;
-    let coords = spectral_velocity_values(image, local_axis, &selection)?;
-    let scale = integrated_scale_factor(image, local_axis)?;
-    let (output_data, output_mask) = collapse_moment(
-        &input,
-        mask.as_ref(),
-        local_axis,
-        &coords,
-        scale,
-        request.includepix,
-        request.moments,
-    )?;
-    let out_shape = output_data.shape().to_vec();
-    let legacy_coordinates = image.table().keywords().get("coords").cloned();
-    let mut output = TempImage::<f32>::new(
-        out_shape.clone(),
-        image.coordinates().clone(),
-        casa_lattices::TempStoragePolicy::Auto {
-            memory_budget_bytes: 64 * 1024 * 1024,
-            scratch: casa_lattices::ScratchSpace::SystemTemp,
-        },
-    )?;
-    output.set_units(moment_units(image.units(), request.moments))?;
-    output.set_image_info(&collapsed_image_info(image)?)?;
-    output.set_misc_info(image.misc_info())?;
-    output.put_slice(&output_data, &vec![0; output.ndim()])?;
-    if output_mask.iter().any(|valid| !*valid) {
-        output.put_mask("mask0", &output_mask)?;
-        output.set_default_mask("mask0")?;
-    }
-    output.save_as(&request.outfile)?;
-    if let Some(Value::Record(coords)) = legacy_coordinates {
-        patch_saved_coords_keyword(&request.outfile, coords)?;
-    }
-    let valid_profiles = output_mask.iter().filter(|value| **value).count();
-    Ok(MomentMapSummary {
-        imagename: request.imagename.display().to_string(),
-        outfile: request.outfile.display().to_string(),
-        moment: request.moments,
-        shape: out_shape,
-        units: output.units().to_string(),
-        valid_profiles,
-    })
-}
-
-fn combined_moment_mask<T>(
-    image: &PagedImage<T>,
-    selection: &Selection,
+    selection: &imsubimage::region::SubimageSelection,
     mask_expr: Option<&str>,
-) -> Result<Option<ArrayD<bool>>, ImageError>
-where
-    T: ImagePixel,
-{
-    let base_mask =
+    stretch: bool,
+) -> Result<Option<ArrayD<bool>>, ImageError> {
+    let mut base =
         image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
-    let Some(mask_expr) = mask_expr else {
-        return Ok(base_mask);
-    };
-    let expr_mask = image_threshold_mask(mask_expr, selection)?;
-    let combined = match base_mask {
-        Some(mut base) => {
-            Zip::from(&mut base).and(&expr_mask).for_each(|base, expr| {
-                *base = *base && *expr;
-            });
-            base
-        }
-        None => expr_mask,
-    };
-    Ok(Some(combined))
-}
-
-fn image_threshold_mask(expr: &str, selection: &Selection) -> Result<ArrayD<bool>, ImageError> {
-    let parsed = parse_image_threshold_mask(expr)?;
-    let mask_image = AnyPagedImage::open(&parsed.imagename)?;
-    match &mask_image {
-        AnyPagedImage::Float32(image) => image_threshold_mask_typed(image, &parsed, selection),
-        AnyPagedImage::Float64(image) => image_threshold_mask_typed(image, &parsed, selection),
-        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
-            ImageError::InvalidMetadata("mask expressions require real-valued images".to_string()),
-        ),
-    }
-}
-
-fn image_threshold_mask_typed<T>(
-    image: &PagedImage<T>,
-    parsed: &ParsedThresholdMask,
-    selection: &Selection,
-) -> Result<ArrayD<bool>, ImageError>
-where
-    T: ImagePixel + Into<f64> + Copy,
-{
-    if image.shape() != selection.full_shape.as_slice() {
-        return Err(ImageError::InvalidMetadata(format!(
-            "mask image shape {:?} does not match input image shape {:?}",
-            image.shape(),
-            selection.full_shape
-        )));
-    }
-    let data = image.get_slice(&selection.start, &selection.shape)?;
-    let image_mask =
-        image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
-    let mut out = data.mapv(|value| parsed.op.compare(value.into(), parsed.threshold));
-    if let Some(image_mask) = image_mask {
-        Zip::from(&mut out).and(&image_mask).for_each(|out, valid| {
-            *out = *out && *valid;
-        });
-    }
-    Ok(out)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct ParsedThresholdMask {
-    imagename: PathBuf,
-    op: ThresholdOp,
-    threshold: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ThresholdOp {
-    Greater,
-    GreaterEqual,
-    Less,
-    LessEqual,
-}
-
-impl ThresholdOp {
-    fn compare(self, value: f64, threshold: f64) -> bool {
-        match self {
-            Self::Greater => value > threshold,
-            Self::GreaterEqual => value >= threshold,
-            Self::Less => value < threshold,
-            Self::LessEqual => value <= threshold,
+    let expression = lel_mask::evaluate_mask(
+        mask_expr,
+        image.shape(),
+        image.coordinates(),
+        stretch,
+        (&selection.start, &selection.shape),
+    )?;
+    if let Some(expression) = expression {
+        if let Some(base) = &mut base {
+            Zip::from(base)
+                .and(&expression)
+                .for_each(|valid, expression| *valid &= *expression);
+        } else {
+            base = Some(expression);
         }
     }
-}
-
-fn parse_image_threshold_mask(expr: &str) -> Result<ParsedThresholdMask, ImageError> {
-    let expr = expr.trim();
-    for (token, op) in [
-        (">=", ThresholdOp::GreaterEqual),
-        ("<=", ThresholdOp::LessEqual),
-        (">", ThresholdOp::Greater),
-        ("<", ThresholdOp::Less),
-    ] {
-        if let Some((lhs, rhs)) = expr.split_once(token) {
-            let imagename = strip_optional_quotes(lhs.trim());
-            if imagename.is_empty() {
-                return Err(ImageError::InvalidMetadata(format!(
-                    "invalid mask expression {expr:?}: missing image name"
-                )));
-            }
-            let threshold = rhs.trim().parse::<f64>().map_err(|error| {
-                ImageError::InvalidMetadata(format!(
-                    "invalid mask expression {expr:?}: invalid threshold: {error}"
-                ))
-            })?;
-            return Ok(ParsedThresholdMask {
-                imagename: PathBuf::from(imagename),
-                op,
-                threshold,
-            });
-        }
-    }
-    Err(ImageError::InvalidMetadata(format!(
-        "unsupported mask expression {expr:?}; expected image>threshold"
-    )))
-}
-
-fn strip_optional_quotes(text: &str) -> &str {
-    text.strip_prefix('\'')
-        .and_then(|text| text.strip_suffix('\''))
-        .or_else(|| {
-            text.strip_prefix('"')
-                .and_then(|text| text.strip_suffix('"'))
-        })
-        .unwrap_or(text)
+    Ok(base)
 }
 
 pub(super) fn patch_saved_coords_keyword(
@@ -4385,149 +4205,6 @@ fn perpendicular_offsets(
         .collect()
 }
 
-fn collapse_moment<T>(
-    input: &ArrayD<T>,
-    mask: Option<&ArrayD<bool>>,
-    axis: usize,
-    coords: &[f64],
-    integrated_scale: f64,
-    includepix: Option<[f64; 2]>,
-    moment: i32,
-) -> Result<(ArrayD<f32>, ArrayD<bool>), ImageError>
-where
-    T: Into<f64> + Copy,
-{
-    let mut out_shape = input.shape().to_vec();
-    out_shape.remove(axis);
-    let mut out = ArrayD::<f32>::zeros(IxDyn(&out_shape).f());
-    let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&out_shape).f(), false);
-    match mask {
-        Some(mask) => Zip::from(&mut out)
-            .and(&mut out_mask)
-            .and(input.lanes(Axis(axis)))
-            .and(mask.lanes(Axis(axis)))
-            .for_each(|out_value, out_valid, input_lane, mask_lane| {
-                let (result, valid) = collapse_moment_lane(
-                    input_lane.iter().copied(),
-                    Some(mask_lane.iter().copied()),
-                    coords,
-                    integrated_scale,
-                    includepix,
-                    moment,
-                );
-                *out_value = result;
-                *out_valid = valid;
-            }),
-        None => Zip::from(&mut out)
-            .and(&mut out_mask)
-            .and(input.lanes(Axis(axis)))
-            .for_each(|out_value, out_valid, input_lane| {
-                let (result, valid) = collapse_moment_lane(
-                    input_lane.iter().copied(),
-                    None::<std::iter::Empty<bool>>,
-                    coords,
-                    integrated_scale,
-                    includepix,
-                    moment,
-                );
-                *out_value = result;
-                *out_valid = valid;
-            }),
-    }
-    Ok((
-        out.insert_axis(Axis(axis)).to_owned(),
-        out_mask.insert_axis(Axis(axis)).to_owned(),
-    ))
-}
-
-fn collapse_moment_lane<T, I, M>(
-    values: I,
-    mask: Option<M>,
-    coords: &[f64],
-    integrated_scale: f64,
-    includepix: Option<[f64; 2]>,
-    moment: i32,
-) -> (f32, bool)
-where
-    T: Into<f64> + Copy,
-    I: IntoIterator<Item = T>,
-    M: IntoIterator<Item = bool>,
-{
-    let mut samples = Vec::new();
-    match mask {
-        Some(mask) => {
-            for ((value, coord), valid) in values.into_iter().zip(coords.iter()).zip(mask) {
-                if !valid {
-                    continue;
-                }
-                let value = value.into();
-                if let Some([min, max]) = includepix
-                    && (value < min || value > max)
-                {
-                    continue;
-                }
-                samples.push((value, *coord));
-            }
-        }
-        None => {
-            for (value, coord) in values.into_iter().zip(coords.iter()) {
-                let value = value.into();
-                if let Some([min, max]) = includepix
-                    && (value < min || value > max)
-                {
-                    continue;
-                }
-                samples.push((value, *coord));
-            }
-        }
-    }
-    let npts = samples.len();
-    let result = if npts == 0 {
-        return (0.0, false);
-    } else {
-        match moment {
-            -1 => samples.iter().map(|(value, _)| *value).sum::<f64>() / npts as f64,
-            0 => samples.iter().map(|(value, _)| *value).sum::<f64>() * integrated_scale,
-            1 | 2 => {
-                let s0 = samples.iter().map(|(value, _)| *value).sum::<f64>();
-                if s0 == 0.0 {
-                    return (0.0, false);
-                }
-                let mean = samples
-                    .iter()
-                    .map(|(value, coord)| value * coord)
-                    .sum::<f64>()
-                    / s0;
-                if moment == 1 {
-                    mean
-                } else {
-                    let variance = samples
-                        .iter()
-                        .map(|(value, coord)| value * (coord - mean).powi(2))
-                        .sum::<f64>()
-                        / s0;
-                    if variance < 0.0 {
-                        return (0.0, false);
-                    }
-                    variance.sqrt()
-                }
-            }
-            3 => {
-                let mut values = samples.iter().map(|(value, _)| *value).collect::<Vec<_>>();
-                values.sort_by(|left, right| left.total_cmp(right));
-                if values.len() % 2 == 0 {
-                    let upper = values.len() / 2;
-                    (values[upper - 1] + values[upper]) / 2.0
-                } else {
-                    values[values.len() / 2]
-                }
-            }
-            _ => return (0.0, false),
-        }
-    };
-    (result as f32, true)
-}
-
 #[cfg(test)]
 fn all_indices(shape: &[usize]) -> Vec<Vec<usize>> {
     fn push_indices(
@@ -4645,55 +4322,9 @@ where
         out_mask[IxDyn(&out_index)] = valid;
     }
     Ok((
-        out.insert_axis(Axis(axis)).to_owned(),
-        out_mask.insert_axis(Axis(axis)).to_owned(),
+        out.insert_axis(ndarray::Axis(axis)).to_owned(),
+        out_mask.insert_axis(ndarray::Axis(axis)).to_owned(),
     ))
-}
-
-fn spectral_velocity_values<T: ImagePixel>(
-    image: &PagedImage<T>,
-    spectral_axis: usize,
-    selection: &Selection,
-) -> Result<Vec<f64>, ImageError> {
-    let full_indices = selection
-        .channel_indices
-        .clone()
-        .unwrap_or_else(|| (0..image.shape()[spectral_axis]).collect());
-    let mut values = Vec::with_capacity(full_indices.len());
-    let rest = spectral_rest_frequency(image.coordinates()).unwrap_or(0.0);
-    for chan in full_indices {
-        let mut pixel = vec![0.0; image.ndim()];
-        pixel[spectral_axis] = chan as f64;
-        let world = image.coordinates().to_world(&pixel)?;
-        let freq = *world.get(spectral_axis).ok_or_else(|| {
-            ImageError::InvalidMetadata("spectral world coordinate missing".to_string())
-        })?;
-        values.push(if rest > 0.0 {
-            SPEED_OF_LIGHT_KM_S * (1.0 - freq / rest)
-        } else {
-            freq
-        });
-    }
-    Ok(values)
-}
-
-fn integrated_scale_factor<T: ImagePixel>(
-    image: &PagedImage<T>,
-    spectral_axis: usize,
-) -> Result<f64, ImageError> {
-    let rest = spectral_rest_frequency(image.coordinates()).unwrap_or(0.0);
-    let coord = coordinate_for_axis(image.coordinates(), spectral_axis)
-        .ok_or_else(|| ImageError::InvalidMetadata("spectral coordinate missing".to_string()))?;
-    let reference_pixel = coord.reference_pixel()[0];
-    if rest > 0.0 {
-        let f0 = coord.to_world(&[reference_pixel - 0.5])?[0];
-        let f1 = coord.to_world(&[reference_pixel + 0.5])?[0];
-        let v0 = SPEED_OF_LIGHT_KM_S * (1.0 - f0 / rest);
-        let v1 = SPEED_OF_LIGHT_KM_S * (1.0 - f1 / rest);
-        Ok((v1 - v0).abs())
-    } else {
-        Ok(coord.increment()[0].abs())
-    }
 }
 
 fn coordinate_for_axis(
@@ -4720,20 +4351,6 @@ fn spectral_rest_frequency(coords: &CoordinateSystem) -> Option<f64> {
         }
     }
     None
-}
-
-fn moment_units(input_units: &str, moment: i32) -> String {
-    match moment {
-        0 => {
-            if input_units.is_empty() {
-                "km/s".to_string()
-            } else {
-                format!("{input_units}.km/s")
-            }
-        }
-        1 | 2 => "km/s".to_string(),
-        _ => input_units.to_string(),
-    }
 }
 
 fn image_pixel_type<T: ImagePixel>() -> ImagePixelType {
@@ -4906,21 +4523,23 @@ mod tests {
             run_image_analysis_task(ImageAnalysisTaskRequest::Immoments(ImmomentsRequest {
                 imagename: source_path.clone(),
                 outfile: moment_path.clone(),
-                moments: 0,
+                moments: vec![0],
                 chans: Some("0~2".to_string()),
                 includepix: Some([2.0, 12.0]),
                 mask: None,
                 overwrite: false,
+                ..ImmomentsRequest::default()
             }))
             .unwrap();
         let ImageAnalysisTaskResult::Immoments(moment) = moment_result else {
             panic!("expected immoments result");
         };
         assert_eq!(moment.shape, vec![2, 2, 1]);
-        assert_eq!(moment.units, "Jy/beam.km/s");
-        assert_eq!(moment.valid_profiles, 4);
+        assert_eq!(moment.products[0].units, "Jy/beam.km/s");
+        assert_eq!(moment.products[0].valid_profiles, 4);
         let moment_image = PagedImage::<f32>::open(&moment_path).unwrap();
-        assert_eq!(moment_image.default_mask_name(), None);
+        // CASA creates mask0 even when every profile is valid.
+        assert_eq!(moment_image.default_mask_name().as_deref(), Some("mask0"));
         for (moment_number, expected_units) in
             [(-1, "Jy/beam"), (1, "km/s"), (2, "km/s"), (3, "Jy/beam")]
         {
@@ -4928,16 +4547,17 @@ mod tests {
             let summary = immoments(&ImmomentsRequest {
                 imagename: source_path.clone(),
                 outfile: output_path,
-                moments: moment_number,
+                moments: vec![moment_number],
                 chans: Some("0~2".to_string()),
                 includepix: Some([2.0, 12.0]),
                 mask: None,
                 overwrite: false,
+                ..ImmomentsRequest::default()
             })
             .unwrap();
-            assert_eq!(summary.moment, moment_number);
-            assert_eq!(summary.units, expected_units);
-            assert_eq!(summary.valid_profiles, 4);
+            assert_eq!(summary.products[0].moment, moment_number);
+            assert_eq!(summary.products[0].units, expected_units);
+            assert_eq!(summary.products[0].valid_profiles, 4);
         }
 
         let mask_path = temp.path().join("source.pb");
@@ -4946,14 +4566,15 @@ mod tests {
         let masked_moment = immoments(&ImmomentsRequest {
             imagename: source_path.clone(),
             outfile: masked_moment_path,
-            moments: 0,
+            moments: vec![0],
             chans: Some("0~2".to_string()),
             includepix: None,
             mask: Some(format!("{}>0.3", mask_path.display())),
             overwrite: false,
+            ..ImmomentsRequest::default()
         })
         .unwrap();
-        assert_eq!(masked_moment.valid_profiles, 3);
+        assert_eq!(masked_moment.products[0].valid_profiles, 3);
 
         let pv_path = temp.path().join("pv.image");
         let pv_result = run_image_analysis_task(ImageAnalysisTaskRequest::Impv(ImpvRequest {
@@ -5122,11 +4743,12 @@ mod tests {
             immoments(&ImmomentsRequest {
                 imagename: complex_path.clone(),
                 outfile: output_path.clone(),
-                moments: 0,
+                moments: vec![0],
                 chans: None,
                 includepix: None,
                 mask: None,
                 overwrite: false,
+                ..ImmomentsRequest::default()
             }),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("real-valued images")
@@ -5183,24 +4805,26 @@ mod tests {
             immoments(&ImmomentsRequest {
                 imagename: real_path.clone(),
                 outfile: output_path.clone(),
-                moments: 12,
+                moments: vec![12],
                 chans: None,
                 includepix: None,
                 mask: None,
                 overwrite: false,
+                ..ImmomentsRequest::default()
             }),
             Err(ImageError::InvalidMetadata(message))
-                if message.contains("moments -1 through 3")
+                if message.contains("moment numbers -1 through 11")
         ));
         assert!(matches!(
             immoments(&ImmomentsRequest {
                 imagename: real_path,
                 outfile: output_path,
-                moments: 0,
+                moments: vec![0],
                 chans: None,
                 includepix: None,
                 mask: None,
                 overwrite: false,
+                ..ImmomentsRequest::default()
             }),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("spectral axis")
@@ -5648,16 +5272,15 @@ mod tests {
         .unwrap();
         let coords = vec![-2.0, -1.0, 0.0, 1.0];
         for moment in [-1, 0, 1, 2, 3] {
-            let actual = collapse_moment(
+            let actual = immoments::collapse_moment(
                 &input,
                 Some(&mask),
                 2,
-                &coords,
+                &immoments::ProfileCoordinates::fixed(&coords),
                 0.25,
-                Some([0.4, 1.8]),
+                immoments::PixelClip::from_include(Some([0.4, 1.8])),
                 moment,
-            )
-            .unwrap();
+            );
             let expected = collapse_moment_reference(
                 &input,
                 Some(&mask),
