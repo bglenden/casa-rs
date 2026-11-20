@@ -12766,7 +12766,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
-      "documentation": {"summary": "Applycal field selector text.", "details": null, "examples": [""]},
+      "documentation": {"summary": "CASA field selector text. Empty selects every field.", "details": null, "examples": [""]},
       "persistence_class": "profile"
     },
     {

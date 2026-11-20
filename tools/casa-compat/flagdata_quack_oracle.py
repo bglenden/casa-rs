@@ -93,7 +93,7 @@ def compare_apply():
         ("row", {"spw": "0:0~1", "quackincrement": True}),
         ("repeated-scan", {"quackincrement": True}),
         ("source", {"scan": "2", "quackmode": "end"}),
-        ("source", {"field": "0", "spw": "0:1~2", "quackmode": "tail"}),
+        ("source", {"field": "FLUX", "spw": "0:1~2", "quackmode": "tail"}),
         *[("source", {"quackinterval": width, "quackmode": "tail"}) for width in (0, -1, np.nan)],
         *[("source", {"quackinterval": width}) for width in (np.inf, -np.inf, True, np.float32(10), np.int64(10))],
         *[("whole", {"quackincrement": value}) for value in ([True], [], np.array(True))],

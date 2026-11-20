@@ -3893,6 +3893,17 @@ for both `FLAG` and `FLAG_ROW`. It also verifies `replace`, `or`, and
 `and` against independent flag patterns. casa-rs raises `ValueError` for
 an unrecognized choice and preserves the working flags.
 
+## `flagdata` can fail to decode an invalid FIELD diagnostic
+
+CASA 6.7.6.14 rejects a FIELD selector consisting of a bare nonbreaking
+space, but its Python binding raises `UnicodeDecodeError` while decoding
+the parser diagnostic. The first UTF-8 byte of the invalid token is
+reported on its own.
+
+casa-rs reports the invalid whitespace with a readable task error.
+The paired check verifies that both calls leave flags and visibility
+data unchanged (#1617).
+
 ## `flagdata` can choose the wrong samples when FLOAT_DATA is present
 
 CASA 6.7.6.14 can evaluate the magnitude of `FLOAT_DATA` when

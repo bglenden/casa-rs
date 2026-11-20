@@ -24134,7 +24134,7 @@
           "name": "field",
           "concept": {
             "id": "ms.selection.field",
-            "semantic_revision": 1
+            "semantic_revision": 4
           },
           "order": 7,
           "default": {
@@ -24160,11 +24160,11 @@
                 "--field"
               ],
               "false_flags": [],
-              "metavar": "IDS"
+              "metavar": "SELECTOR"
             },
             "provider": {
               "field": "field",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "field",

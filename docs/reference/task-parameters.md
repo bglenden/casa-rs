@@ -626,7 +626,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
@@ -665,7 +665,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
 | <code>caltable</code> | <code>calibration.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Solve | Calibration table the task writes. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text.<br><em>Surface:</em> Select fields by CASA field ID, name, or pattern. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field.<br><em>Surface:</em> Select fields by CASA field ID, name, or pattern. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
@@ -817,7 +817,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal spw selector text. |
 | <code>timerange</code> | <code>ms.selection.timerange@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal timerange selector text. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | UV range selector. |
@@ -845,7 +845,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal spw selector text. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Component fit | Whether detailed data-selection controls are enabled. |
 | <code>timerange</code> | <code>ms.selection.timerange@r4</code> | <code>string</code> | <code>""</code>; optional | Data selection | Applycal timerange selector text. |
@@ -872,7 +872,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Input | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Input | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Input | Applycal spw selector text. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Input | Intent selector. |
 | <code>addmodel</code> | <code>parameter.addmodel@r1</code> | <code>bool</code> | <code>false</code>; optional | Scratch columns | Create MODEL_DATA column. |
@@ -891,7 +891,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
 | <code>otf</code> | <code>parameter.otf@r1</code> | <code>bool</code> | <code>true</code>; optional | Scratch columns | Delete OTF model. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Input | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Input | CASA field selector text. Empty selects every field. |
 | <code>scr</code> | <code>parameter.scr@r1</code> | <code>bool</code> | <code>false</code>; optional | Scratch columns | Delete scratch model. |
 
 <a id="surface-gencal"></a>
@@ -954,7 +954,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>yinterp</code> | <code>plotms.yinterp@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Interpolation method for y-axis |
 | <code>yaxislocation</code> | <code>plotms.yaxislocation@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Location of the y-axis (blank for default: left) |
 | <code>selectdata</code> | <code>plotms.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Enable data selection parameters |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>timerange</code> | <code>plotms.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Time range (blank for all) |
 | <code>uvrange</code> | <code>plotms.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range (blank for all) |
@@ -1059,7 +1059,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>reason</code> | <code>flagdata.reason@r1</code> | <code>string</code> | <code>"any"</code>; optional | Input | Select list-mode flag commands by their reason. |
 | <code>tbuff</code> | <code>flagdata.tbuff@r1</code> | <code>float</code> | <code>0.0</code>; optional | Input | Time buffer in seconds that pads each flag command's time range. |
 | <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
 | <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
 | <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
@@ -1614,7 +1614,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Weights | Whether detailed data-selection controls are enabled. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Weights | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Weights | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Weights | Applycal spw selector text. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Weights | Intent selector. |
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Weights | Comma-separated ARRAY_ID integers |
@@ -1668,7 +1668,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r3</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Input | One input MeasurementSet path. |
 | <code>caltable</code> | <code>parameter.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; required | Input | Input calibration table. |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text. |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
 | <code>antenna</code> | <code>ms.selection.antenna@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal antenna selector text. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>listfile</code> | <code>statistics.listing_file@r1</code> | <code>path (file)</code> | <code>""</code>; optional | Output | Write the solution listing to a new text file. Empty writes to the terminal. |
