@@ -1172,15 +1172,12 @@ def importfits(
     zeroblanks: bool = True,
     overwrite: bool = False,
     defaultaxes: bool = False,
-    defaultaxesvalues: str | list[str] | tuple[str, ...] = [],
+    defaultaxesvalues: ParameterData | list[ParameterData] | tuple[ParameterData, ...] = [],
     beam: str | list[str] | tuple[str, ...] = [],
 ) -> Any:
-    """Import a FITS primary image into a CASA image
+    """Import a FITS image into a CASA image
 
     CASA's ``importfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``whichrep``, ``whichhdu``, ``zeroblanks``, ``defaultaxes``,
-    ``defaultaxesvalues``, ``beam``.
     """
     return _call_casa(importfits, locals())
 

@@ -7117,6 +7117,16 @@ file imports successfully when `whichhdu=-1` selects the first image or
 empty HDU and accepts both ways to select the extension. See
 [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+## `importfits` can remove an existing image before import succeeds
+
+CASA 6.7.6.14 removes `imagename` as soon as it sees `overwrite=True`. A
+subsequent validation error, such as a beam whose major axis is smaller
+than its minor axis, leaves the old image gone. The task uses the same
+early deletion when the output path contains the input FITS file.
+casa-rs stages the native image and exchanges it only after the new
+product is complete. It refuses output paths containing the FITS input
+and nonempty directories that are not native images (#977).
+
 ## `exportfits` drops characters when wrapping long `HISTORY` cards
 
 - Date noted: 2026-11-19

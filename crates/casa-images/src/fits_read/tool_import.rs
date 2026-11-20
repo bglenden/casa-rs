@@ -28,8 +28,8 @@ use crate::{ImageError, MutableImageInterface, image::ImageHistoryRow};
 
 /// A selected FITS image ready to copy into a CASA image.
 ///
-/// `fromfits` and `newimagefromfits` use this path with single-precision
-/// pixels, unlike importfits's separate task contract.
+/// The image tools and the `importfits` task share this single-precision
+/// reader.
 pub struct FitsToolImport {
     source: PrimaryHdu,
     /// Coordinate record as the CASA FITS image tool saves it.
@@ -200,10 +200,38 @@ impl FitsToolImport {
         image: &mut impl MutableImageInterface<f32>,
         zero_blanks: bool,
     ) -> Result<(), ImageError> {
-        let shape = &self.source.shape;
-        if image.shape() != shape {
+        let axes: Vec<_> = (0..self.source.shape.len()).collect();
+        self.copy_pixels_with_axes(image, zero_blanks, &axes)
+    }
+
+    // Destination axes in source order, with singleton axes appended beyond
+    // the FITS rank before applying the same permutation to pixels and masks.
+    pub(crate) fn copy_pixels_with_axes(
+        &mut self,
+        image: &mut impl MutableImageInterface<f32>,
+        zero_blanks: bool,
+        axes: &[usize],
+    ) -> Result<(), ImageError> {
+        let mut shape = self.source.shape.clone();
+        let ndim = shape.len();
+        if axes.len() < ndim {
+            return Err(ImageError::InvalidMetadata(
+                "FITS axes were dropped during import".into(),
+            ));
+        }
+        let mut remaining = vec![true; axes.len()];
+        for &axis in axes {
+            if !remaining.get_mut(axis).is_some_and(std::mem::take) {
+                return Err(ImageError::InvalidMetadata(
+                    "invalid FITS axis order".into(),
+                ));
+            }
+        }
+        shape.resize(axes.len(), 1);
+        let expected: Vec<_> = axes.iter().map(|&axis| shape[axis]).collect();
+        if image.shape() != expected {
             return Err(ImageError::ShapeMismatch {
-                expected: shape.clone(),
+                expected,
                 got: image.shape().to_vec(),
             });
         }
@@ -214,21 +242,24 @@ impl FitsToolImport {
         let quota = 1_048_576;
         let mut stride = 1;
         let mut axis = 0;
-        while axis + 1 < shape.len() && stride * shape[axis] <= quota {
+        while axis + 1 < ndim && stride * shape[axis] <= quota {
             stride *= shape[axis];
             axis += 1;
         }
-        let mut block_shape = vec![1; shape.len()];
+        let mut block_shape = vec![1; axes.len()];
         block_shape[..axis].copy_from_slice(&shape[..axis]);
-        let mut origin = vec![0; shape.len()];
+        let mut origin = vec![0; axes.len()];
+        let mut output_origin = origin.clone();
         let mut start = 0;
         let mut mask = None;
-        let shape = shape.clone();
         while start < total {
             let mut offset = start;
             for (position, length) in origin.iter_mut().zip(&shape) {
                 *position = offset % length;
                 offset /= length;
+            }
+            for (position, &source_axis) in output_origin.iter_mut().zip(axes) {
+                *position = origin[source_axis];
             }
             let run = (quota / stride).min(shape[axis] - origin[axis]);
             block_shape[axis] = run;
@@ -245,13 +276,13 @@ impl FitsToolImport {
             }
             let block = ArrayD::from_shape_vec(IxDyn(&block_shape).f(), values)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-            image.put_slice(&block, &origin)?;
+            image.put_slice(&block.permuted_axes(IxDyn(axes)), &output_origin)?;
             start += count;
         }
         if let Some(mask) = mask {
             let mask = ArrayD::from_shape_vec(IxDyn(&shape).f(), mask)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-            image.put_mask("mask0", &mask)?;
+            image.put_mask("mask0", &mask.permuted_axes(IxDyn(axes)))?;
             image.set_default_mask("mask0")?;
         }
         Ok(())

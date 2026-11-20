@@ -1,0 +1,1679 @@
+{
+  "casa_version": "6.7.6.14",
+  "cases": {
+    "zero_blanks": {
+      "fitsimage": "plane.fits",
+      "params": {},
+      "shape": [
+        3,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination"
+      ],
+      "units": [
+        "rad",
+        "rad"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329
+      ],
+      "rest_frequency": null,
+      "stokes": [],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "nan_blanks": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "zeroblanks": false
+      },
+      "shape": [
+        3,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        null,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination"
+      ],
+      "units": [
+        "rad",
+        "rad"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329
+      ],
+      "rest_frequency": null,
+      "stokes": [],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "alternate_wcs": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "whichrep": 1
+      },
+      "shape": [
+        3,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination"
+      ],
+      "units": [
+        "rad",
+        "rad"
+      ],
+      "reference": [
+        1.9373154697137058,
+        0.7504915783575616
+      ],
+      "increment": [
+        -0.00034906585039886593,
+        0.00034906585039886593
+      ],
+      "last_world": [
+        1.9363605845339869,
+        0.7508404167865579
+      ],
+      "rest_frequency": null,
+      "stokes": [],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "selected_hdu": {
+      "fitsimage": "extensions.fits",
+      "params": {
+        "whichhdu": 1
+      },
+      "shape": [
+        3,
+        2,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+        9.0,
+        10.0,
+        11.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "unit": "",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        1420000000.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        2000000.0
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329,
+        1422000000.0
+      ],
+      "rest_frequency": [
+        0.0
+      ],
+      "stokes": [],
+      "beam": {},
+      "fits_history": [],
+      "task_history": true
+    },
+    "first_valid_hdu": {
+      "fitsimage": "empty_primary.fits",
+      "params": {},
+      "shape": [
+        3,
+        2,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+        9.0,
+        10.0,
+        11.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "unit": "",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        1420000000.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        2000000.0
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329,
+        1422000000.0
+      ],
+      "rest_frequency": [
+        0.0
+      ],
+      "stokes": [],
+      "beam": {},
+      "fits_history": [],
+      "task_history": true
+    },
+    "default_stokes_and_spectral": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          "88.5GHz",
+          "Q"
+        ]
+      },
+      "shape": [
+        3,
+        2,
+        1,
+        1
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        2.0,
+        88500000000.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        1.0,
+        1000.0
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329,
+        2.0,
+        88500000000.0
+      ],
+      "rest_frequency": [
+        88500000000.0
+      ],
+      "stokes": [
+        "Q"
+      ],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "default_direction_and_stokes": {
+      "fitsimage": "spectrum.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "13.5h",
+          "-2.5deg",
+          "",
+          "I"
+        ]
+      },
+      "shape": [
+        1,
+        1,
+        1,
+        3
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        1.0,
+        2.0
+      ],
+      "mask": [
+        true,
+        true,
+        true
+      ],
+      "unit": "",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "deg",
+        "deg",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        202.5,
+        -2.5,
+        1.0,
+        1420000000.0
+      ],
+      "increment": [
+        -0.016666666666666666,
+        0.016666666666666666,
+        1.0,
+        2000000.0
+      ],
+      "last_world": [
+        202.5,
+        -2.5,
+        1.0,
+        1424000000.0
+      ],
+      "rest_frequency": [
+        0.0
+      ],
+      "stokes": [
+        "I"
+      ],
+      "beam": {},
+      "fits_history": [],
+      "task_history": true
+    },
+    "numeric_direction": {
+      "fitsimage": "spectrum.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          202.5,
+          -2.5,
+          0,
+          "I"
+        ]
+      },
+      "shape": [
+        1,
+        1,
+        1,
+        3
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        1.0,
+        2.0
+      ],
+      "mask": [
+        true,
+        true,
+        true
+      ],
+      "unit": "",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "deg",
+        "deg",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        202.5,
+        -2.5,
+        1.0,
+        1420000000.0
+      ],
+      "increment": [
+        -0.016666666666666666,
+        0.016666666666666666,
+        1.0,
+        2000000.0
+      ],
+      "last_world": [
+        202.5,
+        -2.5,
+        1.0,
+        1424000000.0
+      ],
+      "rest_frequency": [
+        0.0
+      ],
+      "stokes": [
+        "I"
+      ],
+      "beam": {},
+      "fits_history": [],
+      "task_history": true
+    },
+    "reorder_axes_and_mask": {
+      "fitsimage": "permuted.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "shape": [
+        3,
+        1,
+        2,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        4.0,
+        8.0,
+        1.0,
+        5.0,
+        9.0,
+        2.0,
+        0.0,
+        10.0,
+        3.0,
+        7.0,
+        11.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true
+      ],
+      "unit": "",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        1.0,
+        1420000000.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        1.0,
+        2000000.0
+      ],
+      "last_world": [
+        1.9193924627666057,
+        0.7330382309818668,
+        2.0,
+        1422000000.0
+      ],
+      "rest_frequency": [
+        0.0
+      ],
+      "stokes": [
+        "I",
+        "Q"
+      ],
+      "beam": {},
+      "fits_history": [],
+      "task_history": true
+    },
+    "extension_default_axes": {
+      "fitsimage": "extensions.fits",
+      "params": {
+        "whichhdu": 1,
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          "88.5GHz",
+          "Q"
+        ]
+      },
+      "shape": [
+        3,
+        2,
+        1,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+        9.0,
+        10.0,
+        11.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "unit": "",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        2.0,
+        88500000000.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        1.0,
+        2000000.0
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329,
+        2.0,
+        88502000000.0
+      ],
+      "rest_frequency": [
+        88500000000.0
+      ],
+      "stokes": [
+        "Q"
+      ],
+      "beam": {},
+      "fits_history": [],
+      "task_history": true
+    },
+    "inactive_axis_values": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxesvalues": [
+          "ignored"
+        ]
+      },
+      "shape": [
+        3,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination"
+      ],
+      "units": [
+        "rad",
+        "rad"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329
+      ],
+      "rest_frequency": null,
+      "stokes": [],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "blank_stokes": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          88500000000.0,
+          ""
+        ]
+      },
+      "shape": [
+        3,
+        2,
+        1
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        88500000000.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        1000.0
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329,
+        88500000000.0
+      ],
+      "rest_frequency": [
+        88500000000.0
+      ],
+      "stokes": [],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "undefined_stokes": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          "88.5GHz",
+          "unknown"
+        ]
+      },
+      "shape": [
+        3,
+        2,
+        1,
+        1
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        0.0,
+        88500000000.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        1.0,
+        1000.0
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329,
+        0.0,
+        88500000000.0
+      ],
+      "rest_frequency": [
+        88500000000.0
+      ],
+      "stokes": [
+        "??"
+      ],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "beam_override": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "beam": [
+          "11arcsec",
+          "7arcsec",
+          "35deg"
+        ]
+      },
+      "shape": [
+        3,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination"
+      ],
+      "units": [
+        "rad",
+        "rad"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329
+      ],
+      "rest_frequency": null,
+      "stokes": [],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 11.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 7.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 35.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "per_plane_beams": {
+      "fitsimage": "cube.fits",
+      "params": {},
+      "shape": [
+        4,
+        4,
+        2,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        16.0,
+        32.0,
+        48.0,
+        4.0,
+        20.0,
+        36.0,
+        52.0,
+        8.0,
+        24.0,
+        40.0,
+        56.0,
+        12.0,
+        28.0,
+        44.0,
+        60.0,
+        1.0,
+        17.0,
+        33.0,
+        49.0,
+        5.0,
+        21.0,
+        37.0,
+        53.0,
+        9.0,
+        25.0,
+        41.0,
+        57.0,
+        13.0,
+        29.0,
+        45.0,
+        61.0,
+        2.0,
+        18.0,
+        34.0,
+        50.0,
+        6.0,
+        22.0,
+        38.0,
+        54.0,
+        10.0,
+        26.0,
+        42.0,
+        58.0,
+        14.0,
+        30.0,
+        46.0,
+        62.0,
+        3.0,
+        19.0,
+        35.0,
+        51.0,
+        7.0,
+        23.0,
+        39.0,
+        55.0,
+        11.0,
+        27.0,
+        43.0,
+        59.0,
+        15.0,
+        31.0,
+        47.0,
+        63.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Frequency",
+        "Stokes"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "Hz",
+        ""
+      ],
+      "reference": [
+        0.0,
+        0.0,
+        1415000000.0,
+        1.0
+      ],
+      "increment": [
+        -0.00029088820866577975,
+        0.00029088820866577975,
+        1000.0,
+        1.0
+      ],
+      "last_world": [
+        6.282894418954512,
+        0.00029088821276791635,
+        1415000000.0,
+        2.0
+      ],
+      "rest_frequency": [
+        1420405751.786
+      ],
+      "stokes": [
+        "I",
+        "Q"
+      ],
+      "beam": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 16.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 16.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 16.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 5.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 3.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 12.0
+              }
+            }
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 2
+      },
+      "fits_history": [],
+      "task_history": true
+    },
+    "per_plane_override": {
+      "fitsimage": "cube.fits",
+      "params": {
+        "beam": [
+          "11arcsec",
+          "7arcsec",
+          "35deg"
+        ]
+      },
+      "shape": [
+        4,
+        4,
+        2,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        16.0,
+        32.0,
+        48.0,
+        4.0,
+        20.0,
+        36.0,
+        52.0,
+        8.0,
+        24.0,
+        40.0,
+        56.0,
+        12.0,
+        28.0,
+        44.0,
+        60.0,
+        1.0,
+        17.0,
+        33.0,
+        49.0,
+        5.0,
+        21.0,
+        37.0,
+        53.0,
+        9.0,
+        25.0,
+        41.0,
+        57.0,
+        13.0,
+        29.0,
+        45.0,
+        61.0,
+        2.0,
+        18.0,
+        34.0,
+        50.0,
+        6.0,
+        22.0,
+        38.0,
+        54.0,
+        10.0,
+        26.0,
+        42.0,
+        58.0,
+        14.0,
+        30.0,
+        46.0,
+        62.0,
+        3.0,
+        19.0,
+        35.0,
+        51.0,
+        7.0,
+        23.0,
+        39.0,
+        55.0,
+        11.0,
+        27.0,
+        43.0,
+        59.0,
+        15.0,
+        31.0,
+        47.0,
+        63.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Frequency",
+        "Stokes"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "Hz",
+        ""
+      ],
+      "reference": [
+        0.0,
+        0.0,
+        1415000000.0,
+        1.0
+      ],
+      "increment": [
+        -0.00029088820866577975,
+        0.00029088820866577975,
+        1000.0,
+        1.0
+      ],
+      "last_world": [
+        6.282894418954512,
+        0.00029088821276791635,
+        1415000000.0,
+        2.0
+      ],
+      "rest_frequency": [
+        1420405751.786
+      ],
+      "stokes": [
+        "I",
+        "Q"
+      ],
+      "beam": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 11.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 35.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 11.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 35.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 11.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 35.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 11.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 35.0
+              }
+            }
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 2
+      },
+      "fits_history": [],
+      "task_history": true
+    },
+    "double_fits": {
+      "fitsimage": "double.fits",
+      "params": {
+        "zeroblanks": false
+      },
+      "shape": [
+        3,
+        2
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.2345678806304932,
+        2.0,
+        3.0,
+        4.0,
+        null,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "",
+      "names": [
+        "Right Ascension",
+        "Declination"
+      ],
+      "units": [
+        "rad",
+        "rad"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329
+      ],
+      "rest_frequency": null,
+      "stokes": [],
+      "beam": {},
+      "fits_history": [],
+      "task_history": true
+    },
+    "nonstandard_direction": {
+      "fitsimage": "galactic.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          "88.5GHz",
+          "Q"
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "Non-standard direction axes. Cannot add default axes."
+    },
+    "axis_count": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          "1GHz"
+        ]
+      },
+      "error": "TypeError",
+      "message": "When defaultaxes==True, parameter defaultaxesvalues must be provided as a list of 4 values: RA, Dec, Freq, Stokes,"
+    },
+    "invalid_beam_order": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "beam": [
+          "7arcsec",
+          "11arcsec",
+          "35deg"
+        ]
+      },
+      "error": "TypeError",
+      "message": "Parameter beam[2] is invalid (major axis must be >= minor axis): ['7arcsec', '11arcsec', '35deg']"
+    },
+    "nonquantity_axis_string": {
+      "fitsimage": "spectrum.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "202.5",
+          "-2.5",
+          "",
+          "I"
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "Quantum::assure non-conforming unit type ''"
+    }
+  }
+}

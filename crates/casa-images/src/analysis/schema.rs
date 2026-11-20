@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use casa_provider_contracts::ParameterValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -777,14 +778,42 @@ impl Default for ExportFitsRequest {
 
 /// CASA `importfits` request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ImportFitsRequest {
     /// Input FITS image path.
     pub fitsimage: PathBuf,
     /// Output CASA image path.
     pub imagename: PathBuf,
+    /// Zero-based coordinate representation.
+    pub whichrep: i64,
+    /// Zero-based HDU, or a negative number to select the first image HDU.
+    pub whichhdu: i64,
+    /// Store a zero instead of NaN at invalid FITS pixels.
+    pub zeroblanks: bool,
     /// Replace an existing CASA image.
-    #[serde(default)]
     pub overwrite: bool,
+    /// Add missing standard CASA axes and order the resulting four-axis image.
+    pub defaultaxes: bool,
+    /// Reference values for added axes in RA, Dec, frequency, Stokes order.
+    pub defaultaxesvalues: Vec<ParameterValue>,
+    /// Override the selected FITS restoring beam with major, minor, and PA.
+    pub beam: Vec<ParameterValue>,
+}
+
+impl Default for ImportFitsRequest {
+    fn default() -> Self {
+        Self {
+            fitsimage: PathBuf::new(),
+            imagename: PathBuf::new(),
+            whichrep: 0,
+            whichhdu: -1,
+            zeroblanks: true,
+            overwrite: false,
+            defaultaxes: false,
+            defaultaxesvalues: Vec::new(),
+            beam: Vec::new(),
+        }
+    }
 }
 
 /// Basic axis metadata used by header summaries.

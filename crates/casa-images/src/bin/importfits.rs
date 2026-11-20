@@ -3,7 +3,11 @@
 
 use std::process::ExitCode;
 
-use casa_images::{ImageAnalysisTaskResult, image_task_front_end, image_task_success, import_fits};
+use casa_images::{
+    ImageAnalysisTaskResult, ImportFitsRequest, image_task_front_end, image_task_success,
+    importfits,
+};
+use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
@@ -17,10 +21,20 @@ fn main() -> ExitCode {
 }
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let result = import_fits(
-        task.input_path("fitsimage")?,
-        task.path("imagename")?,
-        task.flag("overwrite")?,
-    );
-    image_task_success(result.map(ImageAnalysisTaskResult::Importfits))
+    let items = |name| match task.value(name) {
+        Some(ParameterValue::Array(items)) => Ok(items.clone()),
+        _ => Err(TaskFailure::validation("expected a list").at(name)),
+    };
+    let request = ImportFitsRequest {
+        fitsimage: task.input_path("fitsimage")?,
+        imagename: task.path("imagename")?,
+        whichrep: task.integer("whichrep")?,
+        whichhdu: task.integer("whichhdu")?,
+        zeroblanks: task.flag("zeroblanks")?,
+        overwrite: task.flag("overwrite")?,
+        defaultaxes: task.flag("defaultaxes")?,
+        defaultaxesvalues: items("defaultaxesvalues")?,
+        beam: items("beam")?,
+    };
+    image_task_success(importfits(&request).map(ImageAnalysisTaskResult::Importfits))
 }
