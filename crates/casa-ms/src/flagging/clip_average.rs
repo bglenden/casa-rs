@@ -4,7 +4,7 @@
 use std::ops::{AddAssign, Div, Mul};
 
 use casa_types::ArrayValue;
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{Array2, ArrayD, ArrayView2, Ix2};
 
 use super::{FlaggingError, MeasurementSet};
 
@@ -45,17 +45,18 @@ impl<'a> ChannelBins<'a> {
         if width <= 1 {
             return None;
         }
-        let shape = [flags.shape()[0], channels.len().div_ceil(width)];
-        let averaged = ArrayD::from_shape_fn(IxDyn(&shape), |index| {
-            let start = index[1] * width;
+        let input = matrix(flags);
+        let shape = (input.nrows(), channels.len().div_ceil(width));
+        let averaged = Array2::from_shape_fn(shape, |(plane, bin)| {
+            let start = bin * width;
             channels[start..(start + width).min(channels.len())]
                 .iter()
-                .all(|&channel| flags[[index[0], channel]])
+                .all(|&channel| input[(plane, channel)])
         });
         Some(Self {
             channels,
             width,
-            flags: averaged,
+            flags: averaged.into_dyn(),
         })
     }
 
@@ -102,17 +103,29 @@ impl<'a> ChannelBins<'a> {
         T: Copy + Default + AddAssign + Mul<F, Output = T> + Div<F, Output = T>,
         F: Copy + Default + PartialOrd + AddAssign,
     {
-        ArrayD::from_shape_fn(self.flags.raw_dim(), |index| {
-            let plane = index[0];
-            let output_flag = self.flags[index.clone()];
+        let values = matrix(values);
+        let flags = matrix(flags);
+        let averaged = matrix(&self.flags);
+        let measure = method.weights();
+        let one = precision(1.0);
+        Array2::from_shape_fn(averaged.dim(), |(plane, bin)| {
+            let output_flag = averaged[(plane, bin)];
             let mut sum = T::default();
             let mut normalization = F::default();
-            for &channel in self.original_channels(index[1]) {
-                let input = [plane, channel];
+            for &channel in self.original_channels(bin) {
+                let input = (plane, channel);
                 if flags[input] == output_flag {
-                    let weight = precision(method.weight(input));
-                    sum += values[input] * weight;
-                    normalization += weight;
+                    match &measure {
+                        Some(weights) => {
+                            let weight = precision(weights.get(input));
+                            sum += values[input] * weight;
+                            normalization += weight;
+                        }
+                        None => {
+                            sum += values[input];
+                            normalization += one;
+                        }
+                    }
                 }
             }
             if matches!(method, ChannelReduction::Sum) {
@@ -123,6 +136,7 @@ impl<'a> ChannelBins<'a> {
                 T::default()
             }
         })
+        .into_dyn()
     }
 }
 
@@ -136,17 +150,39 @@ pub(super) enum ChannelReduction<'a> {
     },
 }
 
-impl ChannelReduction<'_> {
-    fn weight(self, index: [usize; 2]) -> f64 {
+impl<'a> ChannelReduction<'a> {
+    fn weights(self) -> Option<SpectralWeights<'a>> {
         let Self::Weighted {
             spectrum,
             inverse_sigma,
         } = self
         else {
-            return 1.0;
+            return None;
         };
-        match spectrum {
-            ArrayValue::Float32(weights) if inverse_sigma => {
+        Some(match spectrum {
+            ArrayValue::Float32(weights) => SpectralWeights::Single(matrix(weights), inverse_sigma),
+            ArrayValue::Float64(weights) => SpectralWeights::Double(matrix(weights), inverse_sigma),
+            _ => unreachable!("weight spectra are checked floating-point arrays"),
+        })
+    }
+}
+
+fn matrix<T>(array: &ArrayD<T>) -> ArrayView2<'_, T> {
+    array
+        .view()
+        .into_dimensionality::<Ix2>()
+        .expect("clipping rows are rank two")
+}
+
+enum SpectralWeights<'a> {
+    Single(ArrayView2<'a, f32>, bool),
+    Double(ArrayView2<'a, f64>, bool),
+}
+
+impl SpectralWeights<'_> {
+    fn get(&self, index: (usize, usize)) -> f64 {
+        match self {
+            Self::Single(weights, true) => {
                 let sigma = weights[index];
                 f64::from(if sigma > f32::MIN_POSITIVE {
                     1.0 / (sigma * sigma)
@@ -154,8 +190,8 @@ impl ChannelReduction<'_> {
                     0.0
                 })
             }
-            ArrayValue::Float32(weights) => f64::from(weights[index]),
-            ArrayValue::Float64(weights) if inverse_sigma => {
+            Self::Single(weights, false) => f64::from(weights[index]),
+            Self::Double(weights, true) => {
                 let sigma = weights[index];
                 if sigma > f64::MIN_POSITIVE {
                     1.0 / (sigma * sigma)
@@ -163,8 +199,7 @@ impl ChannelReduction<'_> {
                     0.0
                 }
             }
-            ArrayValue::Float64(weights) => weights[index],
-            _ => unreachable!("weight spectra are checked floating-point arrays"),
+            Self::Double(weights, false) => weights[index],
         }
     }
 }
