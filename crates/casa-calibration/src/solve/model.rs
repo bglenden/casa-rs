@@ -246,6 +246,17 @@ impl ModelInputs {
             && !self.virtual_refusals.contains_key(&field)
     }
 
+    pub(super) fn has_virtual_refusals(&self) -> bool {
+        !self.virtual_refusals.is_empty()
+    }
+
+    pub(super) fn virtual_refusal(&self, field: i32) -> Option<GainSolveError> {
+        self.virtual_refusals
+            .get(&field)
+            .cloned()
+            .map(GainSolveError::VirtualModel)
+    }
+
     pub(super) fn dynamic_fields(&self) -> &BTreeSet<i32> {
         &self.dynamic_fields
     }
@@ -436,8 +447,8 @@ impl ModelInputs {
         (raw_flags, previous): (&ArrayD<bool>, Option<ArrayD<Complex32>>),
         scratch_model: bool,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
-        if let Some(error) = self.virtual_refusals.get(&row.field_id) {
-            return Err(GainSolveError::VirtualModel(error.clone()));
+        if let Some(error) = self.virtual_refusal(row.field_id) {
+            return Err(error);
         }
         let Some(entries) = self.virtual_models.get(&row.field_id) else {
             return Ok(None);
