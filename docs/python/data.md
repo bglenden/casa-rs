@@ -89,6 +89,11 @@ a separate image tool. The remaining
 CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
+Use `ia.maketestimage()` to load `demo/Images/imagetestimage.fits` as a
+temporary image. Pass `outfile` to write a native image. The tool searches
+the working directory, `CASA_RS_MEASURESPATH`, and the CASA installation's
+`data` directory when `CASAPATH` or `AIPSPATH` identifies it.
+
 ### Extract a subimage
 
 Use `ia.subimage(outfile="cutout.im", region=region)` to copy a selection

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_images::fits_read::FitsToolImport;
 use pyo3::prelude::*;
@@ -20,7 +20,19 @@ struct ImportFits<'a> {
 }
 
 impl ImportFits<'_> {
-    fn run(&self, add_history: bool) -> PyResult<AttachedImage> {
+    fn command(&self) -> String {
+        format!(
+            "ia.fromfits(outfile={:?}, fitsfile={:?}, whichrep={}, whichhdu={}, zeroBlanks={}, overwrite={})",
+            self.outfile,
+            self.infile,
+            self.whichrep,
+            self.whichhdu,
+            self.zeroblanks,
+            self.overwrite,
+        )
+    }
+
+    fn run(&self, history: Option<(&str, String)>) -> PyResult<AttachedImage> {
         let whichrep = usize::try_from(self.whichrep).map_err(|_| {
             raised("Exception: The Coordinate Representation index must be non-negative.")
         })?;
@@ -51,16 +63,35 @@ impl ImportFits<'_> {
                 .map_err(raised)?;
             let mut image = ImageHandle::Float(storage);
             image.set_coordinate_record(source.coordinate_record)?;
-            if add_history {
-                image.record_history("fromfits", format!(
-                    "ia.fromfits(outfile={:?}, fitsfile={:?}, whichrep={}, whichhdu={}, zeroBlanks={}, overwrite={})",
-                    self.outfile, self.infile, self.whichrep, self.whichhdu, self.zeroblanks, self.overwrite,
-                ))?;
+            if let Some((method, command)) = history {
+                image.record_history(method, command)?;
             }
             image.save().map_err(raised)?;
             Ok(image)
         })
     }
+}
+
+fn test_image_path() -> PathBuf {
+    let sample = Path::new("demo/Images/imagetestimage.fits");
+    if sample.is_file() {
+        return sample.to_path_buf();
+    }
+    let measures_root = std::env::var_os("CASA_RS_MEASURESPATH").map(PathBuf::from);
+    let legacy_root = ["CASAPATH", "AIPSPATH"].into_iter().find_map(|variable| {
+        std::env::var(variable).ok().and_then(|value| {
+            value
+                .split_whitespace()
+                .next()
+                .map(|root| Path::new(root).join("data"))
+        })
+    });
+    measures_root
+        .into_iter()
+        .chain(legacy_root)
+        .map(|root| root.join(sample))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| sample.to_path_buf())
 }
 
 #[pymethods]
@@ -87,7 +118,8 @@ impl PyImageTool {
                 zeroblanks,
                 overwrite,
             };
-            state.image = Some(request.run(state.history)?);
+            state.image =
+                Some(request.run(state.history.then(|| ("fromfits", request.command())))?);
             Ok(true)
         })
     }
@@ -113,8 +145,36 @@ impl PyImageTool {
                 zeroblanks,
                 overwrite,
             }
-            .run(false)
+            .run(None)
         })?;
         Py::new(py, Self::attached(image))
+    }
+
+    #[pyo3(signature = (outfile="", overwrite=false), text_signature = "($self, outfile='', overwrite=False)")]
+    fn maketestimage(&self, py: Python<'_>, outfile: &str, overwrite: bool) -> PyResult<bool> {
+        py.detach(|| {
+            let mut state = self.state();
+            state.image = None;
+            let sample = test_image_path();
+            let infile = sample
+                .to_str()
+                .ok_or_else(|| raised("The CASA test image path is not UTF-8"))?;
+            let request = ImportFits {
+                outfile,
+                infile,
+                whichrep: 0,
+                whichhdu: 0,
+                zeroblanks: false,
+                overwrite,
+            };
+            let history = state.history.then(|| {
+                (
+                    "maketestimage",
+                    format!("ia.maketestimage(outfile={outfile:?}, overwrite={overwrite})"),
+                )
+            });
+            state.image = Some(request.run(history)?);
+            Ok(true)
+        })
     }
 }
