@@ -119,14 +119,13 @@ impl PyImageTool {
                     return Err(raised("The attached image must be float valued"));
                 }
                 attachment.require_lock(&mut real, casa_tables::LockType::Read)?;
-                let mut imaginary = ImageHandle::open(Path::new(imag)).map_err(raised)?;
+                let imaginary = ImageHandle::open_read(Path::new(imag)).map_err(raised)?;
                 if !matches!(imaginary, ImageHandle::Float(_) | ImageHandle::Double(_)) {
                     return Err(raised(format!("{imag} does not have supported real valued pixels")));
                 }
                 if real.kind() != imaginary.kind() {
                     return Err(raised("Real and imaginary images do not have the same precision"));
                 }
-                imaginary.require_storage_lock(casa_tables::LockType::Read)?;
                 if !outfile.is_empty() {
                     for source in [real.path(), imaginary.path()].into_iter().flatten() {
                         ensure_outfile_does_not_alias_input(Path::new(outfile), source)

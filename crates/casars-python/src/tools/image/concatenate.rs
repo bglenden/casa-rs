@@ -124,8 +124,7 @@ struct Input<'a> {
 
 impl<'a> Input<'a> {
     fn open(path: &'a Path, tempclose: bool) -> PyResult<Self> {
-        let mut image = ImageHandle::open_for_concatenation(path).map_err(raised)?;
-        image.require_storage_lock(casa_tables::LockType::Read)?;
+        let image = ImageHandle::open_for_concatenation(path).map_err(raised)?;
         let coordinate_record = image.coordinate_record();
         let coordinates = CoordinateSystem::from_record(&coordinate_record).map_err(raised)?;
         let (units, misc, has_mask) = with_pixels!(&image, storage => with_storage!(storage, image => (
@@ -345,12 +344,11 @@ impl Request<'_> {
         let mut offset = 0;
         for &index in &plan.order {
             let entry = &inputs[index];
-            let mut reopened;
+            let reopened;
             let image = if let Some(opened) = &entry.opened {
                 opened
             } else {
-                reopened = ImageHandle::open(entry.path).map_err(raised)?;
-                reopened.require_storage_lock(casa_tables::LockType::Read)?;
+                reopened = ImageHandle::open_read(entry.path).map_err(raised)?;
                 &reopened
             };
             if image.shape() != entry.shape || image.kind() != entry.kind {

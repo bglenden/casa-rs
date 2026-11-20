@@ -112,6 +112,13 @@ impl ImageHandle {
         AnyPagedImage::open(path).map(Self::from_paged)
     }
 
+    pub(super) fn open_read(path: &Path) -> Result<Self, ImageError> {
+        if path.is_file() {
+            return Self::open(path);
+        }
+        Self::open_native(path, Some(0))
+    }
+
     pub(super) fn open_native(path: &Path, lock_attempts: Option<u32>) -> Result<Self, ImageError> {
         #[cfg(unix)]
         if let Some(attempts) = lock_attempts {
@@ -135,7 +142,7 @@ impl ImageHandle {
         if path.is_file() {
             return Self::open_fits(path, FitsToolImport::open_for_concatenation(path)?);
         }
-        Self::open(path)
+        Self::open_native(path, Some(0))
     }
 
     fn open_fits(path: &Path, mut source: FitsToolImport) -> Result<Self, ImageError> {
