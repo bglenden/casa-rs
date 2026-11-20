@@ -222,17 +222,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (complist, channel = None, polarization = None), text_signature = "($self, complist, channel=-1, polarization=-1)")]
-    fn deconvolvecomponentlist(
-        &self,
-        complist: &Bound<'_, PyAny>,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("deconvolvecomponentlist")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (source = None, beam = None), text_signature = "($self, source=[], beam=[])")]
     fn deconvolvefrombeam(
         &self,

@@ -9,6 +9,7 @@ mod beams;
 mod conformance;
 mod convertflux;
 mod create;
+mod deconvolve_components;
 mod default_record;
 mod fits_header;
 mod fits_import;
