@@ -3,6 +3,10 @@
 
 use std::path::Path;
 
+use casa_calibration::{
+    CalibrationOutputMode, CalibrationSolveRequest, GainSolveMode, GainSolveModelSource,
+    GainSolveRequest, GainType, RefAntSelector,
+};
 use pyo3::prelude::*;
 
 use super::{PyCalibrater, runtime_error};
@@ -242,6 +246,74 @@ impl PyCalibrater {
                     Path::new(cfcache.unwrap_or("")),
                     painc.unwrap_or(360.),
                 )
+            });
+        }
+        if r#type.is_some_and(|kind| kind.eq_ignore_ascii_case("G"))
+            && cfcache.is_none()
+            && painc.is_none()
+            && [
+                t,
+                preavg,
+                phaseonly,
+                apmode,
+                refant,
+                refantmode,
+                minblperant,
+                solnorm,
+                normtype,
+                minsnr,
+                combine,
+                fillgaps,
+                fitorder,
+                fraction,
+                numedge,
+                radius,
+                smooth,
+                zerorates,
+                globalsolve,
+                niter,
+                corrcomb,
+                delaywindow,
+                ratewindow,
+                paramactive,
+                concatspws,
+                solmode,
+                rmsthresh,
+            ]
+            .into_iter()
+            .all(|value| value.is_none())
+        {
+            let mode = if append
+                .map(|value| value.extract::<bool>())
+                .transpose()?
+                .unwrap_or(false)
+            {
+                CalibrationOutputMode::Append
+            } else {
+                CalibrationOutputMode::Replace
+            };
+            let request = GainSolveRequest {
+                output_table: Path::new(table.unwrap_or("")).to_owned(),
+                selection: Default::default(),
+                gain_type: GainType::G,
+                solve_mode: GainSolveMode::AmplitudePhase,
+                solve_interval: Default::default(),
+                preaverage_seconds: -1.,
+                correlation_dependent_flags: false,
+                combine: Default::default(),
+                refant: RefAntSelector::Unspecified,
+                prior_calibration_tables: Vec::new(),
+                parang: false,
+                model_source: GainSolveModelSource::FromMeasurementSet,
+                normalize_average_amplitude: false,
+                normalization_type: Default::default(),
+                robustness: Default::default(),
+                min_snr: 0.,
+                min_baselines_per_antenna: 4,
+                smodel: [1., 0., 0., 0.],
+            };
+            return self.attached(py, |state| {
+                state.set_solve(CalibrationSolveRequest::Gain(request), mode)
             });
         }
         not_yet_implemented_in("calibrater", "setsolve", 1528)

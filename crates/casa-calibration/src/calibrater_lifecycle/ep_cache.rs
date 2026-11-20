@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's one-W-plane legacy EP convolution cache.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::str::SplitWhitespace;
 
@@ -9,12 +10,15 @@ use casa_coordinates::{
 };
 use casa_images::{ImagePixel, PagedImage};
 use casa_imaging_operator::LegacyEpConvolution;
+use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::{MsError, MsResult};
 use casa_types::Complex32;
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 const AUX: &str = "aux.dat";
-const PRODUCTS: [&str; 3] = ["CF0_0", "CFWT0_0", "avgPB"];
+const BEAM: &str = "avgPB";
+const STAGE_PREFIX: &str = ".ep-cache-";
+const JOURNAL: &str = "pending-slot";
 
 pub(super) struct EpCache {
     root: PathBuf,
@@ -26,6 +30,7 @@ pub(super) struct EpCacheProducts {
     pub weights: ArrayD<Complex32>,
     pub support: usize,
     pub sampling: usize,
+    _memory: Reservation,
 }
 
 struct Slot {
@@ -64,6 +69,7 @@ impl EpCache {
 
     pub(super) fn read(
         &self,
+        host: &HostResources,
         angle_rad: f64,
         maximum_gap_deg: f64,
         shape: &[usize],
@@ -82,7 +88,26 @@ impl EpCache {
         };
         let convolution = self.kernel("CF", index, slot, correlations.len())?;
         let weights = self.kernel("CFWT", index, slot, correlations.len())?;
-        let beam = PagedImage::<f32>::open(self.root.join(PRODUCTS[2])).map_err(invalid)?;
+        let bytes = |image: &PagedImage<Complex32>| {
+            image
+                .shape()
+                .iter()
+                .fold(size_of::<Complex32>() as u64, |size, &length| {
+                    size.saturating_mul(length as u64)
+                })
+        };
+        let memory = admit(
+            host,
+            &ResourcePolicy::Balanced,
+            &Demand {
+                phase: "legacy EP cached convolutions",
+                memory: bytes(&convolution).saturating_add(bytes(&weights)),
+            },
+        )
+        .map_err(invalid)?;
+        let convolution = read_kernel(&convolution)?;
+        let weights = read_kernel(&weights)?;
+        let beam = PagedImage::<f32>::open(self.root.join(BEAM)).map_err(invalid)?;
         if shape != beam.shape() {
             return Err(invalid(
                 "legacy EP cache average beam has a different image shape",
@@ -102,6 +127,7 @@ impl EpCache {
             weights,
             support: slot.support,
             sampling: slot.sampling,
+            _memory: memory,
         }))
     }
 
@@ -111,7 +137,7 @@ impl EpCache {
         index: usize,
         slot: &Slot,
         pols: usize,
-    ) -> MsResult<ArrayD<Complex32>> {
+    ) -> MsResult<PagedImage<Complex32>> {
         let path = self.root.join(format!("{prefix}0_{index}"));
         let image = PagedImage::<Complex32>::open(&path).map_err(invalid)?;
         let span = slot
@@ -130,21 +156,10 @@ impl EpCache {
                 path.display()
             )));
         }
-        let kernels = image.get().map_err(invalid)?;
-        if kernels
-            .iter()
-            .any(|v| !v.re.is_finite() || !v.im.is_finite())
-            || !kernels.iter().any(|v| v.re != 0. || v.im != 0.)
-        {
-            return Err(invalid(format!(
-                "invalid sample in legacy EP cache kernel {}",
-                path.display()
-            )));
-        }
-        Ok(kernels)
+        Ok(image)
     }
 
-    pub(super) fn publish_first(
+    pub(super) fn publish(
         &self,
         angle_rad: f64,
         cell_rad: [f64; 2],
@@ -153,11 +168,11 @@ impl EpCache {
         correlations: &[StokesType],
         products: &LegacyEpConvolution,
     ) -> MsResult<()> {
-        if !self.slots()?.is_empty() {
-            return Err(invalid("legacy EP cache has no matching angle"));
-        }
+        let mut slots = self.slots()?;
+        let index = slots.len();
+        let names = product_names(index);
         let staged = tempfile::Builder::new()
-            .prefix(".ep-cache-")
+            .prefix(STAGE_PREFIX)
             .tempdir_in(&self.root)
             .map_err(invalid)?;
         let mut kernel_coordinates = beam_coordinates.clone();
@@ -177,54 +192,133 @@ impl EpCache {
             .find_coordinate(CoordinateType::Stokes)
             .ok_or_else(|| invalid("legacy EP model is missing the polarization axis"))?;
         kernel_coordinates.replace_coordinate(pol, StokesCoordinate::new(correlations.to_vec()));
-        for (name, kernel) in PRODUCTS[..2].iter().zip(&products.kernels) {
+        for (name, kernel) in names[..2].iter().zip(&products.kernels) {
             let side = products.kernel_side;
             let shape = [side, side, correlations.len(), 1];
             let pixels = ArrayD::from_shape_fn(IxDyn(&shape).f(), |i| kernel[i[0] + side * i[1]]);
             save_image(staged.path().join(name), kernel_coordinates.clone(), pixels)?;
         }
-        let pixels = ArrayD::from_shape_fn(IxDyn(&shape).f(), |i| {
-            products.average_beam[i[0] + shape[0] * i[1]]
+        if index == 0 {
+            let pixels = ArrayD::from_shape_fn(IxDyn(&shape).f(), |i| {
+                products.average_beam[i[0] + shape[0] * i[1]]
+            });
+            save_image(staged.path().join(BEAM), beam_coordinates.clone(), pixels)?;
+        } else {
+            let beam = PagedImage::<f32>::open(self.root.join(BEAM)).map_err(invalid)?;
+            if beam.shape() != shape {
+                return Err(invalid(
+                    "legacy EP cache average beam has a different image shape",
+                ));
+            }
+        }
+        let angle = format!("{:.4}", angle_rad.to_degrees());
+        slots.push(Slot {
+            angle_deg: angle.parse().map_err(invalid)?,
+            support: products.support,
+            sampling: products.sampling,
         });
-        save_image(
-            staged.path().join(PRODUCTS[2]),
-            beam_coordinates.clone(),
-            pixels,
-        )?;
-        let pa = angle_rad.to_degrees();
-        let support = products.support;
-        let sampling = products.sampling;
-        std::fs::write(
-            staged.path().join(AUX),
-            format!("1 1\n{pa:.4} {support} {support}  {sampling}\n"),
-        )
-        .map_err(invalid)?;
-        self.publish_files(staged.path())
+        let mut manifest = format!("{} 1\n", slots.len());
+        for slot in slots {
+            writeln!(
+                manifest,
+                "{} {} {}  {}",
+                slot.angle_deg, slot.support, slot.support, slot.sampling
+            )
+            .expect("writing to a String cannot fail");
+        }
+        std::fs::write(staged.path().join(AUX), manifest).map_err(invalid)?;
+        self.publish_files(staged.path(), index, &names)
     }
 
-    fn publish_files(&self, staged: &Path) -> MsResult<()> {
-        let mut published = Vec::new();
-        // The manifest advertises a slot only after every image is in place.
-        for name in PRODUCTS.into_iter().chain([AUX]) {
-            let target = self.root.join(name);
-            let moved = if target.exists() {
-                Err(invalid(format!(
-                    "legacy EP cache already contains {}",
-                    target.display()
-                )))
-            } else {
-                std::fs::rename(staged.join(name), &target).map_err(invalid)
-            };
-            if let Err(error) = moved {
-                for target in published {
-                    let _ = std::fs::remove_dir_all(target);
-                }
-                return Err(error);
+    /// Clean up a previously abandoned publication while holding the cache's
+    /// exclusive lock. Only a stage with a journal can have changed the root.
+    pub(super) fn recover(&self) -> MsResult<()> {
+        let committed = self.slots()?.len();
+        for entry in std::fs::read_dir(&self.root).map_err(invalid)? {
+            let entry = entry.map_err(invalid)?;
+            if !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(STAGE_PREFIX)
+                || !entry.file_type().map_err(invalid)?.is_dir()
+            {
+                continue;
             }
-            published.push(target);
+            let stage = entry.path();
+            let marker = stage.join(JOURNAL);
+            let document = match std::fs::read_to_string(marker) {
+                Ok(document) => document,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(invalid(error)),
+            };
+            let index: usize = document.parse().map_err(invalid)?;
+            if committed == index {
+                self.rollback(&stage, &product_names(index))?;
+            } else if committed < index {
+                return Err(invalid(
+                    "legacy EP cache manifest predates its publication journal",
+                ));
+            }
+            std::fs::remove_dir_all(stage).map_err(invalid)?;
         }
         Ok(())
     }
+
+    fn rollback(&self, stage: &Path, names: &[String]) -> MsResult<()> {
+        for name in names {
+            let target = self.root.join(name);
+            // A product still present in the stage was never promoted.
+            if !stage.join(name).exists() && target.is_dir() {
+                std::fs::remove_dir_all(target).map_err(invalid)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn publish_files(&self, staged: &Path, index: usize, names: &[String]) -> MsResult<()> {
+        for name in names {
+            let target = self.root.join(name);
+            if target.exists() {
+                return Err(invalid(format!(
+                    "legacy EP cache already contains {}",
+                    target.display()
+                )));
+            }
+        }
+        std::fs::write(staged.join(JOURNAL), index.to_string()).map_err(invalid)?;
+        let published = (|| -> std::io::Result<()> {
+            for name in names {
+                std::fs::rename(staged.join(name), self.root.join(name))?;
+            }
+            // Readers see the previous or complete new slot list.
+            std::fs::rename(staged.join(AUX), self.root.join(AUX))
+        })();
+        if let Err(error) = published {
+            self.rollback(staged, names)?;
+            return Err(invalid(error));
+        }
+        Ok(())
+    }
+}
+
+fn read_kernel(image: &PagedImage<Complex32>) -> MsResult<ArrayD<Complex32>> {
+    let kernels = image.get().map_err(invalid)?;
+    if kernels
+        .iter()
+        .any(|v| !v.re.is_finite() || !v.im.is_finite())
+        || !kernels.iter().any(|v| v.re != 0. || v.im != 0.)
+    {
+        return Err(invalid("invalid sample in legacy EP cache kernel"));
+    }
+    Ok(kernels)
+}
+
+fn product_names(index: usize) -> Vec<String> {
+    let mut names = vec![format!("CF0_{index}"), format!("CFWT0_{index}")];
+    if index == 0 {
+        names.push(BEAM.to_owned());
+    }
+    names
 }
 
 fn save_image<T: ImagePixel>(

@@ -11,7 +11,7 @@ import shutil
 from time import perf_counter
 
 import casatasks
-from casatools import calibrater as reference, image, imager
+from casatools import calibrater as reference, image, imager, table
 from casars.tools import calibrater as native
 import numpy as np
 
@@ -32,14 +32,15 @@ def reject(call, text):
         raise AssertionError(f"expected RuntimeError containing {text!r}")
 
 
-def setup(dataset, model, cache, factory, *, retry=False):
+def setup(dataset, model, cache, factory, *, retry=False, painc=360.):
     cb = factory()
     assert cb.setvi(old=True, quiet=True)
     assert cb.open(str(dataset))
     try:
         if retry:
             reject(lambda: cb.setmodel(str(model)), "called before Calibrater::setsolve()")
-        assert cb.setsolve(type="EP", table=str(cache.with_suffix(".EP")), cfcache=str(cache))
+        assert cb.setsolve(type="EP", table=str(cache.with_suffix(".EP")), cfcache=str(cache),
+                           painc=painc)
         if retry:
             assert not any(cache.iterdir())
             missing = model.with_name("missing-ep-model.im")
@@ -83,6 +84,16 @@ def controlled_refusals(root, datasets, model):
         try:
             reject(lambda: cb.setsolve(type="EP", table=str(root / "unsupported.EP"),
                                       cfcache=str(root / "unsupported-cache")), "Error in Calibrater::setsolve.")
+        finally:
+            assert cb.done()
+
+    for label, factory in ENGINES.items():
+        cb = factory()
+        assert cb.setvi(old=True, quiet=True) and cb.open(str(datasets[label]))
+        try:
+            assert cb.setsolve(type="G", table=str(root / f"{label}-model-refusal.G"))
+            reject(lambda: cb.setmodel(str(model)), "Internal error: setModel() not yet supported for non EPJones type.")
+            assert cb.setsolve(type="EP", painc=-1., cfcache=str(root / f"{label}-negative-pa-cache"))
         finally:
             assert cb.done()
 
@@ -148,20 +159,80 @@ def run(root, dataset, model):
         assert len(before) == 22
         assert snapshot(cache) == before
     controlled_refusals(root, datasets, model)
+    result["angle_append"] = append_angle(root, datasets, caches, model)
+    expected = None
+    for writer in ENGINES:
+        dataset, cache = datasets[writer], caches[writer]
+        before = snapshot(cache)
+        predicted = first_buffer(dataset, cache, model)
+        assert snapshot(cache) == before
+        if expected is None:
+            expected = predicted
+        nrms = relative_rms(predicted, expected)
+        assert nrms < 1e-3, (writer, nrms)
+        result[f"{writer}_casa_first_buffer_nrms"] = nrms
+    result["first_buffer_reference_ms"] = str(datasets["casa"])
+    return result
+
+
+def append_angle(root, datasets, caches, model):
+    reports = {}
+    for label, factory in ENGINES.items():
+        path = root / f"{label}-append-cache"
+        shutil.copytree(caches["casa"], path)
+        aux = path / "aux.dat"
+        aux.write_text(aux.read_text().replace("74.4609", "64.4609"))
+        original = snapshot(path)
+        if label == "native":
+            # Reproduce a process exit after promoting the first image of
+            # the second slot, before committing the new auxiliary file.
+            stage = path / ".ep-cache-interrupted"
+            stage.mkdir()
+            (stage / "pending-slot").write_text("1")
+            (stage / "CFWT0_1").mkdir()
+            copied = path / "CF0_1"
+            copied.mkdir()
+            (copied / "incomplete").write_text("abandoned projection")
+        setup(datasets[label], model, path, factory, painc=.1)
+        assert not (path / ".ep-cache-interrupted").exists()
+        recorded = aux.read_text().split()
+        assert recorded[:2] == ["2", "1"]
+        assert recorded[2:6] == ["64.4609", "3", "3", "20"]
+        assert recorded[6:] == ["74.4609", "3", "3", "20"]
+        kept = snapshot(path)
+        assert all(kept[name] == value for name, value in original.items() if name != "aux.dat")
+        for prefix in ("CF", "CFWT"):
+            expected, _ = read_image(caches["casa"] / f"{prefix}0_0")
+            actual, _ = read_image(path / f"{prefix}0_1")
+            nrms = relative_rms(actual, expected)
+            assert nrms < 1e-3, (label, prefix, nrms)
+            reports[f"{label}_{prefix}_nrms"] = nrms
+    return reports
+
+
+def first_buffer(dataset, cache, model):
     # The legacy imager exposes the EP solver's nPBWProjectFT prediction
     # with zero pointing offsets for the retained first-buffer comparison.
-    measured = datasets["casa"]
     tool = imager()
-    assert tool.open(str(measured), usescratch=True)
+    assert tool.open(str(dataset), usescratch=True)
     assert tool.selectvis(field=0)
     assert tool.defineimage(nx=256, ny=256, cellx="15arcsec", celly="15arcsec",
                             stokes="IQUV", outframe="TOPO")
     assert tool.setoptions(ftmachine="pbwproject", wprojplanes=1,
-                           cfcachedirname=str(caches["casa"]), applypointingoffsets=False,
+                           cfcachedirname=str(cache), applypointingoffsets=False,
                            dopbgriddingcorrections=True)
     assert tool.ft(str(model)) and tool.done()
-    result["first_buffer_reference_ms"] = str(measured)
-    return result
+    reader = table()
+    assert reader.open(str(dataset))
+    try:
+        time = reader.getcol("TIME")
+        rows = np.flatnonzero(time == time.min())
+        assert np.all(np.diff(rows) == 1)
+        visibilities = reader.getcol("MODEL_DATA", startrow=int(rows[0]), nrow=len(rows))
+        assert np.max(np.abs(visibilities)) > 1. and np.max(np.abs(visibilities.imag)) > 0.1
+        return visibilities
+    finally:
+        reader.close()
 
 
 def main():

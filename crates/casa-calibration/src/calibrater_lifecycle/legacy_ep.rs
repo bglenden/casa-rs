@@ -9,6 +9,7 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_model::EvlaDishSurface;
 use casa_imaging_operator::{EvlaApertureModel, LegacyEpConvolution, NativeCacheLock};
+use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
 use casa_tables::RequiredScalarColumnValues;
@@ -30,6 +31,7 @@ struct PreparedEpModel {
     _fourier: [Vec<Complex32>; 4],
     _products: EpCacheProducts,
     _correlation_planes: Vec<StokesType>,
+    _memory: Reservation,
 }
 
 struct FirstBuffer {
@@ -40,8 +42,8 @@ struct FirstBuffer {
 
 impl LegacyEpSolver {
     pub(super) fn new(table: &Path, cache: &Path, angle_increment_deg: f64) -> MsResult<Self> {
-        if !angle_increment_deg.is_finite() || angle_increment_deg < 0. {
-            return Err(invalid("EP painc must be a finite nonnegative angle"));
+        if !angle_increment_deg.is_finite() {
+            return Err(invalid("EP painc must be a finite angle"));
         }
         Ok(Self {
             table: table.to_owned(),
@@ -61,12 +63,14 @@ impl LegacyEpSolver {
         }
         let image = PagedImage::<f32>::open(path).map_err(invalid)?;
         let (shape, cell_rad, coordinates) = model_geometry(&image)?;
+        let host = HostResources::detect().map_err(invalid)?;
+        let memory = reserve_model(&host, shape[0])?;
         let pixels = image.get().map_err(invalid)?;
         if pixels.iter().any(|value| !value.is_finite()) {
             return Err(invalid("EP model contains non-finite IQUV values").into());
         }
         let buffer = attachment.with_write(|ms, selection, _| Ok(first_buffer(ms, selection)?))?;
-        let products = self.convolution(&buffer, shape, cell_rad, &coordinates)?;
+        let products = self.convolution(&host, &buffer, shape, cell_rad, &coordinates)?;
         let fourier =
             LegacyEpConvolution::prepare_model(&pixels, &products.average_beam, products.sampling)
                 .map_err(invalid)?;
@@ -77,12 +81,14 @@ impl LegacyEpSolver {
             _fourier: fourier,
             _products: products,
             _correlation_planes: buffer.correlations,
+            _memory: memory,
         });
         Ok(())
     }
 
     fn convolution(
         &self,
+        host: &HostResources,
         buffer: &FirstBuffer,
         shape: [usize; 4],
         cell_rad: [f64; 2],
@@ -90,6 +96,7 @@ impl LegacyEpSolver {
     ) -> MsResult<EpCacheProducts> {
         let read = || {
             self.cache.read(
+                host,
                 buffer.angle_rad,
                 self.angle_increment_deg,
                 &shape,
@@ -103,9 +110,19 @@ impl LegacyEpSolver {
             }
         }
         let _lock = NativeCacheLock::exclusive(self.cache.path()).map_err(invalid)?;
+        self.cache.recover()?;
         if let Some(products) = read()? {
             return Ok(products);
         }
+        let _screen_memory = admit(
+            host,
+            &ResourcePolicy::Balanced,
+            &Demand {
+                phase: "legacy EP convolution screen",
+                memory: 256 << 20,
+            },
+        )
+        .map_err(invalid)?;
         let aperture = legacy_aperture()?;
         let products = LegacyEpConvolution::vla_l_band(
             &aperture,
@@ -115,7 +132,7 @@ impl LegacyEpSolver {
             buffer.angle_rad,
         )
         .map_err(invalid)?;
-        self.cache.publish_first(
+        self.cache.publish(
             buffer.angle_rad,
             cell_rad,
             beam_coordinates,
@@ -126,6 +143,7 @@ impl LegacyEpSolver {
         // The persisted angle is single precision and written as decimal.
         self.cache
             .read(
+                host,
                 buffer.angle_rad,
                 self.angle_increment_deg.max(0.001),
                 &shape,
@@ -133,6 +151,24 @@ impl LegacyEpSolver {
             )?
             .ok_or_else(|| invalid("legacy EP generated an unusable convolution cache"))
     }
+}
+
+fn reserve_model(host: &HostResources, side: usize) -> MsResult<Reservation> {
+    // Model and average-beam pixels, four retained Fourier grids, and
+    // the image-sized Jones, power and FFT workspace of the average beam.
+    let memory = (side as u64)
+        .saturating_mul(side as u64)
+        .saturating_mul(128)
+        .saturating_add(4 << 20);
+    admit(
+        host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy EP model",
+            memory,
+        },
+    )
+    .map_err(invalid)
 }
 
 fn model_geometry(image: &PagedImage<f32>) -> MsResult<([usize; 4], [f64; 2], CoordinateSystem)> {
@@ -309,31 +345,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_ep_model_memory_is_admitted_before_materializing_pixels() {
+        let host = HostResources {
+            threads: 2,
+            performance_cores: 2,
+            available_memory: 1 << 30,
+            metal: false,
+        };
+        assert!(reserve_model(&host, 256).is_ok());
+        let error = reserve_model(&host, 16_384).unwrap_err();
+        assert!(error.to_string().contains("legacy EP model needs"));
+    }
+
+    #[test]
     #[ignore = "requires the pinned CASA legacy PB/W first-buffer MeasurementSet and model"]
     fn legacy_ep_retains_the_casa_first_buffer_model() {
         let dataset = PathBuf::from(std::env::var_os("CASARS_EP_FIRST_BUFFER_MS").unwrap());
         let image = PathBuf::from(std::env::var_os("CASARS_EP_MODEL").unwrap());
         let scratch = tempfile::tempdir().unwrap();
+        let caches = [
+            ("cold", scratch.path().join("cache")),
+            (
+                "CASA warm",
+                PathBuf::from(std::env::var_os("CASARS_EP_REFERENCE_CACHE").unwrap()),
+            ),
+            (
+                "Rust warm",
+                PathBuf::from(std::env::var_os("CASARS_EP_NATIVE_CACHE").unwrap()),
+            ),
+        ];
         let mut tool = CalibraterLifecycle::default();
         assert!(tool.set_legacy_iterator(true));
         tool.open(&dataset).unwrap();
-        tool.set_ep_solve(
-            &scratch.path().join("fit.EP"),
-            &scratch.path().join("cache"),
-            360.,
-        )
-        .unwrap();
-        tool.set_image_model(&image).unwrap();
-        let equation = tool.equation().unwrap();
-        let Some(ConfiguredSolve::LegacyEp(solver)) = &equation.solve else {
-            panic!("EP solver is configured");
-        };
-        let model = solver.model.as_ref().unwrap();
+        for (label, cache) in caches {
+            tool.set_ep_solve(&scratch.path().join("fit.EP"), &cache, 360.)
+                .unwrap();
+            tool.set_image_model(&image).unwrap();
+            let equation = tool.equation().unwrap();
+            let Some(ConfiguredSolve::LegacyEp(solver)) = &equation.solve else {
+                panic!("EP solver is configured");
+            };
+            compare_retained(
+                label,
+                solver.model.as_ref().unwrap(),
+                &dataset,
+                &image,
+                equation.attachment.selection(),
+            );
+        }
+    }
+
+    fn compare_retained(
+        label: &str,
+        model: &PreparedEpModel,
+        dataset: &Path,
+        image: &Path,
+        selection: &casa_ms::MsSelection,
+    ) {
         let stored = PagedImage::<f32>::open(image).unwrap();
         let (shape, increment, _) = model_geometry(&stored).unwrap();
         let ms = MeasurementSet::open(dataset).unwrap();
-        let selected =
-            resolve_casa_calibration_selection(&ms, equation.attachment.selection()).unwrap();
+        let selected = resolve_casa_calibration_selection(&ms, selection).unwrap();
         let first = first_cross_row(&ms, &selected).unwrap();
         let channels = ms
             .spectral_window()
@@ -398,7 +470,9 @@ mod tests {
         }
         assert!(samples > 600 && imaginary > 0.1);
         let error = (difference / norm).sqrt();
-        eprintln!("legacy EP first buffer {samples} complex samples, normalized RMS {error:.9e}");
+        eprintln!(
+            "legacy EP {label}: first buffer {samples} complex samples, normalized RMS {error:.9e}"
+        );
         assert!(error < 1e-3, "{error}");
     }
 
