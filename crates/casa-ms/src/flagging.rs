@@ -136,8 +136,8 @@ pub enum QuackMode {
 pub struct FlagDataRequest {
     /// Structured row selection.
     pub selection: MsSelection,
-    /// Interpret scan and antenna expressions using the CASA task grammar.
-    pub casa_scan_and_baseline: bool,
+    /// Interpret row selectors using the public CASA flagdata task grammar.
+    pub casa_row_selection: bool,
     /// CASA-style SPW/channel selector.
     pub spw: Option<String>,
     /// Mode to execute.
@@ -200,7 +200,7 @@ impl Default for FlagDataRequest {
     fn default() -> Self {
         Self {
             selection: MsSelection::new(),
-            casa_scan_and_baseline: false,
+            casa_row_selection: false,
             spw: None,
             mode: FlagDataMode::Manual,
             action: FlagDataAction::Flag,
@@ -594,7 +594,7 @@ fn selected_rows(
         path: display_ms_path(ms),
         reason: format!("select rows: {source}"),
     };
-    let resolve_rows = if request.casa_scan_and_baseline {
+    let resolve_rows = if request.casa_row_selection {
         resolve_flagdata_row_indices_with_system_budget
     } else {
         resolve_row_indices_with_system_budget
@@ -606,14 +606,16 @@ fn selected_rows(
         .as_deref()
         .filter(|text| !text.trim().is_empty());
     let explicit_row_filter = field.is_some()
-        || (request.casa_scan_and_baseline
+        || (request.casa_row_selection
             && [
                 request.selection.scan.as_deref(),
                 request.selection.antenna.as_deref(),
+                request.selection.timerange.as_deref(),
+                request.selection.observation.as_deref(),
             ]
             .into_iter()
             .flatten()
-            .any(|text| !text.is_empty()));
+            .any(|text| !text.is_empty() && !text.starts_with('\0')));
     if rows.is_empty() && request.selection.selectdata && explicit_row_filter {
         // An empty result can mean no matching FIELD metadata or simply no
         // selected MAIN rows. Keep separate diagnostics for the two cases.

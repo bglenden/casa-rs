@@ -23,6 +23,7 @@ pub(crate) fn selection_from_options(
 
     let full_row_grammar = matches!(grammar, RowGrammar::Casa | RowGrammar::Transform);
     let flagdata = grammar == RowGrammar::FlagData;
+    let casa_time_grammar = full_row_grammar || flagdata;
     let mut selection = CompiledMsSelection::new();
 
     if let Some(field) = options.field.as_deref() {
@@ -39,7 +40,7 @@ pub(crate) fn selection_from_options(
         if !flagdata && let Some(scan) = options.scan.as_deref() {
             selection = selection.scan(&parse_numeric_id_selector(scan, "scan")?);
         }
-        if let Some(observation) = options.observation.as_deref() {
+        if !flagdata && let Some(observation) = options.observation.as_deref() {
             selection =
                 selection.observation(&parse_numeric_id_selector(observation, "observation")?);
         }
@@ -63,7 +64,7 @@ pub(crate) fn selection_from_options(
     {
         selection = apply_uvrange_selector(ms, selection, uvrange)?;
     }
-    if !full_row_grammar && let Some(timerange) = options.timerange.as_deref() {
+    if !casa_time_grammar && let Some(timerange) = options.timerange.as_deref() {
         selection = apply_timerange_selector(ms, selection, timerange)?;
     }
     if let Some(msselect) = options.msselect.as_deref() {
@@ -72,7 +73,12 @@ pub(crate) fn selection_from_options(
             selection = selection.taql(trimmed);
         }
     }
-    if full_row_grammar && let Some(timerange) = options.timerange.as_deref() {
+    if casa_time_grammar && let Some(timerange) = options.timerange.as_deref() {
+        let timerange = if flagdata {
+            super::row_grammar::flagdata_c_string(timerange)
+        } else {
+            timerange
+        };
         selection = super::row_grammar::with_time(ms, selection, timerange, rows_per_block)?;
     }
 
