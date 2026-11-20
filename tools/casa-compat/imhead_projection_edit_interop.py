@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from astropy.io import fits
 from casatasks import imhead
 from casatools import image, quanta, table, version_string
 
@@ -18,9 +19,32 @@ def plain(value):
     return value
 
 
+def check_world(ia, case):
+    cs = ia.coordsys(); rec = cs.torecord(); cs.done(); qa = quanta()
+    for point, expected_world in zip(([0.0, 0.0], [2.5, 1.0]), case['world']):
+        pixel = [0.0] * len(ia.shape())
+        for axis in range(2): pixel[int(rec['pixelmap0'][axis])] = point[axis]
+        values = ia.toworld(pixel, format='q')['quantity']
+        world = [qa.convert(values[f'*{int(rec["worldmap0"][axis]) + 1}'], 'rad')['value'] for axis in range(2)]
+        assert abs(math.remainder(world[0] - expected_world[0], math.tau)) < 1e-12, (case, world)
+        assert abs(world[1] - expected_world[1]) < 1e-12, (case, world)
+
+
+def check_fits_export(binary, path, case):
+    exported = path.with_suffix('.fits')
+    request = {'surface': 'exportfits', 'values': {'imagename': str(path), 'fitsimage': str(exported)}}
+    result = subprocess.run([str(binary), '--json-run', '-'], input=json.dumps(request), text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    header = fits.getheader(exported)
+    for index, value in enumerate(case['parameters'][:2], 1):
+        assert math.isclose(header[f'PV2_{index}'], value, rel_tol=1e-12, abs_tol=0), (case, header)
+    ia = image(); ia.open(str(exported)); check_world(ia, case); ia.done()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=lambda path: Path(path).resolve())
+    parser.add_argument('--exportfits', type=lambda path: Path(path).resolve())
     args = parser.parse_args()
     root = Path('crates/casars-imexplore/tests/data/imhead_crpix')
     expected = json.loads((root / 'projection_edit_expected.json').read_text())
@@ -47,14 +71,10 @@ def main():
             ia = image(); ia.open(str(path)); history = ia.history(list=False)[count:]
             assert len(history) == len(case['history']), (case, history)
             if len(history) == 3: assert history[0] == case['history'][0], (case, history)
-            cs = ia.coordsys(); rec = cs.torecord(); cs.done(); qa = quanta()
-            for point, expected_world in zip(([0.0, 0.0], [2.5, 1.0]), case['world']):
-                pixel = [0.0] * len(ia.shape())
-                for axis in range(2): pixel[int(rec['pixelmap0'][axis])] = point[axis]
-                values = ia.toworld(pixel, format='q')['quantity']
-                world = [qa.convert(values[f'*{int(rec["worldmap0"][axis]) + 1}'], 'rad')['value'] for axis in range(2)]
-                assert all(math.isclose(actual, target, abs_tol=1e-12) for actual, target in zip(world, expected_world)), (case, world)
+            check_world(ia, case)
             ia.done()
+            if args.exportfits and case['get'] == 'AZP' and any(case['parameters'][:2]):
+                check_fits_export(args.exportfits, path, case)
     print(f"CASA {version_string()} reopened {len(expected['cases'])} projection edit results")
 
 

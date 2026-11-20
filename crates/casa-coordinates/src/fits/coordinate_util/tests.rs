@@ -213,6 +213,29 @@ fn direction_sin_roundtrip() {
 }
 
 #[test]
+fn azp_fits_parameters_follow_the_latitude_axis() {
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::with_parameters(ProjectionType::AZP, vec![2.0, 30.0]),
+        [1.0, 0.5],
+        [-2e-3, 2e-3],
+        [64.0, 64.0],
+    ));
+    let shape = [1, 128, 128];
+    let header = to_fits_header(&coordinates, &shape);
+    assert_eq!(header.get_float("PV3_1"), Some(2.0));
+    assert_eq!(header.get_float("PV3_2"), Some(30.0));
+    let restored = from_fits_header(&header, &shape).unwrap();
+    let index = restored.find_coordinate(CoordinateType::Direction).unwrap();
+    let CoordinateModel::Direction(direction) = restored.coordinate(index) else {
+        panic!("direction coordinate");
+    };
+    assert_eq!(direction.projection().parameters(), &[2.0, 30.0]);
+}
+
+#[test]
 fn spectral_roundtrip() {
     let mut cs = CoordinateSystem::new();
     let spec = SpectralCoordinate::new(FrequencyRef::BARY, 1.5e9, -500e3, 64.0, 1.42040575e9);

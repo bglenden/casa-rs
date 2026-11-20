@@ -12,9 +12,9 @@
 //! | Code | Name | FITS keyword |
 //! |------|------|-------------|
 //! | SIN  | Slant orthographic | `-SIN` |
-//! | AZP  | Zenithal perspective with zero parameters | `-AZP` |
+//! | AZP  | Zenithal perspective with a tilted plane | `-AZP` |
 //! | SZP  | Slant zenithal perspective with tclean parameters | `-SZP` |
-//! | AIR  | Airy with zero reference latitude parameter | `-AIR` |
+//! | AIR  | Airy with zero or the default reference latitude | `-AIR` |
 //! | TAN  | Gnomonic (tangent plane) | `-TAN` |
 //! | ARC  | Zenithal equidistant | `-ARC` |
 //! | CAR  | Plate carree (cylindrical equidistant) | `-CAR` |
@@ -36,7 +36,10 @@ use std::fmt;
 
 use crate::error::CoordinateError;
 
+mod azp;
 mod cube;
+
+use azp::ZenithalPerspective;
 
 /// Degrees-to-radians conversion factor.
 const DEG_TO_RAD: f64 = PI / 180.0;
@@ -52,7 +55,7 @@ const RAD_TO_DEG: f64 = 180.0 / PI;
 pub enum ProjectionType {
     /// Slant orthographic projection.
     SIN,
-    /// Zenithal perspective with tclean's zero parameters.
+    /// Zenithal perspective with a tilted projection plane.
     AZP,
     /// Slant zenithal perspective with tclean's `[0, 0, 90]` parameters.
     SZP,
@@ -225,7 +228,8 @@ impl Projection {
     pub fn project(&self, phi: f64, theta: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => project_sin(phi, theta, &self.parameters),
-            ProjectionType::AZP | ProjectionType::SZP => {
+            ProjectionType::AZP => ZenithalPerspective::new(&self.parameters)?.project(phi, theta),
+            ProjectionType::SZP => {
                 self.validate_conversion_parameters()?;
                 project_tan(phi, theta)
             }
@@ -253,7 +257,8 @@ impl Projection {
     pub fn deproject(&self, x: f64, y: f64) -> Result<(f64, f64), CoordinateError> {
         match self.projection_type {
             ProjectionType::SIN => deproject_sin(x, y, &self.parameters),
-            ProjectionType::AZP | ProjectionType::SZP => {
+            ProjectionType::AZP => ZenithalPerspective::new(&self.parameters)?.deproject(x, y),
+            ProjectionType::SZP => {
                 self.validate_conversion_parameters()?;
                 deproject_tan(x, y)
             }
@@ -276,19 +281,15 @@ impl Projection {
         }
     }
 
-    /// Confirm that a partially implemented projection uses the parameters
-    /// supported by coordinate conversion. Other projections are unchanged.
+    /// Confirm that the supported transform can use the stated parameters.
     ///
-    /// AZP and SZP give the gnomonic map at zero distance from the sphere's
-    /// centre (Calabretta & Greisen 2002, §§5.1.1–2). Casacore pads missing
-    /// SZP parameters with `[0, 0, 90]`. AIR defaults to 90° and also supports
-    /// the explicit zero latitude written by tclean. Surplus parameters are
-    /// stored by casacore but have no effect on these projections.
+    /// AZP reads the perspective distance and the plane tilt in degrees.
+    /// Casacore pads missing SZP parameters with `[0, 0, 90]`. AIR defaults
+    /// to 90° and also supports the explicit zero latitude written by tclean.
+    /// Surplus parameters are stored but have no effect on these projections.
     pub fn validate_conversion_parameters(&self) -> Result<(), CoordinateError> {
         let required = match self.projection_type {
-            ProjectionType::AZP if self.parameters.iter().take(2).any(|&value| value != 0.0) => {
-                "the zero projection parameters written by tclean"
-            }
+            ProjectionType::AZP => return ZenithalPerspective::new(&self.parameters).map(|_| ()),
             ProjectionType::SZP
                 if self
                     .parameters
@@ -963,8 +964,8 @@ mod tests {
     #[test]
     fn zenithal_transforms_refuse_unsupported_parameters() {
         for (kind, parameters) in [
-            (ProjectionType::AZP, vec![2.0, 0.0]),
-            (ProjectionType::AZP, vec![0.0, 10.0]),
+            (ProjectionType::AZP, vec![-1.0, 0.0]),
+            (ProjectionType::AZP, vec![0.0, 90.0]),
             (ProjectionType::SZP, vec![1.0, 0.0, 90.0]),
             (ProjectionType::SZP, vec![0.0, 0.0, 45.0]),
             (ProjectionType::AIR, vec![45.0]),
@@ -974,6 +975,55 @@ mod tests {
             assert!(projection.project(0.4, 1.2).is_err(), "{kind:?}");
             assert!(projection.deproject(0.04, 0.03).is_err(), "{kind:?}");
         }
+    }
+
+    #[test]
+    fn azp_matches_wcslib_for_tilted_planes() {
+        // WCSLIB through Astropy Sky2Pix_ZenithalPerspective, in degrees.
+        for (distance, tilt, phi, theta, x, y) in [
+            (
+                2.0,
+                30.0,
+                35.0,
+                55.0,
+                18.29823807694109,
+                -30.175318324704378,
+            ),
+            (
+                -2.0,
+                -35.0,
+                -52.0,
+                50.0,
+                -19.206219600866895,
+                -18.318385967910768,
+            ),
+            (0.7, 55.0, 115.0, 40.0, 76.80775157299566, 62.44336498899339),
+            (
+                0.0,
+                25.0,
+                25.0,
+                30.0,
+                24.215004766569404,
+                -57.29758261470182,
+            ),
+        ] {
+            let projection = Projection::with_parameters(ProjectionType::AZP, vec![distance, tilt]);
+            let (phi, theta) = (phi * DEG_TO_RAD, theta * DEG_TO_RAD);
+            let expected = (x * DEG_TO_RAD, y * DEG_TO_RAD);
+            let projected = projection.project(phi, theta).unwrap();
+            assert!((projected.0 - expected.0).abs() < TOL);
+            assert!((projected.1 - expected.1).abs() < TOL);
+            let actual = projection.deproject(expected.0, expected.1).unwrap();
+            assert!((actual.0 - phi).abs() < TOL);
+            assert!((actual.1 - theta).abs() < TOL);
+        }
+    }
+
+    #[test]
+    fn azp_rejects_points_beyond_the_visible_limb() {
+        let projection = Projection::with_parameters(ProjectionType::AZP, vec![2.0, 0.0]);
+        assert!(projection.project(0.0, -45.0 * DEG_TO_RAD).is_err());
+        assert!(projection.deproject(120.0 * DEG_TO_RAD, 0.0).is_err());
     }
 
     #[test]

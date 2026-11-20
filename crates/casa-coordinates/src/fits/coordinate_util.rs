@@ -183,6 +183,13 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
 
     h.set(format!("CTYPE{a1}"), FitsValue::String(ctype_lon));
     h.set(format!("CTYPE{a2}"), FitsValue::String(ctype_lat));
+    if direction.projection().projection_type() == ProjectionType::AZP {
+        let parameters = direction.projection().parameters();
+        for index in 0..2 {
+            let value = parameters.get(index).copied().unwrap_or(0.0);
+            h.set(format!("PV{a2}_{}", index + 1), FitsValue::Float(value));
+        }
+    }
 
     // CRVAL in degrees
     h.set(
@@ -617,7 +624,20 @@ fn parse_direction(
     // Projection
     let proj_type = ProjectionType::from_name(proj_code)
         .ok_or_else(|| CoordinateError::UnsupportedProjection(proj_code.to_string()))?;
-    let proj = Projection::new(proj_type);
+    let proj = if proj_type == ProjectionType::AZP {
+        let distance = h.get_float(&format!("PV{a2}_1"));
+        let tilt = h.get_float(&format!("PV{a2}_2"));
+        let parameters = if distance.is_none() && tilt.is_none() {
+            vec![]
+        } else {
+            vec![distance.unwrap_or(0.0), tilt.unwrap_or(0.0)]
+        };
+        let projection = Projection::with_parameters(proj_type, parameters);
+        projection.validate_conversion_parameters()?;
+        projection
+    } else {
+        Projection::new(proj_type)
+    };
 
     let lon_scale = celestial_unit_scale_to_rad(h, a1)?;
     let lat_scale = celestial_unit_scale_to_rad(h, a2)?;
