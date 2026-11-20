@@ -138,7 +138,7 @@ pub(super) fn run(
             &expressions,
             &options,
             &mut panels,
-            averaging.avgchannel.is_some_and(|width| width > 1),
+            averaging::active(&averaging),
         )?;
     }
     let expformat = task.text("expformat")?.unwrap_or_default();

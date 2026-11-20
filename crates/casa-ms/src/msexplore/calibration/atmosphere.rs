@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Apply the PlotMS atmospheric model to calibration-table plotting chunks.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -66,7 +67,7 @@ pub(super) fn append_overlays(
     expressions: &Expressions<'_>,
     options: &Options,
     panels: &mut PlotPanels,
-    average_channels: bool,
+    averaged: bool,
 ) -> Result<(), TaskFailure> {
     let context = Context::open(table, path, selection, expressions, options.image)
         .map_err(TaskFailure::execution)?;
@@ -80,26 +81,34 @@ pub(super) fn append_overlays(
         let mut signal = Vec::new();
         let mut image = Vec::new();
         for (chunk, points, receptors) in chunks {
-            let mut frequencies = points
-                .iter()
-                .map(|point| point.coordinates.frequency_ghz * 1e9)
-                .collect::<Vec<_>>();
-            let mut output_channel = None;
-            if frequencies.len() == 1 && !average_channels {
-                let coordinates = points[0].coordinates;
+            let coordinates = points[0].coordinates;
+            let full_grid = if averaged {
+                None
+            } else {
                 let solution = table
                     .solution(coordinates)
                     .map_err(TaskFailure::execution)?;
-                if solution.values.shape()[1] > 1
-                    && let Some(window) = usize::try_from(chunk.0)
-                        .ok()
-                        .and_then(|id| table.windows.get(id))
-                    && coordinates.channel < window.frequencies.len()
-                {
-                    frequencies.clone_from(&window.frequencies);
-                    output_channel = Some(coordinates.channel);
-                }
-            }
+                let channels = solution.values.shape()[1];
+                usize::try_from(chunk.0)
+                    .ok()
+                    .and_then(|id| table.windows.get(id))
+                    .and_then(|window| window.frequencies.get(..channels))
+                    .filter(|_| channels > 1)
+            };
+            // The unaveraged CASA cache samples the full band before applying
+            // selected channels. Rebuilding a regular grid across a gapped
+            // selection would move atmospheric lines to different channels.
+            let frequencies = full_grid.map_or_else(
+                || {
+                    Cow::Owned(
+                        points
+                            .iter()
+                            .map(|point| point.coordinates.frequency_ghz * 1e9)
+                            .collect(),
+                    )
+                },
+                Cow::Borrowed,
+            );
             let key = (
                 chunk,
                 frequencies
@@ -125,8 +134,12 @@ pub(super) fn append_overlays(
                 }
             };
             for (index, point) in points.into_iter().enumerate() {
-                let source_channel = output_channel.unwrap_or(index);
-                let mut point = *point;
+                let source_channel = if full_grid.is_some() {
+                    point.coordinates.channel
+                } else {
+                    index
+                };
+                let mut point = point;
                 point.coordinates.receptor = receptors[index % receptors.len()];
                 signal.push(Point {
                     y: transmission[source_channel],
@@ -156,37 +169,41 @@ pub(super) fn append_overlays(
     Ok(())
 }
 
-fn group_channels(points: &[Point]) -> Vec<(Chunk, Vec<&Point>, Vec<i32>)> {
+#[derive(Default)]
+struct ChunkChannels {
+    channels: BTreeMap<usize, Point>,
+    receptors: BTreeSet<i32>,
+}
+
+fn group_channels(points: &[Point]) -> Vec<(Chunk, Vec<Point>, Vec<i32>)> {
     let mut order = Vec::new();
-    let mut groups = BTreeMap::<_, Vec<_>>::new();
+    let mut groups = BTreeMap::<_, ChunkChannels>::new();
     for point in points {
         let coordinates = point.coordinates;
         let key = (
             (coordinates.window, coordinates.scan),
+            coordinates.field,
             coordinates.time.to_bits(),
         );
-        groups
-            .entry(key)
-            .or_insert_with(|| {
-                order.push(key);
-                Vec::new()
-            })
-            .push(point);
+        let group = groups.entry(key).or_insert_with(|| {
+            order.push(key);
+            ChunkChannels::default()
+        });
+        group
+            .channels
+            .entry(coordinates.channel)
+            .and_modify(|representative| representative.flagged &= point.flagged)
+            .or_insert(*point);
+        group.receptors.insert(coordinates.receptor);
     }
     order
         .into_iter()
         .map(|key| {
-            let group = groups.remove(&key).unwrap_or_default();
-            let mut channels = BTreeMap::new();
-            let mut receptors = BTreeSet::new();
-            for point in group {
-                channels.entry(point.coordinates.channel).or_insert(point);
-                receptors.insert(point.coordinates.receptor);
-            }
+            let group = groups.remove(&key).expect("recorded overlay chunk");
             (
                 key.0,
-                channels.into_values().collect(),
-                receptors.into_iter().collect(),
+                group.channels.into_values().collect(),
+                group.receptors.into_iter().collect(),
             )
         })
         .collect()
@@ -379,20 +396,11 @@ impl Context {
         conditions: &AtmosphericConditions,
         overlay: Overlay,
     ) -> Result<Vec<f64>, casa_atmosphere::AtmosphereError> {
-        if frequencies.len() < 2 {
-            return Ok(vec![0.0; frequencies.len()]);
-        }
-        let Some(lo) = usize::try_from(window)
+        let lo = usize::try_from(window)
             .ok()
             .and_then(|window| self.oscillators.get(window))
-        else {
-            return Ok(vec![-f64::NAN; frequencies.len()]);
-        };
-        let image = frequencies
-            .iter()
-            .map(|frequency| 2.0 * lo - frequency)
-            .collect::<Vec<_>>();
-        conditions.curve(&image, overlay)
+            .copied();
+        conditions.image_curve(frequencies, lo, overlay)
     }
 }
 
