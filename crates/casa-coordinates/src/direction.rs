@@ -271,6 +271,70 @@ impl DirectionCoordinate {
         self.crval
     }
 
+    /// Convert between absolute directions and offsets from this coordinate's
+    /// reference direction, in radians. Pass `absolute` to recover an absolute
+    /// direction. A removed axis uses its stored world replacement.
+    ///
+    /// # Errors
+    /// Returns an error if `values` has the wrong number of visible axes.
+    pub fn convert_world_offset(
+        &self,
+        values: &mut [f64],
+        absolute: bool,
+    ) -> Result<(), CoordinateError> {
+        let [lon, lat] = match (self.removed_axis, &*values) {
+            (Some(removed), [value]) if removed.index == 0 => [removed.world_rad, *value],
+            (Some(removed), [value]) => [*value, removed.world_rad],
+            (None, [longitude, latitude]) => [*longitude, *latitude],
+            _ => {
+                return Err(CoordinateError::DimensionMismatch {
+                    expected: self.n_world_axes(),
+                    got: values.len(),
+                });
+            }
+        };
+        let [ref_lon, ref_lat] = self.crval;
+        let (sin_lon, cos_lon) = ref_lon.sin_cos();
+        let (sin_lat, cos_lat) = ref_lat.sin_cos();
+        let longitude = if absolute { lon / lat.cos() } else { lon };
+        let (sin_longitude, cos_longitude) = longitude.sin_cos();
+        let (z, cos_latitude) = lat.sin_cos();
+        let x = cos_latitude * cos_longitude;
+        let y = cos_latitude * sin_longitude;
+        // Unit vectors pointing to the reference, east and north form the local frame.
+        let [x, y, z] = if absolute {
+            let meridian = x * cos_lat - z * sin_lat;
+            [
+                meridian * cos_lon - y * sin_lon,
+                meridian * sin_lon + y * cos_lon,
+                x * sin_lat + z * cos_lat,
+            ]
+        } else {
+            let meridian = x * cos_lon + y * sin_lon;
+            [
+                meridian * cos_lat + z * sin_lat,
+                -x * sin_lon + y * cos_lon,
+                -meridian * sin_lat + z * cos_lat,
+            ]
+        };
+        let latitude = z.clamp(-1.0, 1.0).asin();
+        let longitude = y.atan2(x);
+        let result = [
+            if absolute {
+                longitude
+            } else {
+                longitude * latitude.cos()
+            },
+            latitude,
+        ];
+        if let Some(removed) = self.removed_axis {
+            values[0] = result[1 - removed.index];
+        } else {
+            values.copy_from_slice(&result);
+        }
+        Ok(())
+    }
+
     /// The stored unit of each visible world axis, in axis order.
     pub fn visible_world_units(&self) -> Vec<String> {
         self.select_axis(self.world_units.clone())

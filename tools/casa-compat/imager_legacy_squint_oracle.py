@@ -118,12 +118,14 @@ def refusal_controls(root, source, model):
             assert writer.putcell('CORR_TYPE', 0, np.array([9, 10, 11, 12], dtype=np.int32))
             assert writer.putcell('CORR_PRODUCT', 0, np.array([[0, 0, 1, 1], [0, 1, 0, 1]], np.int32))
         else:
+            predict(imager, dataset, model, False)
             assert writer.open(str(dataset), nomodify=False)
             arrays, times = writer.getcol('ARRAY_ID'), writer.getcol('TIME')
             arrays[times == times.max()] = 1
             assert writer.putcol('ARRAY_ID', arrays)
         assert writer.done()
-        predict(imager, dataset, model, False)
+        if label == 'linear-feed':
+            predict(imager, dataset, model, False)
         prior = data(dataset, 'MODEL_DATA')
         predict(imager, dataset, model, True, accepts=False)
         np.testing.assert_array_equal(data(dataset, 'MODEL_DATA'), prior)

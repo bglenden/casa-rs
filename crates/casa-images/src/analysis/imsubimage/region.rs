@@ -117,7 +117,8 @@ impl SubimageSelection {
     ) -> Result<(Self, Vec<usize>), ImageError> {
         if let Some(SubimageRegion::Record(record)) = region
             && let Some(slicer) =
-                saved::strided_lc_slicer(record, image.coordinates(), image.shape())?
+                saved::lc_slicer_section(record, image.coordinates(), image.shape())?
+            && slicer.stride.iter().any(|&step| step != 1)
         {
             let mut selection = Self::resolve(image, None, None, None, None)?;
             selection.start = slicer.start;
@@ -412,6 +413,8 @@ fn parse_region_argument<T: ImagePixel>(
             .map_err(|e| ImageError::Io(format!("read CRTF file {text}: {e}")))?
     } else if looks_like_inline_crtf(text) {
         text.to_string()
+    } else if let Some(path) = image.name().filter(|path| path.is_dir()) {
+        return load_saved_region(path, text, image.coordinates(), full_shape, plane);
     } else {
         return Err(ImageError::CasaSelection(format!(
             "Unable to open region file or region table description {text}."
@@ -428,19 +431,15 @@ fn looks_like_four_ints(text: &str) -> bool {
 
 fn looks_like_inline_crtf(text: &str) -> bool {
     let lower = text.trim_start().to_ascii_lowercase();
-    [
-        "box",
-        "centerbox",
-        "rotbox",
-        "circle",
-        "ellipse",
-        "poly",
-        "#crtf",
-    ]
-    .iter()
-    .any(|kw| lower.starts_with(kw))
+    lower.starts_with("#crtf")
         || text.contains('\n')
-        || text.contains("[[")
+        || lower.split_once('[').is_some_and(|(shape, arguments)| {
+            let shape = shape.trim();
+            !shape.is_empty()
+                && shape.bytes().all(|byte| byte.is_ascii_alphabetic())
+                && arguments.contains(',')
+                && arguments.contains(']')
+        })
 }
 
 fn parse_single_box(

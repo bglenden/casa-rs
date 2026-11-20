@@ -10,7 +10,7 @@ use casa_ms::write_session::{
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelectionRow};
 use casa_tables::{Table, TableInfo, TableWriteLock};
-use casa_types::{ArrayValue, Complex32};
+use casa_types::{ArrayValue, Complex32, ScalarValue};
 use ndarray::{ArrayD, Axis, IxDyn};
 
 use crate::model_columns::{ScratchDestination, has_column, observed_column, scratch_write_plan};
@@ -88,11 +88,6 @@ pub fn subtract_visibility_model_selected(
         initializing: create,
         refusal: None,
     };
-    let input = if create {
-        observed_column(ms)
-    } else {
-        CORRECTED.name()
-    };
     let mut resolved =
         resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
     if !create {
@@ -112,14 +107,49 @@ pub fn subtract_visibility_model_selected(
     } else {
         &resolved.selected_rows
     };
-    let models = VisibilityModels::new(ms, rows_with_models).map_err(invalid)?;
+    let models = VisibilityModels::for_uvsub(ms, rows_with_models).map_err(invalid)?;
     let polarizations = ms.polarization()?;
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
         .collect::<MsResult<_>>()?;
+    if models.has_virtual_refusals() {
+        let rows = &resolved.selected_rows;
+        if create {
+            let mut baseline = Subtraction {
+                selection: Some(&[]),
+                ..subtraction
+            };
+            write_subtraction(ms, rows, &models, &correlations, &mut baseline, lock)?;
+        }
+        return subtract_valid_buffers(ms, rows_with_models, &models, &correlations, reverse, lock);
+    }
+    write_subtraction(
+        ms,
+        &resolved.selected_rows,
+        &models,
+        &correlations,
+        &mut subtraction,
+        lock,
+    )
+}
+
+fn write_subtraction(
+    ms: &mut MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+    models: &VisibilityModels,
+    correlations: &BTreeMap<i32, Vec<i32>>,
+    subtraction: &mut Subtraction<'_>,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    let create = subtraction.initializing;
+    let input = if create {
+        observed_column(ms)
+    } else {
+        CORRECTED.name()
+    };
     let (plan, destinations) = scratch_write_plan(
         ms,
-        resolved.row_indices().collect(),
+        rows.iter().map(|row| row.row_index).collect(),
         &[CORRECTED],
         create,
         false,
@@ -127,15 +157,15 @@ pub fn subtract_visibility_model_selected(
     )?;
     let batch_rows = plan.batch_rows().max(1);
     MeasurementSetWriteSession::mutate_selected_rows_with_lock(ms, plan, lock, |session, ms| {
-        for rows in resolved.selected_rows.chunks(batch_rows) {
+        for rows in rows.chunks(batch_rows) {
             let batch = subtract_batch(
                 ms,
                 rows,
                 input,
-                &models,
-                &correlations,
+                models,
+                correlations,
                 &destinations[0],
-                &mut subtraction,
+                subtraction,
             )
             .map_err(visibility_column_error)?;
             session.write_mutation_batch(ms, batch)?;
@@ -143,8 +173,56 @@ pub fn subtract_visibility_model_selected(
         Ok(())
     })
     .map_err(invalid)?;
-    if let Some(error) = subtraction.refusal {
+    if let Some(error) = subtraction.refusal.take() {
         return Err(invalid(visibility_column_error(error)));
+    }
+    Ok(())
+}
+
+fn subtract_valid_buffers(
+    ms: &mut MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+    models: &VisibilityModels,
+    correlations: &BTreeMap<i32, Vec<i32>>,
+    reverse: bool,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    let main = ms.main_table();
+    let mut ordered = rows
+        .iter()
+        .map(|row| {
+            let ScalarValue::Int32(array) =
+                main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
+            else {
+                return Err(invalid("ARRAY_ID must be Int32"));
+            };
+            Ok(((*array, row.field_id, row.data_desc_id), row))
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    ordered.sort_unstable_by(|(a, left), (b, right)| {
+        a.cmp(b)
+            .then_with(|| left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds))
+            .then_with(|| left.row_index.cmp(&right.row_index))
+    });
+    let mut subtraction = Subtraction {
+        selection: None,
+        reverse,
+        initializing: false,
+        refusal: None,
+    };
+    for buffer in
+        ordered.chunk_by(|a, b| a.0 == b.0 && a.1.time_mjd_seconds == b.1.time_mjd_seconds)
+    {
+        // The old CASA reader reaches recipes in visibility-buffer order.
+        // A refused buffer never touches CORRECTED_DATA or its compression.
+        if let Some(error) = models.virtual_refusal(buffer[0].1.field_id) {
+            return Err(invalid(visibility_column_error(invalid(error))));
+        }
+        let rows = buffer
+            .iter()
+            .map(|(_, row)| (**row).clone())
+            .collect::<Vec<_>>();
+        write_subtraction(ms, &rows, models, correlations, &mut subtraction, lock)?;
     }
     Ok(())
 }
@@ -231,9 +309,8 @@ fn subtract_batch(
                 if !subtraction.initializing {
                     return Err(error);
                 }
-                // CASA initializes a new corrected column before prediction.
-                // Keep earlier subtractions and write observed values from the
-                // refused row onward before returning the original error.
+                // Finish initializing the new column with observed values
+                // from the refused row onward before returning the error.
                 subtraction.refusal = Some(error);
             }
         }

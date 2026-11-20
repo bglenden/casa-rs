@@ -14,7 +14,7 @@ use casa_ms::{
     FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
     append_flag_command, append_task_history, calculate_flagdata_path, flagdata_empty_record,
     flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
-    save_next_flag_backup, task_selection_text,
+    save_next_casa_flag_backup, task_selection_text,
 };
 use casa_provider_contracts::{
     DefaultSpec, NumpyScalarType, ParameterValue, TaskFailureKind, python_repr,
@@ -88,7 +88,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     check_selector_arguments(task, &action)?;
     let request = flagdata_request(task, channel_bins).or_else(|error| {
         let parameter = error.parameter.as_deref();
-        if parameter == Some("datacolumn")
+        if matches!(parameter, Some("datacolumn" | "field" | "spw"))
             || (matches!(parameter, Some("channelavg" | "timeavg"))
                 && error.kind == TaskFailureKind::Execution)
         {
@@ -400,7 +400,7 @@ fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result
     if action == "apply" && task.required_text("mode")? != "summary" && task.flag("flagbackup")? {
         let ms = MeasurementSet::open(task.path("vis")?)
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
-        save_next_flag_backup(&ms, "flagdata")
+        save_next_casa_flag_backup(&ms, "flagdata")
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
     }
     Ok(())
@@ -597,8 +597,9 @@ fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFa
         let text = task_selection_text(task, name)?;
         Ok((!text.is_empty()).then_some(text))
     };
-    let mut selection = MsSelection {
+    let selection = MsSelection {
         field: (!field.is_empty()).then_some(field),
+        spw: (!spw.is_empty()).then(|| spw.to_owned()),
         scan: selector("scan")?,
         antenna: selector("antenna")?,
         timerange: selector("timerange")?,
@@ -609,11 +610,6 @@ fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFa
         uvrange: selector("uvrange")?,
         ..MsSelection::default()
     };
-    if !spw.is_empty() {
-        selection = selection
-            .spw_selector(spw)
-            .map_err(|error| TaskFailure::validation(error.to_string()).at("spw"))?;
-    }
     Ok(selection)
 }
 

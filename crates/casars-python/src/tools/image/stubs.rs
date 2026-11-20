@@ -15,12 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (region = None), text_signature = "($self, region={})")]
-    fn boundingbox(&self, region: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("boundingbox")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, region = None, mask = None, axis = None, width = None, drop = None, dmethod = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', region={}, mask=[], axis=-1, width=2, drop=True, dmethod='copy', overwrite=False, stretch=False)")]
     fn boxcar(
         &self,
@@ -104,40 +98,6 @@ impl PyImageTool {
         beam: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("convolve2d")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, axes = None, overwrite = None, region = None, r#box = None, chans = None, stokes = None, mask = None, stretch = None, wantreturn = None), text_signature = "($self, outfile='', axes=[], overwrite=False, region={}, box='', chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
-    fn crop(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        axes: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        r#box: Option<&Bound<'_, PyAny>>,
-        chans: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        wantreturn: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("crop")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, axis = None, factor = None, method = None, region = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', axis=0, factor=1, method='copy', region='', mask='', overwrite=False, stretch=False)")]
-    fn decimate(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        axis: Option<&Bound<'_, PyAny>>,
-        factor: Option<&Bound<'_, PyAny>>,
-        method: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("decimate")
     }
 
     /// Not yet implemented in casa-rs.
@@ -458,21 +418,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("pbcor")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels = None, pixelmask = None, region = None, list = None, usemask = None, locking = None, replicate = None), text_signature = "($self, pixels=[], pixelmask=[], region={}, list=False, usemask=True, locking=True, replicate=False)")]
-    fn putregion(
-        &self,
-        pixels: Option<&Bound<'_, PyAny>>,
-        pixelmask: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        usemask: Option<&Bound<'_, PyAny>>,
-        locking: Option<&Bound<'_, PyAny>>,
-        replicate: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("putregion")
     }
 
     /// Not yet implemented in casa-rs.

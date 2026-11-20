@@ -21,7 +21,7 @@ use crate::expr_parser::{
     referenced_images,
 };
 use crate::fits_read::{FitsToolImport, SharedFitsSectionReader};
-use crate::image_expr::{ImageExprMeta, ImageExprValue, bounded_read_cursor};
+use crate::image_expr::{ImageExprMeta, ImageExprValue, MaskExpression, bounded_read_cursor};
 use crate::image_expr_lel::broadcast_array;
 use crate::{
     AnyPagedImage, ImageError, ImageExprBuilder, ImageExpression, ImageInterface, ImagePixel,
@@ -308,22 +308,19 @@ fn evaluate_mask_section(
     window: (&[usize], &[usize]),
     stride: Option<&[usize]>,
 ) -> Result<Option<ArrayD<bool>>, ImageError> {
-    let Some(raw) = mask_expr.map(str::trim).filter(|s| !s.is_empty()) else {
+    let Some(mask) = PreparedMask::new(mask_expr, target_shape, target_coordinates, stretch)?
+    else {
         return Ok(None);
     };
-
-    let expr = mask_expression(raw);
-    let names = referenced_images(&expr).map_err(mask_parse_error)?;
-    let opened = open_operands(&resolve_named_operands(names)?, false)?;
-    evaluate(
-        &expr,
-        target_shape,
-        target_coordinates,
-        stretch,
-        window,
-        stride,
-        &opened,
-    )
+    match stride {
+        Some(stride) => mask.strided(&StridedSection {
+            start: window.0,
+            shape: window.1,
+            stride,
+        }),
+        None => mask.window(window.0, window.1),
+    }
+    .map(Some)
 }
 
 fn mask_expression(raw: &str) -> String {
@@ -348,86 +345,98 @@ fn mask_expression(raw: &str) -> String {
     }
 }
 
-fn evaluate(
-    expr: &str,
-    target_shape: &[usize],
-    target_coordinates: &CoordinateSystem,
-    stretch: bool,
-    window: (&[usize], &[usize]),
-    stride: Option<&[usize]>,
-    opened: &[(String, Operand)],
-) -> Result<Option<ArrayD<bool>>, ImageError> {
-    let (real, complex) = operand_resolvers(opened);
-    let parsed = parse_subimage_mask_expr(expr, &real, &complex).map_err(mask_parse_error)?;
-    let mask_shape = parsed.shape();
-    let mapped_axes = if mask_shape != target_shape && !mask_shape.is_empty() {
-        if !stretch {
-            return Err(ImageError::CasaSelection(format!(
-                "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) \
-                 are different, and it was specified that the mask should not be extended, \
-                 so the mask cannot be applied to the (sub)image"
-            )));
-        }
-        opened
-            .iter()
-            .map(|(_, image)| image.geometry())
-            .find(|(shape, _)| *shape == mask_shape)
-            .map(|(_, coordinates)| {
-                stretch_axes(coordinates, target_coordinates, mask_shape, target_shape)
-            })
-            .transpose()?
-            .filter(|axes| axes.iter().copied().ne(0..axes.len()))
-    } else {
-        None
-    };
+pub(super) struct PreparedMask<'a> {
+    expression: MaskExpression<f64>,
+    target_shape: &'a [usize],
+    mapped_axes: Option<Vec<usize>>,
+}
 
-    let evaluate_window =
-        |origin: &[usize], extent: &[usize]| -> Result<ArrayD<bool>, ImageError> {
-            let Some(axes) = &mapped_axes else {
-                return parsed.eval_window_for_shape(origin, extent, target_shape);
-            };
-            let mut start = Vec::with_capacity(axes.len());
-            let mut shape = Vec::with_capacity(axes.len());
-            for (i, &axis) in axes.iter().enumerate() {
-                let single = mask_shape[i] == 1;
-                start.push(if single { 0 } else { origin[axis] });
-                shape.push(if single { 1 } else { extent[axis] });
-            }
-            let mut data = parsed.get_slice(&start, &shape)?;
-            for axis in 0..target_shape.len() {
-                if !axes.contains(&axis) {
-                    data = data.insert_axis(ndarray::Axis(axis));
-                }
-            }
-            broadcast_array(data, extent)
+impl<'a> PreparedMask<'a> {
+    pub(super) fn new(
+        mask_expr: Option<&str>,
+        target_shape: &'a [usize],
+        target_coordinates: &CoordinateSystem,
+        stretch: bool,
+    ) -> Result<Option<Self>, ImageError> {
+        let Some(raw) = mask_expr.map(str::trim).filter(|s| !s.is_empty()) else {
+            return Ok(None);
         };
-
-    let Some(stride) = stride else {
-        return evaluate_window(window.0, window.1).map(Some);
-    };
-    let section = StridedSection {
-        start: window.0,
-        shape: window.1,
-        stride,
-    };
-    let dense_cursor = bounded_read_cursor(section.dense_shape(section.shape))?;
-    let mut mask = ArrayD::from_elem(IxDyn(section.shape), true);
-    for cursor in section.cursors(dense_cursor) {
-        let cursor = cursor?;
-        let extent = section.dense_shape(&cursor.shape);
-        let dense = evaluate_window(&section.source_start(&cursor.position), &extent)?;
-        let selected = dense.slice_each_axis(|axis| {
-            let index = axis.axis.index();
-            Slice::new(0, None, stride[index].min(extent[index]) as isize)
-        });
-        mask.slice_each_axis_mut(|axis| {
-            let index = axis.axis.index();
-            let start = cursor.position[index];
-            Slice::from(start..start + cursor.shape[index])
-        })
-        .assign(&selected);
+        let expr = mask_expression(raw);
+        let names = referenced_images(&expr).map_err(mask_parse_error)?;
+        let opened = open_operands(&resolve_named_operands(names)?, false)?;
+        let (real, complex) = operand_resolvers(&opened);
+        let expression =
+            parse_subimage_mask_expr(&expr, &real, &complex).map_err(mask_parse_error)?;
+        let mask_shape = expression.shape();
+        let mapped_axes = if mask_shape != target_shape && !mask_shape.is_empty() {
+            if !stretch {
+                return Err(ImageError::CasaSelection(format!(
+                    "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) \
+                     are different, and it was specified that the mask should not be extended, \
+                     so the mask cannot be applied to the (sub)image"
+                )));
+            }
+            opened
+                .iter()
+                .map(|(_, image)| image.geometry())
+                .find(|(shape, _)| *shape == mask_shape)
+                .map(|(_, coordinates)| {
+                    stretch_axes(coordinates, target_coordinates, mask_shape, target_shape)
+                })
+                .transpose()?
+                .filter(|axes| axes.iter().copied().ne(0..axes.len()))
+        } else {
+            None
+        };
+        Ok(Some(Self {
+            expression,
+            target_shape,
+            mapped_axes,
+        }))
     }
-    Ok(Some(mask))
+
+    fn window(&self, origin: &[usize], extent: &[usize]) -> Result<ArrayD<bool>, ImageError> {
+        let Some(axes) = &self.mapped_axes else {
+            return self
+                .expression
+                .eval_window_for_shape(origin, extent, self.target_shape);
+        };
+        let mut start = Vec::with_capacity(axes.len());
+        let mut shape = Vec::with_capacity(axes.len());
+        for (i, &axis) in axes.iter().enumerate() {
+            let single = self.expression.shape()[i] == 1;
+            start.push(if single { 0 } else { origin[axis] });
+            shape.push(if single { 1 } else { extent[axis] });
+        }
+        let mut data = self.expression.get_slice(&start, &shape)?;
+        for axis in 0..self.target_shape.len() {
+            if !axes.contains(&axis) {
+                data = data.insert_axis(ndarray::Axis(axis));
+            }
+        }
+        broadcast_array(data, extent)
+    }
+
+    pub(super) fn strided(&self, section: &StridedSection<'_>) -> Result<ArrayD<bool>, ImageError> {
+        let dense_cursor = bounded_read_cursor(section.dense_shape(section.shape))?;
+        let mut mask = ArrayD::from_elem(IxDyn(section.shape), true);
+        for cursor in section.cursors(dense_cursor) {
+            let cursor = cursor?;
+            let extent = section.dense_shape(&cursor.shape);
+            let dense = self.window(&section.source_start(&cursor.position), &extent)?;
+            let selected = dense.slice_each_axis(|axis| {
+                let index = axis.axis.index();
+                Slice::new(0, None, section.stride[index].min(extent[index]) as isize)
+            });
+            mask.slice_each_axis_mut(|axis| {
+                let index = axis.axis.index();
+                let start = cursor.position[index];
+                Slice::from(start..start + cursor.shape[index])
+            })
+            .assign(&selected);
+        }
+        Ok(mask)
+    }
 }
 
 fn stretch_axes(
@@ -498,6 +507,51 @@ fn operand_path(base: &Path, spec: &str) -> Option<(PathBuf, Option<String>)> {
     None
 }
 
+/// Open a lazy FITS expression operand with its optional validity mask.
+///
+/// The image and mask share one section reader for the lifetime of the
+/// expression.
+///
+/// # Errors
+/// Returns an error if the file has no supported FITS image.
+pub fn open_fits_expression<T: ImageExprValue + From<f32>>(
+    path: &Path,
+    use_mask: bool,
+) -> Result<ImageExpression<T>, ImageError> {
+    let fits = FitsToolImport::open(path, 0, -1)?;
+    if fits.is_tile_compressed() {
+        return Err(ImageError::CasaSelection(format!(
+            "No data in the zeroth or first extension of {}",
+            path.display(),
+        )));
+    }
+    let reader = Arc::new(SharedFitsSectionReader::new(
+        path.to_path_buf(),
+        fits.hdu_index(),
+        fits.shape().to_vec(),
+    )?);
+    let mask_reader = Arc::clone(&reader);
+    let mask_fn = (fits.has_implicit_mask() && use_mask).then(|| {
+        Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
+            let pixels = mask_reader.read(start, shape, stride)?;
+            Ok(pixels
+                .iter()
+                .any(|value| value.is_nan())
+                .then(|| pixels.mapv(|value| !value.is_nan())))
+        }) as crate::image_expr::OwnedMaskReader
+    });
+    let expression = ImageExprBuilder::from_section_readers(
+        ImageExprMeta::from_fits(&fits, path)?,
+        Arc::new(move |start, shape, stride| {
+            reader
+                .read(start, shape, stride)
+                .map(|pixels| pixels.mapv(<T as From<f32>>::from))
+        }),
+        mask_fn,
+    );
+    expression.compile()
+}
+
 fn open_path_with_mask_name(
     path: &Path,
     mask_name: Option<String>,
@@ -513,39 +567,9 @@ fn open_path_with_mask_name(
                 path.display(),
             )));
         }
-        let fits = FitsToolImport::open(path, 0, -1)?;
-        if fits.is_tile_compressed() {
-            return Err(ImageError::CasaSelection(format!(
-                "No data in the zeroth or first extension of {}",
-                path.display(),
-            )));
-        }
-        let reader = Arc::new(SharedFitsSectionReader::new(
-            path.to_path_buf(),
-            fits.hdu_index(),
-            fits.shape().to_vec(),
-        )?);
-        let mask_reader = Arc::clone(&reader);
-        let mask_fn = (fits.has_implicit_mask() && !ignore_default).then(|| {
-            Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
-                let pixels = mask_reader.read(start, shape, stride)?;
-                Ok(pixels
-                    .iter()
-                    .any(|value| value.is_nan())
-                    .then(|| pixels.mapv(|value| !value.is_nan())))
-            }) as crate::image_expr::OwnedMaskReader
-        });
-        let expression = ImageExprBuilder::from_section_readers(
-            ImageExprMeta::from_fits(&fits, path)?,
-            Arc::new(move |start, shape, stride| {
-                reader
-                    .read(start, shape, stride)
-                    .map(|pixels| pixels.mapv(f64::from))
-            }),
-            mask_fn,
-        );
+        let expression = open_fits_expression(path, !ignore_default)?;
         return Ok(Operand::Real(
-            MaskSource::Sections(Box::new(expression.compile()?)),
+            MaskSource::Sections(Box::new(expression)),
             true,
         ));
     }

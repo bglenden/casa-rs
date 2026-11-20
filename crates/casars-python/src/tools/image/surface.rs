@@ -72,7 +72,7 @@ const METHODS: &[Method] = &[
         "boundingbox",
         &[param("region", K::Record, EmptyRecord)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "boxcar",
@@ -222,7 +222,7 @@ const METHODS: &[Method] = &[
             param("wantreturn", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "decimate",
@@ -237,7 +237,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "decompose",
@@ -902,7 +902,7 @@ const METHODS: &[Method] = &[
             param("replicate", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "pv",

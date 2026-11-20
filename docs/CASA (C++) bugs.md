@@ -19,6 +19,12 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[a non-finite rest frequency](#coordsyssetrestfrequency-can-store-an-infinite-frequency),
+[a whitespace-only rest-frequency string](#coordsyssetrestfrequency-can-crash-on-a-whitespace-only-string),
+[a masked coordinate reference-location edit](#coordsyssetreferencelocation-can-crash-when-an-axis-is-masked),
+[an omitted or undersized coordinate offset](#coordsys-relative-conversions-can-abort-on-missing-values),
+[empty input to the spectral velocity conversions](#coordsys-spectral-velocity-conversions-can-crash-on-missing-input),
+[spectral vectors with non-native byte order](#coordsys-doppler-conversion-can-misread-byte-swapped-arrays),
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
@@ -3961,6 +3967,14 @@ result meets the clipping criterion. The paired Stokes clip oracle
 reproduces the CASA flags and compares the native flags with independently
 calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Manual flagging can flag channels between requested stride steps
+
+In CASA 6.7.6.14, manual flagging with `spw='0:0~3^2'` changes all four
+channels of the window. Using the explicit list `spw='0:0;2'` selects
+channels 0 and 2. The `tools/casa-compat/flagdata_apply_backup_oracle.py`
+comparison reproduces the extra flags and checks that casa-rs retains the
+two requested channels. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## Clip channel averaging can abort on a strided selection
 
 In CASA 6.7.6.14, `flagdata(mode="clip", channelavg=True, chanbin=2,
@@ -5805,6 +5819,23 @@ CASA direction records at longitude 120° on the equator and longitude 180° at 
 controls alongside the raw shift results. This follows the standing rule
 for results that contradict the documented operation (#1252).
 [CASA measures documentation](https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html)
+
+## A rejected increment edit can leave a singular coordinate system
+
+In CASA 6.7.6.14, create a coordinate tool with `cs.newcoordsys(linear=2)`.
+The call `cs.setincrement([3.0, 0.0])` raises a singular-matrix error and
+leaves the increments at `[3.0, 0.0]`. Casa-rs validates the edited record
+before replacing the active system, so a rejected edit leaves the original
+increments and the transform usable.
+
+## A rejected unit conversion can leave some coordinates changed
+
+In CASA 6.7.6.14, create a coordinate system with direction and spectral
+coordinates and two linear axes. Applying
+`cs.setunits(["deg", "deg", "m", "m", "m"])` raises an incompatible-unit error
+for the spectral axis and still converts the direction and linear axes.
+Casa-rs validates the entire conversion before replacing the coordinate
+record, so a rejected call preserves all units and the transform (#1626).
 
 ## Batch coordinate conversion can reshape ragged inputs or misread byte order
 
@@ -8065,3 +8096,60 @@ pixels. For example, `(2, 152)` contains 150 instead of the original value
 1661 from `(1, 151)`. The cursor writes overlap pixels that a subsequent
 cursor reads. casa-rs snapshots the selected pixels and validity before
 writing, using scratch storage when the overlap exceeds its memory budget.
+
+## `coordsys.setrestfrequency` can store an infinite frequency
+
+CASA 6.7.6.14 accepts `cs.setrestfrequency(float('inf'))` and writes an
+infinite active rest frequency. That value cannot produce meaningful Doppler
+velocities. casa-rs raises `RuntimeError` and retains the previous frequency
+list, active frequency and coordinate transform.
+
+## `coordsys.setrestfrequency` can crash on a whitespace-only string
+
+CASA 6.7.6.14 terminates with `SIGSEGV` when `cs.setrestfrequency('  ')`
+tokenizes the string and tries to read the first quantity from an empty
+list. casa-rs raises `RuntimeError` and retains the existing list.
+
+## `coordsys.setreferencelocation` can crash when an axis is masked
+
+On a two-axis linear coordinate, CASA 6.7.6.14 terminates with `SIGSEGV`
+for `cs.setreferencelocation([2, 3], [8.0, 9.0], [True, False])`. The same
+failure can occur with a Stokes axis because the method excludes Stokes
+from the edit. casa-rs changes both reference values on each enabled
+non-Stokes axis and preserves both values on the other axes. It publishes
+the updated coordinate state only after the complete edit succeeds.
+
+## `imager.ft` can crash after a refused duplicate image with a new component
+
+With the same live CASA 6.7.6.14 imager, predict an image, then submit that
+image again together with an unused component list. `ft` reports a duplicate
+image. A subsequent call with just the component reports that the component
+is already present, and a no-input `ft()` can terminate with `SIGSEGV`.
+casa-rs refuses the mixed duplicate request before adding the component.
+The same imager can repeat the original image prediction and can subsequently
+add the component alone.
+
+## Coordsys relative conversions can abort on missing values
+
+On a two-axis coordinate system, CASA 6.7.6.14 aborts for
+`cs.toabs(isworld=0)` and `cs.toabs(isworld=1)`. casa-rs interprets the
+omitted values as zero offsets and returns the reference position in the
+requested domain. CASA also aborts when `toabsmany` or `torelmany` receives
+a matrix with fewer rows than the number of coordinate axes. casa-rs
+raises `RuntimeError` for these matrices.
+
+## Coordsys spectral velocity conversions can crash on missing input
+
+In CASA 6.7.6.14, calling `frequencytovelocity` or `velocitytofrequency`
+with an empty vector on a spectral coordinate exits with `SIGSEGV`.
+Calling `velocitytofrequency([1.0])` without a spectral coordinate also
+exits with `SIGSEGV` when it looks up the default frequency unit. casa-rs
+returns an empty `float64` array for empty vectors on a spectral coordinate
+and raises `RuntimeError` when the spectral coordinate is missing.
+
+## Coordsys Doppler conversion can misread byte-swapped arrays
+
+On a little-endian host, CASA 6.7.6.14 treats a big-endian `float64` NumPy
+array such as `np.array([1.0, 2.0, 3.0], dtype='>f8')` as native-endian
+bytes in `frequencytofrequency`. The values become tiny subnormal numbers
+even at zero velocity. casa-rs respects the array dtype's byte order.

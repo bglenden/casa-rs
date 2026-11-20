@@ -22,7 +22,7 @@ use pyo3::{
 };
 
 use crate::convert::{Variant, quantity, quantity_value};
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::tools::{LogLine, emit};
 
 const LOGGER: &str = "casars.tools.imager";
 
@@ -32,7 +32,20 @@ struct ImagerState {
     prediction: ImagerPrediction,
     valid: bool,
     uses_scratch: bool,
-    model_in_sky_equation: bool,
+    sky_model: SkyModelPaths,
+}
+
+#[derive(Default)]
+struct SkyModelPaths {
+    images: Vec<PathBuf>,
+    components: Option<PathBuf>,
+}
+
+impl ImagerState {
+    fn reset_sky_model(&mut self) {
+        self.sky_model = SkyModelPaths::default();
+        self.prediction.clear_retained_model_sources();
+    }
 }
 
 /// CASA's calibration-facing legacy imager.
@@ -180,12 +193,12 @@ impl PyImager {
                 .prediction
                 .define_model_geometry(request)
                 .map_err(runtime_error)?;
-            state.model_in_sky_equation = false;
+            state.reset_sky_model();
             Ok(true)
         })
     }
 
-    #[pyo3(signature = (ftmachine = "ft", cache = -1, tile = 16, gridfunction = "SF", location = Variant::Empty, padding = 1.0, freqinterp = "nearest", wprojplanes = -1, epjtablename = "", applypointingoffsets = false, dopbgriddingcorrections = true, cfcachedirname = "", rotpastep = 5.0, pastep = 360.0, pblimit = 0.05, imagetilevol = 0, singleprecisiononly = false, numthreads = -1, psterm = true, aterm = true, mterm = true, wbawp = false, conjbeams = true), text_signature = "($self, ftmachine='ft', cache=-1, tile=16, gridfunction='SF', location=[], padding=1.0, freqinterp='nearest', wprojplanes=-1, epjtablename='', applypointingoffsets=False, dopbgriddingcorrections=True, cfcachedirname='', rotpastep=5.0, pastep=360.0, pblimit=0.05, imagetilevol=0, singleprecisiononly=False, numthreads=-1, psterm=True, aterm=True, mterm=True, wbawp=False, conjbeams=True)")]
+    #[pyo3(signature = (ftmachine = "ft", cache = -1, tile = 16, gridfunction = "SF", location = Variant::Empty, padding = 1.0, freqinterp = "nearest", wprojplanes = -1, epjtablename = "", applypointingoffsets = false, dopbgriddingcorrections = true, cfcachedirname = "", rotpastep = 5.0, pastep = 360.0, pblimit = 0.05, imagetilevol = options::ImageTileVolume::default(), singleprecisiononly = false, numthreads = -1, psterm = true, aterm = true, mterm = true, wbawp = false, conjbeams = true), text_signature = "($self, ftmachine='ft', cache=-1, tile=16, gridfunction='SF', location=[], padding=1.0, freqinterp='nearest', wprojplanes=-1, epjtablename='', applypointingoffsets=False, dopbgriddingcorrections=True, cfcachedirname='', rotpastep=5.0, pastep=360.0, pblimit=0.05, imagetilevol=0, singleprecisiononly=False, numthreads=-1, psterm=True, aterm=True, mterm=True, wbawp=False, conjbeams=True)")]
     #[allow(clippy::too_many_arguments)]
     fn setoptions(
         &self,
@@ -205,7 +218,7 @@ impl PyImager {
         rotpastep: f64,
         pastep: f64,
         pblimit: f64,
-        imagetilevol: i64,
+        imagetilevol: options::ImageTileVolume,
         singleprecisiononly: bool,
         numthreads: i32,
         psterm: bool,
@@ -216,7 +229,7 @@ impl PyImager {
     ) -> PyResult<bool> {
         // The A/W controls are consumed by their Fourier machines. Ordinary
         // GridFT and WProjectFT do not use them.
-        let _ = (epjtablename, imagetilevol, psterm, aterm, mterm, wbawp);
+        let _ = (mterm, wbawp);
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -236,7 +249,7 @@ impl PyImager {
             .options(state.prediction.transform_options())?;
             let mosaic = ftmachine.eq_ignore_ascii_case("pbmosaic");
             if mosaic || ftmachine.eq_ignore_ascii_case("pbwproject") {
-                state.prediction.configure_legacy_pbw(
+                state.prediction.configure_legacy_pbw_with_pointing(
                     settings,
                     ImagerLegacyPbWOptions {
                         mosaic,
@@ -246,12 +259,14 @@ impl PyImager {
                         correct_primary_beam: dopbgriddingcorrections,
                         primary_beam_limit: pblimit,
                     },
+                    (applypointingoffsets && !epjtablename.is_empty())
+                        .then(|| PathBuf::from(epjtablename)),
                 )
             } else if matches!(
                 ftmachine.to_ascii_lowercase().as_str(),
                 "awproject" | "mawproject"
             ) {
-                state.prediction.configure_legacy_aw(
+                state.prediction.configure_legacy_aw_terms(
                     settings,
                     ImagerLegacyAwOptions {
                         cache_directory: PathBuf::from(cfcachedirname),
@@ -263,11 +278,13 @@ impl PyImager {
                         rotation_step_deg: rotpastep,
                         conjugate_beams: conjbeams,
                     },
+                    [psterm, aterm],
                 )
             } else {
                 state.prediction.configure_transform(settings)
             }
             .map_err(runtime_error)?;
+            state.prediction.set_image_tile_volume(imagetilevol.0);
             Ok(true)
         })
     }
@@ -306,7 +323,7 @@ impl PyImager {
                 .prediction
                 .configure_single_dish(setup)
                 .map_err(runtime_error)?;
-            state.model_in_sky_equation = false;
+            state.reset_sky_model();
             Ok(true)
         })
     }
@@ -335,9 +352,6 @@ impl PyImager {
         };
         let parallactic = angle(&parangleinc, 360.)?;
         let threshold = angle(&skyposthreshold, 180.)?;
-        if dovp && (parallactic, threshold) != (360., 180.) {
-            return not_yet_implemented_in("imager", "setvp for varying voltage patterns", 1520);
-        }
         // SkyEquation chooses its default pattern from the attached observation.
         let _ = telescope;
         self.with_state(py, |state| {
@@ -346,9 +360,14 @@ impl PyImager {
             });
             state
                 .prediction
-                .configure_voltage_pattern_squint(pattern, dovp, dosquint)
+                .configure_voltage_pattern_rotation(
+                    pattern,
+                    dovp,
+                    dosquint,
+                    parallactic.to_radians(),
+                )
                 .map_err(runtime_error)?;
-            state.model_in_sky_equation = false;
+            state.reset_sky_model();
             Ok(())
         })?;
         let mut lines = vec![LogLine::info("Setting voltage pattern parameters")];
@@ -448,7 +467,7 @@ impl PyImager {
                     state.valid = selected;
                     if selected {
                         state.prediction.reset_fourier_machine();
-                        state.model_in_sky_equation = false;
+                        state.reset_sky_model();
                     }
                     Ok(Some(selected))
                 }
@@ -501,28 +520,46 @@ impl PyImager {
         phasecentertime: f64,
     ) -> PyResult<bool> {
         let images = model_images(model)?;
+        let components = (!complist.is_empty()).then(|| PathBuf::from(complist));
         let mut preparation_error = None;
         let result = self.attached(py, |state| {
-            let has_model = !images.is_empty() || !complist.is_empty();
-            // The legacy sky equation rejects a second model addition until
-            // the caller rebuilds its data or image selection.
-            if state.model_in_sky_equation && has_model {
+            // The sky equation has separate image and component slots.
+            // A call can fill either vacant slot and predict both together.
+            if (!images.is_empty() && !state.sky_model.images.is_empty())
+                || (components.is_some() && state.sky_model.components.is_some())
+            {
                 return Ok(false);
             }
             let model = ImagerPredictionModel {
-                images: &images,
-                components: (!complist.is_empty()).then(|| Path::new(complist)),
+                images: if images.is_empty() {
+                    &state.sky_model.images
+                } else {
+                    &images
+                },
+                components: components
+                    .as_deref()
+                    .or(state.sky_model.components.as_deref()),
                 incremental,
                 phase_centre_time: (phasecentertime >= 0.).then_some(phasecentertime),
             };
-            match state
-                .prediction
-                .predict_attached(&state.attachments, model, state.uses_scratch)
+            let prediction = state.prediction.predict_attached_retaining_sources(
+                &state.attachments,
+                model,
+                state.uses_scratch,
+            );
+            if matches!(prediction, Ok(true))
+                || prediction
+                    .as_ref()
+                    .is_err_and(ImagerPrediction::retains_prepared_model)
             {
-                Ok(true) => {
-                    state.model_in_sky_equation |= has_model;
-                    Ok(true)
+                if !images.is_empty() {
+                    state.sky_model.images = images;
                 }
+                if components.is_some() {
+                    state.sky_model.components = components;
+                }
+            }
+            match prediction {
                 Err(AttachmentError::PredictionPreparation(error)) => {
                     preparation_error = Some(error.to_string());
                     Ok(false)

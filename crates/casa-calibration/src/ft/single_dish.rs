@@ -35,13 +35,12 @@ use super::{invalid, spectral_with_runtime};
 pub(super) fn prepare_model(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
-    path: &Path,
+    image: &PagedImage<f32>,
     kernel: ImagerSingleDishKernel,
     geometry: &PredictionGeometry,
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
-    let image = PagedImage::<f32>::open(path).map_err(invalid)?;
     let context = &geometry.single_dish_setup;
     if !matches!(context.convert_first.as_str(), "NEVER" | "ALWAYS" | "AUTO") {
         return Err(invalid(format!(
@@ -96,7 +95,7 @@ pub(super) fn prepare_model(
     validate_model(
         ms,
         selected,
-        &image,
+        image,
         kernel,
         parameters,
         &context.pointing_column,
@@ -133,7 +132,7 @@ pub(super) fn prepare_model(
     coordinates.replace_coordinate(pol, grid_axis);
     ImageModel::prepare(ms, selected, keep_zero, scratch, |path| {
         let (shape, nonzero) = write_planes(
-            &image,
+            image,
             coordinates.clone(),
             &routing,
             path,

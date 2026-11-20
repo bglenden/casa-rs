@@ -16,16 +16,23 @@ import numpy as np
 from gaincal_oracle import relative_rms
 
 
-def ft(factory, dataset, model, cache, *, scratch, spw='', correction=True, limit=.05,
-       interp='nearest', accepts=True, machine='pbwproject', field=0):
+def configured_imager(factory, dataset, cache, *, scratch, spw='', correction=True, limit=.05,
+                      interp='nearest', machine='pbwproject', field=0, baseline='',
+                      pointing=False, ep_table=''):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
-    assert tool.selectvis(field=field, spw=spw)
+    assert tool.selectvis(field=field, spw=spw, baseline=baseline)
     assert tool.defineimage(nx=256, ny=256, cellx='15arcsec', celly='15arcsec',
                             phasecenter=0, stokes='IQUV', outframe='TOPO')
     assert tool.setoptions(ftmachine=machine, wprojplanes=1, numthreads=1,
-                           cfcachedirname=str(cache), applypointingoffsets=False,
+                           cfcachedirname=str(cache), applypointingoffsets=pointing,
+                           epjtablename=str(ep_table),
                            dopbgriddingcorrections=correction, pblimit=limit, freqinterp=interp)
+    return tool
+
+
+def ft(factory, dataset, model, cache, *, accepts=True, **options):
+    tool = configured_imager(factory, dataset, cache, **options)
     assert tool.ft(str(model)) is accepts
     if accepts:
         (dataset.parent / f'{dataset.name}.complete').touch()
