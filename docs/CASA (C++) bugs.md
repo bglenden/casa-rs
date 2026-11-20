@@ -160,6 +160,7 @@ Calibration behaviours casa-rs does not follow:
 [component spectra in another frame](#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame).
 Flagging behaviours casa-rs does not follow:
 [a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
+[an unrecognized flag merge choice](#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice),
 [a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
 Coordinate behaviours casa-rs does not follow:
 [a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
@@ -3770,6 +3771,16 @@ CASA 6.7.6.14 lists `{0: {'name': 'v1.old.1793292269', 'comment': 'second'},
 and then `'second'`; the first comment is lost. casa-rs renames the version
 the same way and keeps its own comment (`flagmanager`'s
 `keep_existing_version`).
+
+## `flagmanager` replaces working flags for an unrecognized merge choice
+
+CASA 6.7.6.14 accepts unrecognized `merge` strings in restore mode and
+silently applies `replace`. For example, `merge="OR"` removes working flags
+that were set after the version was saved. The
+`tools/casa-compat/flagmanager_store_oracle.py` comparison verifies this
+for both `FLAG` and `FLAG_ROW`. It also verifies `replace`, `or`, and
+`and` against independent flag patterns. casa-rs raises `ValueError` for
+an unrecognized choice and preserves the working flags.
 
 ## `flagdata`'s summary aborts on a correlation it cannot name
 
