@@ -649,7 +649,12 @@ impl SpectralCoordinate {
             for value in &mut world_values {
                 *value *= factor;
             }
-            if pixel_values.len() >= 2 && world_values.len() == pixel_values.len() {
+            if pixel_values.len() == 1 && world_values.len() == 1 {
+                crval[0] = world_values[0];
+                cdelt[0] = 0.0;
+                crpix[0] = 0.0;
+                pixel_values[0] = 0.0;
+            } else if pixel_values.len() >= 2 && world_values.len() == pixel_values.len() {
                 let last = pixel_values.len() - 1;
                 if pixel_values[last] == pixel_values[0] {
                     return Err(CoordinateError::InvalidRecord(

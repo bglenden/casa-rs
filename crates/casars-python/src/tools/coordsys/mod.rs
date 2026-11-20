@@ -101,9 +101,7 @@ fn current_epoch(mut info: ObsInfo) -> ObsInfo {
 }
 
 impl CoordinateState {
-    fn from_record(mut record: RecordValue) -> PyResult<Self> {
-        let coordinates = CoordinateSystem::from_record(&record)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    fn from_coordinates(coordinates: CoordinateSystem, mut record: RecordValue) -> PyResult<Self> {
         for (index, placement) in CoordinateSystem::record_coordinates(&record)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
             .into_iter()
@@ -146,9 +144,15 @@ impl PyCoordsys {
         }
     }
 
-    pub(crate) fn from_record(record: RecordValue) -> PyResult<Self> {
+    pub(crate) fn from_image_coordinates(
+        coordinates: &CoordinateSystem,
+        record: RecordValue,
+    ) -> PyResult<Self> {
         Ok(Self {
-            state: Mutex::new(CoordinateState::from_record(record)?),
+            state: Mutex::new(CoordinateState::from_coordinates(
+                coordinates.clone(),
+                record,
+            )?),
         })
     }
 

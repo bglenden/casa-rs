@@ -136,6 +136,11 @@ pub trait ImageExprValue:
     /// Lossily convert from `f64`.  Used by reduction/scalar operations.
     fn from_f64_lossy(v: f64) -> Self;
 
+    /// Divide by a real scalar in the pixel's native precision.
+    fn div_by_real(self, divisor: f64) -> Self {
+        self / Self::from_f64_lossy(divisor)
+    }
+
     /// Lossily convert to `f64`.  Used by sorting in median/fractile.
     fn to_f64_lossy(&self) -> f64;
 
@@ -437,6 +442,9 @@ impl ImageExprValue for casa_types::Complex32 {
     fn from_f64_lossy(v: f64) -> Self {
         Self::new(v as f32, 0.0)
     }
+    fn div_by_real(self, divisor: f64) -> Self {
+        self / divisor as f32
+    }
     fn to_f64_lossy(&self) -> f64 {
         self.norm() as f64
     }
@@ -544,6 +552,9 @@ impl ImageExprValue for casa_types::Complex64 {
     }
     fn from_f64_lossy(v: f64) -> Self {
         Self::new(v, 0.0)
+    }
+    fn div_by_real(self, divisor: f64) -> Self {
+        self / divisor
     }
     fn to_f64_lossy(&self) -> f64 {
         self.norm()
