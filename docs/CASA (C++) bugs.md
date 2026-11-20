@@ -4020,6 +4020,17 @@ and accumulates each weight spectrum over its actual contributing
 integrations. The test calculates the expected masks from the stored values,
 then compares flags and data using both CASA and casacore readback.
 
+## Decorated manual and quack selections can flag unnamed correlations
+
+In CASA 6.7.6.14, manual and quack flagging ignore the correlation scope
+when a recognized visibility operator appears in the expression. For example,
+`correlation='ABS_XX'` changes all four stored linear-correlation planes,
+including the cross-hands. `NORM_UNKNOWN` can also select all products.
+The `tools/casa-compat/flagdata_routine_expressions_oracle.py` comparison
+reproduces the extra flags and checks casa-rs against explicit CASA selection
+of the named planes. `ALL` still selects every stored correlation. An
+expression with no known product leaves the flags unchanged.
+
 ## Time-averaged clipping can derive row flags from a subset of channels
 
 With `timeavg=True`, `channelavg=True` and `spw="0:1~2"` on a

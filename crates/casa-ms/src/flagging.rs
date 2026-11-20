@@ -482,11 +482,7 @@ fn flagdata_with_persistence(
             channel_selections.as_ref(),
             correlations.as_ref(),
             request.action.value(),
-            if correlations.is_some() {
-                SelectedFlagRowPolicy::Preserve
-            } else {
-                SelectedFlagRowPolicy::ChangedSamples
-            },
+            selected_flag_row_policy(correlations.as_ref(), SelectedFlagRowPolicy::ChangedSamples),
         )?,
         FlagDataMode::Clip => apply_clip_flags(
             ms,
@@ -1073,7 +1069,7 @@ fn apply_clip_flags(
             }
         }
         // CASA's clip agent writes the per-sample FLAG column.
-        write_touched_flag_updates(ms, updates, touched_rows, false, &mut changed)?;
+        write_touched_flag_updates(ms, updates, touched_rows, |_| false, &mut changed)?;
     }
     changed.summary = Some(FlagSummary {
         flagged_samples,
@@ -1187,10 +1183,10 @@ fn apply_quack_flags(
     }
     // CASA updates FLAG_ROW at selected scan times only when the call
     // leaves SPW unspecified, even for an explicitly selected full window.
-    let row_policy = if channel_selections.is_some() || correlations.is_some() {
+    let row_policy = if channel_selections.is_some() {
         SelectedFlagRowPolicy::Preserve
     } else {
-        SelectedFlagRowPolicy::AllSelectedRows
+        selected_flag_row_policy(correlations, SelectedFlagRowPolicy::AllSelectedRows)
     };
     set_selected_flags(
         ms,
@@ -1444,7 +1440,21 @@ fn check_channel_selections(
 enum SelectedFlagRowPolicy {
     ChangedSamples,
     AllSelectedRows,
+    FullySelectedRows,
     Preserve,
+}
+
+fn selected_flag_row_policy(
+    correlations: Option<&CorrelationSelection>,
+    unfiltered: SelectedFlagRowPolicy,
+) -> SelectedFlagRowPolicy {
+    match correlations {
+        Some(selection) if selection.decorated_stored_products() => {
+            SelectedFlagRowPolicy::FullySelectedRows
+        }
+        Some(_) => SelectedFlagRowPolicy::Preserve,
+        None => unfiltered,
+    }
 }
 
 fn set_selected_flags(
@@ -1459,7 +1469,11 @@ fn set_selected_flags(
     let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
     let mut touched_rows = std::collections::BTreeSet::new();
+    let mut coverage = BTreeMap::<usize, usize>::new();
     for sample in loaded.samples {
+        if row_policy == SelectedFlagRowPolicy::FullySelectedRows {
+            *coverage.entry(sample.row).or_default() += 1;
+        }
         if sample.flag != flag
             && let Some(flags) = updates.get_mut(&sample.row)
             && let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan]))
@@ -1479,11 +1493,29 @@ fn set_selected_flags(
             }
         }
     }
+    let fully_selected = coverage
+        .into_iter()
+        .filter_map(|(row, count)| (updates[&row].len() == count).then_some(row))
+        .collect::<std::collections::BTreeSet<_>>();
+    if !fully_selected.is_empty() {
+        let rows = fully_selected.iter().copied().collect::<Vec<_>>();
+        let path = display_ms_path(ms);
+        let row_flags = load_bool_cells(ms.main_table(), &rows, FLAG_ROW_COLUMN, &path)?;
+        touched_rows.extend(
+            rows.into_iter()
+                .zip(row_flags)
+                .filter_map(|(row, row_flag)| (row_flag != flag).then_some(row)),
+        );
+    }
     write_touched_flag_updates(
         ms,
         updates,
         touched_rows,
-        row_policy != SelectedFlagRowPolicy::Preserve,
+        |row| match row_policy {
+            SelectedFlagRowPolicy::FullySelectedRows => fully_selected.contains(&row),
+            SelectedFlagRowPolicy::Preserve => false,
+            _ => true,
+        },
         &mut changed,
     )?;
     Ok(changed)
@@ -1512,7 +1544,7 @@ fn apply_flag_mask_with_preloaded(
             touched_rows.insert(sample.row);
         }
     }
-    write_touched_flag_updates(ms, updates, touched_rows, true, &mut changed)?;
+    write_touched_flag_updates(ms, updates, touched_rows, |_| true, &mut changed)?;
     Ok(changed)
 }
 
@@ -1520,7 +1552,7 @@ fn write_touched_flag_updates(
     ms: &mut MeasurementSet,
     mut updates: std::collections::BTreeMap<usize, ArrayD<bool>>,
     touched_rows: std::collections::BTreeSet<usize>,
-    update_flag_rows: bool,
+    update_flag_row: impl Fn(usize) -> bool,
     changed: &mut ChangeSet,
 ) -> Result<(), FlaggingError> {
     let path = display_ms_path(ms);
@@ -1531,19 +1563,17 @@ fn write_touched_flag_updates(
         };
         prepared.push((row, flags));
     }
-    let flag_row_updates = if update_flag_rows {
-        let rows = prepared.iter().map(|(row, _)| *row).collect::<Vec<_>>();
+    let flag_row_updates = {
+        let selected = prepared.iter().filter(|(row, _)| update_flag_row(*row));
+        let rows = selected.clone().map(|(row, _)| *row).collect::<Vec<_>>();
         let current_flag_rows = load_bool_cells(ms.main_table(), &rows, FLAG_ROW_COLUMN, &path)?;
-        prepared
-            .iter()
+        selected
             .zip(current_flag_rows)
             .filter_map(|((row, flags), current)| {
                 let flag_row = flags.iter().all(|flag| *flag);
                 (current != flag_row).then_some((*row, flag_row))
             })
             .collect::<Vec<_>>()
-    } else {
-        Vec::new()
     };
     ms.main_table_mut()
         .reserve_array_cell_updates(FLAG_COLUMN, prepared.len());
