@@ -44,6 +44,8 @@ mod write;
 mod write_cells;
 mod write_structure;
 
+pub(crate) use cache::path_is_in_use;
+
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::PyTypeError;
