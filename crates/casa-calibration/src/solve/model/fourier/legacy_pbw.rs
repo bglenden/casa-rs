@@ -9,6 +9,27 @@ use casa_types::{Complex32, RecordValue, ScalarValue, Value};
 use super::{FourierRow, GainSolveError, complex_model_image_path, model_error, record_number};
 use crate::ft::legacy_pbw::KERNEL_IMAGE;
 
+#[derive(Default)]
+pub(super) struct FeedAngle(Option<(i32, f64, f64)>);
+
+impl FeedAngle {
+    pub(super) fn for_row(&mut self, row: &FourierRow<'_>) -> Result<f64, GainSolveError> {
+        let field = row.row.field_id;
+        let time = row.row.time_seconds;
+        if let Some((last_field, last_time, angle)) = self.0
+            && (field, time) == (last_field, last_time)
+        {
+            return Ok(angle);
+        }
+        let angle = -row
+            .engine
+            .feed_parallactic_angle(time, field as usize, 0)
+            .map_err(model_error)?;
+        self.0 = Some((field, time, angle));
+        Ok(angle)
+    }
+}
+
 pub(super) fn load(
     record: &RecordValue,
     row: &FourierRow<'_>,

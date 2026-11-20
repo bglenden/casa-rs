@@ -172,8 +172,7 @@ struct PreparedFourierModel {
     weights: Vec<f32>,
     flags: Vec<bool>,
     frequencies: Vec<f64>,
-    legacy_pbw: bool,
-    legacy_pbw_angle: Option<(i32, f64, f64)>,
+    legacy_pbw_angle: Option<legacy_pbw::FeedAngle>,
     _legacy_pbw_memory: Option<Reservation>,
 }
 
@@ -323,8 +322,7 @@ impl PreparedFourierModel {
             weights: Vec::new(),
             flags: Vec::new(),
             frequencies: Vec::new(),
-            legacy_pbw,
-            legacy_pbw_angle: None,
+            legacy_pbw_angle: legacy_pbw.then(legacy_pbw::FeedAngle::default),
         })
     }
 
@@ -487,24 +485,10 @@ impl PreparedFourierModel {
         } else {
             1.0
         };
-        let parallactic_angle = if self.legacy_pbw {
-            let field = row.row.field_id;
-            let time = row.row.time_seconds;
-            if let Some((last_field, last_time, angle)) = self.legacy_pbw_angle
-                && (field, time) == (last_field, last_time)
-            {
-                angle
-            } else {
-                let angle = -row
-                    .engine
-                    .feed_parallactic_angle(time, field as usize, 0)
-                    .map_err(model_error)?;
-                self.legacy_pbw_angle = Some((field, time, angle));
-                angle
-            }
-        } else {
-            0.
-        };
+        let parallactic_angle = self
+            .legacy_pbw_angle
+            .as_mut()
+            .map_or(Ok(0.), |angles| angles.for_row(&row))?;
         let native = NativeRow {
             uvw_m: uvw_m.map(|coordinate| coordinate * wavelength_scale),
             phase_shift_m: phase_shift_m * wavelength_scale,
