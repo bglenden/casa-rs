@@ -284,12 +284,28 @@ impl Chunk {
         getmask: bool,
         wide: (impl Fn(T) -> U, impl Fn(U) -> U),
     ) -> PyResult<CasaValue> {
-        let (widen, round) = wide;
         let mask = if getmask || !axes.is_empty() {
             self.mask(image)?
         } else {
             None
         };
+        self.format(axes, dropdeg, getmask, wide, mask, || {
+            image
+                .get_slice(&self.start, &self.size, &self.stride)
+                .map_err(raised)
+        })
+    }
+
+    fn format<T: ImagePixel, U: Average>(
+        &self,
+        axes: &[usize],
+        dropdeg: bool,
+        getmask: bool,
+        wide: (impl Fn(T) -> U, impl Fn(U) -> U),
+        mask: Option<ArrayD<bool>>,
+        read: impl FnOnce() -> PyResult<ArrayD<T>>,
+    ) -> PyResult<CasaValue> {
+        let (widen, round) = wide;
         let mut shape = self.size.clone();
         for &axis in axes {
             shape[axis] = 1;
@@ -307,9 +323,7 @@ impl Chunk {
                 values,
             });
         }
-        let pixels = image
-            .get_slice(&self.start, &self.size, &self.stride)
-            .map_err(raised)?;
+        let pixels = read()?;
         if axes.is_empty() {
             return Ok(U::output(
                 output_shape,
@@ -412,6 +426,11 @@ impl PyImageTool {
                 }
                 collapse.push(axis as usize);
             }
+            if let Some(fits) = image.fits() {
+                let pixels = fits.read(&chunk.start, &chunk.size, &chunk.stride)?;
+                let mask = (getmask || !collapse.is_empty()).then(|| pixels.mapv(|value| !value.is_nan()));
+                return chunk.format(&collapse, dropdeg, getmask, (f64::from, |v| f64::from(v as f32)), mask, || Ok(pixels));
+            }
             match &*image {
                 ImageHandle::Float(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (f64::from, |v| f64::from(v as f32)))),
                 ImageHandle::Double(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (f64::from, std::convert::identity))),
@@ -445,6 +464,9 @@ impl PyImageTool {
             let chunk = Chunk::write(image.shape(), pixels.shape(), &blc, &inc, replicate)?;
             if pixels.is_complex() && matches!(&*image, ImageHandle::Float(_) | ImageHandle::Double(_)) {
                 return Err(raised("Exception: Unsupported type for pixels parameter. It must be either a vector of doubles or ints"));
+            }
+            if image.fits().is_some() {
+                return Err(raised("FITSImage::putSlice - is not possible as FITSImage is not writable"));
             }
             match &mut *image {
                 ImageHandle::Float(storage) => chunk.put(storage, pixels.f32())?,

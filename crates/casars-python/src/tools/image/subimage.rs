@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
 use crate::convert::{IntList, Variant};
-use crate::tools::{LogLine, emit, table::casa_record};
+use crate::tools::{LogLine, emit, not_yet_implemented_in, table::casa_record};
 
 use super::PyImageTool;
 use super::create::publish_image;
@@ -208,11 +208,15 @@ impl PyImageTool {
             if outfile.is_empty() && !wantreturn {
                 logs.push(LogLine::warning("outfile was not specified and wantreturn is false. The resulting image will be inaccessible"));
             }
-            if !outfile.is_empty() && let Some(source) = attached.lock().path() {
-                ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
-            }
             publish_image(outfile, overwrite, |path| {
+                // Release the source handle before publication takes the image registry lock.
                 let original = attached.lock();
+                if original.fits().is_some() {
+                    return not_yet_implemented_in("image", "subimage", 1627);
+                }
+                if !outfile.is_empty() && let Some(source) = original.path() {
+                    ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
+                }
                 let mut copy = match &*original {
                     ImageHandle::Float(source) => ImageHandle::Float(request.build(source, path, &mut logs)?),
                     ImageHandle::Double(source) => ImageHandle::Double(request.build(source, path, &mut logs)?),

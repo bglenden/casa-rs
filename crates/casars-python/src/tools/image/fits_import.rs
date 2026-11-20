@@ -26,6 +26,12 @@ impl ImportFits<'_> {
         })?;
         let mut source = FitsToolImport::open(Path::new(self.infile), whichrep, self.whichhdu)
             .map_err(raised)?;
+        if source.is_tile_compressed() {
+            return Err(raised(format!(
+                "Exception: No image at specified location in file {}.",
+                self.infile
+            )));
+        }
         publish_image(self.outfile, self.overwrite, |path| {
             let mut storage = Storage::create(
                 source.shape().to_vec(),

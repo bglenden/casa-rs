@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+use std::cell::OnceCell;
+use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{
     AnyPagedImage, ImageError, ImagePixel, ImagePixelType, PagedImage, ScratchSpace, TempImage,
     TempStoragePolicy,
+    fits_read::{FitsSectionReader, FitsToolImport},
 };
 use casa_types::{RecordValue, Value};
 use ndarray::ArrayD;
@@ -18,7 +20,34 @@ pub(super) enum Storage<T: ImagePixel> {
     Temp {
         image: Box<TempImage<T>>,
         record: RecordValue,
+        fits: Option<FitsAttachment>,
     },
+}
+
+pub(super) struct FitsAttachment {
+    path: PathBuf,
+    hdu: usize,
+    pub(super) shape: Vec<usize>,
+    pixels: OnceCell<FitsSectionReader>,
+}
+
+impl FitsAttachment {
+    pub(super) fn read(
+        &self,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> PyResult<ArrayD<f32>> {
+        // CASA opens the pixel stream on the first read and retains it
+        // across subsequent reads even if the filename is moved or removed.
+        if let Some(reader) = self.pixels.get() {
+            return reader.read(start, count, stride).map_err(raised);
+        }
+        let reader = FitsSectionReader::open(&self.path, self.hdu, &self.shape).map_err(raised)?;
+        let section = reader.read(start, count, stride).map_err(raised)?;
+        let _ = self.pixels.set(reader);
+        Ok(section)
+    }
 }
 
 pub(super) enum ImageHandle {
@@ -57,12 +86,55 @@ pub(super) fn raised(error: impl std::fmt::Display) -> PyErr {
 
 impl ImageHandle {
     pub(super) fn open(path: &Path) -> Result<Self, ImageError> {
+        if path.is_file() {
+            return Self::open_fits(path);
+        }
         Ok(match AnyPagedImage::open(path)? {
             AnyPagedImage::Float32(image) => Self::Float(Storage::Paged(Box::new(image))),
             AnyPagedImage::Float64(image) => Self::Double(Storage::Paged(Box::new(image))),
             AnyPagedImage::Complex32(image) => Self::Complex(Storage::Paged(Box::new(image))),
             AnyPagedImage::Complex64(image) => Self::DComplex(Storage::Paged(Box::new(image))),
         })
+    }
+
+    fn open_fits(path: &Path) -> Result<Self, ImageError> {
+        let mut source = FitsToolImport::open(path, 0, -1)?;
+        if source.is_tile_compressed() {
+            return Err(ImageError::CasaSelection(format!(
+                "No data in the zeroth or first extension of {}",
+                path.display()
+            )));
+        }
+        // Reuse temporary-image metadata operations. The attachment owns the
+        // actual shape and pixel stream, so this needs only one storage cell.
+        let mut image = TempImage::new(
+            vec![1; source.shape().len()],
+            source.coordinates().clone(),
+            TempStoragePolicy::Memory,
+        )?;
+        let fits = FitsAttachment {
+            path: path.to_path_buf(),
+            hdu: source.hdu_index(),
+            shape: source.shape().to_vec(),
+            pixels: OnceCell::new(),
+        };
+        source.misc_info.remove("object");
+        image.set_units(source.units)?;
+        image.set_image_info_record(source.image_info)?;
+        image.set_misc_info(source.misc_info)?;
+        image.append_history_entries(&source.history)?;
+        Ok(Self::Float(Storage::Temp {
+            image: Box::new(image),
+            record: source.coordinate_record,
+            fits: Some(fits),
+        }))
+    }
+
+    pub(super) fn fits(&self) -> Option<&FitsAttachment> {
+        match self {
+            Self::Float(Storage::Temp { fits, .. }) => fits.as_ref(),
+            _ => None,
+        }
     }
 
     pub(super) fn kind(&self) -> ImagePixelType {
@@ -75,10 +147,16 @@ impl ImageHandle {
     }
 
     pub(super) fn shape(&self) -> &[usize] {
+        if let Some(fits) = self.fits() {
+            return &fits.shape;
+        }
         with_pixels!(self, storage => with_storage!(storage, image => image.shape()))
     }
 
     pub(super) fn path(&self) -> Option<&Path> {
+        if let Some(fits) = self.fits() {
+            return Some(&fits.path);
+        }
         with_pixels!(self, storage => with_storage!(storage, image => image.name()))
     }
 
@@ -115,7 +193,7 @@ impl ImageHandle {
     pub(super) fn set_coordinate_record(&mut self, record: RecordValue) -> PyResult<()> {
         with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised),
-            Storage::Temp { image, record: current } => {
+            Storage::Temp { image, record: current, .. } => {
                 let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
                 image.set_coordinates(coordinates).map_err(raised)?;
                 *current = record;
@@ -146,6 +224,7 @@ impl<T: ImagePixel> Storage<T> {
         let mut storage = match path {
             Some(path) => Self::Paged(Box::new(PagedImage::create(shape, coordinates, path)?)),
             None => Self::Temp {
+                fits: None,
                 record: coordinates.to_record(),
                 image: Box::new(TempImage::new(
                     shape,

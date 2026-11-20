@@ -44,6 +44,9 @@ impl AttachedImage {
     }
 
     pub(super) fn open(registry: &mut OpenImages, path: &Path) -> PyResult<Self> {
+        if path.is_file() {
+            return ImageHandle::open(path).map(Self::temporary).map_err(raised);
+        }
         let key = key(path)?;
         if let Some(image) = registry.get(&key).and_then(Weak::upgrade)
             && image
@@ -81,7 +84,7 @@ impl AttachedImage {
     }
 
     pub(super) fn is_persistent(&self) -> bool {
-        self.key.is_some()
+        self.key.is_some() || self.lock().fits().is_some()
     }
 
     pub(super) fn rename(&self, name: &str, overwrite: bool, history: bool) -> PyResult<Self> {
@@ -89,6 +92,9 @@ impl AttachedImage {
             return Err(raised("Exception: new file name must be specified."));
         }
         let Some(source) = &self.key else {
+            if self.lock().fits().is_some() {
+                return Err(stub("rename").unwrap_err());
+            }
             return Err(raised(
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
             ));
@@ -220,6 +226,12 @@ impl AttachedImage {
 
     pub(super) fn remove(&self) -> PyResult<String> {
         let Some(key) = &self.key else {
+            if let Some(path) = self.lock().path() {
+                return Err(raised(format!(
+                    "Cannot delete file {} because table is not writable",
+                    path.display()
+                )));
+            }
             return Err(raised(
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be deleted.",
             ));
