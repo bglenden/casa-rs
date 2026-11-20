@@ -3,7 +3,7 @@
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, SpectralCoordinate};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore};
+use casa_types::quanta::{Dimension, Quantity, UnitDim, casacore};
 use casa_types::{ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError};
@@ -245,7 +245,7 @@ impl PyCoordsys {
     ) -> PyResult<Py<PyAny>> {
         let mut values = values(value, "frequencytofrequency")?;
         let velocity = velocity
-            .map(Bound::extract::<Variant>)
+            .map(|value| value.extract::<Variant>())
             .transpose()?
             .unwrap_or(Variant::Empty);
         py.detach(|| {
