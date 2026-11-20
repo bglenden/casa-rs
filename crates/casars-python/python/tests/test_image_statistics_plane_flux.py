@@ -72,7 +72,8 @@ def test_box_flux_integrates_selected_channels_after_applying_each_beam(casa, al
         np.testing.assert_allclose(result["flux"], [density[1, ::2].sum() * 2 * width])
         result = image.statistics(region=selection, axes=[0, 1], algorithm=algorithm)
         np.testing.assert_allclose(result["flux"], density[1, ::2])
-        assert "flux" not in image.statistics(region=selection, axes=[0, 1, 3], algorithm=algorithm)
+        for axes in ([0, 1, 2], [0, 1, 3], [0, 1, 2, 3]):
+            assert "flux" not in image.statistics(region=selection, axes=axes, algorithm=algorithm)
         single_plane = regionmanager.box([0, 0, 1, 2], [3, 2, 1, 2])
         np.testing.assert_allclose(image.statistics(region=single_plane, algorithm=algorithm)["flux"], [density[1, 2]])
         assert image.done()
@@ -103,6 +104,33 @@ def test_excluded_plane_preserves_the_shape_of_the_flux_array(casa):
     np.testing.assert_allclose(left_result["flux"], expected)
     _assert_value(left_result, right_result)
     assert left.done() and right.done()
+
+
+def test_explicit_beam_axis_suppresses_flux_even_if_selected_axis_is_degenerate(casa):
+    for backend in (tools, casa):
+        image, _, _ = _image(backend)
+        single = casa.regionmanager().box([0, 0, 0, 1], [3, 2, 1, 1])
+        for units in ("Jy/beam", "K"):
+            assert image.setbrightnessunit(units)
+            assert "flux" not in image.statistics(axes=[0, 1, 3], region=single)
+            assert "flux" not in image.statistics(axes=[0, 1, 3], region=single, excludepix=[0, 10])
+        assert image.done()
+
+
+@pytest.mark.parametrize("unit", ["Jy/beam.km/s", "Jy/beam.Hz"])
+def test_per_beam_flux_accepts_integrated_brightness_units(casa, tmp_path, unit):
+    for index, backend in enumerate((tools, casa)):
+        image, values, _ = _image(backend)
+        assert image.setbrightnessunit(unit)
+        result = image.statistics(axes=[0, 1])
+        np.testing.assert_allclose(result["flux"], _expected_density(values))
+        selection = casa.regionmanager().box([0, 0, 1, 1], [3, 2, 1, 1])
+        path = tmp_path / f"moment-{index}.txt"
+        image.statistics(region=selection, list=True, logfile=str(path))
+        line, = (line for line in path.read_text().splitlines() if "[flux]" in line)
+        assert "-- flux [flux]" in line
+        assert line.endswith(unit.replace("/beam", ""))
+        assert image.done()
 
 
 def test_individual_beam_flux_after_all_native_write_reopen_pairings(casa, tmp_path):

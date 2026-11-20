@@ -157,13 +157,18 @@ fn calculate<T: ImagePixel + StatsElement>(
     let global = options.axes.is_empty() || options.axes.len() == chunk.size.len();
     let mask = and_mask(chunk.mask(image)?, options.expression.take());
     let mut fields = region_fields(image.coordinates(), chunk)?;
-    let flux_plan = flux::plan(
-        image,
-        chunk,
-        &options.axes,
-        global,
-        options.spectral_velocity,
-    );
+    let report_flux = flux::allowed(image, &options.axes);
+    let flux_plan = report_flux
+        .then(|| {
+            flux::plan(
+                image,
+                chunk,
+                &options.axes,
+                global,
+                options.spectral_velocity,
+            )
+        })
+        .flatten();
     if !matches!(options.algorithm, StatisticsAlgorithm::Classic)
         && !matches!(options.algorithm, StatisticsAlgorithm::HingesFences { fence } if fence < 0.0)
     {
@@ -178,6 +183,9 @@ fn calculate<T: ImagePixel + StatsElement>(
                 .map(|plan| &plan.scale),
             &mut fields,
         )?;
+        if !report_flux {
+            fields.retain(|(name, _)| *name != "flux");
+        }
         if let Some(plan) = flux_plan
             && let Some(integral) = &plan.integral
             && !matches!(options.algorithm, StatisticsAlgorithm::Biweight { .. })
@@ -257,7 +265,9 @@ fn calculate<T: ImagePixel + StatsElement>(
         fields.push((name, value));
     }
     if empty {
-        fields.push(("flux", CasaValue::floats(Vec::new())));
+        if report_flux {
+            fields.push(("flux", CasaValue::floats(Vec::new())));
+        }
     } else {
         if global {
             let (min, max) = stats.get_min_max_pos().map_err(raised)?;

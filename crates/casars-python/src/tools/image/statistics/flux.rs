@@ -101,6 +101,17 @@ fn channel_width(
     }
 }
 
+pub(super) fn allowed<T: ImagePixel>(image: &impl ImageInterface<T>, axes: &[usize]) -> bool {
+    let beam_axis_selected = [CoordinateType::Spectral, CoordinateType::Stokes]
+        .into_iter()
+        .filter_map(|kind| image.find_axis(kind))
+        .any(|axis| axes.contains(&axis));
+    !beam_axis_selected
+        || image
+            .image_info()
+            .is_ok_and(|info| !info.beam_set.is_multi())
+}
+
 pub(super) fn plan<T: ImagePixel>(
     image: &impl ImageInterface<T>,
     chunk: &Chunk,
@@ -141,7 +152,7 @@ pub(super) fn plan<T: ImagePixel>(
         .filter(|(kind, _)| **kind == CoordinateType::Direction)
         .map(|(_, &step)| step as f64)
         .product::<f64>();
-    let beams = if let Some(brightness) = units.strip_suffix("/beam") {
+    let beams = if let Some((brightness, _)) = units.split_once("/beam") {
         let jansky = Unit::new("Jy").expect("standard Jy unit");
         Quantity::new(1.0, brightness)
             .ok()?
@@ -152,9 +163,6 @@ pub(super) fn plan<T: ImagePixel>(
         None
     };
     if let Some(beams) = beams.as_ref().filter(|beams| beams.is_multi()) {
-        if integrated_axis.is_some() && !global {
-            return None;
-        }
         let integral = match integrated_axis {
             Some(axis) => Some(SpectralIntegral {
                 density_axes: (0..chunk.size.len()).filter(|&item| item != axis).collect(),
