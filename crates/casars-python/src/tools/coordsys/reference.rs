@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::CoordinateSystem;
+use casa_coordinates::tabular::TabularEdit;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -57,14 +58,11 @@ impl PyCoordsys {
                     type_name = r#type
                 ))
             })?;
-            let mut record = state.record.clone();
+            let mut record = state.editable_record()?;
             for (axis, value) in range.zip(value.0) {
-                CoordinateSystem::set_reference_pixel_in_record(&mut record, axis, value)
-                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                state.edit_record_axis(&mut record, axis, TabularEdit::ReferencePixel(value))?;
             }
-            let mut edited = super::CoordinateState::from_record(record)?;
-            edited.parent_name = std::mem::take(&mut state.parent_name);
-            *state = edited;
+            state.apply_edited_record(record)?;
             Ok(true)
         })
     }

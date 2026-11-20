@@ -43,6 +43,10 @@ persist the edits to the image.
 Use `cs.projection()` to inspect the direction projection and
 `cs.referencecode()` to list stored frames in coordinate order.
 `cs.getconversiontype("direction")` reports the current conversion frame.
+Use `cs.lineartransform(type)` and `cs.setlineartransform(type, matrix)`
+to read or edit the linear coupling between axes of the selected coordinate.
+On a sampled tabular coordinate, saving its record folds the current
+transform into the lookup values used on reopen.
 Use `cs.setnames(values)` to replace the world-axis labels in order, or
 pass `type` to replace one coordinate's labels. `cs.setstokes(values)`
 sets the polarization labels in pixel order.

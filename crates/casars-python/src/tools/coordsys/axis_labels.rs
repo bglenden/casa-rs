@@ -59,7 +59,7 @@ impl PyCoordsys {
                 }
                 target.pixel_axes
             };
-            let mut record = state.record.clone();
+            let mut record = state.editable_record()?;
             let mut updated = state.coordinates.clone();
             for (axis, name) in axes.into_iter().zip(names) {
                 let axis = axis.ok_or_else(|| {
@@ -68,8 +68,7 @@ impl PyCoordsys {
                 (updated, _) = CoordinateSystem::set_axis_name_in_record(&mut record, axis, &name)
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             }
-            state.record = record;
-            state.coordinates = updated;
+            state.apply_edited_coordinates(record, updated)?;
             Ok(true)
         })
     }
@@ -83,7 +82,7 @@ impl PyCoordsys {
             let first = stokes.first().ok_or_else(|| {
                 PyRuntimeError::new_err("You did not specify any new Stokes values")
             })?;
-            let mut record = state.record.clone();
+            let mut record = state.editable_record()?;
             let Some(Value::Record(target)) = record.get_mut(&target.field) else {
                 return Err(PyRuntimeError::new_err(
                     "Stokes coordinate is missing from the record",
@@ -98,9 +97,7 @@ impl PyCoordsys {
                 ArrayValue::from_string_vec(stokes.iter().map(|code| code.name().into()).collect())
                     .into(),
             );
-            state.coordinates = CoordinateSystem::from_record(&record)
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            state.record = record;
+            state.apply_edited_record(record)?;
             Ok(true)
         })
     }
@@ -117,7 +114,7 @@ impl PyCoordsys {
         let units = names(string_arguments(Some(value), "value")?);
         py.detach(|| {
             let mut state = self.state();
-            let mut record = state.record.clone();
+            let mut record = state.editable_record()?;
             let axes = if r#type.is_empty() {
                 if units.len() != state.coordinates.n_world_axes() {
                     return Err(PyRuntimeError::new_err(
@@ -183,9 +180,7 @@ impl PyCoordsys {
                 CoordinateSystem::set_axis_unit_in_record(&mut record, axis, &unit)
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             }
-            state.coordinates = CoordinateSystem::from_record(&record)
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            state.record = record;
+            state.apply_edited_record(record)?;
             Ok(true)
         })
     }

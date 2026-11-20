@@ -47,6 +47,7 @@ PARTIAL = {
 }
 
 IMPLEMENTED["coordsys"] = {
+    "setlineartransform",
     "frequencytofrequency", "frequencytovelocity", "velocitytofrequency",
     "increment", "referencevalue",
     "addcoordinate", "axesmap", "axiscoordinatetypes", "conversiontype", "coordinatetype", "copy", "done", "epoch",
