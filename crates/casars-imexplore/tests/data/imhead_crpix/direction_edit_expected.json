@@ -151,6 +151,44 @@
     },
     {
       "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 1979.9,
+        "RADESYS": "FK4"
+      },
+      "get": "B1950_VLA",
+      "history": [
+        "Modified equinox from \"J2000\" to \"B1950_VLA\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"B1950_VLA\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          -1.2998491172311333e-12,
+          6.887623804630039e-11
+        ],
+        [
+          2.4999999999990967,
+          1.0000000000343765
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "00:02:41.770 +00.14.42.141 I 1.415e+09Hz",
+      "value": "B1950_VLA",
+      "world": [
+        [
+          0.01176428009264503,
+          0.004276738764153314
+        ],
+        [
+          0.011037061781925218,
+          0.004567647051898294
+        ]
+      ]
+    },
+    {
+      "fits": {
         "CTYPE1": "ELON-SIN",
         "CTYPE2": "ELAT-SIN"
       },
@@ -349,6 +387,39 @@
         [
           0.011037295745470714,
           0.004567223183006401
+        ]
+      ]
+    },
+    {
+      "fits_error": true,
+      "get": "B1950_VLA",
+      "history": [
+        "Modified equinox from \"J2000\" to \"B1950_VLA\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"B1950_VLA\", verbose=False)"
+      ],
+      "image": "transposed",
+      "inverse": [
+        [
+          -1.2998491172311333e-12,
+          6.887623804630039e-11
+        ],
+        [
+          2.4999999999990967,
+          1.0000000000343765
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "I 1.415e+09Hz 00:02:41.770 +00.14.42.141",
+      "value": "B1950_VLA",
+      "world": [
+        [
+          0.01176428009264503,
+          0.004276738764153314
+        ],
+        [
+          0.011037061781925218,
+          0.004567647051898294
         ]
       ]
     },
@@ -563,6 +634,44 @@
         [
           2.976850487575165,
           -1.0523117801459112
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 1979.9,
+        "RADESYS": "FK4"
+      },
+      "get": "B1950_VLA",
+      "history": [
+        "Modified equinox from \"J2000\" to \"B1950_VLA\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"B1950_VLA\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "inverse": [
+        [
+          -6.475654679150011e-09,
+          1.1179749792589178e-08
+        ],
+        [
+          2.499999993546088,
+          1.0000000111771117
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "11:22:36.140 -60.17.12.084 I 1.415e+09Hz",
+      "value": "B1950_VLA",
+      "world": [
+        [
+          2.9784145577522674,
+          -1.0522012336826247
+        ],
+        [
+          2.976850148113205,
+          -1.0523122017816995
         ]
       ]
     },

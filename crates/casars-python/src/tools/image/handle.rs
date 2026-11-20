@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::cell::OnceCell;
+use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
@@ -28,6 +29,8 @@ pub(super) struct FitsAttachment {
     path: PathBuf,
     hdu: usize,
     pub(super) shape: Vec<usize>,
+    pub(super) tile_shape: Vec<usize>,
+    pub(super) has_mask: bool,
     pixels: OnceCell<FitsSectionReader>,
 }
 
@@ -102,21 +105,59 @@ pub(super) fn raised(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
+pub(super) fn same_file_snapshot(expected: &Metadata, actual: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
+            return false;
+        }
+    }
+    expected.len() == actual.len() && expected.modified().ok() == actual.modified().ok()
+}
+
 impl ImageHandle {
     pub(super) fn open(path: &Path) -> Result<Self, ImageError> {
         if path.is_file() {
-            return Self::open_fits(path);
+            return Self::open_fits(path, FitsToolImport::open(path, 0, -1)?);
         }
-        Ok(match AnyPagedImage::open(path)? {
+        AnyPagedImage::open(path).map(Self::from_paged)
+    }
+
+    pub(super) fn open_read(path: &Path) -> Result<Self, ImageError> {
+        if path.is_file() {
+            return Self::open(path);
+        }
+        Self::open_native(path, Some(0))
+    }
+
+    pub(super) fn open_native(path: &Path, lock_attempts: Option<u32>) -> Result<Self, ImageError> {
+        #[cfg(unix)]
+        if let Some(attempts) = lock_attempts {
+            return AnyPagedImage::open_with_lock(path, attempts).map(Self::from_paged);
+        }
+        #[cfg(not(unix))]
+        let _ = lock_attempts;
+        Self::open(path)
+    }
+
+    fn from_paged(image: AnyPagedImage) -> Self {
+        match image {
             AnyPagedImage::Float32(image) => Self::Float(Storage::Paged(Box::new(image))),
             AnyPagedImage::Float64(image) => Self::Double(Storage::Paged(Box::new(image))),
             AnyPagedImage::Complex32(image) => Self::Complex(Storage::Paged(Box::new(image))),
             AnyPagedImage::Complex64(image) => Self::DComplex(Storage::Paged(Box::new(image))),
-        })
+        }
     }
 
-    fn open_fits(path: &Path) -> Result<Self, ImageError> {
-        let mut source = FitsToolImport::open(path, 0, -1)?;
+    pub(super) fn open_for_concatenation(path: &Path) -> Result<Self, ImageError> {
+        if path.is_file() {
+            return Self::open_fits(path, FitsToolImport::open_for_concatenation(path)?);
+        }
+        Self::open_native(path, Some(0))
+    }
+
+    fn open_fits(path: &Path, mut source: FitsToolImport) -> Result<Self, ImageError> {
         if source.is_tile_compressed() {
             return Err(ImageError::CasaSelection(format!(
                 "No data in the zeroth or first extension of {}",
@@ -134,6 +175,8 @@ impl ImageHandle {
             path: path.to_path_buf(),
             hdu: source.hdu_index(),
             shape: source.shape().to_vec(),
+            tile_shape: source.tile_shape(),
+            has_mask: source.has_implicit_mask(),
             pixels: OnceCell::new(),
         };
         source.misc_info.remove("object");
@@ -169,6 +212,10 @@ impl ImageHandle {
             return &fits.shape;
         }
         with_pixels!(self, storage => with_storage!(storage, image => image.shape()))
+    }
+
+    pub(super) fn coordinates(&self) -> &CoordinateSystem {
+        with_pixels!(self, storage => with_storage!(storage, image => image.coordinates()))
     }
 
     pub(super) fn path(&self) -> Option<&Path> {
@@ -265,6 +312,23 @@ impl<T: ImagePixel> Storage<T> {
         match self {
             Self::Paged(image) => image.save(),
             Self::Temp { .. } => Ok(()),
+        }
+    }
+}
+
+impl Storage<f32> {
+    pub(super) fn with_float_view<R>(
+        &self,
+        use_image: impl FnOnce(&dyn casa_images::ImageInterface<f32>) -> R,
+    ) -> R {
+        match self {
+            Self::Paged(image) => use_image(image.as_ref()),
+            Self::Temp {
+                image,
+                fits: Some(fits),
+                ..
+            } => use_image(&fits.image_view(image)),
+            Self::Temp { image, .. } => use_image(image.as_ref()),
         }
     }
 }

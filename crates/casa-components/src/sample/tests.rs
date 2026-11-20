@@ -132,17 +132,23 @@ fn a_galactic_component_is_sampled_at_j2000_pixels() {
 }
 
 #[test]
-fn what_casa_rs_does_not_sample_is_refused() {
+fn a_limb_darkened_disk_matches_casas_image_normalization() {
     let axes = Ellipse::new(1.0 * ARCSEC, 1.0 * ARCSEC, 0.0).expect("axes");
     let limb = shape(ShapeKind::LimbDarkenedDisk {
         axes,
         errors: Default::default(),
     });
+    let (_, grid) = grid(3, ARCSEC);
+    let scales = limb
+        .pixel_scales(&[offset(0.0, 0.0), offset(ARCSEC, 0.0)], &grid)
+        .expect("scales");
+    assert!((scales[0] - std::f64::consts::FRAC_1_PI).abs() < 1.0e-14);
+    assert_eq!(scales[1], 0.0);
+}
+
+#[test]
+fn sampling_requires_a_measures_frame_for_a_horizon_direction() {
     let (directions, grid) = grid(3, ARCSEC);
-    assert!(matches!(
-        limb.pixel_scales(&directions, &grid),
-        Err(ComponentError::ImageSample { .. })
-    ));
     let horizon = ComponentShape::new(
         MDirection::from_angles(1.0, 0.5, DirectionRef::AZEL),
         ShapeKind::Point,

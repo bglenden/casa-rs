@@ -155,7 +155,7 @@ const METHODS: &[Method] = &[
             param("polarization", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "convolve",
@@ -262,12 +262,12 @@ const METHODS: &[Method] = &[
     method(
         "deconvolvecomponentlist",
         &[
-            param("complist", K::Any, Required),
+            param("complist", K::Record, Required),
             param("channel", K::Int, Int(-1)),
             param("polarization", K::Int, Int(-1)),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Yes,
     ),
     method(
         "deconvolvefrombeam",
@@ -488,7 +488,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Status::Partial,
     ),
     method(
         "fromrecord",
@@ -497,7 +497,7 @@ const METHODS: &[Method] = &[
             param("outfile", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromshape",
@@ -586,7 +586,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("haslock", &[], R::Any, No),
+    method("haslock", &[], R::Any, Yes),
     method(
         "histograms",
         &[
@@ -633,7 +633,7 @@ const METHODS: &[Method] = &[
             param("mode", K::Text, Text("paged")),
         ],
         R::Any,
-        No,
+        Status::Partial,
     ),
     method(
         "insert",
@@ -646,7 +646,12 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("isconform", &[param("other", K::Any, Required)], R::Any, No),
+    method(
+        "isconform",
+        &[param("other", K::Any, Required)],
+        R::Any,
+        Yes,
+    ),
     method("isopen", &[], R::Any, Yes),
     method("ispersistent", &[], R::Any, Yes),
     method(
@@ -656,7 +661,7 @@ const METHODS: &[Method] = &[
             param("nattempts", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "makearray",
@@ -670,13 +675,13 @@ const METHODS: &[Method] = &[
     method(
         "makecomplex",
         &[
-            param("outfile", K::Any, Required),
-            param("imag", K::Any, Required),
+            param("outfile", K::Text, Required),
+            param("imag", K::Text, Required),
             param("region", K::Record, EmptyRecord),
             param("overwrite", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "maketestimage",
@@ -712,15 +717,15 @@ const METHODS: &[Method] = &[
     method(
         "modify",
         &[
-            param("model", K::Any, Required),
+            param("model", K::Record, Required),
             param("region", K::Record, EmptyRecord),
             param("mask", K::Text, Text("")),
             param("subtract", K::Bool, Bool(true)),
             param("list", K::Bool, Bool(true)),
             param("stretch", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "moments",
@@ -803,7 +808,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Status::Partial,
     ),
     method(
         "newimagefromshape",
@@ -993,7 +998,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "restoringbeam",
@@ -1023,7 +1028,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("rotatebeam", &[param("angle", K::Any, Empty)], R::Any, No),
+    method("rotatebeam", &[param("angle", K::Any, Empty)], R::Any, Yes),
     method(
         "sepconvolve",
         &[
@@ -1148,7 +1153,7 @@ const METHODS: &[Method] = &[
             param("verbose", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "tofits",
@@ -1175,7 +1180,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
-    method("torecord", &[], R::Any, No),
+    method("torecord", &[], R::Any, Yes),
     method(
         "toworld",
         &[
@@ -1210,7 +1215,7 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("type", &[], R::Any, Yes),
-    method("unlock", &[], R::Any, No),
+    method("unlock", &[], R::Any, Yes),
 ];
 
 /// The `image` tool's surface.

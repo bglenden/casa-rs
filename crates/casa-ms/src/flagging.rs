@@ -32,7 +32,10 @@ use thiserror::Error;
 use crate::ms::MeasurementSet;
 use crate::schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
-use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
+use crate::selection::{
+    MsSelection, resolve_flagdata_row_indices_with_system_budget,
+    resolve_row_indices_with_system_budget,
+};
 use crate::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
     MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
@@ -120,6 +123,12 @@ pub enum QuackMode {
     Beg,
     /// Flag the last interval in each scan.
     End,
+    /// Flag before the end interval, CASA's `end` mode.
+    BeforeEnd,
+    /// Flag after the beginning interval.
+    Tail,
+    /// Accepted CASA options that leave the quack agent inactive.
+    Disabled,
 }
 
 /// Request for native `flagdata`.
@@ -127,12 +136,16 @@ pub enum QuackMode {
 pub struct FlagDataRequest {
     /// Structured row selection.
     pub selection: MsSelection,
+    /// Interpret row selectors using the public CASA flagdata task grammar.
+    pub casa_row_selection: bool,
     /// CASA-style SPW/channel selector.
     pub spw: Option<String>,
     /// Mode to execute.
     pub mode: FlagDataMode,
     /// Manual action.
     pub action: FlagDataAction,
+    /// Set manual flags only on rows whose antenna IDs are equal.
+    pub autocorr: bool,
     /// Data column for automatic modes.
     pub data_column: FlagDataColumn,
     /// Create a `flagdata_N` backup before mutating flags.
@@ -149,6 +162,8 @@ pub struct FlagDataRequest {
     pub quackinterval: f64,
     /// Quack scan edge.
     pub quackmode: QuackMode,
+    /// Start the interval from the first or last time with unflagged data.
+    pub quackincrement: bool,
     /// TFCrop time cutoff in robust sigma units.
     pub timecutoff: f64,
     /// TFCrop frequency cutoff in robust sigma units.
@@ -187,9 +202,11 @@ impl Default for FlagDataRequest {
     fn default() -> Self {
         Self {
             selection: MsSelection::new(),
+            casa_row_selection: false,
             spw: None,
             mode: FlagDataMode::Manual,
             action: FlagDataAction::Flag,
+            autocorr: false,
             data_column: FlagDataColumn::Data,
             flagbackup: true,
             summary_options: FlagSummaryOptions::default(),
@@ -198,6 +215,7 @@ impl Default for FlagDataRequest {
             clipoutside: Some(true),
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
+            quackincrement: false,
             timecutoff: 4.0,
             freqcutoff: 3.0,
             timedevscale: 5.0,
@@ -373,6 +391,16 @@ fn flagdata_with_persistence(
         );
     }
 
+    // The manual agent filters baselines after full MS selection, including
+    // the rows that supply the default date for a partial time selector.
+    let autocorrelation_rows = if request.autocorr
+        && request.mode == FlagDataMode::Manual
+        && request.action == FlagDataAction::Flag
+    {
+        Some(select_autocorrelations(ms, &selected_rows, &ms_path)?)
+    } else {
+        None
+    };
     let backup_version = if persist && request.flagbackup && !selected_rows.is_empty() {
         Some(save_next_flag_backup(ms, "flagdata")?)
     } else {
@@ -380,11 +408,12 @@ fn flagdata_with_persistence(
     };
 
     let changes = match request.mode {
-        FlagDataMode::Manual => apply_manual_flags(
+        FlagDataMode::Manual => set_selected_flags(
             ms,
-            &selected_rows,
+            autocorrelation_rows.as_deref().unwrap_or(&selected_rows),
             channel_selections.as_ref(),
-            request.action,
+            request.action.value(),
+            SelectedFlagRowPolicy::ChangedSamples,
         )?,
         FlagDataMode::Clip => {
             apply_clip_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
@@ -574,12 +603,48 @@ fn selected_rows(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
 ) -> Result<Vec<usize>, FlaggingError> {
-    resolve_row_indices_with_system_budget(ms, &request.selection).map_err(|source| {
-        FlaggingError::MutateFlags {
-            path: display_ms_path(ms),
-            reason: format!("select rows: {source}"),
+    let selection_error = |source| FlaggingError::MutateFlags {
+        path: display_ms_path(ms),
+        reason: format!("select rows: {source}"),
+    };
+    let resolve_rows = if request.casa_row_selection {
+        resolve_flagdata_row_indices_with_system_budget
+    } else {
+        resolve_row_indices_with_system_budget
+    };
+    let rows = resolve_rows(ms, &request.selection).map_err(selection_error)?;
+    let field = request
+        .selection
+        .field
+        .as_deref()
+        .filter(|text| !text.trim().is_empty());
+    let explicit_row_filter = field.is_some()
+        || (request.casa_row_selection
+            && [
+                request.selection.scan.as_deref(),
+                request.selection.antenna.as_deref(),
+                request.selection.timerange.as_deref(),
+                request.selection.observation.as_deref(),
+                request.selection.array.as_deref(),
+                request.selection.feed.as_deref(),
+                request.selection.intent.as_deref(),
+                request.selection.uvrange.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|text| !text.is_empty() && !text.starts_with('\0')));
+    if rows.is_empty() && request.selection.selectdata && explicit_row_filter {
+        // An empty result can mean no matching FIELD metadata or simply no
+        // selected MAIN rows. Keep separate diagnostics for the two cases.
+        if let Some(field) = field {
+            ms.resolve_field_selector(field).map_err(selection_error)?;
         }
-    })
+        return Err(FlaggingError::MutateFlags {
+            path: display_ms_path(ms),
+            reason: "MSSelectionNullSelection : The selected table has zero rows.".to_string(),
+        });
+    }
+    Ok(rows)
 }
 
 fn clip_read_plan(
@@ -680,22 +745,6 @@ fn clip_read_plan(
     MsReadPlan::new(row_count, budget).map_err(|source| FlaggingError::MutateFlags {
         path,
         reason: source.to_string(),
-    })
-}
-
-fn apply_manual_flags(
-    ms: &mut MeasurementSet,
-    selected_rows: &[usize],
-    channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
-    action: FlagDataAction,
-) -> Result<ChangeSet, FlaggingError> {
-    let new_flag = action.value();
-    mutate_selected_samples(ms, selected_rows, channel_selections, |old| {
-        if old != new_flag {
-            Some(new_flag)
-        } else {
-            None
-        }
     })
 }
 
@@ -853,35 +902,62 @@ fn apply_quack_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
+    let from_start = match request.quackmode {
+        QuackMode::Beg | QuackMode::Tail => true,
+        QuackMode::End | QuackMode::BeforeEnd => false,
+        QuackMode::Disabled => return Ok(ChangeSet::default()),
+    };
+    if request.quackinterval.is_nan() || request.quackinterval <= 0.0 {
+        tracing::warn!("quackinterval must be greater than zero to start the quack agent");
+        return Ok(ChangeSet::default());
+    }
     let table = ms.main_table();
-    let mut by_scan = BTreeMap::<i32, Vec<(usize, f64)>>::new();
+    let mut scan_times = Vec::with_capacity(selected_rows.len());
+    let mut edges = BTreeMap::<i32, f64>::new();
     for &row in selected_rows {
         let scan = table_i32(table, row, "SCAN_NUMBER", ms.path())?;
         let time = table_f64(table, row, "TIME", ms.path())?;
-        by_scan.entry(scan).or_default().push((row, time));
-    }
-    let mut quack_rows = Vec::new();
-    for rows in by_scan.values_mut() {
-        rows.sort_by(|left, right| left.1.total_cmp(&right.1));
-        let Some(edge_time) = (match request.quackmode {
-            QuackMode::Beg => rows.first().map(|row| row.1),
-            QuackMode::End => rows.last().map(|row| row.1),
-        }) else {
-            continue;
-        };
-        // CASA's quack agent flags the row at exactly `quackinterval` from
-        // the scan's first or last time as well (`FlagAgentQuack.cc`).
-        for &(row, time) in rows.iter() {
-            let in_edge = match request.quackmode {
-                QuackMode::Beg => time <= edge_time + request.quackinterval,
-                QuackMode::End => time >= edge_time - request.quackinterval,
-            };
-            if in_edge {
-                quack_rows.push(row);
-            }
+        scan_times.push((row, scan, time));
+        // CASA determines the unflagged time limits from whole flag cubes.
+        if !request.quackincrement || clone_flag_matrix(ms, row)?.iter().any(|flag| !*flag) {
+            edges
+                .entry(scan)
+                .and_modify(|edge| {
+                    *edge = if from_start {
+                        edge.min(time)
+                    } else {
+                        edge.max(time)
+                    };
+                })
+                .or_insert(time);
         }
     }
-    apply_manual_flags(ms, &quack_rows, channel_selections, FlagDataAction::Flag)
+    let mut quack_rows = Vec::new();
+    for (row, scan, time) in scan_times {
+        let Some(&edge_time) = edges.get(&scan) else {
+            continue;
+        };
+        // CASA's edge intervals include equality. The complementary modes
+        // select the samples strictly outside their respective intervals.
+        let flag = match request.quackmode {
+            QuackMode::Beg => time <= edge_time + request.quackinterval,
+            QuackMode::End => time >= edge_time - request.quackinterval,
+            QuackMode::BeforeEnd => time < edge_time - request.quackinterval,
+            QuackMode::Tail => time > edge_time + request.quackinterval,
+            QuackMode::Disabled => false,
+        };
+        if flag {
+            quack_rows.push(row);
+        }
+    }
+    // CASA updates FLAG_ROW at selected scan times only when the call
+    // leaves SPW unspecified, even for an explicitly selected full window.
+    let row_policy = if channel_selections.is_some() {
+        SelectedFlagRowPolicy::Preserve
+    } else {
+        SelectedFlagRowPolicy::AllSelectedRows
+    };
+    set_selected_flags(ms, &quack_rows, channel_selections, true, row_policy)
 }
 
 fn apply_tfcrop_flags(
@@ -1121,35 +1197,51 @@ fn check_channel_selections(
     Ok(())
 }
 
-fn mutate_selected_samples<F>(
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectedFlagRowPolicy {
+    ChangedSamples,
+    AllSelectedRows,
+    Preserve,
+}
+
+fn set_selected_flags(
     ms: &mut MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
-    mut edit: F,
-) -> Result<ChangeSet, FlaggingError>
-where
-    F: FnMut(bool) -> Option<bool>,
-{
-    // Manual flagging, as CASA's, reads the flags alone.
+    flag: bool,
+    row_policy: SelectedFlagRowPolicy,
+) -> Result<ChangeSet, FlaggingError> {
     let loaded = load_samples(ms, selected_rows, channel_selections, None)?;
-    let samples = loaded.samples;
     let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
-    for sample in samples {
-        let Some(new_flag) = edit(sample.flag) else {
-            continue;
-        };
-        let Some(flags) = updates.get_mut(&sample.row) else {
-            continue;
-        };
-        if let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan]))
-            && *value != new_flag
+    let mut touched_rows = std::collections::BTreeSet::new();
+    for sample in loaded.samples {
+        if sample.flag != flag
+            && let Some(flags) = updates.get_mut(&sample.row)
+            && let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan]))
+            && *value != flag
         {
-            *value = new_flag;
+            *value = flag;
             changed.changed_samples += 1;
+            touched_rows.insert(sample.row);
         }
     }
-    write_flag_updates(ms, updates, &mut changed)?;
+    if row_policy == SelectedFlagRowPolicy::AllSelectedRows {
+        let path = display_ms_path(ms);
+        let row_flags = load_bool_cells(ms.main_table(), selected_rows, FLAG_ROW_COLUMN, &path)?;
+        for (&row, flag_row) in selected_rows.iter().zip(row_flags) {
+            if !flag_row && updates.get(&row).is_some_and(|flags| !flags.is_empty()) {
+                touched_rows.insert(row);
+            }
+        }
+    }
+    write_touched_flag_updates(
+        ms,
+        updates,
+        touched_rows,
+        row_policy != SelectedFlagRowPolicy::Preserve,
+        &mut changed,
+    )?;
     Ok(changed)
 }
 
@@ -1178,58 +1270,6 @@ fn apply_flag_mask_with_preloaded(
     }
     write_touched_flag_updates(ms, updates, touched_rows, true, &mut changed)?;
     Ok(changed)
-}
-
-fn write_flag_row_update(
-    ms: &mut MeasurementSet,
-    row: usize,
-    flags: ArrayD<bool>,
-    flag_row: bool,
-    changed: &mut ChangeSet,
-) -> Result<(), FlaggingError> {
-    let path = display_ms_path(ms);
-    ms.main_table_mut()
-        .cell_accessor_mut(row, FLAG_COLUMN)
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: format!("open FLAG row {row}: {source}"),
-        })?
-        .set(Value::Array(ArrayValue::Bool(flags)))
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: format!("write FLAG row {row}: {source}"),
-        })?;
-    ms.main_table_mut()
-        .cell_accessor_mut(row, FLAG_ROW_COLUMN)
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.clone(),
-            reason: format!("open FLAG_ROW row {row}: {source}"),
-        })?
-        .set(Value::Scalar(ScalarValue::Bool(flag_row)))
-        .map_err(|source| FlaggingError::MutateFlags {
-            path,
-            reason: format!("write FLAG_ROW row {row}: {source}"),
-        })?;
-    changed.changed_rows += 1;
-    changed.changed_row_indices.push(row);
-    changed.changed_flag_row_rows += 1;
-    Ok(())
-}
-
-fn write_flag_updates(
-    ms: &mut MeasurementSet,
-    updates: std::collections::BTreeMap<usize, ArrayD<bool>>,
-    changed: &mut ChangeSet,
-) -> Result<(), FlaggingError> {
-    for (row, flags) in updates {
-        let old = clone_flag_matrix(ms, row)?;
-        if old == flags {
-            continue;
-        }
-        let flag_row = flags.iter().all(|flag| *flag);
-        write_flag_row_update(ms, row, flags, flag_row, changed)?;
-    }
-    Ok(())
 }
 
 fn write_touched_flag_updates(
@@ -1371,6 +1411,23 @@ fn load_i32_cells(
             }),
         })
         .collect()
+}
+
+fn select_autocorrelations(
+    ms: &MeasurementSet,
+    rows: &[usize],
+    path: &str,
+) -> Result<Vec<usize>, FlaggingError> {
+    let table = ms.main_table();
+    let first = load_i32_cells(table, rows, "ANTENNA1", path)?;
+    let second = load_i32_cells(table, rows, "ANTENNA2", path)?;
+    Ok(rows
+        .iter()
+        .copied()
+        .zip(first)
+        .zip(second)
+        .filter_map(|((row, first), second)| (first == second).then_some(row))
+        .collect())
 }
 
 /// The selected rows' samples and flags. Each sample carries its value in

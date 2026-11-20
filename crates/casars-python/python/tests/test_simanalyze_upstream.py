@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from casars import tasks
-from casars.data import Image
+from casars._native_image import NativeImageView
 from casars.tasks import _runner
 
 
@@ -42,7 +42,7 @@ def test_upstream_combined_imaging_produces_if_tp_and_feather_images(tmp_path):
     for suffix in ("small.image", "sd.image", "sd.image0", "sd.image0.scaled", "sd.image0.weight"):
         assert (project / f"seed.{suffix}").is_dir()
     expected = reference["cases"]["feather"]["images"]["feather.small.feather.image"]
-    image = Image.open(project / "seed.small.feather.image")
+    image = NativeImageView.open(project / "seed.small.feather.image")
     assert list(image.shape) == expected["shape"]
     actual = image.get_slice([0] * len(image.shape), list(image.shape))
     mask = image.get_mask_slice([0] * len(image.shape), list(image.shape))

@@ -76,6 +76,12 @@ impl TableImpl {
                 "metadata-only shapes do not support changed row registration".to_string(),
             ));
         }
+        if source.read_metadata.get().is_none()
+            && let Some(shapes) =
+                CompositeStorage.load_array_shapes_for_concat(&source.path, column, rows)?
+        {
+            return Ok(shapes);
+        }
         let metadata = source.read_metadata()?;
         CompositeStorage
             .plain_array_cell_shapes_uncached(&source.path, metadata, column, rows)

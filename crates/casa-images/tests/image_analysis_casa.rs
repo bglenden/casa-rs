@@ -633,6 +633,8 @@ fn impbcor_immath_and_feather_match_casa() {
         highres: images.paths["int_cube"].clone(),
         lowres: images.paths["sd_low"].clone(),
         sdfactor: 1.0,
+        effdishdiam: -1.0,
+        lowpassfiltersd: false,
         overwrite: false,
     })
     .unwrap();

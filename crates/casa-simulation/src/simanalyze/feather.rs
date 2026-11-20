@@ -75,6 +75,8 @@ pub(super) fn combine(
         highres: high,
         lowres: low,
         sdfactor: 1.,
+        effdishdiam: -1.0,
+        lowpassfiltersd: false,
         overwrite: false,
     })
     .map_err(failure)?;

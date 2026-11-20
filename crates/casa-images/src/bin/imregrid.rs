@@ -5,8 +5,10 @@
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageAnalysisTaskResult, ImregridRequest, image_task_front_end, image_task_success, imregrid,
+    ImageAnalysisTaskResult, ImregridOutcome, ImregridRequest, ImregridTemplate,
+    image_task_front_end, image_task_returning, imregrid,
 };
+use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
@@ -20,21 +22,34 @@ fn main() -> ExitCode {
 }
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let template = task.path("template")?;
-    // CASA's default, `template='get'`, returns the input's coordinate
-    // system and shape instead of regridding.
-    if template.as_os_str().eq_ignore_ascii_case("get") {
-        return Err(TaskFailure::validation(
-            "template='get' is not implemented by casa-rs yet (#977); give a template image",
-        )
-        .at("template"));
-    }
+    let template = match task.value("template") {
+        Some(ParameterValue::String(template)) if !template.is_empty() => {
+            ImregridTemplate::Image(template.into())
+        }
+        Some(ParameterValue::Table(record)) => ImregridTemplate::Record(record.clone()),
+        _ => {
+            return Err(TaskFailure::validation(
+                "template must be an image path or coordinate record",
+            )
+            .at("template"));
+        }
+    };
     let request = ImregridRequest {
         imagename: task.input_path("imagename")?,
-        template: task.input_path("template")?,
-        output: task.path("output")?,
+        template,
+        output: task.text("output")?.unwrap_or_default().into(),
         interpolation: task.required_text("interpolation")?,
+        asvelocity: task.flag("asvelocity")?,
+        axes: task.integers("axes")?,
+        shape: task.integers("shape")?,
+        decimate: task.integer("decimate")?,
+        replicate: task.flag("replicate")?,
         overwrite: task.flag("overwrite")?,
     };
-    image_task_success(imregrid(&request).map(ImageAnalysisTaskResult::Imregrid))
+    let outcome = imregrid(&request);
+    let value = match &outcome {
+        Ok(ImregridOutcome::Template(value)) => value.clone(),
+        _ => CasaValue::None,
+    };
+    image_task_returning(value, outcome.map(ImageAnalysisTaskResult::Imregrid))
 }

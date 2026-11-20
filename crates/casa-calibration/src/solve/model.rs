@@ -2,8 +2,10 @@
 //! CASA's precedence for scratch and virtual model visibilities.
 
 mod fourier;
+mod mosaic_pointing;
+mod single_dish;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -11,7 +13,8 @@ use casa_components::{ComponentList, Polarisation};
 use casa_ms::columns::direction_columns::DirectionColumn;
 use casa_ms::derived::engine::{MsCalEngine, raw_field_phase_direction};
 use casa_ms::{
-    MeasurementSet, MsError, SubTable, VirtualModelEntry, VirtualModelKind, virtual_model,
+    MeasurementSet, MsError, SubTable, SubtableId, VirtualModelEntry, VirtualModelKind,
+    virtual_model,
 };
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::FrequencyRef;
@@ -23,6 +26,8 @@ use num_complex::Complex64;
 use super::grouping::{BucketedRow, SelectedSolveRow, VisibilityBuffer};
 use super::{GainSolveCombine, GainSolveError, GainSolveModelSource, get_i32};
 use fourier::{FourierMerge, FourierModel, FourierRow};
+use mosaic_pointing::{FeedOffsets, MosaicPointing};
+use single_dish::{PointingQuery, SingleDishModel};
 
 pub(super) struct ModelInputs {
     read_column: bool,
@@ -33,11 +38,14 @@ pub(super) struct ModelInputs {
     pub(super) phase_times: BTreeMap<usize, f64>,
     finite_fields: BTreeSet<i32>,
     model_buffers: BTreeMap<usize, Arc<ModelBuffer>>,
+    single_dish_pointings: HashMap<PointingQuery, BTreeMap<usize, MDirection>>,
+    single_dish_feeds: FeedOffsets,
 }
 
 struct ModelBuffer {
     selection: [i32; 4],
     focus_rows: Vec<FocusSample>,
+    legacy_mosaic_pointing: Option<MosaicPointing>,
 }
 
 struct FocusSample {
@@ -70,6 +78,7 @@ impl EntrySelection {
 enum Prediction {
     Components(ComponentList),
     FourierGrid(Box<FourierModel>),
+    SingleDish(Box<SingleDishModel>),
 }
 
 impl ModelInputs {
@@ -148,6 +157,8 @@ impl ModelInputs {
             phase_times: BTreeMap::new(),
             finite_fields: BTreeSet::new(),
             model_buffers: BTreeMap::new(),
+            single_dish_pointings: HashMap::new(),
+            single_dish_feeds: FeedOffsets::default(),
         }
     }
 
@@ -211,9 +222,12 @@ impl ModelInputs {
 
     pub(super) fn uses_fourier(&self, field: i32) -> bool {
         self.virtual_models.get(&field).is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| matches!(entry.prediction, Prediction::FourierGrid(_)))
+            entries.iter().any(|entry| {
+                matches!(
+                    entry.prediction,
+                    Prediction::FourierGrid(_) | Prediction::SingleDish(_)
+                )
+            })
         })
     }
 
@@ -240,6 +254,40 @@ impl ModelInputs {
                 .or_default()
                 .push(row.0);
         }
+        let mosaic_fields: BTreeSet<_> = self
+            .virtual_models
+            .iter()
+            .filter_map(|(&field, entries)| {
+                entries
+                    .iter()
+                    .any(|entry| {
+                        matches!(&entry.prediction,
+                            Prediction::FourierGrid(grid) if grid.uses_legacy_mosaic_pointing()
+                        )
+                    })
+                    .then_some(field)
+            })
+            .collect();
+        let mut pointings =
+            if !mosaic_fields.is_empty() && ms.subtable(SubtableId::Pointing).is_some() {
+                let queries: Vec<_> = buffers
+                    .values()
+                    .map(|rows| rows[0])
+                    .filter(|row| mosaic_fields.contains(&row.field_id))
+                    .map(|row| (row.antenna1, row.time_seconds, row.interval_seconds))
+                    .collect();
+                ms.pointing()
+                    .and_then(|pointing| pointing.legacy_buffer_directions(&queries))
+                    .map_err(|source| read_error(ms, source))?
+            } else {
+                Vec::new()
+            }
+            .into_iter();
+        let feeds = if mosaic_fields.is_empty() {
+            FeedOffsets::default()
+        } else {
+            FeedOffsets::load(ms).map_err(|source| read_error(ms, source))?
+        };
         for rows in buffers.into_values() {
             let first = rows[0];
             let state = get_i32(ms.main_table(), first.row_index, "STATE_ID")?;
@@ -257,11 +305,83 @@ impl ModelInputs {
             let buffer = Arc::new(ModelBuffer {
                 selection,
                 focus_rows,
+                legacy_mosaic_pointing: if mosaic_fields.contains(&first.field_id) {
+                    Some(feeds.direction(
+                        ms,
+                        self.geometry.as_ref().expect("mosaic has geometry"),
+                        first,
+                        pointings.next().flatten(),
+                    )?)
+                } else {
+                    None
+                },
             });
             for row in rows {
                 self.model_buffers
                     .insert(row.row_index, Arc::clone(&buffer));
             }
+        }
+        self.load_single_dish_pointings(ms, rows)
+    }
+
+    fn load_single_dish_pointings(
+        &mut self,
+        ms: &MeasurementSet,
+        rows: &[BucketedRow<'_>],
+    ) -> Result<(), GainSolveError> {
+        let queries: HashSet<_> = self
+            .virtual_models
+            .values()
+            .flat_map(|entries| entries.iter())
+            .filter_map(|entry| match &entry.prediction {
+                Prediction::SingleDish(dish) => Some(dish.pointing()),
+                _ => None,
+            })
+            .collect();
+        if queries.is_empty() {
+            return Ok(());
+        }
+        let pointing = ms
+            .subtable(SubtableId::Pointing)
+            .is_some()
+            .then(|| ms.pointing())
+            .transpose()
+            .map_err(|error| read_error(ms, error))?;
+        let Some(pointing) = pointing.filter(|pointing| pointing.row_count() > 0) else {
+            self.single_dish_feeds =
+                FeedOffsets::load(ms).map_err(|error| read_error(ms, error))?;
+            return Ok(());
+        };
+        let engine = self.geometry.as_ref().expect("single-dish geometry");
+        for query in queries {
+            let selected: Vec<_> = rows.iter().map(|(row, _, _)| *row).filter(|row| {
+                if row.antenna1 != row.antenna2 || row.flag_row {
+                    return false;
+                }
+                let Some(buffer) = self.model_buffers.get(&row.row_index) else { return false };
+                self.virtual_models[&row.field_id].iter().any(|entry| {
+                    entry.selection.matches(buffer.selection)
+                        && matches!(&entry.prediction, Prediction::SingleDish(dish) if dish.pointing() == query)
+                })
+            }).collect();
+            let requests: Vec<_> = selected
+                .iter()
+                .map(|row| (row.antenna1, row.time_seconds, row.interval_seconds))
+                .collect();
+            let target = query.convert_first.map(|reference| (engine, reference));
+            let directions = pointing
+                .single_dish_directions(&requests, &query.column, target)
+                .map_err(|error| read_error(ms, error))?;
+            self.single_dish_pointings.insert(
+                query.clone(),
+                selected
+                    .into_iter()
+                    .zip(directions)
+                    .filter_map(|(row, direction)| {
+                        direction.map(|direction| (row.row_index, direction))
+                    })
+                    .collect(),
+            );
         }
         Ok(())
     }
@@ -331,23 +451,6 @@ impl ModelInputs {
             .with_direction(field.clone());
         let uvw = uvw(ms, row.row_index)?;
         let (frequencies, frequency_ref) = &self.frequencies[&row.data_spw_id];
-        let (basis, offset) = match correlations.first().copied() {
-            Some(5..=8) => (Polarisation::Circular, 5),
-            Some(9..=12) => (Polarisation::Linear, 9),
-            _ => {
-                return Err(model_error(
-                    "virtual component prediction requires linear or circular correlations",
-                ));
-            }
-        };
-        if correlations
-            .iter()
-            .any(|&code| !(offset..offset + 4).contains(&code))
-        {
-            return Err(model_error(
-                "virtual component prediction requires one correlation basis",
-            ));
-        }
         let shape = [correlations.len(), frequencies.len()];
         let mut model = match previous {
             Some(model) if model.shape() != shape => {
@@ -357,8 +460,37 @@ impl ModelInputs {
             Some(model) => ArrayD::from_shape_fn(IxDyn(&shape).f(), |index| model[index]),
             None => ArrayD::<Complex32>::zeros(IxDyn(&shape).f()),
         };
+        // The cube sky equation adds each result from a working VisBuffer.
+        // Unassigned cells retain their last value in that buffer.
+        let multiple_grids = scratch_model
+            && matching
+                .clone()
+                .filter(|entry| matches!(entry.prediction, Prediction::FourierGrid(_)))
+                .nth(1)
+                .is_some();
+        let mut scratch_buffer = None;
         let mut components_written = false;
         for entry in matching {
+            let grid_row = || FourierRow {
+                ms,
+                row,
+                correlations,
+                frequencies,
+                raw_flags,
+                frequency_ref: *frequency_ref,
+                engine,
+                field: &field,
+                phase_time,
+                frame: &frame,
+                uvw,
+                focus_rows: &buffer.focus_rows,
+                legacy_mosaic_pointing: buffer.legacy_mosaic_pointing.as_ref(),
+                scratch_channels: entry
+                    .scratch_channels
+                    .iter()
+                    .find(|channels| channels[0] == row.data_spw_id)
+                    .copied(),
+            };
             let components = match &entry.prediction {
                 Prediction::Components(components) => {
                     if virtual_components.is_some_and(|active| !std::ptr::eq(active, entry)) {
@@ -367,40 +499,48 @@ impl ModelInputs {
                     components_written = true;
                     components
                 }
+                Prediction::SingleDish(dish) => {
+                    if row.antenna1 != row.antenna2 || row.flag_row {
+                        continue;
+                    }
+                    let corrected;
+                    let pointing = match self.single_dish_pointings.get(dish.pointing()) {
+                        Some(pointings) => pointings.get(&row.row_index),
+                        None if !self.single_dish_feeds.is_empty() => {
+                            corrected = self
+                                .single_dish_feeds
+                                .direction(ms, engine, row, Some(field.clone()))?
+                                .direction;
+                            Some(&corrected)
+                        }
+                        None => Some(&field),
+                    };
+                    if let Some(direction) = pointing {
+                        dish.predict(&grid_row(), direction, &mut model)?;
+                    }
+                    continue;
+                }
                 Prediction::FourierGrid(grid) => {
-                    grid.predict(
-                        FourierRow {
-                            ms,
-                            row,
-                            correlations,
-                            frequencies,
-                            raw_flags,
-                            frequency_ref: *frequency_ref,
-                            engine,
-                            field: &field,
-                            phase_time,
-                            frame: &frame,
-                            uvw,
-                            focus_rows: &buffer.focus_rows,
-                            scratch_channels: entry
-                                .scratch_channels
-                                .iter()
-                                .find(|channels| channels[0] == row.data_spw_id)
-                                .copied(),
-                        },
-                        &mut model,
-                        if !scratch_model {
-                            FourierMerge::VirtualSum
-                        } else if components_written {
-                            FourierMerge::ScratchReplaceComponents
-                        } else {
-                            FourierMerge::ScratchSum
-                        },
-                    )?;
+                    let merge = if !scratch_model {
+                        FourierMerge::VirtualSum
+                    } else if multiple_grids {
+                        FourierMerge::ScratchAccumulate(
+                            scratch_buffer
+                                .get_or_insert_with(|| model.clone())
+                                .as_slice_memory_order_mut()
+                                .expect("contiguous scratch buffer"),
+                        )
+                    } else if components_written {
+                        FourierMerge::ScratchReplaceComponents
+                    } else {
+                        FourierMerge::ScratchSum
+                    };
+                    grid.predict(grid_row(), &mut model, merge)?;
                     components_written = false;
                     continue;
                 }
             };
+            let (basis, offset) = component_basis(correlations)?;
             for component in components.iter() {
                 let projection =
                     UvwMachine::with_frame(component.shape().reference_direction(), &field, &frame)
@@ -427,17 +567,55 @@ impl ModelInputs {
     }
 }
 
+fn component_basis(correlations: &[i32]) -> Result<(Polarisation, i32), GainSolveError> {
+    let (basis, offset) = match correlations.first().copied() {
+        Some(5..=8) => (Polarisation::Circular, 5),
+        Some(9..=12) => (Polarisation::Linear, 9),
+        _ => {
+            return Err(model_error(
+                "virtual component prediction requires linear or circular correlations",
+            ));
+        }
+    };
+    if correlations
+        .iter()
+        .any(|&code| !(offset..offset + 4).contains(&code))
+    {
+        return Err(model_error(
+            "virtual component prediction requires one correlation basis",
+        ));
+    }
+    Ok((basis, offset))
+}
+
 fn decode_entries(record: &RecordValue) -> Result<Vec<Entry>, GainSolveError> {
     if record.get("version").is_some() {
         return VirtualModelEntry::entries(record)
             .map_err(model_error)?
             .into_iter()
             .map(|entry| {
-                decode_entry(
+                let mut model = decode_entry(
                     entry.kind,
                     EntrySelection::Rows(entry.index_combination),
                     &entry.container,
-                )
+                )?;
+                // Native SDGrid recipes keep the original iterator span
+                // for interpolation, including its single-channel bypass.
+                if matches!(model.prediction, Prediction::SingleDish(_))
+                    && entry.container.get("casars_live_image_frequency").is_some()
+                {
+                    if entry
+                        .channel_selection
+                        .iter()
+                        .any(|&[spw, start, count, step]| {
+                            spw < 0 || start < 0 || count <= 0 || step <= 0
+                        })
+                    {
+                        return Err(model_error("invalid saved SDGrid channel selection"));
+                    }
+                    model.scratch_channels = entry.channel_selection;
+                }
+                Ok(model)
             })
             .collect();
     }
@@ -477,6 +655,9 @@ fn decode_entry(
     let prediction = match kind {
         VirtualModelKind::ComponentList => {
             Prediction::Components(ComponentList::from_record(container).map_err(model_error)?)
+        }
+        VirtualModelKind::FtMachine if matches!(container.get("name"), Some(Value::Scalar(ScalarValue::String(name))) if name == "SDGrid") => {
+            Prediction::SingleDish(Box::new(SingleDishModel::new(container.clone())?))
         }
         VirtualModelKind::FtMachine => {
             Prediction::FourierGrid(Box::new(FourierModel::new(container.clone())))

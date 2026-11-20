@@ -215,6 +215,18 @@ On `refim_mawproject` (CASA 6.7.6.14, Stokes I, `wbawp=True`,
 dirty image. casa-rs compiles CASA's pairing (`casa-imaging-operator`,
 `aw::routing` into `MuellerRouting`) and agrees with CASA to 2e-7.
 
+
+## FLAG_CMD rewrites may truncate a longer saved command
+
+CASA 6.7.6.14 reads FLAG_CMD.COMMAND into a NumPy string array during
+`split` and `mstransform` post-processing. The array holds strings no longer
+than the longest original command. Replacing a spectral selector with a longer
+one can cut off later arguments before the table is written. The paired
+`ms_flag_commands_oracle.py` test reproduces the truncation when an inactive
+channel bin is negative and checks the complete rewritten command independently.
+casa-rs writes the full command to the variable-length table column.
+[Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## AW-projection predicts with the unrotated w
 
 - Date noted: 2026-10-09
@@ -1840,6 +1852,52 @@ produced SIGBUS during cleanup on one run. The isolated child writes its
 reference DATA before cleanup; the parent accepts only these identified
 cleanup failures and records the process exit separately from prediction.
 
+## Legacy imager cleanup aborts after common-beam prediction
+
+CASA 6.7.6.14 returns success from `imager.ft` with
+`setoptions(ftmachine='mosaic')` on a 1.5 GHz VLA MeasurementSet. Both
+scratch and virtual predictions reach disk. The next `imager.done()`
+call raises SIGABRT with “pure virtual method called.” A separate CASA
+process reopens the virtual recipe and reads its model through `uvsub`.
+The same cleanup failure occurs with ATCA, GMRT, WSRT, GBT, NRAO140FT,
+and the `NONE` telescope pattern.
+
+casa-rs publishes both products and closes the tool normally. The
+common-beam oracle verifies that CASA finished prediction before the
+cleanup failure and checks live and reopened output against their own
+references.
+[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Legacy MosaicFT cannot reopen a DEFAULT telescope beam
+
+CASA 6.7.6.14 selects `SimplePBConvFunc` for the literal telescope name
+`DEFAULT`. Its live `VPSkyJones` uses a numeric beam from the first dish
+diameter. The virtual writer records the telescope name. On reopening,
+`MosaicFT::fromRecord` looks up the name through `PBMath` and rejects the
+recipe with “Failed to recovermosaic FTmachine” when the lookup is unknown.
+
+casa-rs uses the first dish's numeric beam when reopening the record.
+The paired oracle uses the pinned live prediction as that beam's reference
+and checks the documented failure from the CASA reader.
+[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Legacy nift can abort while preparing a virtual model
+
+In CASA 6.7.6.14, `imager.setoptions(ftmachine='nift')` constructs an
+`rGridFT`. Live scratch prediction agrees with GridFT for the paired
+visibility fixtures. `CubeSkyEquation::init` falls through to a `GridFT`
+cast for the `rGridFT` object. Some virtual and faceted scratch runs
+abort during `ft` in that path.
+
+casa-rs uses the shared interferometric prediction and publishes a
+`GridFT` virtual recipe. CASA reads that recipe through `uvsub`. The
+paired oracle checks the scratch prediction against pinned `nift` and
+the virtual prediction against a readable pinned GridFT reference.
+[`imager_nift_oracle.py`](../tools/casa-compat/imager_nift_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
 ## Mosaic multi-image prediction depends on image order
 
 - Date noted: 2026-11-11
@@ -1874,6 +1932,44 @@ test retains the raw joint CASA outputs and checks that they still expose
 the defect. Its independent reference for these two cases is the sum of
 the separate CASA predictions, with the usual 0.001 normalized RMS limit;
 the limit is not relaxed to admit the defective joint output.
+
+## Legacy MosaicFT can crash with nonzero FEED beam offsets
+
+On CASA 6.7.6.14, a two-field heterogeneous ALMA MeasurementSet with
+nonzero receptor-zero `FEED.BEAM_OFFSET` caused the public legacy
+`imager.ft` call to exit with signal 11. The fixture has an ALT-AZ mount,
+explicit POINTING rows and the `mosaic` Fourier machine. casa-rs applies
+the first antenna's rotated feed offset to the buffer pointing and
+predicts the scratch and virtual models normally.
+
+The paired control calculates the rotation from the pinned CASA measures
+and writes the shifted directions into POINTING with zero feed offsets.
+The native scratch and virtual predictions matched this CASA control
+within 1.84e-6 normalized RMS. The fixture is in
+`tools/casa-compat/imager_mosaic_oracle.py`.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Faceted MosaicFT can omit its first facet in later scratch buffers
+
+With CASA 6.7.6.14, `imager.defineimage(facets=2)` and
+`imager.setoptions(ftmachine='mosaic')` assign MosaicFT to the first
+facet and ordinary GridFT to the others. In a heterogeneous ALMA
+MeasurementSet with measured POINTING rows, a bulk scratch prediction
+retained the MosaicFT contribution in its first integration and omitted
+it in the other eleven. The GridFT contribution was present throughout.
+
+`CubeSkyEquation::getSlice` gives the per-facet transforms a copy of the
+visibility buffer. The copy constructor does not initialize or copy the
+first antenna's cached direction flag. The original buffer's first
+direction is available to the initialization and the virtual reader.
+
+casa-rs evaluates the first antenna's pointing for each integration and
+keeps the working visibility buffer across facet transforms. The oracle
+compares a native bulk scratch prediction with independent CASA calls
+selecting one integration each. It also compares both virtual writers
+and readers against a CASA virtual prediction over both fields.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_facets_oracle.py`](../tools/casa-compat/imager_facets_oracle.py)
 
 ## The simulator's mosaic machine is not tclean's
 
@@ -3797,6 +3893,25 @@ for both `FLAG` and `FLAG_ROW`. It also verifies `replace`, `or`, and
 `and` against independent flag patterns. casa-rs raises `ValueError` for
 an unrecognized choice and preserves the working flags.
 
+## `flagdata` can fail to decode an invalid FIELD diagnostic
+
+CASA 6.7.6.14 rejects a FIELD selector consisting of a bare nonbreaking
+space, but its Python binding raises `UnicodeDecodeError` while decoding
+the parser diagnostic. The first UTF-8 byte of the invalid token is
+reported on its own.
+
+casa-rs reports the invalid whitespace with a readable task error.
+The paired check verifies that both calls leave flags and visibility
+data unchanged (#1617).
+
+A leading nonbreaking space in an ARRAY selector triggers the same
+decoding failure. The array oracle checks both the CASA failure and the
+readable native refusal, with flags and visibility data unchanged.
+
+The same decoding failure occurs for a leading nonbreaking space in
+`intent` and `uvrange`. The paired checks cover both refusals and verify
+that quoted intent patterns still match valid UTF-8 text in STATE.
+
 ## `flagdata` can choose the wrong samples when FLOAT_DATA is present
 
 CASA 6.7.6.14 can evaluate the magnitude of `FLOAT_DATA` when
@@ -3811,6 +3926,49 @@ tolerance to the magnitude of each sample. An explicit inside or outside
 range on FLOAT_DATA uses the signed values, as CASA does. The
 `tools/casa-compat/flagdata_clip_range_oracle.py` comparison verifies both
 choices with independent expected flags.
+
+## An overflowing observation selector flags a different observation
+
+In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.
+Passing the same decimal value as text also selects observation 0. The
+selector converts an ID to a signed 32-bit value without a range check.
+
+casa-rs refuses out-of-range observation IDs before writing flags. The
+paired oracle applies both selectors in CASA to verify which rows change
+and checks that casa-rs preserves the input flags. [Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+## An array selector can flag another subarray or terminate CASA
+
+CASA 6.7.6.14 reads the array ID in `flagdata(array="4294967298")` as
+subarray 2. The comparisons `>1002` and `>=1002` can also abort with a
+negative-shaped array while preparing an auxiliary list of IDs.
+
+casa-rs rejects the overflowing ID and applies comparisons directly to
+the stored ARRAY_ID values. The oracle verifies both aborts in separate
+processes and checks the flags for real rows with ARRAY_ID 1003.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+## `flagdata` can flag other feeds when a feed is selected
+
+CASA 6.7.6.14's `flagdata` accepts a feed expression but does not apply it to
+the row selection. In a MeasurementSet containing same-feed and cross-feed
+rows, `flagdata(feed="0&2")` flags both kinds of row without a warning.
+
+casa-rs applies the feed selection before calculating or writing flags.
+The paired oracle reproduces the extra writes in CASA and verifies the
+native row selection against CASA `split` and the explicit feed pairs.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+## A NumPy autocorrelation switch can flag cross-correlations
+
+CASA 6.7.6.14 accepts `flagdata(autocorr=numpy.bool_(True))`. Its manual flag
+agent uses the default false switch and writes flags on cross-correlations.
+A Python `True` restricts the same call to autocorrelations.
+
+casa-rs honors the true value in both scalar forms. The paired oracle
+reproduces the extra writes and checks the native mask against CASA's
+Python-Boolean product and the stored antenna pairs.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
 ## `flagdata`'s summary aborts on a correlation it cannot name
 
@@ -4016,6 +4174,27 @@ UTC, 37 seconds later. Where the scale is lost was not pinned down:
 wcslib's `mjdobs`, so the scale is gone by then. casa-rs reads `MJD-OBS` or `DATE-OBS` in the scale `TIMESYS` names, UTC
 when it names none (`casa_coordinates::fits::from_fits_header`), so the
 round trip keeps the date.
+
+## `imhead` displays a bogus observation date after calendar overflow
+
+On a CASA image, CASA 6.7.6.14 accepts `imhead(mode='put', hdkey='epoch',
+hdvalue={'value': 1e20, 'unit': 'd'})` and then reports
+`-5884082/10/30/00:00:00.000000`. The stored MJD exceeds the signed integer
+range used by `MVTime::ymd` for the Julian day. casa-rs rejects the out-of-range
+edit before changing the image. Dates inside the representable range still
+work, including 1.01 billion MJD days, which both render as
+`2767144/12/15/00:00:00.000000` (#977).
+
+## `imhead` can save a direction reference frame that prevents reopening the image
+
+In CASA 6.7.6.14, `imhead(mode='put', hdkey='equinox', hdvalue='APP')`
+returns successfully on a J2000 image. It stores APP as the native
+frame and retains J2000 as the conversion frame. Reopening the image then
+fails with `Missing information in Frame specified for conversion`.
+The same behavior occurs for JMEAN and AZEL. The saved direction coordinate
+does not supply the epoch or observer position needed by those conversions.
+casa-rs checks the conversion before updating the image and preserves the
+existing readable coordinates if the context is missing (#977).
 
 ## `feather` fails on an image whose direction is not on its first two axes
 
@@ -7153,6 +7332,15 @@ the per-scan output matched two independent single-field CASA controls.
 An independent SciPy natural spline matched 52 valid complex factors
 in the spline comparison (#1525).
 
+## Image record restore can crash or damage an existing output
+
+CASA 6.7.6.14 segfaults in `ia.fromrecord` if an otherwise valid image
+record has an empty outer `coordsys` record. A native restore of a record
+with a two-axis coordinate system and `shape=[2, 3, 2]` throws
+`Failed AlwaysAssert setCoordinateInfo` after replacing the output with
+an unreadable directory. Casa-rs reports both errors in Python and
+preserves the prior native image and its history (#1625).
+
 ## FITS import can abort on an empty primary HDU
 
 CASA 6.7.6.14 aborts in `ia.fromfits(infile=path, whichhdu=0)` when the FITS
@@ -7225,7 +7413,19 @@ passed to `ia.subimage(overwrite=True)`. The source history then fails to
 read because the table lacks the `TIME` column. If the history table is
 already open, CASA reports that it is in the table cache. Casa-rs rejects
 overwriting existing entries inside the source image before staging the
-cutout.
+cutout. The same replacement through `ia.fromimage` or
+`ia.newimagefromimage` succeeds in CASA and leaves the source history
+unreadable. Casa-rs protects the source before staging either copy.
+
+## Paged image concatenation can remove a source image or mask
+
+CASA 6.7.6.14 accepts `imageconcat(overwrite=True)` with an existing output
+directory that contains an input. It removes the nested image before failing
+to read its pixels. Replacing an input's mask subtable as the output can also
+succeed, leaving the input mask unreadable because the new table has no
+`PagedArray` column. Casa-rs raises a Python error before either replacement.
+A new output directory inside a source image is supported when no existing
+subtable is replaced.
 
 ## imsubimage permutes coordinate labels after dropping transposed axes
 
@@ -7298,6 +7498,25 @@ CASA 6.7.6.14 can terminate when `coordsys.setnames` is called with
 pixel maps are `[0, -2]`. casa-rs raises `RuntimeError` before applying
 either name. Passing the one visible axis name without a coordinate type
 renames that axis and preserves the stored removed-axis name (#1626).
+
+## Time averaging LAG_DATA and mixed FLOAT_DATA loses visibility information
+
+CASA 6.7.6.14 leaves LAG_DATA undefined while time averaging, and a LAG_DATA-only
+product can also have undefined FLAG cells and zero spectral weights. The
+native average retains the lag axis. It averages defined lag values using
+scalar weights, preferring rows with an unflagged frequency sample for the
+same correlation. It computes the frequency flags and statistics from the
+input frequency cells.
+
+With `datacolumn="all"` on a MeasurementSet containing both FLOAT_DATA and
+complex visibilities, `VbAvg::accumulateElementForCubes` can accumulate
+calibrated and single-dish weights into the same buffer. The resulting
+denominators attenuate CORRECTED_DATA, MODEL_DATA, and FLOAT_DATA. The same
+layout can substitute FLOAT_DATA for complex DATA. Native averaging uses
+the calibrated weights for corrected and model samples and the observed
+variance for DATA and FLOAT_DATA. The oracle verifies the independent lanes
+against CASA runs on the separate layouts and against an analytic lag sum.
+[Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
 ## Channel-width argument variants can crash both MeasurementSet tasks
 
@@ -7411,6 +7630,118 @@ channels 0–1 and 5–6. It averages visibility samples from original
 channels 0–1 and 2 and 5, in the order of its compressed channel
 buffer. casa-rs preserves the paired text coordinates and sample
 values so existing PlotMS diagnostics can be compared directly (#1526).
+
+## `impv` can lose overlap on small rotated strips
+
+In CASA 6.7.6.14, a 12-by-12 direction plane can report that the input and
+rotated output do not overlap even when both endpoints are at least two
+pixels from the edges. Examples are a reversed horizontal cut from
+`[8,6]` to `[3,6]` and a vertical cut from `[5,3]` to `[5,8]`. Padding the
+input direction plane before the same sky-coordinate cut restores the CASA
+result. casa-rs interpolates only the requested strip and agrees with the
+padded CASA reference without requiring callers to pad the input (#1024).
+
+## imregrid drops brightness units and the beam when broadcasting a channel
+
+In CASA 6.7.6.14, `imregrid` with a one-channel input, an explicitly selected
+spectral axis and a multi-channel output replicates the data and mask. During
+that copy it loses the brightness unit and restoring beam. The `singleton`
+case in `crates/casa-images/tests/data/imregrid/expected.json` records a
+`Jy/beam` image with a 4 by 3 arcsec beam becoming a unitless image without a
+beam. casa-rs matches the samples, mask and template frequency grid and retains
+the original units and beam. Copying channels does not change the calibration
+of the pixels being copied.
+
+## Legacy MosaicFT rejects split voltage-pattern image records
+
+The CASA 6.7.6.14 legacy `HetArrayConvFunc::findAntennaSizes` checks
+for `realimage` and `imagimage` in a custom `IMAGE` record. It reads
+the imaginary image from `imagim`. `vpmanager.setpbimage` saves the
+standard field `imagimage`. The public `imager.ft` then reports that
+`imagim` is unknown and returns false.
+
+The same responses packaged as complex Jones images work through the
+public legacy imager. Adding `imagim` as an alias in the split records
+also works and gives the same CASA prediction. casa-rs reads the standard
+field for native prediction. For virtual interoperation, the Fourier grid
+owns a copy of the voltage-pattern table with the alias. A real-only
+pattern uses a zero-valued imaginary image owned by the same grid.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
+
+## A zero-stride region aborts `image.modify`
+
+CASA 6.7.6.14 terminates with SIGABRT and an uncaught
+`casacore::ArraySlicerError` when `image.modify` uses an LCSlicer record
+whose increment is zero. A scratch probe used a 7 × 7 float image and a
+point component, with the first increment of a region covering [1, 1]
+through [5, 5] set to zero. Casa-rs raises a Python error during region
+validation and preserves the stored pixels and history (#1625). The same
+zero-stride record also aborts CASA when passed to `ia.fromimage` or
+`ia.newimagefromimage`. Casa-rs reports a Python error before copying.
+
+## Legacy imager single-dish Gaussian settings and virtual recipes
+
+CASA 6.7.6.14 constructs the default single-dish imager with an empty
+`convertfirst` string. An explicit `setsdoptions(convertfirst='NEVER')`
+allows `imager.ft` to proceed. casa-rs starts with that default.
+
+The legacy `SDGrid` copy constructor omits the Gaussian widths and
+cutoff that `CubeSkyEquation` needs when it initializes the live model.
+On a smooth ALMA model with off-centre recorded pointings, pinned SF and
+BOX produce nonzero scratch models. The pinned GAUSS control returns
+zero even with an explicit positive cutoff. casa-rs evaluates GAUSS and
+GJINC from their kernel equations. The paired oracle uses the pinned
+pointing coordinates and independent Gaussian and Bessel evaluations.
+
+CASA publishes an `SDGrid` record for `sd` without the kernel settings.
+For `both`, `GridBoth::toRecord` writes its two transforms into the same
+record, leaving the SDGrid name and image with some GridFT fields.
+Pinned `uvsub` rejects the records for both modes. casa-rs saves the
+single-dish settings with the complex SDGrid image and gives GridFT its
+own entry for `both`. The CASA image tool opens both backing images, and
+native `uvsub` reopens the models. An incomplete CASA recipe raises an
+error that identifies the missing settings.
+
+Standalone SDGrid uses the interpolator selected by `freqinterp` for
+scratch prediction. Its native saved recipe retains that choice and the
+original channel span on reopen, including the single-channel bypass.
+GridBoth delegates prediction to its two child transforms. The legacy
+frequency setter updates the parent, so both children use nearest
+neighbour. In the pinned five-plane test, all four methods produce identical
+mixed-grid outputs. The native mixed-grid prediction follows that behavior.
+
+With `setvp(dovp=True)`, pinned scratch prediction applies the field's sky
+voltage pattern as it advances through the visibility buffers. Its virtual
+recipe stores the first apparent sky for the selected fields. The beam oracle
+compares the stored sky pixels with CASA, then uses that pinned image as input
+to a separate CASA scratch prediction to verify native readback. Standalone
+SDGrid takes custom gridding beams. GridBoth keeps its default gridding beam
+and can still apply a custom sky voltage pattern. The legacy voltage-pattern
+lookup uses the first concrete table row for the telescope. A later row
+marked as the VPManager default does not change that choice.
+
+SDGrid can include a cross-correlation when all of its UVW components
+are nonpositive. casa-rs applies the single-dish contribution to
+autocorrelations. In `both`, the ordinary GridFT path predicts the
+cross-correlations.
+
+For fast scans, CASA normally fits a natural cubic through each antenna's
+pointings. Its linear fallback can take neighboring rows from another
+antenna when the short sequence is interleaved. casa-rs interpolates over
+the recorded samples of the requested antenna. With an empty POINTING
+table, casa-rs applies the first feed's offset to the field direction.
+The paired test uses pinned measures to shift the field in its reference.
+The pinned SDGrid copy also drops the requested conversion order and
+disables the pointing cache. casa-rs retains both controls. In the
+conversion-order test, pinned CASA measures convert each AZEL control
+point at its recorded epoch. A second pinned run samples that converted
+track in the image frame.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_single_dish_oracle.py`](../tools/casa-compat/imager_single_dish_oracle.py) ·
+[`imager_single_dish_options_oracle.py`](../tools/casa-compat/imager_single_dish_options_oracle.py) ·
+[`imager_single_dish_spectral_oracle.py`](../tools/casa-compat/imager_single_dish_spectral_oracle.py) ·
+[`imager_single_dish_beam_oracle.py`](../tools/casa-compat/imager_single_dish_beam_oracle.py)
 
 ## FITS export can change axis lengths or abort while removing axes
 

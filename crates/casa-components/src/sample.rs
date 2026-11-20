@@ -11,6 +11,8 @@
 //!   direction's offset, out to four major axes (`GaussianShape::sample`);
 //! - **a disk:** the pixel's area over the disk's, for a direction inside
 //!   the ellipse (`DiskShape::_calcSample`).
+//! - **a limb-darkened disk:** CASA uses the same ellipse test with one
+//!   quarter of the disk's image normalization (`LimbDarkenedDiskShape::calcSample`).
 //!
 //! The offsets are casacore's: the separation and position angle from the
 //! component to the direction (`MVDirection::separation` and
@@ -22,8 +24,7 @@
 //!
 //! The component's reference direction is first converted into the frame of
 //! the pixel directions with no measures frame, as CASA converts it; a
-//! conversion that needs an epoch or a position (to AZEL, say) is refused. A
-//! limb-darkened disk is refused, as its visibility is.
+//! conversion that needs an epoch or a position (to AZEL, say) is refused.
 //!
 //! The frequencies are taken in the frame of the spectral model's reference
 //! frequency, as the visibility takes them: a caller sampling an image in
@@ -112,8 +113,7 @@ impl ComponentShape {
     /// # Errors
     ///
     /// [`ComponentError::Direction`] when the reference direction cannot be
-    /// converted into `grid.frame` without a measures frame, and
-    /// [`ComponentError::ImageSample`] for a limb-darkened disk.
+    /// converted into `grid.frame` without a measures frame.
     pub fn pixel_scales(
         &self,
         directions: &[[f64; 3]],
@@ -162,10 +162,15 @@ impl ComponentShape {
                     })
                     .collect()
             }
-            ShapeKind::Disk { axes, .. } => {
+            ShapeKind::Disk { axes, .. } | ShapeKind::LimbDarkenedDisk { axes, .. } => {
                 let major_radius = axes.major_axis() / 2.0;
                 let minor_radius = axes.minor_axis() / 2.0;
-                let value = grid.area() / (FRAC_PI_4 * axes.major_axis() * axes.minor_axis());
+                let normalization = if matches!(self.kind(), ShapeKind::LimbDarkenedDisk { .. }) {
+                    PI
+                } else {
+                    FRAC_PI_4
+                };
+                let value = grid.area() / (normalization * axes.major_axis() * axes.minor_axis());
                 directions
                     .iter()
                     .map(|&direction| {
@@ -183,12 +188,6 @@ impl ComponentShape {
                         if inside { value } else { 0.0 }
                     })
                     .collect()
-            }
-            ShapeKind::LimbDarkenedDisk { .. } => {
-                return Err(ComponentError::ImageSample {
-                    shape: "limb-darkened disk",
-                    reason: "casa-rs does not yet sample its brightness profile".to_string(),
-                });
             }
         })
     }

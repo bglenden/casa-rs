@@ -210,13 +210,8 @@ def definition_cases(root, reference_ms, factories):
                     else:
                         raise AssertionError((engine, convolution))
                 assert tool.setoptions()
-            if name == "channel" and engine == "native":
-                assert tool.setoptions(freqinterp="linear")
-                before = samples(path)
-                assert tool.ft(str(model)) is False
-                assert not model.exists()
-                np.testing.assert_array_equal(samples(path), before)
-                assert tool.setoptions(freqinterp="nearest")
+            if name == "channel":
+                assert tool.setoptions(freqinterp="spline")
             assert tool.ft(str(model)), (name, engine)
             assert tool.done()
             observed = empty_image(model)
@@ -238,16 +233,9 @@ def definition_cases(root, reference_ms, factories):
                 assert reader.done()
             records.append(observed)
             if name == "channel":
+                tool = factory()
                 assert tool.open(str(path), usescratch=True)
                 assert tool.selectvis(field=0)
-                if engine == "native":
-                    assert tool.defineimage(**arguments)
-                    before = samples(path)
-                    for interpolation in ("linear", "cubic", "spline"):
-                        assert tool.setoptions(freqinterp=interpolation)
-                        assert tool.ft(str(model)) is False
-                        np.testing.assert_array_equal(samples(path), before)
-                    assert tool.setoptions(freqinterp="nearest")
                 assert tool.ft(str(model))
                 assert tool.done()
                 predictions.append(samples(path))
@@ -269,6 +257,10 @@ def definition_cases(root, reference_ms, factories):
             assert error < 1e-3, (name, error)
             reports["channel_cube_nrms"] = error
     reports.update(reopened_channel_cube(root, reference_ms, factories))
+    reports.update(legacy_cube_interpolation(root, reference_ms, factories))
+    reports["legacy_incremental_zero_assignment"] = legacy_incremental_assignment(root, reference_ms, factories)
+    reports["short_cubic"] = short_cubic_cases(root, reference_ms, factories)
+    reports["spline_planes"] = spline_plane_counts(root, reference_ms, factories)
     return reports
 
 
@@ -299,6 +291,167 @@ def reopened_channel_cube(root, reference_ms, factories):
         error = relative_rms(actual, expected)
         assert error < 1e-3, (label, error)
         reports[f"channel_cube_{label}_nrms"] = error
+    return reports
+
+
+def legacy_cube_interpolation(root, reference_ms, factories):
+    model = root / "definition-channel-casa.im"
+    cases = {"whole": ("0", np.arange(12)), "stepped": ("0:2~10^2", np.arange(2, 11, 2)),
+             "single": ("0:4", np.array([4])), "created": ("0", np.arange(12))}
+    reports = {}
+    for method in ("linear", "cubic", "spline"):
+        for case, (selector, channels) in cases.items():
+            predictions = []
+            for engine, factory in factories.items():
+                path = root / f"interpolation-{method}-{case}-{engine}.ms"
+                shutil.copytree(reference_ms, path)
+                tool = factory()
+                assert tool.open(str(path), usescratch=True)
+                assert tool.selectvis(field=0, spw=selector)
+                assert tool.defineimage(nx=32, mode="channel", nchan=4, start=2, step=2,
+                                        outframe="TOPO")
+                image_path = model
+                if case == "created":
+                    image_path = root / f"interpolation-{method}-{engine}.im"
+                    assert tool.ft(str(image_path))
+                    with_image = image()
+                    assert with_image.open(str(image_path))
+                    pixels = with_image.getchunk()
+                    pixels[21, 12, 0, :] = [2., .5, 1.5, .75]
+                    assert with_image.putchunk(pixels) and with_image.done()
+                    assert tool.selectvis(field=0, spw=selector)
+                before = samples(path)
+                assert tool.setoptions(freqinterp=method)
+                assert tool.ft(str(image_path)) and tool.done(), (method, case, engine)
+                result = samples(path)
+                unselected = np.setdiff1d(np.arange(12), channels)
+                np.testing.assert_array_equal(result[:, unselected], before[:, unselected])
+                assert np.any(result[:, channels] != before[:, channels])
+                predictions.append(result[:, channels])
+            expected, actual = predictions
+            error = relative_rms(actual, expected)
+            assert error < 1e-3, (method, case, error)
+            reports[f"{method}-{case}-nrms"] = error
+    for engine in factories:
+        cubic = samples(root / f"interpolation-cubic-whole-{engine}.ms")
+        spline = samples(root / f"interpolation-spline-whole-{engine}.ms")
+        assert relative_rms(spline, cubic) > 1e-3, engine
+    return reports
+
+
+def legacy_incremental_assignment(root, reference_ms, factories):
+    model = root / "definition-channel-casa.im"
+    sentinel = np.complex64(11. + 23.j)
+    reports = {}
+    for interpolation in ("nearest", "linear", "cubic", "spline"):
+        for engine, factory in factories.items():
+            path = root / f"interpolation-incremental-{interpolation}-{engine}.ms"
+            shutil.copytree(reference_ms, path)
+            stored = table()
+            assert stored.open(str(path), nomodify=False)
+            try:
+                fields = stored.getcol("FIELD_ID")
+                antenna1, antenna2 = (stored.getcol(col) for col in ("ANTENNA1", "ANTENNA2"))
+                rows = np.flatnonzero((fields == 0) & (antenna1 != antenna2))[:3]
+                assert len(rows) == 3
+                for row in rows:
+                    stored.putcell("MODEL_DATA", int(row), np.full_like(stored.getcell("MODEL_DATA", int(row)), sentinel))
+                    stored.putcell("FLAG", int(row), np.zeros_like(stored.getcell("FLAG", int(row))))
+                stored.putcell("FLAG_ROW", int(rows[0]), True)
+                stored.putcell("UVW", int(rows[1]), np.full(3, 800_000.))
+                stored.putcell("ANTENNA2", int(rows[2]), int(antenna1[rows[2]]))
+            finally:
+                stored.close()
+            tool = factory()
+            assert tool.open(str(path), usescratch=True)
+            assert tool.selectvis(field=0)
+            assert tool.defineimage(nx=32, mode="channel", nchan=4, start=2, step=2, outframe="TOPO")
+            assert tool.setoptions(freqinterp=interpolation)
+            assert tool.ft(str(model), incremental=True) and tool.done()
+            assert stored.open(str(path))
+            try:
+                measured = [stored.getcell("MODEL_DATA", int(row))[0, 2] for row in rows]
+            finally:
+                stored.close()
+            expected = 2. * sentinel if interpolation == "nearest" else sentinel
+            np.testing.assert_array_equal(measured, np.full(len(rows), expected))
+            reports[f"{interpolation}-{engine}"] = len(rows)
+    return reports
+
+
+def short_cubic_cases(root, reference_ms, factories):
+    reports = {}
+    for planes in (1, 2, 3):
+        fixture = root / f"short-cubic-{planes}.ms"
+        shutil.copytree(reference_ms, fixture)
+        model = root / f"short-cubic-{planes}.im"
+        arguments = dict(nx=32, mode="channel", nchan=planes, start=2, step=2, outframe="TOPO")
+        maker = imager()
+        assert maker.open(str(fixture), usescratch=True) and maker.selectvis(field=0)
+        assert maker.defineimage(**arguments) and maker.ft(str(model)) and maker.done()
+        with_image = image()
+        assert with_image.open(str(model))
+        pixels = with_image.getchunk()
+        pixels[21, 12, 0, :] = np.arange(1., planes + 1.)
+        assert with_image.putchunk(pixels) and with_image.done()
+        for name, selector in (("whole", "0"), ("mapped", "0:2~3"), ("single", "0:2"),
+                               ("high", "0:10~11"), ("low", "0:0~1")):
+            expected_success = planes == 1 or name in {"single", "high", "low"}
+            for engine, factory in factories.items():
+                path = root / f"short-cubic-{planes}-{name}-{engine}.ms"
+                shutil.copytree(reference_ms, path)
+                before = samples(path)
+                tool = factory()
+                assert tool.open(str(path), usescratch=True)
+                assert tool.selectvis(field=0, spw=selector) and tool.defineimage(**arguments)
+                assert tool.setoptions(freqinterp="cubic")
+                assert tool.ft(str(model)) is expected_success, (engine, planes, name)
+                assert tool.done()
+                if not expected_success:
+                    np.testing.assert_array_equal(samples(path), before)
+            reports[f"{planes}-{name}"] = expected_success
+    return reports
+
+
+def spline_plane_counts(root, reference_ms, factories):
+    reports = {}
+    cases = [(f"{planes}-planes", planes,
+              dict(mode="channel", start=2, step=2), "ft") for planes in (2, 3, 6)]
+    cases.extend((f"descending-{machine}", 6,
+                  dict(mode="frequency", start="100.020GHz", step="-4MHz"), machine)
+                 for machine in ("ft", "wproject"))
+    for label, planes, spectral, machine in cases:
+        fixture = root / f"spline-{label}-fixture.ms"
+        shutil.copytree(reference_ms, fixture)
+        model = root / f"spline-{label}.im"
+        arguments = dict(nx=32, nchan=planes, outframe="TOPO", **spectral)
+        maker = imager()
+        assert maker.open(str(fixture), usescratch=True) and maker.selectvis(field=0)
+        assert maker.defineimage(**arguments) and maker.ft(str(model)) and maker.done()
+        with_image = image()
+        assert with_image.open(str(model))
+        if label.startswith("descending"):
+            coords = with_image.coordsys()
+            assert coords.increment()["numeric"][-1] < 0.
+            assert coords.done()
+        pixels = with_image.getchunk()
+        pixels[21, 12, 0, :] = [2., .5, 1.5, .75, 3., .25][:planes]
+        assert with_image.putchunk(pixels) and with_image.done()
+        predictions = []
+        for engine, factory in factories.items():
+            path = root / f"spline-{label}-{engine}.ms"
+            shutil.copytree(reference_ms, path)
+            tool = factory()
+            assert tool.open(str(path), usescratch=True) and tool.selectvis(field=0)
+            assert tool.defineimage(**arguments)
+            assert tool.setoptions(ftmachine=machine, wprojplanes=16, freqinterp="spline")
+            assert tool.ft(str(model)) and tool.done()
+            predictions.append(samples(path))
+        expected, actual = predictions
+        assert np.max(np.abs(expected)) > 0.5
+        error = relative_rms(actual, expected)
+        assert error < 1e-3, (label, error)
+        reports[f"{label}-nrms"] = error
     return reports
 
 

@@ -15,13 +15,17 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 /// A 4x4x3 direction-and-frequency image with a beam, whose pixels are
 /// `1..=48` times `scale`.
 pub fn write_image(path: &Path, scale: f32) {
+    write_image_with_geometry(path, scale, 4, [-2.0e-6, 3.0e-6]);
+}
+
+pub fn write_image_with_geometry(path: &Path, scale: f32, side: usize, increment: [f64; 2]) {
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
         DirectionRef::J2000,
         Projection::new(ProjectionType::SIN),
         [1.2, -0.4],
-        [-2.0e-6, 3.0e-6],
-        [1.5, 1.5],
+        increment,
+        [(side as f64 - 1.0) / 2.0; 2],
     ));
     coordinates.add_coordinate(SpectralCoordinate::new(
         FrequencyRef::LSRK,
@@ -30,7 +34,7 @@ pub fn write_image(path: &Path, scale: f32) {
         0.0,
         372.0e9,
     ));
-    let shape = vec![4, 4, 3];
+    let shape = vec![side, side, 3];
     let mut image = PagedImage::<f32>::create(shape.clone(), coordinates, path).unwrap();
     let data = ArrayD::from_shape_vec(
         IxDyn(&shape).f(),

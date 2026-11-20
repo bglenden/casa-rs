@@ -441,6 +441,23 @@ pub struct RecordCoordinate {
     pub pixel_axes: Vec<Option<usize>>,
 }
 
+impl RecordCoordinate {
+    /// Read this coordinate before applying the system's pixel and world maps.
+    /// This retains descriptors for axes that the maps remove.
+    ///
+    /// # Errors
+    /// Returns an error if the field is missing or its coordinate is malformed.
+    pub fn model(&self, record: &RecordValue) -> Result<CoordinateModel, CoordinateError> {
+        let Some(Value::Record(coordinate)) = record.get(&self.field) else {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "coordinate field {:?} is not a record",
+                self.field
+            )));
+        };
+        parse_coordinate_record(&self.field, coordinate)
+    }
+}
+
 /// `rec`'s coordinates with where they come from, in the order of their
 /// axes.
 fn read_coordinates(

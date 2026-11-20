@@ -515,7 +515,8 @@ impl ImageCorrection {
 
     /// MosaicFT's sampling sinc: multiply the model and divide the dirty
     /// image and PSF, leaving the weight image to the kernel set's rule.
-    pub(crate) fn mosaic_sinc([nx, ny]: [usize; 2], oversampling: u16) -> Self {
+    #[must_use]
+    pub fn mosaic_sinc([nx, ny]: [usize; 2], oversampling: u16) -> Self {
         let sinc = |len: usize| {
             (0..len)
                 .map(|index| {
