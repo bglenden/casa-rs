@@ -265,7 +265,7 @@ def compare_refusals(vis):
     assert_preserved(vis, before, auxiliary)
 
     for mode, correlation in (("manual", "ABS_XX"), ("manual", "ABSXX"), ("manual", "WVR"),
-                              ("clip", "XX"), ("rflag", "RR")):
+                              ("clip", "IMAG_XX"), ("rflag", "RR")):
         try:
             tasks.flagdata(vis=vis, mode=mode, correlation=correlation)
         except RuntimeError as error:
