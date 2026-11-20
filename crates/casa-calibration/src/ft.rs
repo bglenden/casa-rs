@@ -2,7 +2,13 @@
 //! Publish CASA's virtual source recipes or their sampled scratch visibilities.
 
 pub(crate) mod image;
+mod imager;
+pub(crate) mod settings;
 pub(crate) mod virtual_publication;
+mod voltage_pattern;
+
+pub use imager::{ImagerImageDefinition, ImagerPrediction, ImagerPredictionModel};
+pub use voltage_pattern::ImagerVoltagePattern;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;

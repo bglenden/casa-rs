@@ -11,9 +11,9 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
-    Basis, GridGeometry, GridPadding, GridPolarization, GridPrecision, ImageExtent,
-    MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, PaddingFactor,
-    PolarizationRouting, Spheroidal,
+    Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
+    GridPrecision, ImageExtent, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale,
+    PaddingFactor, PolarizationRouting, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral, legacy_multi_term};
@@ -24,12 +24,14 @@ use casa_ms::{
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
+use super::settings::{ImagerGridder, PredictionGeometry};
 use super::{channel_span, invalid, model_entry};
 
 /// An uncommitted Fourier image. The scratch path uses it until the write
 /// finishes. The virtual model can keep it once its on-disk record is filed.
 pub(crate) struct ImageModel {
     pub(crate) entry: VirtualModelEntry,
+    pub(crate) starts_series: bool,
     backing: GridLifetime,
 }
 
@@ -55,7 +57,11 @@ impl ImageModel {
         } else {
             entry.container.upsert("diskimage", path);
         }
-        Ok(Self { entry, backing })
+        Ok(Self {
+            entry,
+            starts_series: self.starts_series,
+            backing,
+        })
     }
 
     pub(crate) fn retain(&mut self) {
@@ -102,8 +108,28 @@ pub(crate) fn prepare_image(
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
+    prepare_configured_image(
+        ms,
+        selected,
+        path,
+        taylor,
+        keep_zero,
+        scratch,
+        PredictionGeometry::default(),
+    )
+}
+
+pub(super) fn prepare_configured_image(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    path: &Path,
+    taylor: Option<TaylorTerm>,
+    keep_zero: bool,
+    scratch: bool,
+    options: PredictionGeometry,
+) -> MsResult<Option<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
-    let layout = ImageTransform::new(ms, selected, &image)?;
+    let layout = ImageTransform::new(ms, selected, &image, options)?;
     let mut path = virtual_model_image_path(ms)?;
     if scratch {
         let name = path
@@ -119,13 +145,17 @@ pub(crate) fn prepare_image(
     if !layout.grid(&image, &backing.path)? && !keep_zero {
         return Ok(None);
     }
-    let record = layout.record(ms, selected, &backing.path)?;
+    let record = layout.record(ms, selected, &backing.path, scratch)?;
     let container = match taylor {
         Some(term) => legacy_multi_term(record, term.count, term.index, term.reference_hz),
         None => record,
     };
     let entry = model_entry(ms, selected, VirtualModelKind::FtMachine, container)?;
-    Ok(Some(ImageModel { entry, backing }))
+    Ok(Some(ImageModel {
+        entry,
+        starts_series: false,
+        backing,
+    }))
 }
 
 struct ImageTransform {
@@ -135,6 +165,111 @@ struct ImageTransform {
     increment: [f64; 2],
     phase_center: [f64; 2],
     frame: String,
+    options: PredictionGeometry,
+    w_record: Option<WRecord>,
+}
+
+struct WRecord {
+    planes: usize,
+    size: usize,
+    scale: f64,
+    supports: Vec<i32>,
+    statistics: [f64; 3],
+}
+
+impl WRecord {
+    fn new(kernels: &WPlanes, count: WPlaneCount) -> Self {
+        let statistics = match count {
+            WPlaneCount::Fixed(_) => [-1.; 3],
+            WPlaneCount::Restored { max_w, .. } => [-1., max_w, -1.],
+            WPlaneCount::Auto {
+                min_w,
+                max_w,
+                rms_w,
+            } => [min_w, max_w, rms_w],
+        };
+        Self {
+            statistics,
+            planes: kernels.planes(),
+            size: kernels.screen_size(),
+            scale: kernels.w_scale(),
+            supports: (0..kernels.planes())
+                .map(|plane| i32::from(kernels.half_support(plane)))
+                .collect(),
+        }
+    }
+
+    fn save(&self, record: &mut RecordValue, scratch: bool, geometry: &GridGeometry) {
+        record.upsert(
+            "name",
+            Value::Scalar(ScalarValue::String("WProjectFT".into())),
+        );
+        record.remove("convtype");
+        let count = self.planes as i32;
+        for (key, value) in [
+            ("nwplanes", count),
+            ("wconvsize", count),
+            ("convsize", self.size as i32),
+            ("convsampling", if count > 1 { 4 } else { 1 }),
+            ("lastindex", 0),
+        ] {
+            record.upsert(key, Value::Scalar(ScalarValue::Int32(value)));
+        }
+        for (key, value) in ["minw", "maxw", "rmsw"].into_iter().zip(self.statistics) {
+            record.upsert(key, Value::Scalar(ScalarValue::Float64(value)));
+        }
+        record.upsert(
+            "savedwscale",
+            Value::Scalar(ScalarValue::Float64(self.scale)),
+        );
+        record.upsert(
+            "convsizes",
+            Value::Array(ArrayValue::from_i32_vec(Vec::new())),
+        );
+        record.upsert(
+            "convsupport",
+            Value::Array(ArrayValue::from_i32_vec(self.supports.clone())),
+        );
+        if let Some(Value::Array(ArrayValue::Float64(scale))) = record.get("uvscale") {
+            let mut scale = scale.iter().copied().collect::<Vec<f64>>();
+            scale.push(self.scale);
+            record.upsert("uvscale", Value::Array(ArrayValue::from_f64_vec(scale)));
+        }
+        if let Some(Value::Array(ArrayValue::Float64(offset))) = record.get("uvoffset") {
+            let mut offset = offset.iter().copied().collect::<Vec<f64>>();
+            offset.push(0.0);
+            record.upsert("uvoffset", Value::Array(ArrayValue::from_f64_vec(offset)));
+        }
+        if scratch {
+            // The temporary record does not leave this call. Preserve the
+            // geometry used by the legacy iterator before its grid was padded.
+            let GridPadding::CasaComposite(padding) = geometry.padding() else {
+                unreachable!("W projection has a padded grid");
+            };
+            let [nx, ny] = geometry.image().shape;
+            record.upsert(
+                "casars_prediction_geometry",
+                Value::Array(ArrayValue::from_f64_vec(vec![
+                    nx as f64,
+                    ny as f64,
+                    f64::from(padding.get()),
+                ])),
+            );
+        }
+    }
+}
+
+fn effective_padding(options: &PredictionGeometry) -> MsResult<GridPadding> {
+    // The legacy imager forwards its configured padding to WProjectFT.
+    // Its GridFT factory uses unit padding even when setoptions supplies
+    // another value.
+    let factor = match options.settings.gridder {
+        ImagerGridder::WProject(_) => options.settings.padding,
+        ImagerGridder::Spheroidal | ImagerGridder::Boxcar => 1.0,
+    };
+    Ok(GridPadding::CasaComposite(
+        PaddingFactor::new(factor).map_err(invalid)?,
+    ))
 }
 
 impl ImageTransform {
@@ -142,6 +277,7 @@ impl ImageTransform {
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
         image: &PagedImage<f32>,
+        options: PredictionGeometry,
     ) -> MsResult<Self> {
         let [nx, ny, npol, channels] = *image.shape() else {
             return Err(invalid(
@@ -186,7 +322,7 @@ impl ImageTransform {
         // GridFT phases on the world direction of the integer image
         // midpoint, which need not be the WCS reference pixel.
         let reference = [nx / 2, ny / 2];
-        let padding = GridPadding::CasaComposite(PaddingFactor::new(1.0).map_err(invalid)?);
+        let padding = effective_padding(&options)?;
         let geometry = GridGeometry::new(
             ImageExtent {
                 shape: [nx, ny],
@@ -222,9 +358,23 @@ impl ImageTransform {
         let basis = Basis::ChannelLocal {
             planes: channels as u32,
         };
-        let kernels = Box::new(Spheroidal::new(&geometry, &routing));
-        let operator =
-            MeasurementOperator::new(geometry, basis, routing, kernels, GridPrecision::F64);
+        let mut w_record = None;
+        let kernels: Box<dyn ConvolutionFunctionSet> = match options.settings.gridder {
+            ImagerGridder::Spheroidal => Box::new(Spheroidal::new(&geometry, &routing)),
+            ImagerGridder::Boxcar => Box::new(Boxcar::new(&geometry, &routing)),
+            ImagerGridder::WProject(planes) => {
+                let kernels = WPlanes::new(&geometry, &routing, planes).map_err(invalid)?;
+                w_record = Some(WRecord::new(&kernels, planes));
+                Box::new(kernels)
+            }
+        };
+        let operator = MeasurementOperator::new(
+            geometry,
+            basis,
+            routing,
+            kernels,
+            options.settings.precision,
+        );
         Ok(Self {
             operator,
             coordinates,
@@ -232,6 +382,8 @@ impl ImageTransform {
             increment,
             phase_center,
             frame: direction.direction_ref().as_str().to_owned(),
+            options,
+            w_record,
         })
     }
 
@@ -240,13 +392,46 @@ impl ImageTransform {
             unreachable!()
         };
         let [gx, gy] = self.operator.geometry().grid_shape();
+        let beam = self
+            .options
+            .voltage_pattern
+            .as_ref()
+            .map(|beam| {
+                let coords = image.coordinates();
+                let index = coordinate_index(coords, CoordinateType::Direction)?;
+                let CoordinateModel::Direction(direction) = coords.coordinate(index) else {
+                    unreachable!("direction coordinate");
+                };
+                Ok::<_, casa_ms::MsError>((
+                    beam.pattern.pattern(),
+                    beam.separations(direction, [nx, ny])?,
+                ))
+            })
+            .transpose()?;
         let grid_pols = self.operator.polarization().grid_pols();
+        let settings = self.options.settings;
+        let plane_bytes = gx.saturating_mul(gy).saturating_mul(8);
+        let cache_bytes = usize::try_from(settings.cache_size)
+            .ok()
+            .filter(|pixels| *pixels > 0)
+            .map_or(plane_bytes, |pixels| {
+                pixels.saturating_mul(8).min(plane_bytes)
+            });
+        let tile = usize::try_from(settings.tile_size)
+            .ok()
+            .filter(|tile| *tile > 0 && *tile != 16);
+        let tile_shape = vec![
+            tile.map_or(gx, |tile| gx.min(tile)),
+            tile.map_or(gy, |tile| gy.min(tile)),
+            1,
+            1,
+        ];
         let mut output = PagedImage::<Complex32>::create_with_tile_shape_and_cache(
             vec![gx, gy, grid_pols, channels],
-            vec![gx, gy, 1, 1],
+            tile_shape,
             self.coordinates.clone(),
             path,
-            gx * gy * 8,
+            cache_bytes,
         )
         .map_err(invalid)?;
         let mut nonzero = false;
@@ -255,8 +440,20 @@ impl ImageTransform {
                 .get_slice(&[0, 0, 0, plane], &[nx, ny, npol, 1])
                 .map_err(invalid)?;
             nonzero |= values.iter().any(|value| *value != 0.0);
+            let frequency = self.frequencies[plane];
+            let beam = beam
+                .as_ref()
+                .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
             let images = (0..npol)
-                .map(|pol| Array2::from_shape_fn((ny, nx), |(y, x)| values[[x, y, pol, 0]]))
+                .map(|pol| {
+                    Array2::from_shape_fn((ny, nx), |(y, x)| {
+                        let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
+                            let radius = separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
+                            pattern.power(radius)
+                        });
+                        values[[x, y, pol, 0]] * scale
+                    })
+                })
                 .collect();
             let model = ModelImages {
                 first_plane: plane as u32,
@@ -267,11 +464,20 @@ impl ImageTransform {
                 .prepare_model(&model, ModelPrescale::Unit)
                 .map_err(invalid)?;
             for pol in 0..grid_pols {
-                let cells = grid.block::<f64>(0, pol, 0);
-                let values = ArrayD::from_shape_fn(IxDyn(&[gx, gy, 1, 1]).f(), |index| {
-                    let cell = cells[index[1] * gx + index[0]];
-                    Complex32::new(cell.re as f32, cell.im as f32)
-                });
+                let shape = IxDyn(&[gx, gy, 1, 1]).f();
+                let values = match self.operator.precision() {
+                    GridPrecision::F32 => {
+                        let cells = grid.block::<f32>(0, pol, 0);
+                        ArrayD::from_shape_fn(shape, |index| cells[index[1] * gx + index[0]])
+                    }
+                    GridPrecision::F64 => {
+                        let cells = grid.block::<f64>(0, pol, 0);
+                        ArrayD::from_shape_fn(shape, |index| {
+                            let cell = cells[index[1] * gx + index[0]];
+                            Complex32::new(cell.re as f32, cell.im as f32)
+                        })
+                    }
+                };
                 output
                     .put_slice(&values, &[0, 0, pol, plane])
                     .map_err(invalid)?;
@@ -286,6 +492,7 @@ impl ImageTransform {
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
         path: &Path,
+        scratch: bool,
     ) -> MsResult<RecordValue> {
         let engine = MsCalEngine::new(ms).map_err(invalid)?;
         let (lon, lat, radius) = engine.observatory_position().as_spherical();
@@ -318,13 +525,54 @@ impl ImageTransform {
             increment_rad: self.increment,
             phase_centre_rad: self.phase_center,
             direction_frame: &self.frame,
-            observatory: [lon, lat, radius],
+            observatory: self
+                .options
+                .settings
+                .observatory
+                .unwrap_or([lon, lat, radius]),
             spectral: spectral_record,
             buffer: &buffer,
-            interpolation: 0,
+            interpolation: self.options.settings.frequency_interpolation,
             frequency_frame_valid: false,
         }
         .record();
+        let settings = self.options.settings;
+        record.upsert(
+            "usedoublegrid",
+            Value::Scalar(ScalarValue::Bool(settings.precision == GridPrecision::F64)),
+        );
+        record.upsert(
+            "cachesize",
+            Value::Scalar(ScalarValue::Int64(settings.cache_size)),
+        );
+        record.upsert(
+            "tilesize",
+            Value::Scalar(ScalarValue::Int32(settings.tile_size)),
+        );
+        record.upsert(
+            "numthreads",
+            Value::Scalar(ScalarValue::Int32(settings.threads)),
+        );
+        if let Some(epoch) = self.options.phase_centre_time {
+            record.upsert(
+                "phasecentertime",
+                Value::Scalar(ScalarValue::Float64(epoch)),
+            );
+        }
+        if let Some(distance) = self.options.distance_m {
+            record.upsert("distance", Value::Scalar(ScalarValue::Float64(distance)));
+        }
+        if scratch && settings.frequency_interpolation != 0 {
+            // This temporary record represents the live iterator, which
+            // keeps its configured interpolation when sampling MODEL_DATA.
+            record.upsert("tovis", Value::Scalar(ScalarValue::Bool(false)));
+        }
+        if matches!(settings.gridder, ImagerGridder::Boxcar) {
+            record.upsert("convtype", Value::Scalar(ScalarValue::String("BOX".into())));
+        }
+        if let Some(w_record) = &self.w_record {
+            w_record.save(&mut record, scratch, self.operator.geometry());
+        }
         record.upsert(
             "spwchanselflag",
             Value::Array(ArrayValue::Int32(selection_mask(ms, selected)?)),

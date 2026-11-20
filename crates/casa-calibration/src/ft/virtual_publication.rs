@@ -124,11 +124,12 @@ impl VirtualFtPublication {
         for target in &mut self.targets {
             let (table, lock) = &mut tables[target.input];
             let entries = self.components.iter().map(|entry| (entry, true)).chain(
-                target
-                    .images
-                    .iter()
-                    .enumerate()
-                    .map(|(index, model)| (&model.entry, index > 0 || self.incremental)),
+                target.images.iter().enumerate().map(|(index, model)| {
+                    (
+                        &model.entry,
+                        self.incremental || (index > 0 && !model.starts_series),
+                    )
+                }),
             );
             let result = target.publication.publish_holding(
                 table,
