@@ -60,11 +60,10 @@ impl PyImageTool {
             let all_axes = axes.is_empty()
                 || axes == [-1]
                 || axes.iter().copied().eq(0..image.shape().len() as i64);
-            let record = image.coordinate_record();
             if all_axes {
-                return PyCoordsys::from_record(record);
+                return image.coordsys();
             }
-            let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
+            let coordinates = image.coordinates();
             let mut result = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
             let mut first = 0;
             let mut selected = Vec::new();

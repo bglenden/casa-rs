@@ -17,7 +17,7 @@ use crate::convert::IntList;
 use super::PyImageTool;
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_image;
+use super::create::publish_image_with;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{Region, mask_argument};
 
@@ -59,14 +59,7 @@ fn copy<T: ImageExprValue>(
         None,
     )
     .map_err(raised)?;
-    let mask = with_storage!(&mut product, output => rebin.copy_to(input, output.as_mut()))
-        .map_err(raised)?;
-    if let Some(mask) = mask {
-        with_storage!(&mut product, output => output
-            .put_mask("mask0", &mask)
-            .and_then(|()| output.set_default_mask("mask0")))
-        .map_err(raised)?;
-    }
+    with_storage!(&mut product, output => rebin.copy_to(input, output.as_mut())).map_err(raised)?;
     with_storage!(&mut product, output => output.set_image_info_record(info)).map_err(raised)?;
     if let Some(record) = &section.coordinate_record {
         match &mut product {
@@ -116,7 +109,7 @@ impl PyImageTool {
             let attachment = state.image.as_ref().ok_or_else(|| raised("Unable to create image"))?;
             let region = region?;
             let mask = mask?;
-            publish_image(outfile, overwrite, |path| {
+            publish_image_with(outfile, overwrite, |path| {
                 let mut handle = attachment.lock();
                 match &*handle {
                     ImageHandle::Double(_) => return Err(raised("rebin does not support images with double precision pixel values.")),
@@ -163,6 +156,11 @@ impl PyImageTool {
                 output.save().map_err(raised)?;
                 attachment.release_requested_lock(&mut handle)?;
                 Ok(output)
+            }, |output| {
+                with_pixels!(output, storage => match storage {
+                    Storage::Paged(image) => image.restore_live_coordinate_references().map_err(raised),
+                    Storage::Temp { .. } => Ok(()),
+                })
             })
         })?;
         Py::new(py, Self::attached(product))

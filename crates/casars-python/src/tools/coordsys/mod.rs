@@ -152,6 +152,17 @@ impl PyCoordsys {
         })
     }
 
+    pub(crate) fn from_image_coordinates(
+        coordinates: &CoordinateSystem,
+        record: RecordValue,
+    ) -> PyResult<Self> {
+        let mut state = CoordinateState::from_record(record)?;
+        state.coordinates = coordinates.clone();
+        Ok(Self {
+            state: Mutex::new(state),
+        })
+    }
+
     fn state(&self) -> MutexGuard<'_, CoordinateState> {
         let mut state = self.lock_state();
         if state.parent_name.is_empty() {

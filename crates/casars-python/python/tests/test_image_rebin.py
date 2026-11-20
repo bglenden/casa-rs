@@ -151,6 +151,16 @@ def test_rebin_sums_in_native_precision_and_axis_order(casa, mask):
         assert result.done() and source.done()
 
 
+def test_rebin_complex_mean_does_not_overflow_in_scalar_division(casa):
+    values = np.full((2, 3), 4e37 + 3e37j, dtype=np.complex64)
+    for backend in (tools, casa):
+        source = backend.image()
+        assert source.fromarray(pixels=values)
+        result = source.rebin("", [2, 3])
+        np.testing.assert_allclose(result.getchunk(), values[:1, :1], rtol=2e-7)
+        assert result.done() and source.done()
+
+
 @pytest.mark.parametrize("kind", ["coupled", "sampled"])
 def test_rebin_coordinate_parameters_match_casa(casa, kind):
     if kind == "coupled":
@@ -176,6 +186,35 @@ def test_rebin_coordinate_parameters_match_casa(casa, kind):
         assert product.done() and source.done()
     for left, right in zip(*outputs):
         _assert_value(left, right)
+
+
+@pytest.mark.parametrize(
+    "limits,crop,expected",
+    [([0, 6], False, [1.2666666666666667e9, 1.5666666666666667e9, 2.4666666666666667e9]),
+     ([1, 5], True, [1.6e9]), ([3, 3], False, [2.1e9])],
+)
+def test_rebin_sampled_frequencies_survive_native_reopen(casa, tmp_path, limits, crop, expected):
+    cs = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    frequency = np.array([1, 1.1, 1.4, 2.1, 2.2, 2.5, 2.6]) * 1e9
+    assert cs.setspectral(frequencies={"value": frequency, "unit": "Hz"})
+    region = casa.regionmanager().box([0, 0, limits[0]], [3, 3, limits[1]])
+    for index, writer in enumerate((casa, tools)):
+        source = writer.image()
+        assert source.fromshape(shape=[4, 4, 7], csys=cs.torecord())
+        path = str(tmp_path / f"sampled-{index}.im")
+        result = source.rebin(path, [1, 1, 3], region=region, crop=crop)
+        assert result.coordsys().referencepixel()["numeric"][-1] == pytest.approx(-1 / 3)
+        for channel, value in enumerate(expected):
+            assert result.toworld([0, 0, channel])["numeric"][-1] == pytest.approx(value)
+        assert result.done() and source.done()
+        for reader in (casa, tools):
+            result = reader.image()
+            assert result.open(path)
+            reference = result.coordsys().referencepixel()["numeric"][-1]
+            assert reference == pytest.approx(-1 / 3 if limits[0] == limits[1] else 0)
+            for channel, value in enumerate(expected):
+                assert result.toworld([0, 0, channel])["numeric"][-1] == pytest.approx(value)
+            assert result.done()
 
 
 def test_rebin_selects_multiple_beams_and_rejects_spectral_rebin(casa):

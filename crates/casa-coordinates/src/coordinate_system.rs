@@ -393,14 +393,36 @@ impl CoordinateSystem {
     /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
     /// the system's axes, as for any other malformed record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        Self::restore_record(rec, false)
+    }
+
+    /// Restore a coordinate record made by a live image operation, retaining
+    /// sampled axes' live references. A filesystem reopen uses `from_record`.
+    ///
+    /// # Errors
+    /// The record or one of its live sampled references is invalid.
+    pub fn from_live_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        Self::restore_record(rec, true)
+    }
+
+    fn restore_record(rec: &RecordValue, live: bool) -> Result<Self, CoordinateError> {
         let obs_info = match rec.get("obsinfo") {
             Some(Value::Record(obs_rec)) => ObsInfo::from_record(obs_rec)?,
             _ => ObsInfo::from_record(rec)?,
         };
-        let coordinates = read_coordinates(rec)?
-            .into_iter()
-            .map(|(_, coordinate)| coordinate)
-            .collect();
+        let mut coordinates = Vec::new();
+        for (placement, mut coordinate) in read_coordinates(rec)? {
+            if live && let Some(Value::Record(stored)) = rec.get(&placement.field) {
+                coordinate = match coordinate {
+                    CoordinateModel::Spectral(spectral) if !spectral.has_linear_mapping() => {
+                        spectral.with_live_reference(stored)?.into()
+                    }
+                    CoordinateModel::Tabular(table) => table.with_live_reference(stored)?.into(),
+                    other => other,
+                };
+            }
+            coordinates.push(coordinate);
+        }
         Ok(Self {
             coordinates,
             obs_info,

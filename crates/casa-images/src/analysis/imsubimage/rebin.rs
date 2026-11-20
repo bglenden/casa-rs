@@ -8,10 +8,10 @@ use crate::image_expr::ImageExprValue;
 use crate::image_expr_lel::{rebin_coordinate_record, rebin_reduce_slice};
 use crate::{ImageError, ImageInterface, ImagePixel, MutableImageInterface};
 
-use super::super::axes::StridedSection;
+use super::super::axes::{StridedSection, section_record_reference_pixels};
 use super::super::lel_mask::PreparedMask;
-use super::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
-use super::read_window::{PixelSections, sample_slice};
+use super::coords::drop_axes_from_legacy_record;
+use super::read_window::PixelSections;
 use super::region::SubimageSelection;
 use super::{SubimageOptions, SubimagePlan, SubimageRegion, resolve_kept_axes};
 
@@ -162,24 +162,19 @@ impl<'a> ImageRebin<'a> {
             .coordinate_record
             .take()
             .unwrap_or_else(|| section.coordinates.to_record());
+        if input_shape != section.shape {
+            section_record_reference_pixels(&mut record, &vec![0; ndim], &input_shape, None)?;
+        }
         let mut coords = rebin_coordinate_record(&mut record, &factors)?;
-        let mut native = Some(record);
         if kept_axes.len() != ndim {
-            let spec = CoordReductionSpec {
-                full_shape: &binned_shape,
-                start: &vec![0; ndim],
-                shape: &binned_shape,
-                stride: None,
-                kept_axes: &kept_axes,
-                selected_stokes: None,
-            };
-            (coords, native, section.image_info) =
-                reduce_coordinates_and_beams(&coords, native, spec, section.image_info)?;
+            record = drop_axes_from_legacy_record(&record, ndim, &kept_axes)
+                .ok_or_else(|| selection_error("Could not reduce the rebinned image axis maps"))?;
+            coords = CoordinateSystem::from_live_record(&record)?;
         }
         section.shape = kept_axes.iter().map(|&axis| binned_shape[axis]).collect();
         section.kept_axes = kept_axes;
         section.coordinates = coords;
-        section.coordinate_record = native;
+        section.coordinate_record = Some(record);
         Ok(Self {
             section,
             input_shape,
@@ -200,8 +195,8 @@ impl<'a> ImageRebin<'a> {
         self.section.beam_planes(axis, planes)
     }
 
-    /// Average selected pixels into an allocated output using bounded reads.
-    /// Returns a validity mask if an output bin has no valid samples.
+    /// Average selected pixels into a new output using bounded tiles.
+    /// Creates its default mask on the first bin with no valid samples.
     ///
     /// # Errors
     /// A source read, mask calculation or output write fails.
@@ -209,7 +204,7 @@ impl<'a> ImageRebin<'a> {
         &self,
         image: &dyn ImageInterface<T>,
         output: &mut dyn MutableImageInterface<T>,
-    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+    ) -> Result<(), ImageError> {
         self.section.copy_metadata(image, output)?;
         let ndim = image.ndim();
         let ones = vec![1; ndim];
@@ -247,7 +242,7 @@ impl<'a> ImageRebin<'a> {
                 count
             })
             .collect();
-        let mut mask_out = None;
+        let mut masked = false;
         for tile in binned.cursors(output_cursor) {
             let tile = tile?;
             let start = tile
@@ -291,17 +286,15 @@ impl<'a> ImageRebin<'a> {
                 .collect();
             output.put_slice(&self.section.squeeze(pixels), &offset)?;
             if let Some(valid) = valid.filter(|mask| mask.iter().any(|valid| !valid)) {
-                let valid = self.section.squeeze(valid);
-                let mask = mask_out
-                    .get_or_insert_with(|| ArrayD::from_elem(IxDyn(&self.section.shape), true));
-                mask.slice_each_axis_mut(|slice| {
-                    let axis = slice.axis.index();
-                    sample_slice(offset[axis], valid.shape()[axis], 1)
-                })
-                .assign(&valid);
+                if !masked {
+                    output.create_filled_mask("mask0", true)?;
+                    output.set_default_mask("mask0")?;
+                    masked = true;
+                }
+                output.put_mask_slice("mask0", &self.section.squeeze(valid), &offset)?;
             }
         }
-        Ok(mask_out)
+        Ok(())
     }
 }
 
@@ -344,7 +337,7 @@ fn read_large_bin<T: ImageExprValue>(
         }
     }
     if count > 0 {
-        sum = sum / T::from_f64_lossy(count as f64);
+        sum = sum.div_by_real(count as f64);
     }
     Ok((sum, masked.then_some(count > 0)))
 }
