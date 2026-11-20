@@ -10277,7 +10277,17 @@ impl TiledFileIO {
         let use_lru = max_cache_bytes > 0 && max_cache_bytes < total_data_bytes;
         let (cache, read_file) = if use_lru {
             let max_slots = (max_cache_bytes / tile_bytes).max(1);
-            let file = OpenOptions::new().read(true).write(true).open(&tsm_path)?;
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&tsm_path)
+                .or_else(|error| match error.kind() {
+                    std::io::ErrorKind::PermissionDenied
+                    | std::io::ErrorKind::ReadOnlyFilesystem => {
+                        OpenOptions::new().read(true).open(&tsm_path)
+                    }
+                    _ => Err(error),
+                })?;
             (
                 TileCache::Lru(LruTileCache {
                     data: vec![0u8; max_slots * tile_bytes],
@@ -12535,6 +12545,28 @@ impl TiledArrayStorage {
         self.inner.reset_io_stats();
     }
 
+    /// Discard cached reads while keeping the current pixel file open.
+    /// Pending pixel writes retain their cache until they are flushed.
+    pub fn discard_clean_read_cache(&mut self) {
+        match &mut self.inner.cache {
+            TileCache::Flat(flat) if !flat.dirty.iter().any(|&dirty| dirty) => {
+                flat.data = Vec::new();
+                flat.allocated = false;
+            }
+            TileCache::Lru(lru) if !lru.slot_dirty[..lru.used_slots].iter().any(|&dirty| dirty) => {
+                for tile in &mut lru.slot_tile[..lru.used_slots] {
+                    if *tile != usize::MAX {
+                        lru.tile_to_slot[*tile] = -1;
+                        *tile = usize::MAX;
+                    }
+                }
+                lru.used_slots = 0;
+                lru.access_counter = 0;
+            }
+            _ => {}
+        }
+    }
+
     pub fn flush(&mut self) -> Result<(), StorageError> {
         self.inner.flush()
     }
@@ -14064,6 +14096,47 @@ mod tests {
             values
         );
         assert_eq!(storage.owned_resident_bytes(), 16);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_pixel_reads_refresh_with_the_original_open_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for budget in [1, 1024] {
+            let root = tempdir().unwrap();
+            let mut writer = TiledArrayStorage::create_with_cache::<f32>(
+                root.path(),
+                &[4],
+                &[2],
+                false,
+                0,
+                "DATA",
+                budget,
+            )
+            .unwrap();
+            writer
+                .put_slice_fortran(&[1.0f32, 2.0, 3.0, 4.0], &[0], &[4])
+                .unwrap();
+            writer.flush().unwrap();
+            let file = writer.inner.tsm_path.to_path_buf();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444)).unwrap();
+            let mut reader =
+                TiledArrayStorage::open_with_cache::<f32>(root.path(), 0, budget).unwrap();
+            assert_eq!(reader.get_at::<f32>(&[0]).unwrap(), 1.0);
+            if budget == 1 {
+                assert_eq!(reader.owned_resident_bytes(), 2 * size_of::<f32>());
+            }
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+            writer.put_slice_fortran(&[5.0f32], &[0], &[1]).unwrap();
+            writer.discard_clean_read_cache();
+            assert_eq!(writer.get_at::<f32>(&[0]).unwrap(), 5.0);
+            writer.flush().unwrap();
+            drop(writer);
+            std::fs::rename(file, root.path().join("relocated-pixels")).unwrap();
+            reader.discard_clean_read_cache();
+            assert_eq!(reader.get_at::<f32>(&[0]).unwrap(), 5.0);
+        }
     }
 
     #[test]

@@ -6,7 +6,6 @@ use std::f64::consts::TAU;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_components::ComponentList;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{ImageInfo, PagedImage};
 use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
@@ -19,8 +18,9 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
-use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
+use super::image::{ImageModel, TaylorTerm, image_reference_frequency, prepare_configured_images};
 use super::imager_definition::{ImagerDefinitionRequest, model_tile_shape};
+use super::imager_sources::ModelSources;
 use super::legacy_pbw::pointing::LegacyEpOffsets;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
 use super::settings::{
@@ -66,6 +66,7 @@ pub struct ImagerPrediction {
     image_tile_volume: i32,
     legacy_pbw: Option<(ImagerLegacyPbWOptions, Option<PathBuf>)>,
     legacy_ep: Option<(Option<PathBuf>, LegacyEpOffsets)>,
+    retained_sources: Option<ModelSources>,
     legacy_aw: Option<ImagerLegacyAwOptions>,
     single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
@@ -134,6 +135,7 @@ impl Default for ImagerPrediction {
             image_tile_volume: 0,
             legacy_pbw: None,
             legacy_ep: None,
+            retained_sources: None,
             legacy_aw: None,
             single_dish_setup: ImagerSingleDishSetup::default(),
             taylor: (1, None),
@@ -447,6 +449,36 @@ impl ImagerPrediction {
         Ok(true)
     }
 
+    /// Predict with the source images and components retained by a live sky equation.
+    ///
+    /// # Errors
+    /// The model cannot be prepared or published to the selected attachments.
+    pub fn predict_attached_retaining_sources(
+        &mut self,
+        attachments: &ImagerAttachments,
+        model: ImagerPredictionModel<'_>,
+        scratch: bool,
+    ) -> Result<bool, AttachmentError> {
+        let previous = self
+            .retained_sources
+            .get_or_insert_with(ModelSources::default)
+            .paths();
+        let result = self.predict_attached(attachments, model, scratch);
+        if !matches!(result, Ok(true))
+            && self.partial_batch.is_none()
+            && self.pending_publication.is_none()
+            && let Some(sources) = &mut self.retained_sources
+        {
+            sources.retain(&previous.0, previous.1.as_deref());
+        }
+        result
+    }
+
+    /// Drop model inputs when a legacy sky equation is rebuilt.
+    pub fn clear_retained_model_sources(&mut self) {
+        self.retained_sources = None;
+    }
+
     /// Predict and publish the model for one already-selected attachment.
     ///
     /// Returns false when an absent image needs an image definition.
@@ -634,6 +666,24 @@ impl ImagerPrediction {
         model: &ImagerPredictionModel<'_>,
         scratch: bool,
     ) -> MsResult<Option<(Vec<VirtualModelEntry>, Vec<ImageModel>)>> {
+        let mut retained = self.retained_sources.take();
+        let mut temporary = ModelSources::default();
+        let sources = retained.as_mut().unwrap_or(&mut temporary);
+        let result =
+            self.prepare_with_sources(ms, selected, image_selection, model, scratch, sources);
+        self.retained_sources = retained;
+        result
+    }
+
+    fn prepare_with_sources(
+        &mut self,
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+        image_selection: &ResolvedMsSelection,
+        model: &ImagerPredictionModel<'_>,
+        scratch: bool,
+        sources: &mut ModelSources,
+    ) -> MsResult<Option<(Vec<VirtualModelEntry>, Vec<ImageModel>)>> {
         if model
             .images
             .iter()
@@ -670,9 +720,11 @@ impl ImagerPrediction {
                 "the number of model images must match the Taylor terms",
             ));
         }
+
+        sources.retain(model.images, model.components);
         let requested = match self.definition.as_ref() {
             Some(ImageDefinition::Requested(request))
-                if model.images.iter().any(|path| !path.exists()) =>
+                if model.images.iter().any(|path| sources.needs_image(path)) =>
             {
                 let location = self.options.observatory_override();
                 Some(request.build_for_selection(ms, image_selection, location)?)
@@ -680,7 +732,7 @@ impl ImagerPrediction {
             _ => None,
         };
         for path in model.images {
-            if !path.exists() {
+            if sources.needs_image(path) {
                 let definition = match &self.definition {
                     Some(ImageDefinition::Coordinates(definition)) => Some(definition),
                     _ => requested.as_ref(),
@@ -728,23 +780,24 @@ impl ImagerPrediction {
                     });
             }
         }
+        sources.open_images(model.images)?;
         let reference_hz = if terms == 1 || model.images.is_empty() {
             None
         } else {
             Some(match explicit_reference {
                 Some(reference) => reference,
-                None => reference_frequency(&model.images[0])?,
+                None => image_reference_frequency(sources.image(&model.images[0])?)?,
             })
         };
         let mut components = Vec::new();
         if let Some(path) = model.components {
-            let list = ComponentList::read_table(path).map_err(invalid)?;
+            let list = sources.component_record(path)?;
             if !model.incremental {
                 components.push(model_entry(
                     ms,
                     selected,
                     VirtualModelKind::ComponentList,
-                    list.to_record().map_err(invalid)?,
+                    list.clone(),
                 )?);
             }
         }
@@ -768,7 +821,7 @@ impl ImagerPrediction {
                     images.extend(self.prepare_images(
                         ms,
                         &field,
-                        model,
+                        (model, sources),
                         reference_hz,
                         true,
                         Some(voltage_pattern),
@@ -785,7 +838,7 @@ impl ImagerPrediction {
                 images = self.prepare_images(
                     ms,
                     selected,
-                    model,
+                    (model, sources),
                     reference_hz,
                     scratch,
                     voltage_pattern,
@@ -862,11 +915,12 @@ impl ImagerPrediction {
         &self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
-        model: &ImagerPredictionModel<'_>,
+        inputs: (&ImagerPredictionModel<'_>, &ModelSources),
         reference_hz: Option<f64>,
         scratch: bool,
         voltage_pattern: Option<super::voltage_pattern::PreparedVoltagePattern>,
     ) -> MsResult<Vec<ImageModel>> {
+        let (model, sources) = inputs;
         let terms = self.taylor.0;
         let facets = self.facet_count();
         let dish = self.options.single_dish;
@@ -935,6 +989,7 @@ impl ImagerPrediction {
         }
         let mut images = Vec::new();
         for (index, path) in model.images.iter().enumerate() {
+            let image = sources.image(path)?;
             let taylor = reference_hz.map(|reference_hz| TaylorTerm {
                 count: terms,
                 // The faceted sky model has one Taylor plane per image.
@@ -947,7 +1002,7 @@ impl ImagerPrediction {
                 images.extend(super::legacy_pbw::prepare_model(
                     ms,
                     selected,
-                    path,
+                    image,
                     &geometry,
                     (
                         legacy_pbw,
@@ -958,13 +1013,13 @@ impl ImagerPrediction {
                 )?);
             } else if let Some(legacy_aw) = legacy_aw {
                 images.extend(super::legacy_aw::prepare_model(
-                    ms, selected, path, &geometry, legacy_aw, keep_zero, scratch,
+                    ms, selected, image, &geometry, legacy_aw, keep_zero, scratch,
                 )?);
             } else if dish.is_none_or(|choice| choice.combined) {
                 images.extend(prepare_configured_images(
                     ms,
                     selected,
-                    path,
+                    image,
                     taylor,
                     keep_zero,
                     scratch,
@@ -975,7 +1030,7 @@ impl ImagerPrediction {
                 images.extend(single_dish::prepare_model(
                     ms,
                     selected,
-                    path,
+                    image,
                     choice.kernel,
                     &geometry,
                     keep_zero,
