@@ -120,21 +120,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None, major = None, minor = None, r#type = None, topeak = None, channel = None, polarization = None), text_signature = "($self, value=[], major=[], minor=[], type='Gaussian', topeak=True, channel=-1, polarization=-1)")]
-    fn convertflux(
-        &self,
-        value: Option<&Bound<'_, PyAny>>,
-        major: Option<&Bound<'_, PyAny>>,
-        minor: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        topeak: Option<&Bound<'_, PyAny>>,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("convertflux")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, kernel = None, scale = None, region = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', kernel=[], scale=-1.0, region={}, mask='', overwrite=False, stretch=False)")]
     fn convolve(
         &self,
