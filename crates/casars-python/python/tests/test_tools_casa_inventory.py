@@ -42,7 +42,10 @@ IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit",
 }
-PARTIAL = {"calibrater": {"setmodel", "setsolve"}, "image": {"imageconcat"}}
+PARTIAL = {
+    "calibrater": {"setmodel", "setsolve"},
+    "image": {"fromimage", "imageconcat", "newimagefromimage"},
+}
 
 IMPLEMENTED["coordsys"] = {
     "increment", "referencevalue",
@@ -59,7 +62,7 @@ IMPLEMENTED["image"] = {
     "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
     "getchunk", "history", "isconform", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
-    "deconvolvecomponentlist", "fromimage", "fromrecord", "makecomplex", "modify", "newimagefromimage", "replacemaskedpixels", "torecord",
+    "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",
     "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
     "summary",
 }

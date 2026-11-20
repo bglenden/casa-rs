@@ -124,7 +124,9 @@ single-precision pixels and starts a new history.
 Use `ia.fromimage(outfile="copy.im", infile="example.im")` to copy an image
 with its coordinates, active pixel mask, metadata and history. Use
 `newimagefromimage` to keep the current attachment and receive a separate tool.
-An absolute CASA `LCSlicer` region selects a pixel box and its stride.
+An absolute CASA `LCSlicer` region selects a pixel box and its stride. The
+copy retains the selected frequencies and restoring beams. Additional region
+forms are tracked in #1625.
 
 The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
