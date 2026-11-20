@@ -32,7 +32,8 @@ def test_reference_location_forms_and_affine_values(casa, pixels, world, mask, e
         assert cs.setreferencelocation(pixels, **kwargs)
         np.testing.assert_allclose(cs.referencepixel()["numeric"], [2, 3])
         np.testing.assert_allclose(cs.referencevalue()["numeric"], expected_world)
-        np.testing.assert_allclose(cs.toworld([4.0, 5.0])["numeric"], np.asarray(expected_world) + [4, -6])
+        output = cs.toworldmany(np.array([[4.0], [5.0]]))["numeric"][:, 0]
+        np.testing.assert_allclose(output, np.asarray(expected_world) + [4, -6])
 
 
 def test_reference_location_default_and_invalid_lengths(casa):
@@ -80,6 +81,6 @@ def test_reference_location_persists_analytic_affine_transform(casa, tmp_path):
             image = reader.image()
             assert image.open(path)
             cs = image.coordsys()
-            np.testing.assert_allclose(cs.toworld([4.0, 5.0])["numeric"], [12, 3])
-            np.testing.assert_allclose(cs.topixel([12.0, 3.0])["numeric"], [4, 5])
+            np.testing.assert_allclose(cs.toworldmany(np.array([[4.0], [5.0]]))["numeric"][:, 0], [12, 3])
+            np.testing.assert_allclose(cs.topixelmany(np.array([[12.0], [3.0]]))["numeric"][:, 0], [4, 5])
             assert image.done()
