@@ -21,6 +21,9 @@ use crate::{ImageError, ImageInterface, ImagePixel};
 use super::SubimageRegion;
 
 pub(super) mod saved;
+mod sections;
+
+pub(super) use sections::StridedSection;
 
 use saved::{load_saved_region, parse_saved_region};
 
@@ -67,6 +70,12 @@ struct PlaneSelection {
 struct QualifiedShape {
     spatial: SpatialShape,
     planes: PlaneSelection,
+}
+
+const EMPTY_SECTION: &str = "selected region contains no pixels inside the image";
+
+fn empty_section() -> ImageError {
+    ImageError::CasaSelection(EMPTY_SECTION.into())
 }
 
 impl From<SpatialShape> for QualifiedShape {
@@ -1124,9 +1133,7 @@ fn resolve_spatial_and_saved_bounds(
     }
 
     if !any_pixel {
-        return Err(ImageError::CasaSelection(
-            "selected region contains no pixels inside the image".into(),
-        ));
+        return Err(empty_section());
     }
 
     if has_saved_mask {
