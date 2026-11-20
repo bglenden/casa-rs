@@ -3,6 +3,7 @@
 
 mod stubs;
 pub(crate) mod surface;
+mod weights;
 
 use std::{path::Path, sync::Mutex};
 
