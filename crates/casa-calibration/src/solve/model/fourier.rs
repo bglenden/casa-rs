@@ -532,11 +532,21 @@ fn spectral_layout(
     }
     // FTMachine::fromRecord sets nearest neighbour when reopening a
     // prediction grid, even if the original tclean used another method.
-    let kernel = match (record.get("tovis"), record.get("freqinterpmethod")) {
+    let live_frequencies = match record.get("casars_live_image_frequency") {
+        Some(Value::Array(ArrayValue::Float64(frequencies))) => Some(frequencies),
+        _ => None,
+    };
+    let to_vis = record.get("tovis");
+    let interpolation = record.get("freqinterpmethod");
+    let spline = live_frequencies.is_some()
+        && !matches!(to_vis, Some(Value::Scalar(ScalarValue::Bool(true))))
+        && matches!(interpolation, Some(Value::Scalar(ScalarValue::Int32(3))));
+    let kernel = match (to_vis, interpolation) {
         (Some(Value::Scalar(ScalarValue::Bool(true))), _)
         | (_, Some(Value::Scalar(ScalarValue::Int32(0)))) => SpectralKernel::Nearest,
         (_, Some(Value::Scalar(ScalarValue::Int32(1)))) => SpectralKernel::Linear,
         (_, Some(Value::Scalar(ScalarValue::Int32(2)))) => SpectralKernel::Cubic,
+        (_, Some(Value::Scalar(ScalarValue::Int32(3)))) if spline => SpectralKernel::Cubic,
         _ => {
             return Err(model_error(
                 "unsupported virtual grid spectral interpolation",
@@ -544,9 +554,7 @@ fn spectral_layout(
         }
     };
     let basis = Basis::ChannelLocal { planes: channels };
-    let resampler = if let Some(Value::Array(ArrayValue::Float64(frequencies))) =
-        record.get("casars_live_image_frequency")
-    {
+    let resampler = if let Some(frequencies) = live_frequencies {
         let frequencies = frequencies.iter().copied().collect::<Vec<_>>();
         if frequencies.len() != channels as usize {
             return Err(model_error(
@@ -555,7 +563,11 @@ fn spectral_layout(
         }
         let increment = frequencies[1] - frequencies[0];
         let grid = SpectralAxis::tabular(&frequencies, increment).map_err(model_error)?;
-        SpectralResampler::channel_local(grid, kernel).with_legacy_prediction_axis(axis.clone())
+        if spline {
+            SpectralResampler::legacy_spline(grid, axis.clone())
+        } else {
+            SpectralResampler::channel_local(grid, kernel).with_legacy_prediction_axis(axis.clone())
+        }
     } else {
         SpectralResampler::channel_local(axis.clone(), kernel)
     };

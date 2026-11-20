@@ -17,9 +17,7 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
-use super::image::{
-    ImageModel, TaylorTerm, check_scratch_cube, prepare_configured_image, reference_frequency,
-};
+use super::image::{ImageModel, TaylorTerm, prepare_configured_image, reference_frequency};
 use super::imager_definition::ImagerDefinitionRequest;
 use super::settings::{ImagerTransformOptions, PredictionGeometry};
 use super::virtual_publication::VirtualFtPublication;
@@ -422,11 +420,6 @@ impl ImagerPrediction {
                 let Some(definition) = definition else {
                     return Ok(None);
                 };
-                check_scratch_cube(
-                    scratch,
-                    self.options.frequency_interpolation,
-                    &definition.shape,
-                )?;
                 let mut image = PagedImage::<f32>::create(
                     definition.shape.to_vec(),
                     definition.coordinates.clone(),

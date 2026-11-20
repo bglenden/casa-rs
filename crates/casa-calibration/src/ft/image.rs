@@ -116,19 +116,6 @@ pub(crate) fn prepare_image(
     )
 }
 
-pub(super) fn check_scratch_cube(
-    scratch: bool,
-    interpolation: i32,
-    shape: &[usize],
-) -> MsResult<()> {
-    if scratch && interpolation == 3 && shape.get(3).is_some_and(|&channels| channels > 1) {
-        return Err(invalid(
-            "legacy scratch cube prediction with spline frequency interpolation is pending in #1520",
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn prepare_configured_image(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
@@ -139,11 +126,6 @@ pub(super) fn prepare_configured_image(
     options: PredictionGeometry,
 ) -> MsResult<Option<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
-    check_scratch_cube(
-        scratch,
-        options.settings.frequency_interpolation,
-        image.shape(),
-    )?;
     let layout = ImageTransform::new(ms, selected, &image, scratch, options)?;
     let mut path = virtual_model_image_path(ms)?;
     if scratch {
@@ -428,7 +410,7 @@ impl ImageTransform {
             unreachable!()
         };
         let interpolation_frequencies =
-            if scratch && channels > 1 && matches!(options.settings.frequency_interpolation, 1 | 2)
+            if scratch && channels > 1 && matches!(options.settings.frequency_interpolation, 1..=3)
             {
                 // FTMachine saves these image world frequencies before stripping
                 // the reference conversion from the channel-matching coordinate.
