@@ -54,6 +54,18 @@ def test_world_edits_preserve_native_records_and_transform(casa, tmp_path):
             assert coordinates.done() and reopened.done()
 
 
+def test_stokes_world_edits_keep_the_discrete_codes(casa):
+    for backend in (casa, tools):
+        cs = backend.coordsys()
+        assert cs.newcoordsys(stokes=["I", "Q", "U", "V"])
+        assert cs.setreferencevalue(["U"], "stokes")
+        assert cs.setincrement([0.0], "stokes")
+        np.testing.assert_array_equal(cs.referencevalue()["numeric"], [1])
+        np.testing.assert_array_equal(cs.increment()["numeric"], [1])
+        assert list(cs.stokes()) == ["I", "Q", "U", "V"]
+        assert cs.done()
+
+
 def test_rejected_world_edits_preserve_the_coordinate_record():
     cs = tools.coordsys()
     assert cs.newcoordsys(linear=2)
