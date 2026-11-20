@@ -166,11 +166,19 @@ impl WorldArgument {
     }
 
     fn values(self, state: &CoordinateState) -> PyResult<Vec<f64>> {
-        let coordinates = &state.coordinates;
-        let units = native_world_units(coordinates);
-        let mut world = models(coordinates)
+        let world = models(&state.coordinates)
             .flat_map(CoordinateModel::reference_value)
             .collect::<Vec<_>>();
+        self.values_with_defaults(state, world)
+    }
+
+    pub(super) fn values_with_defaults(
+        self,
+        state: &CoordinateState,
+        mut world: Vec<f64>,
+    ) -> PyResult<Vec<f64>> {
+        let coordinates = &state.coordinates;
+        let units = native_world_units(coordinates);
         let values = match self {
             Self::Numeric(values) => declared_to_native(values, coordinates)?,
             Self::Text(text) => {

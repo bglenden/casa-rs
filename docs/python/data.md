@@ -51,6 +51,10 @@ Use `cs.referencevalue()` and `cs.increment()` to read the world-axis
 reference values and spacing. Pass `type` to select a coordinate, or combine
 `n`, `q`, `s`, and `m` in `format` to request numbers, quantities, display
 strings, and CASA measures.
+Use `cs.setreferencevalue(values)` and `cs.setincrement(values)` to edit
+the coordinate record. Numeric values use the declared world-axis units.
+Quantity strings can specify their own units, and `type` selects one
+coordinate.
 
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
