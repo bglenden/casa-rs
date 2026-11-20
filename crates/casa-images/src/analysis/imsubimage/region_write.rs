@@ -138,7 +138,7 @@ impl ImageRegionWrite {
         usemask: bool,
     ) -> Result<(), ImageError> {
         if let Some(mask) = mask {
-            let name = if let Some(name) = image.default_mask_name() {
+            let name = if let Some(name) = image.active_pixel_mask_name() {
                 if !image.named_mask_is_writable(&name)? {
                     return Err(ImageError::CasaSelection("The mask is not writable".into()));
                 }

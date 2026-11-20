@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_images::MutableImageInterface;
 use casa_images::analysis::{ImagePixelSelection, evaluate_pixel_expression};
 use ndarray::{ArrayD, IxDyn};
 use pyo3::prelude::*;
@@ -94,7 +95,7 @@ impl PyImageTool {
             }
             attachment.require_lock(&mut handle, casa_tables::LockType::Write)?;
             let ImageHandle::Float(storage) = &*handle else { unreachable!("float attachment checked") };
-            let default = with_storage!(storage, image => image.default_mask_name());
+            let default = with_storage!(storage, image => image.active_pixel_mask_name());
             let mask_name = if set_mask {
                 if let Some(name) = default {
                     Some(name)

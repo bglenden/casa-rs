@@ -115,6 +115,51 @@ def test_decimate_rejects_multiple_beams(casa):
         assert source.done()
 
 
+@pytest.mark.parametrize("method", ["set", "putregion", "calcmask", "clear"])
+def test_decimate_anonymous_pixel_mask_can_be_edited(casa, method):
+    for backend in (casa, tools):
+        source = backend.image()
+        assert source.fromshape(shape=[4, 4])
+        mask = np.ones((4, 4), dtype=bool)
+        mask[0, 0] = False
+        assert source.putregion(pixelmask=mask)
+        product = source.decimate(factor=2)
+        assert not product.getchunk(getmask=True)[0, 0]
+        if method == "set":
+            assert product.set(pixelmask=1)
+        elif method == "putregion":
+            assert product.putregion(pixelmask=np.ones((2, 4), dtype=bool))
+        elif method == "calcmask":
+            assert product.calcmask("T", "named", asdefault=False)
+            assert not product.getchunk(getmask=True)[0, 0]
+            product.maskhandler("set", ["named"])
+            assert product.getchunk(getmask=True).all()
+            product.maskhandler("delete", ["named"])
+        else:
+            product.maskhandler("set", [])
+        assert product.getchunk(getmask=True).all()
+        assert product.maskhandler("get") == ["T"]
+        assert product.maskhandler("default") == [""]
+        assert product.done() and source.done()
+
+
+@pytest.mark.parametrize("complex_pixels", [False, True])
+@pytest.mark.parametrize("samples,expected", [([1e10, 1.0, -1e10], 1 / 3), ([2e38, 2e38], 2e38)])
+def test_decimate_mean_accumulates_before_rounding(casa, complex_pixels, samples, expected):
+    pixels = np.broadcast_to(np.array(samples, dtype=np.float32)[:, None], (len(samples), 2)).copy()
+    if complex_pixels:
+        pixels = pixels + 1j * pixels
+        expected = np.complex64(complex(expected, expected))
+    else:
+        expected = np.float32(expected)
+    for backend in (casa, tools):
+        image = backend.image()
+        assert image.fromarray(pixels=pixels)
+        result = image.decimate(factor=len(samples), method="mean")
+        np.testing.assert_array_equal(result.getchunk(), [[expected, expected]])
+        assert result.done() and image.done()
+
+
 def test_decimate_direct_fits_with_stretched_mask(casa, tmp_path):
     path = tmp_path / "pixels.fits"
     path.write_bytes(_hdu(True, [1, -999, 3, 4]))
@@ -157,3 +202,49 @@ def test_decimate_non_direction_coordinates_honor_implicit_and_explicit_regions(
         with pytest.raises(RuntimeError, match="cursorShape <=0 or > latticeShape"):
             source.decimate(factor=2)
         assert implicit.done() and explicit.done() and source.done()
+
+
+def test_decimate_two_linear_axes_with_spectral_keeps_the_full_implicit_region(casa):
+    values = np.arange(4 * 4 * 4, dtype=np.float32).reshape(4, 4, 4)
+    for backend in (casa, tools):
+        source = backend.image()
+        cs = backend.coordsys().newcoordsys(spectral=True, linear=2)
+        assert source.fromarray(pixels=values, csys=cs.torecord())
+        result = source.decimate(axis=2, factor=2)
+        np.testing.assert_array_equal(result.getchunk(), values[:, :, ::2])
+        assert result.done() and source.done()
+
+
+def test_decimate_stokes_axes_remain_usable_across_two_calls(casa):
+    values = np.arange(2 * 2 * 4 * 5, dtype=np.float32).reshape(2, 2, 4, 5)
+    for backend in (casa, tools):
+        image = backend.image()
+        assert image.fromarray(pixels=values)
+        polarizations = image.decimate(axis=2, factor=2)
+        assert polarizations.coordsys().stokes() == ["I", "Q", "U", "V"]
+        result = polarizations.decimate(axis=3, factor=2)
+        assert result.coordsys().stokes() == ["I", "Q"]
+        np.testing.assert_array_equal(result.getchunk(), values[:, :, ::2, ::2])
+        assert image.done() and polarizations.done() and result.done()
+
+
+@pytest.mark.parametrize("start,stride,world", [(1, 1, [18.25, 20.25]), (0, 2, [3, 7])])
+def test_decimate_tabular_lookup_values_in_native_output(casa, tmp_path, start, stride, world):
+    values = np.arange(5, dtype=np.float32)
+    cs = casa.coordsys().newcoordsys(tabular=True)
+    assert cs.settabular(pixel=[0, 1, 2, 3, 4], world=[3, 4, 10, 14, 64])
+    region = casa.regionmanager().box([start], [4], [stride])
+    for index, backend in enumerate((tools, casa)):
+        image = backend.image()
+        assert image.fromarray(pixels=values, csys=cs.torecord())
+        path = str(tmp_path / f"table-{index}.im")
+        result = image.decimate(path, factor=2, region=region)
+        assert image.done() and result.done()
+        for reader in (casa, tools):
+            reopened = reader.image()
+            assert reopened.open(path)
+            coordinates = reopened.coordsys()
+            for pixel, expected in enumerate(world):
+                np.testing.assert_allclose(coordinates.toworld([float(pixel)])["numeric"], [expected])
+            np.testing.assert_array_equal(reopened.getchunk(), values[start::2 * stride])
+            assert reopened.done()

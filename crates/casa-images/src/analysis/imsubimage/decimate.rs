@@ -3,13 +3,14 @@
 use std::ops::{AddAssign, Div};
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::{ArrayD, RecordValue};
+use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Axis, IxDyn, Slice, Zip};
+use num_complex::{Complex32, Complex64};
 
 use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel, MutableImageInterface};
 
 use super::super::axes::StridedSection;
-use super::super::lel_mask::evaluate_strided_mask;
+use super::super::lel_mask::PreparedMask;
 use super::region::SubimageSelection;
 use super::{SubimageOptions, SubimagePlan, SubimageRegion, and_opt_mask};
 
@@ -20,6 +21,42 @@ pub enum DecimationMethod {
     Copy,
     /// Average the unmasked pixels of each complete group.
     Mean,
+}
+
+/// Single-precision image pixels that accumulate means in double precision.
+pub trait DecimationPixel: ImagePixel {
+    /// Double-precision sum of the input pixel values.
+    type Sum: Copy + Default + AddAssign + Div<f64, Output = Self::Sum>;
+
+    /// Widen a pixel before summing.
+    fn widen(self) -> Self::Sum;
+
+    /// Convert a completed mean back to image precision.
+    fn narrow(value: Self::Sum) -> Self;
+}
+
+impl DecimationPixel for f32 {
+    type Sum = f64;
+
+    fn widen(self) -> Self::Sum {
+        f64::from(self)
+    }
+
+    fn narrow(value: Self::Sum) -> Self {
+        value as f32
+    }
+}
+
+impl DecimationPixel for Complex32 {
+    type Sum = Complex64;
+
+    fn widen(self) -> Self::Sum {
+        Complex64::new(f64::from(self.re), f64::from(self.im))
+    }
+
+    fn narrow(value: Self::Sum) -> Self {
+        Self::new(value.re as f32, value.im as f32)
+    }
 }
 
 /// Axis and input selection for image decimation.
@@ -80,19 +117,23 @@ impl<'a> ImageDecimation<'a> {
                 "This application does not support images with multiple beams. Please convolve your image with a single beam and run this application using that image.".into(),
             ));
         }
+        let spectral = image.find_axis(CoordinateType::Spectral);
+        let stokes = image.find_axis(CoordinateType::Stokes);
+        let positional_axes: Vec<_> = (0..image.ndim())
+            .filter(|&axis| Some(axis) != spectral && Some(axis) != stokes)
+            .collect();
+        let tabular_source = image
+            .coordinates()
+            .find_coordinate(CoordinateType::Tabular)
+            .map(|_| native_coordinates.clone());
         let mut plan = if region.is_none()
-            && image.ndim() > 2
+            && positional_axes.len() > 2
             && image.find_axis(CoordinateType::Direction).is_none()
         {
             // CASA's implicit region selects a single pixel on two spatial
             // axes when a multidimensional image has no direction coordinate.
-            let spectral = image.find_axis(CoordinateType::Spectral);
-            let stokes = image.find_axis(CoordinateType::Stokes);
             let mut selection = SubimageSelection::resolve_section(image, None, None, None, None)?;
-            for axis in (0..image.ndim())
-                .filter(|&axis| Some(axis) != spectral && Some(axis) != stokes)
-                .take(2)
-            {
+            for axis in positional_axes.into_iter().take(2) {
                 selection.shape[axis] = 1;
             }
             SubimagePlan::from_selection(
@@ -123,45 +164,51 @@ impl<'a> ImageDecimation<'a> {
                 DecimationMethod::Mean => "TiledShape: shape has to be > 0".into(),
             }));
         }
-        if factor > 1 {
+        if factor > 1 || tabular_source.is_some() {
             let mut record = plan
                 .coordinate_record
                 .take()
                 .unwrap_or_else(|| plan.coordinates.to_record());
-            let (coordinate, local) = (0..plan.coordinates.n_coordinates())
-                .scan(0, |offset, index| {
-                    let model = plan.coordinates.coordinate(index);
-                    let start = *offset;
-                    *offset += model.n_pixel_axes();
-                    Some((model, start..*offset))
-                })
-                .find_map(|(model, range)| {
-                    range.contains(&axis).then(|| (model, axis - range.start))
-                })
-                .ok_or_else(|| {
-                    ImageError::CasaSelection("Decimation axis has no coordinate".into())
-                })?;
-            CoordinateSystem::set_reference_pixel_in_record(
-                &mut record,
-                axis,
-                coordinate.reference_pixel()[local] / factor as f64,
-            )?;
-            let increments = match coordinate {
-                CoordinateModel::Direction(direction) => {
-                    direction.reference_and_increment_in_world_units().1
-                }
-                _ => coordinate.increment(),
-            };
-            let (coordinates, _) = CoordinateSystem::set_increment_in_record(
-                &mut record,
-                axis,
-                increments[local] * factor as f64,
-            )?;
+            if factor > 1 && plan.coordinates.pixel_axis_type(axis) != Some(CoordinateType::Tabular)
+            {
+                let (coordinate, local) = (0..plan.coordinates.n_coordinates())
+                    .scan(0, |offset, index| {
+                        let model = plan.coordinates.coordinate(index);
+                        let start = *offset;
+                        *offset += model.n_pixel_axes();
+                        Some((model, start..*offset))
+                    })
+                    .find_map(|(model, range)| {
+                        range.contains(&axis).then(|| (model, axis - range.start))
+                    })
+                    .ok_or_else(|| {
+                        ImageError::CasaSelection("Decimation axis has no coordinate".into())
+                    })?;
+                CoordinateSystem::set_reference_pixel_in_record(
+                    &mut record,
+                    axis,
+                    coordinate.reference_pixel()[local] / factor as f64,
+                )?;
+                let increments = match coordinate {
+                    CoordinateModel::Direction(direction) => {
+                        direction.reference_and_increment_in_world_units().1
+                    }
+                    _ => coordinate.increment(),
+                };
+                CoordinateSystem::set_increment_in_record(
+                    &mut record,
+                    axis,
+                    increments[local] * factor as f64,
+                )?;
+            }
+            if let Some(source) = &tabular_source {
+                adjust_tabular_record(source, &plan.selection, axis, factor, &mut record)?;
+            }
             plan.shape[axis] = match method {
                 DecimationMethod::Copy => plan.shape[axis].div_ceil(factor),
                 DecimationMethod::Mean => plan.shape[axis] / factor,
             };
-            plan.coordinates = coordinates;
+            plan.coordinates = CoordinateSystem::from_record(&record)?;
             plan.coordinate_record = Some(record);
         }
         Ok(Self { plan, options })
@@ -177,14 +224,11 @@ impl<'a> ImageDecimation<'a> {
     ///
     /// # Errors
     /// Invalid product geometry, a fully masked averaging group, or I/O failure.
-    pub fn copy_to<T>(
+    pub fn copy_to<T: DecimationPixel>(
         &self,
         image: &dyn ImageInterface<T>,
         output: &mut dyn MutableImageInterface<T>,
-    ) -> Result<Option<ArrayD<bool>>, ImageError>
-    where
-        T: ImagePixel + AddAssign + Div<f32, Output = T>,
-    {
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
         let ImageDecimationOptions {
             axis,
             factor,
@@ -207,11 +251,11 @@ impl<'a> ImageDecimation<'a> {
             shape: &selected_shape,
             stride,
         };
-        let mut membership =
-            evaluate_strided_mask(mask, image.shape(), image.coordinates(), stretch, &input)?;
-        if selected.stride.is_none() {
-            selected.apply_selection_masks(&mut membership);
-        }
+        let reader = PixelSections {
+            image,
+            selection: selected,
+            mask: PreparedMask::new(mask, image.shape(), image.coordinates(), stretch)?,
+        };
         let mut out_step = stride.to_vec();
         out_step[axis] *= factor;
         let output_section = StridedSection {
@@ -232,30 +276,17 @@ impl<'a> ImageDecimation<'a> {
             let mut packed_start = cursor.position.clone();
             packed_start[axis] *= factor;
             let (values, validity) = match method {
-                DecimationMethod::Copy => {
-                    let pixels = image.get_slice(&origin, &cursor.shape, &out_step)?;
-                    let mut validity = image.get_mask_slice(&origin, &cursor.shape, &out_step)?;
-                    if let Some(mask) = &membership {
-                        let region = mask.slice_each_axis(|slice| {
-                            let index = slice.axis.index();
-                            let step = if index == axis { factor } else { 1 };
-                            sample_slice(packed_start[index], cursor.shape[index], step)
-                        });
-                        and_opt_mask(&mut validity, region.to_owned());
-                    }
-                    (pixels, validity)
-                }
+                DecimationMethod::Copy => reader.read(&origin, &cursor.shape, &out_step)?,
                 DecimationMethod::Mean => {
                     let bin = cursor.position[axis];
                     let (values, validity) = mean_tile(
-                        image,
+                        &reader,
                         &input,
                         packed_start,
                         &cursor.shape,
                         axis,
                         factor,
                         block_planes,
-                        membership.as_ref(),
                     )?;
                     valid_bins[bin] |= validity.iter().any(|&sample| sample);
                     (values, Some(validity))
@@ -281,6 +312,107 @@ impl<'a> ImageDecimation<'a> {
     }
 }
 
+fn adjust_tabular_record(
+    source: &RecordValue,
+    selection: &SubimageSelection,
+    decimated_axis: usize,
+    factor: usize,
+    record: &mut RecordValue,
+) -> Result<(), ImageError> {
+    for placement in CoordinateSystem::record_coordinates(source)? {
+        let CoordinateModel::Tabular(table) = placement.model(source)? else {
+            continue;
+        };
+        let Some(axis) = placement.pixel_axes.first().copied().flatten() else {
+            continue;
+        };
+        let start = selection.start[axis] as f64;
+        let stride = selection.stride.as_ref().map_or(1, |stride| stride[axis]);
+        let step = (if axis == decimated_axis {
+            stride * factor
+        } else {
+            stride
+        }) as f64;
+        if start == 0.0 && step == 1.0 {
+            continue;
+        }
+        let Some(Value::Record(native)) = record.get_mut(&placement.field) else {
+            return Err(ImageError::CasaSelection(
+                "Tabular coordinate is missing from its record".into(),
+            ));
+        };
+        let reference_pixel = table.reference_pixel()[0];
+        let reference_world = table.reference_value()[0];
+        let shifted_pixel = (reference_pixel - start) / step;
+        let increment = table.increment()[0] * step;
+        // CASACore keeps the table's pixel samples and edits the affine
+        // mapping around that lookup. Serialization evaluates the edited mapping.
+        let world = table
+            .world_values()
+            .iter()
+            .map(|&world| {
+                reference_world
+                    + (world - reference_world) * step
+                    + (reference_pixel - shifted_pixel) * increment
+            })
+            .collect::<Vec<_>>();
+        if !increment.is_finite() || world.iter().any(|value| !value.is_finite()) {
+            return Err(ImageError::CasaSelection(
+                "Decimation produces non-finite tabular coordinates".into(),
+            ));
+        }
+        for (field, values) in [
+            ("crpix", vec![shifted_pixel]),
+            ("cdelt", vec![increment]),
+            ("pixelvalues", table.pixel_values().to_vec()),
+            ("worldvalues", world),
+        ] {
+            native.upsert(field, ArrayValue::from_f64_vec(values).into());
+        }
+    }
+    Ok(())
+}
+
+struct PixelSections<'a, T: ImagePixel> {
+    image: &'a dyn ImageInterface<T>,
+    selection: &'a SubimageSelection,
+    mask: Option<PreparedMask<'a>>,
+}
+
+impl<T: ImagePixel> PixelSections<'_, T> {
+    fn read(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<(ArrayD<T>, Option<ArrayD<bool>>), ImageError> {
+        let pixels = self.image.get_slice(start, shape, stride)?;
+        let mut validity = self.image.get_mask_slice(start, shape, stride)?;
+        let section = StridedSection {
+            start,
+            shape,
+            stride,
+        };
+        if self.selection.stride.is_none() {
+            let extent = section.dense_shape(shape);
+            let mut membership = None;
+            self.selection
+                .apply_window_masks(&mut membership, start, &extent);
+            if let Some(membership) = membership {
+                let membership = membership.slice_each_axis(|slice| {
+                    let axis = slice.axis.index();
+                    sample_slice(0, shape[axis], stride[axis])
+                });
+                and_opt_mask(&mut validity, membership.to_owned());
+            }
+        }
+        if let Some(mask) = &self.mask {
+            and_opt_mask(&mut validity, mask.strided(&section)?);
+        }
+        Ok((pixels, validity))
+    }
+}
+
 fn sample_slice(start: usize, count: usize, step: usize) -> Slice {
     Slice::new(
         start as isize,
@@ -290,34 +422,22 @@ fn sample_slice(start: usize, count: usize, step: usize) -> Slice {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn mean_tile<T>(
-    image: &dyn ImageInterface<T>,
+fn mean_tile<T: DecimationPixel>(
+    reader: &PixelSections<'_, T>,
     input: &StridedSection<'_>,
     mut packed_start: Vec<usize>,
     shape: &[usize],
     axis: usize,
     factor: usize,
     block_planes: usize,
-    membership: Option<&ArrayD<bool>>,
-) -> Result<(ArrayD<T>, ArrayD<bool>), ImageError>
-where
-    T: ImagePixel + AddAssign + Div<f32, Output = T>,
-{
-    let mut sums = ArrayD::<T>::default(IxDyn(shape));
+) -> Result<(ArrayD<T>, ArrayD<bool>), ImageError> {
+    let mut sums = ArrayD::<T::Sum>::default(IxDyn(shape));
     let mut counts = ArrayD::<usize>::zeros(IxDyn(shape));
     let mut block = shape.to_vec();
     for offset in (0..factor).step_by(block_planes) {
         block[axis] = block_planes.min(factor - offset);
         let origin = input.source_start(&packed_start);
-        let samples = image.get_slice(&origin, &block, input.stride)?;
-        let mut validity = image.get_mask_slice(&origin, &block, input.stride)?;
-        if let Some(membership) = membership {
-            let region = membership.slice_each_axis(|slice| {
-                let i = slice.axis.index();
-                sample_slice(packed_start[i], block[i], 1)
-            });
-            and_opt_mask(&mut validity, region.to_owned());
-        }
+        let (samples, validity) = reader.read(&origin, &block, input.stride)?;
         for (index, plane) in samples.axis_iter(Axis(axis)).enumerate() {
             let output = Zip::from(sums.index_axis_mut(Axis(axis), 0))
                 .and(counts.index_axis_mut(Axis(axis), 0))
@@ -326,24 +446,26 @@ where
                 output.and(mask.index_axis(Axis(axis), index)).for_each(
                     |sum, count, &value, &valid| {
                         if valid {
-                            *sum += value;
+                            *sum += value.widen();
                             *count += 1;
                         }
                     },
                 );
             } else {
                 output.for_each(|sum, count, &value| {
-                    *sum += value;
+                    *sum += value.widen();
                     *count += 1;
                 });
             }
         }
         packed_start[axis] += block[axis];
     }
-    Zip::from(&mut sums).and(&counts).for_each(|value, &count| {
-        if count != 0 {
-            *value = *value / count as f32;
+    let values = Zip::from(&sums).and(&counts).map_collect(|&value, &count| {
+        if count == 0 {
+            T::default()
+        } else {
+            T::narrow(value / count as f64)
         }
     });
-    Ok((sums, counts.mapv(|count| count != 0)))
+    Ok((values, counts.mapv(|count| count != 0)))
 }

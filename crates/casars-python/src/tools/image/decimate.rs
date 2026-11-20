@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::ops::{AddAssign, Div};
 use std::path::{Path, PathBuf};
 
+use casa_images::ImageInterface;
 use casa_images::analysis::{
-    DecimationMethod, ImageDecimation, ImageDecimationOptions, ensure_outfile_does_not_alias_input,
+    DecimationMethod, DecimationPixel, ImageDecimation, ImageDecimationOptions,
+    ensure_outfile_does_not_alias_input,
 };
 use casa_images::image::image_history_rows;
-use casa_images::{ImageInterface, ImagePixel};
 use casa_types::RecordValue;
 use pyo3::prelude::*;
 
@@ -17,16 +17,13 @@ use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::Region;
 
-fn copy<T>(
+fn copy<T: DecimationPixel>(
     input: &dyn ImageInterface<T>,
     coordinates: RecordValue,
     options: ImageDecimationOptions<'_>,
     beams: &BeamView,
     path: Option<&Path>,
-) -> PyResult<Storage<T>>
-where
-    T: ImagePixel + AddAssign + Div<f32, Output = T>,
-{
+) -> PyResult<Storage<T>> {
     let decimation =
         ImageDecimation::new(input, coordinates, options, beams.record()).map_err(raised)?;
     let section = decimation.section();
@@ -45,7 +42,7 @@ where
                 image.put_mask("mask0", &mask).map_err(raised)?;
                 image.set_default_mask("mask0").map_err(raised)?;
             }
-            Storage::Temp { image, .. } => image.set_region_mask(mask).map_err(raised)?,
+            Storage::Temp { image, .. } => image.set_anonymous_mask(mask).map_err(raised)?,
         }
     }
     let mut info = section.image_info().to_record();
@@ -65,16 +62,13 @@ where
     Ok(product)
 }
 
-fn decimate_storage<T>(
+fn decimate_storage<T: DecimationPixel>(
     source: &Storage<T>,
     coordinates: RecordValue,
     options: ImageDecimationOptions<'_>,
     beams: &BeamView,
     path: Option<&Path>,
-) -> PyResult<Storage<T>>
-where
-    T: ImagePixel + AddAssign + Div<f32, Output = T>,
-{
+) -> PyResult<Storage<T>> {
     with_storage!(source, image => copy(image.as_ref(), coordinates, options, beams, path))
 }
 
