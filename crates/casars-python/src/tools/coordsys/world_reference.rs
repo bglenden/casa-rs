@@ -518,7 +518,11 @@ pub(super) fn format_world_offsets(
             )));
         }
     }
-    format_world_at(state, world, format, absolute, true, true)
+    let mut result = format_world_at(state, world, format, absolute, true, true)?;
+    if !absolute && let CasaValue::Record(fields) = &mut result {
+        fields.insert("ar_type".into(), CasaValue::Text("relative".into()));
+    }
+    Ok(result)
 }
 
 fn format_world_at(
@@ -595,10 +599,7 @@ fn format_world_record(
     let mut record = Vec::new();
     if coordinate_tags {
         record.extend([
-            (
-                "ar_type",
-                CasaValue::Text(if absolute { "absolute" } else { "relative" }.into()),
-            ),
+            ("ar_type", CasaValue::Text("absolute".into())),
             ("pw_type", CasaValue::Text("world".into())),
         ]);
     }
