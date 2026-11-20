@@ -912,14 +912,27 @@ sets the polarization labels in pixel order.</p>
 Use <code>addcoordinate</code> to append axes and <code>fromrecord</code> to restore a coordinate
 record. Pass <code>cs.torecord()</code> as the <code>csys</code> argument to <code>ia.fromshape</code> or
 <code>ia.fromarray</code>. The coordinate record must describe each image axis.</p>
+<p>Use <code>cs.setepoch(epoch)</code> to store an epoch measure record. <code>cs.epoch()</code>
+returns the epoch in days with its reference code and any reference offset.</p>
 <p>Use <code>cs.setobserver(name)</code> and <code>cs.settelescope(name)</code> to update observation
 metadata. An unknown telescope name is stored and the setter returns
 <code>False</code>. The record retains the last known telescope position.</p>
+<p>Use <code>cs.toworldmany(pixels)["numeric"]</code> and
+<code>cs.topixelmany(world)["numeric"]</code> to convert a floating-point matrix with
+one point per column. The rows follow the coordinate system's axis order.
+World values use the units reported by <code>cs.units()</code>.
+NumPy <code>float32</code>, <code>float64</code>, <code>longdouble</code>, <code>longlong</code>, and <code>ulonglong</code>
+matrices are converted to double precision, as in CASA.</p>
 <p>Use <code>ia.open("example.im")</code> to reopen the product. Use
 <code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. Use <code>ia.setmiscinfo(record)</code> to replace an image’s miscellaneous metadata, and
 <code>ia.sethistory(origin, messages)</code> to append provenance. For an image with stored
 restoring beams, <code>ia.restoringbeam()</code> reads the beam quantities and
-<code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid. The remaining
+<code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid.</p>
+<p>Use <code>ia.fromfits("example.im", "example.fits")</code> to import a FITS image as a
+native CASA image. <code>whichhdu</code> selects the image HDU and <code>whichrep</code> selects the
+coordinate representation. <code>zeroblanks=True</code> writes zero at blank pixels
+while preserving their invalid mask values. <code>ia.newimagefromfits(...)</code> returns
+a separate image tool. The remaining
 CASA image and coordinate operations are tracked in
 <a href="https://github.com/bglenden/casa-rs/issues/1027">#1027</a>.</p>
 <h3 id="access-an-existing-image-through-the-data-api">Access an existing image through the Data API<a class="headerlink" href="#access-an-existing-image-through-the-data-api" title="Permanent link">&para;</a></h3>

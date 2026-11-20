@@ -19,9 +19,9 @@
 <a href=#19 id=19 data-nosnippet>19</a>    append: bool,
 <a href=#20 id=20 data-nosnippet>20</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;PlotFigure&gt;, SimobserveError&gt; {
 <a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">let </span><span class="kw-2">mut </span>payload = <span class="kw">if </span>append {
-<a href=#22 id=22 data-nosnippet>22</a>        Payload::append(output)<span class="question-mark">?
+<a href=#22 id=22 data-nosnippet>22</a>        Payload::append(output).map_err(failure)<span class="question-mark">?
 <a href=#23 id=23 data-nosnippet>23</a>    </span>} <span class="kw">else </span>{
-<a href=#24 id=24 data-nosnippet>24</a>        Payload::open(output)<span class="question-mark">?
+<a href=#24 id=24 data-nosnippet>24</a>        Payload::open(output).map_err(failure)<span class="question-mark">?
 <a href=#25 id=25 data-nosnippet>25</a>    </span>};
 <a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">let </span><span class="kw-2">mut </span>plots = Vec::new();
 <a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">if </span>p.flag(<span class="string">"image"</span>) &amp;&amp; !plan.inputs.synthesis.is_empty() {
@@ -32,7 +32,7 @@
 <a href=#32 id=32 data-nosnippet>32</a>    </span>{
 <a href=#33 id=33 data-nosnippet>33</a>        plots.push(figure);
 <a href=#34 id=34 data-nosnippet>34</a>    }
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span>bytes = payload.finish()<span class="question-mark">?</span>;
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span>bytes = payload.finish().map_err(failure)<span class="question-mark">?</span>;
 <a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">for </span>figure <span class="kw">in </span><span class="kw-2">&amp;</span>plots {
 <a href=#37 id=37 data-nosnippet>37</a>        figure.document.validate_payload(bytes).map_err(failure)<span class="question-mark">?</span>;
 <a href=#38 id=38 data-nosnippet>38</a>    }

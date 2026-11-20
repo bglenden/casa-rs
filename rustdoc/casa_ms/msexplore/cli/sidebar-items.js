@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["task_front_end"]};
+window.SIDEBAR_ITEMS = {"fn":["task_front_end","task_front_end_with_plot_payload"]};

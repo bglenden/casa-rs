@@ -2568,6 +2568,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagmanager replaces working flags for an unrecognized merge choice
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3052,6 +3063,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#an-empty-floating-epoch-vector-can-terminate-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An empty floating epoch vector can terminate CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#casa-discards-the-values-of-bare-complex-quantity-arrays" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3337,6 +3359,17 @@
     <span class="md-ellipsis">
       
         Direction shifts can use the wrong longitude quadrant
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batch-coordinate-conversion-can-reshape-ragged-inputs-or-misread-byte-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch coordinate conversion can reshape ragged inputs or misread byte order
       
     </span>
   </a>
@@ -4313,6 +4346,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fits-import-can-abort-on-an-empty-primary-hdu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FITS import can abort on an empty primary HDU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exportfits-drops-characters-when-wrapping-long-history-cards" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4350,6 +4394,17 @@
     <span class="md-ellipsis">
       
         plotbandpass passes a fractional platforming channel to range
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PlotMS disabling selection calls the selection setter with a missing argument
       
     </span>
   </a>
@@ -4400,6 +4455,39 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#transforming-an-ms-with-float_data-can-replace-the-requested-complex-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transforming an MS with FLOAT_DATA can replace the requested complex DATA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transforming-lag_data-leaves-its-cells-undefined" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transforming LAG_DATA leaves its cells undefined
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transforming-all-columns-can-crash-an-ms-with-one-scratch-column" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transforming all columns can crash an MS with one scratch column
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4436,6 +4524,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#fits-import-can-abort-on-an-empty-primary-hdu">FITS import of an empty primary HDU</a>,
 <a href="#beam-removal-can-delete-metadata-before-rejecting-a-record">restoring-beam removal with a malformed record</a>,
 <a href="#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable">a Gaussian beam fit to collinear PSF samples</a>,
 <a href="#a-non-frequency-component-unit-corrupts-casas-spectrum">non-frequency component frequency units</a>,
@@ -4576,6 +4665,7 @@ Calibration behaviours casa-rs does not follow:
 <a href="#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame">component spectra in another frame</a>.
 Flagging behaviours casa-rs does not follow:
 <a href="#flagmanager-gives-the-version-a-save-renames-the-new-comment">a re-saved version's comment</a>,
+<a href="#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice">an unrecognized flag merge choice</a>,
 <a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name">a summary of correlations it cannot name</a>.
 Coordinate behaviours casa-rs does not follow:
 <a href="#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table">a tabular coordinate's subimage</a>,
@@ -7934,6 +8024,14 @@ CASA 6.7.6.14 lists <code>{0: {'name': 'v1.old.1793292269', 'comment': 'second'}
 and then <code>'second'</code>; the first comment is lost. casa-rs renames the version
 the same way and keeps its own comment (<code>flagmanager</code>'s
 <code>keep_existing_version</code>).</p>
+<h2 id="flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice"><code>flagmanager</code> replaces working flags for an unrecognized merge choice<a class="headerlink" href="#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 accepts unrecognized <code>merge</code> strings in restore mode and
+silently applies <code>replace</code>. For example, <code>merge="OR"</code> removes working flags
+that were set after the version was saved. The
+<code>tools/casa-compat/flagmanager_store_oracle.py</code> comparison verifies this
+for both <code>FLAG</code> and <code>FLAG_ROW</code>. It also verifies <code>replace</code>, <code>or</code>, and
+<code>and</code> against independent flag patterns. casa-rs raises <code>ValueError</code> for
+an unrecognized choice and preserves the working flags.</p>
 <h2 id="flagdatas-summary-aborts-on-a-correlation-it-cannot-name"><code>flagdata</code>'s summary aborts on a correlation it cannot name<a class="headerlink" href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-29</li>
@@ -8939,6 +9037,14 @@ native integers still narrow to the same signed 32-bit value as CASA,
 including the singleton list, tuple, and rectangular nested forms.
 Mixed boolean/floating sequences also report overflow before promoting a
 native integer outside that range to a floating value.</p>
+<h2 id="an-empty-floating-epoch-vector-can-terminate-casa">An empty floating epoch vector can terminate CASA<a class="headerlink" href="#an-empty-floating-epoch-vector-can-terminate-casa" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, a <code>float64</code> NumPy array of shape <code>(0,)</code> or <code>(1, 0)</code>
+inside the <code>m0.value</code> field of an epoch record can terminate the process
+during <code>coordsys.setepoch</code>. casa-rs returns <code>False</code> and preserves the
+current observation date (#1626).</p>
+<p>CASA can also misread a byte-swapped <code>float64</code> epoch vector. For example,
+a one-element vector containing <code>20.0</code> days can be stored as a subnormal
+value. casa-rs converts the byte order and stores <code>20.0</code> days.</p>
 <h2 id="casa-discards-the-values-of-bare-complex-quantity-arrays">CASA discards the values of bare complex quantity arrays<a class="headerlink" href="#casa-discards-the-values-of-bare-complex-quantity-arrays" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
@@ -9513,6 +9619,13 @@ CASA direction records at longitude 120° on the equator and longitude 180° at 
 controls alongside the raw shift results. This follows the standing rule
 for results that contradict the documented operation (#1252).
 <a href="https://casadocs.readthedocs.io/en/latest/api/tt/casatools.measures.html">CASA measures documentation</a></p>
+<h2 id="batch-coordinate-conversion-can-reshape-ragged-inputs-or-misread-byte-order">Batch coordinate conversion can reshape ragged inputs or misread byte order<a class="headerlink" href="#batch-coordinate-conversion-can-reshape-ragged-inputs-or-misread-byte-order" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 can pad or truncate a ragged sequence while converting it to
+the coordinate matrix used by <code>toworldmany</code> and <code>topixelmany</code>. NumPy arrays
+with non-native byte order can produce different numeric values from the
+same array in native byte order.</p>
+<p>casa-rs requires rectangular input and converts the array's byte order
+before interpreting its values (#1626).</p>
 <h2 id="frame-display-can-discard-the-coordinate-conversion-context">Frame display can discard the coordinate conversion context<a class="headerlink" href="#frame-display-can-discard-the-coordinate-conversion-context" title="Permanent link">&para;</a></h2>
 <p>In CASA 6.7.6.14, <code>showframe()</code> fails to display many radial-velocity
 references even after the epoch, observatory, and direction have all
@@ -10916,6 +11029,13 @@ cumulative rows' scan and observation metadata. In local comparisons,
 the per-scan output matched two independent single-field CASA controls.
 An independent SciPy natural spline matched 52 valid complex factors
 in the spline comparison (#1525).</p>
+<h2 id="fits-import-can-abort-on-an-empty-primary-hdu">FITS import can abort on an empty primary HDU<a class="headerlink" href="#fits-import-can-abort-on-an-empty-primary-hdu" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 aborts in <code>ia.fromfits(infile=path, whichhdu=0)</code> when the FITS
+primary HDU has <code>NAXIS=0</code> and a later extension contains the image. The same
+file imports successfully when <code>whichhdu=-1</code> selects the first image or
+<code>whichhdu=1</code> selects its extension. casa-rs returns <code>RuntimeError</code> for the
+empty HDU and accepts both ways to select the extension. See
+<a href="https://github.com/bglenden/casa-rs/issues/1625">#1625</a>.</p>
 <h2 id="exportfits-drops-characters-when-wrapping-long-history-cards"><code>exportfits</code> drops characters when wrapping long <code>HISTORY</code> cards<a class="headerlink" href="#exportfits-drops-characters-when-wrapping-long-history-cards" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-19</li>
@@ -10961,6 +11081,12 @@ The paired 64-channel fixture enters this branch.</p>
 <p>casa-rs evaluates the check at integer channel indices. In the fixture,
 a step at channel 32 produces a platforming report at the 10 percent
 threshold and a clean result at the 100 percent threshold (#1526).</p>
+<h2 id="plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument">PlotMS disabling selection calls the selection setter with a missing argument<a class="headerlink" href="#plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument" title="Permanent link">&para;</a></h2>
+<p>The installed CASA PlotMS wrapper raises <code>Exception("updateImmediately must
+be a boolean")</code> for <code>selectdata=False</code>. The wrapper's no-selection call omits
+a selector argument before the update flag. casa-rs applies the requested
+unfiltered selection and leaves the caller's selector expressions inactive
+(#1526).</p>
 <h2 id="plotbandpass-references-an-undefined-name-when-weather-is-absent">plotbandpass references an undefined name when WEATHER is absent<a class="headerlink" href="#plotbandpass-references-an-undefined-name-when-weather-is-absent" title="Permanent link">&para;</a></h2>
 <p>An atmospheric overlay on the paired bandpass with no associated WEATHER
 table raises <code>NameError</code> in CASA 6.7.6.14 when it tries to read
@@ -10991,6 +11117,27 @@ rejected call preserves the restoring beam and history. See
 pixel maps are <code>[0, -2]</code>. casa-rs raises <code>RuntimeError</code> before applying
 either name. Passing the one visible axis name without a coordinate type
 renames that axis and preserves the stored removed-axis name (#1626).</p>
+<h2 id="transforming-an-ms-with-float_data-can-replace-the-requested-complex-data">Transforming an MS with FLOAT_DATA can replace the requested complex DATA<a class="headerlink" href="#transforming-an-ms-with-float_data-can-replace-the-requested-complex-data" title="Permanent link">&para;</a></h2>
+<p>For an input with separately populated DATA and FLOAT_DATA, CASA 6.7.6.14
+can fill output DATA from FLOAT_DATA, with zero imaginary components, when
+the requested layout includes DATA. This occurs with <code>datacolumn="all"</code>,
+<code>"float_data,data"</code>, and <code>"lag_data,data"</code> in the physical layout oracle.</p>
+<p>The native tasks select each requested physical column and preserve its own
+values through row, channel, and correlation selection (#1614).</p>
+<h2 id="transforming-lag_data-leaves-its-cells-undefined">Transforming LAG_DATA leaves its cells undefined<a class="headerlink" href="#transforming-lag_data-leaves-its-cells-undefined" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 creates the LAG_DATA descriptor for <code>split</code> and <code>mstransform</code>
+but the visibility writer skips the column. Selecting only LAG_DATA can
+also leave FLAG cells undefined.</p>
+<p>The native tasks preserve the selected rows and correlations of LAG_DATA
+with its independent lag axis. The frequency-channel selection applies to
+the visibility and flag columns on the spectral axis (#1614).</p>
+<h2 id="transforming-all-columns-can-crash-an-ms-with-one-scratch-column">Transforming all columns can crash an MS with one scratch column<a class="headerlink" href="#transforming-all-columns-can-crash-an-ms-with-one-scratch-column" title="Permanent link">&para;</a></h2>
+<p>On an MS with a single physical visibility column, either CORRECTED_DATA
+or MODEL_DATA, CASA 6.7.6.14 <code>split(datacolumn="all")</code> and
+<code>mstransform(datacolumn="all")</code> terminate Python with SIGSEGV in the pinned
+Linux build.</p>
+<p>The native tasks keep the original visibility column and its weights in
+these sparse layouts (#1614).</p>
 
 
 

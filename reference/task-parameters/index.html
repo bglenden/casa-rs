@@ -1748,9 +1748,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 727</li>
+<li>Concepts: 808</li>
 <li>Surfaces: 45 (45 task, 0 session)</li>
-<li>Surface bindings: 1053</li>
+<li>Surface bindings: 1089</li>
 </ul>
 <table>
 <thead>
@@ -1935,10 +1935,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-plotms">PlotMS</a><br><code>plotms</code></td>
 <td>task</td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">8</td>
 <td><code>msexplore</code></td>
-<td style="text-align: right;">66</td>
-<td>Plot MeasurementSet visibility data with CASA plotms-style selections and axes.</td>
+<td style="text-align: right;">102</td>
+<td>Plot selected MeasurementSet or calibration table data.</td>
 </tr>
 <tr>
 <td><a href="#surface-flagdata">Flag Data</a><br><code>flagdata</code></td>
@@ -7333,10 +7333,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="plotms-plotms">PlotMS (<code>plotms</code>)<a class="headerlink" href="#plotms-plotms" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>7</code></li>
+<li>Contract version: <code>8</code></li>
 <li>Category: Plotting</li>
 <li>Provider family: <code>msexplore</code></li>
-<li>Summary: Plot MeasurementSet visibility data with CASA plotms-style selections and axes.</li>
+<li>Summary: Plot selected MeasurementSet or calibration table data.</li>
 </ul>
 <table>
 <thead>
@@ -7352,211 +7352,275 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tbody>
 <tr>
 <td><code>vis</code></td>
-<td><code>data.input.vis@r1</code></td>
-<td><code>array&lt;path (measurement_set)&gt;</code></td>
-<td>no default; required</td>
+<td><code>plotms.vis@r1</code></td>
+<td><code>path (table)</code></td>
+<td><code>""</code>; optional</td>
 <td>Input</td>
-<td>Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms_path.</td>
+<td>Input MS or CalTable (blank for none)</td>
 </tr>
 <tr>
-<td><code>format</code></td>
-<td><code>parameter.format@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"text"</code>; optional</td>
-<td>Output</td>
-<td>Execution report format</td>
+<td><code>caltable</code></td>
+<td><code>parameter.caltable@r1</code></td>
+<td><code>path (calibration_table)</code></td>
+<td><code>""</code>; optional</td>
+<td>Input</td>
+<td>Input calibration table.</td>
 </tr>
 <tr>
-<td><code>output</code></td>
-<td><code>measurementset.summary.output@r1</code></td>
-<td><code>path (product)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Output</td>
-<td>Optional destination for a MeasurementSet summary report.</td>
+<td><code>gridrows</code></td>
+<td><code>plotms.gridrows@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Presentation</td>
+<td>Number of subplot rows</td>
 </tr>
 <tr>
-<td><code>overwrite</code></td>
-<td><code>output.overwrite@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Output</td>
-<td>Replace an existing output file</td>
+<td><code>gridcols</code></td>
+<td><code>plotms.gridcols@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Presentation</td>
+<td>Number of subplot columns</td>
+</tr>
+<tr>
+<td><code>rowindex</code></td>
+<td><code>plotms.rowindex@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Presentation</td>
+<td>Row location of the plot (0-based)</td>
+</tr>
+<tr>
+<td><code>colindex</code></td>
+<td><code>plotms.colindex@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Presentation</td>
+<td>Column location of the plot (0-based)</td>
+</tr>
+<tr>
+<td><code>plotindex</code></td>
+<td><code>plotms.plotindex@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Presentation</td>
+<td>Index to address a subplot (0-based)</td>
+</tr>
+<tr>
+<td><code>xaxis</code></td>
+<td><code>plotms.xaxis@r1</code></td>
+<td><code>choice (162 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Plot x-axis (blank for default/current)</td>
+</tr>
+<tr>
+<td><code>xdatacolumn</code></td>
+<td><code>plotms.xdatacolumn@r1</code></td>
+<td><code>choice (18 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.</td>
+</tr>
+<tr>
+<td><code>xframe</code></td>
+<td><code>plotms.xframe@r1</code></td>
+<td><code>choice (6 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Coordinate frame to use for x-axis</td>
+</tr>
+<tr>
+<td><code>xinterp</code></td>
+<td><code>plotms.xinterp@r1</code></td>
+<td><code>choice (4 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Interpolation method for x-axis</td>
+</tr>
+<tr>
+<td><code>yaxis</code></td>
+<td><code>plotms.yaxis@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Plot y-axis (blank for default/current)</td>
+</tr>
+<tr>
+<td><code>ydatacolumn</code></td>
+<td><code>plotms.ydatacolumn@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.</td>
+</tr>
+<tr>
+<td><code>yframe</code></td>
+<td><code>plotms.yframe@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Coordinate frame to use for y-axis</td>
+</tr>
+<tr>
+<td><code>yinterp</code></td>
+<td><code>plotms.yinterp@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Interpolation method for y-axis</td>
+</tr>
+<tr>
+<td><code>yaxislocation</code></td>
+<td><code>plotms.yaxislocation@r1</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
+<td>Axes</td>
+<td>Location of the y-axis (blank for default: left)</td>
 </tr>
 <tr>
 <td><code>selectdata</code></td>
-<td><code>parameter.selectdata@r1</code></td>
+<td><code>plotms.selectdata@r1</code></td>
 <td><code>bool</code></td>
 <td><code>true</code>; optional</td>
 <td>Selection</td>
-<td>Whether detailed data-selection controls are enabled.</td>
+<td>Enable data selection parameters</td>
 </tr>
 <tr>
 <td><code>field</code></td>
-<td><code>ms.selection.field@r1</code></td>
+<td><code>ms.selection.field@r4</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>CASA field selector.</td>
+<td>Applycal field selector text.</td>
 </tr>
 <tr>
 <td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
+<td><code>ms.selection.spw@r3</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
+<td>Applycal spw selector text.</td>
 </tr>
 <tr>
 <td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
+<td><code>plotms.timerange@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Inclusive TIME range in MJD seconds</td>
+<td>Time range (blank for all)</td>
 </tr>
 <tr>
 <td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r1</code></td>
+<td><code>plotms.uvrange@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>UV range selector.</td>
+<td>UV range (blank for all)</td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
+<td><code>plotms.antenna@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+<td>Baseline/antenna names or ids (blank for all)</td>
 </tr>
 <tr>
 <td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
+<td><code>plotms.scan@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated scan numbers</td>
+<td>Scan numbers (blank for all)</td>
 </tr>
 <tr>
 <td><code>correlation</code></td>
-<td><code>ms.selection.correlation@r1</code></td>
+<td><code>plotms.correlation@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Correlation selector.</td>
+<td>Correlations/polarizations (blank for all)</td>
 </tr>
 <tr>
-<td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
+<td><code>polarization</code></td>
+<td><code>plotms.polarization@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
+<td>Polarizations (blank for all)</td>
+</tr>
+<tr>
+<td><code>antpos</code></td>
+<td><code>plotms.antpos@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Antenna positions (blank for all)</td>
 </tr>
 <tr>
 <td><code>array</code></td>
-<td><code>ms.selection.array@r1</code></td>
+<td><code>plotms.array@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Comma-separated ARRAY_ID integers</td>
+<td>(Sub)array numbers (blank for all)</td>
+</tr>
+<tr>
+<td><code>observation</code></td>
+<td><code>plotms.observation@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Selection</td>
+<td>Observation IDs (blank for all)</td>
 </tr>
 <tr>
 <td><code>intent</code></td>
-<td><code>ms.selection.intent@r1</code></td>
+<td><code>plotms.intent@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Intent selector.</td>
+<td>Observing intent (blank for all)</td>
 </tr>
 <tr>
 <td><code>feed</code></td>
-<td><code>ms.selection.feed@r1</code></td>
+<td><code>plotms.feed@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Feed selector.</td>
+<td>Feed numbers (blank for all)</td>
 </tr>
 <tr>
 <td><code>msselect</code></td>
-<td><code>ms.selection.msselect@r1</code></td>
+<td><code>plotms.msselect@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Raw TaQL WHERE expression to AND with the structured selectors</td>
+<td>MSSelection TaQL string (blank for none)</td>
 </tr>
 <tr>
-<td><code>page_spec</code></td>
-<td><code>parameter.page_spec@r1</code></td>
-<td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Plot</td>
-<td>Load a JSON multi-plot page spec instead of the single-plot axis/preset flags</td>
-</tr>
-<tr>
-<td><code>preset</code></td>
-<td><code>parameter.preset@r1</code></td>
-<td><code>choice (27 values; surface-narrowed)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Plot</td>
-<td>Use a named common plot preset</td>
-</tr>
-<tr>
-<td><code>x_axis</code></td>
-<td><code>parameter.x_axis@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Plot</td>
-<td>Explicit x axis when not using a preset</td>
-</tr>
-<tr>
-<td><code>y_axis</code></td>
-<td><code>parameter.y_axis@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Plot</td>
-<td>Explicit y axis when not using a preset</td>
-</tr>
-<tr>
-<td><code>y_axis2</code></td>
-<td><code>parameter.y_axis2@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Plot</td>
-<td>Optional second y axis rendered on the right side</td>
-</tr>
-<tr>
-<td><code>datacolumn</code></td>
-<td><code>parameter.datacolumn@r1</code></td>
-<td><code>string</code></td>
-<td><code>"data"</code>; optional</td>
-<td>Plot</td>
-<td>Visibility data column used by the surface.<br><em>Surface:</em> Canonical datacolumn maps to provider field data_column.</td>
-</tr>
-<tr>
-<td><code>color_by</code></td>
-<td><code>parameter.color_by@r1</code></td>
-<td><code>choice (6 values)</code></td>
-<td><code>"field"</code>; optional</td>
-<td>Plot</td>
-<td>Metadata axis used to group series colors</td>
+<td><code>averagedata</code></td>
+<td><code>plotms.averagedata@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Averaging</td>
+<td>Enable data averaging parameters</td>
 </tr>
 <tr>
 <td><code>avgchannel</code></td>
-<td><code>parameter.avgchannel@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>plotms.avgchannel@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
 <td>Averaging</td>
-<td>Channel bin size for channel/frequency plots</td>
+<td>Average over channel (blank = False, otherwise value in channels)</td>
 </tr>
 <tr>
 <td><code>avgtime</code></td>
-<td><code>parameter.avgtime@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>plotms.avgtime@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
 <td>Averaging</td>
-<td>Time averaging window in seconds</td>
+<td>Average over time (blank = False, otherwise value in seconds)</td>
 </tr>
 <tr>
 <td><code>avgscan</code></td>
@@ -7607,59 +7671,83 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Use scalar averaging instead of vector averaging</td>
 </tr>
 <tr>
-<td><code>freqframe</code></td>
-<td><code>parameter.freqframe@r1</code></td>
-<td><code>choice (9 values)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>transform</code></td>
+<td><code>plotms.transform@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
 <td>Transforms</td>
-<td>Render frequency and velocity axes in the requested frame</td>
+<td>Enable data transformations</td>
+</tr>
+<tr>
+<td><code>freqframe</code></td>
+<td><code>plotms.freqframe@r1</code></td>
+<td><code>choice (9 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Transforms</td>
+<td>The frame in which to render frequency and velocity axes</td>
 </tr>
 <tr>
 <td><code>restfreq</code></td>
-<td><code>parameter.restfreq@r1</code></td>
+<td><code>plotms.restfreq@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>""</code>; optional</td>
 <td>Transforms</td>
-<td>Rest frequency used for velocity-style cube axes</td>
+<td>Rest frequency to use for velocity conversions</td>
 </tr>
 <tr>
 <td><code>veldef</code></td>
-<td><code>parameter.veldef@r1</code></td>
+<td><code>plotms.veldef@r1</code></td>
 <td><code>choice (3 values)</code></td>
 <td><code>"RADIO"</code>; optional</td>
 <td>Transforms</td>
-<td>Velocity definition used for velocity axes</td>
+<td>The definition in which to render velocity</td>
+</tr>
+<tr>
+<td><code>phasecenter</code></td>
+<td><code>plotms.phasecenter@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Transforms</td>
+<td>The direction coordinates of the desired center</td>
+</tr>
+<tr>
+<td><code>extendflag</code></td>
+<td><code>plotms.extendflag@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Flagging</td>
+<td>Extend flagging to other data points not plotted</td>
+</tr>
+<tr>
+<td><code>extcorr</code></td>
+<td><code>plotms.extcorr@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Flagging</td>
+<td>Extend flags based on correlation</td>
+</tr>
+<tr>
+<td><code>extchannel</code></td>
+<td><code>plotms.extchannel@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Flagging</td>
+<td>Extend flags based on channel</td>
 </tr>
 <tr>
 <td><code>iteraxis</code></td>
-<td><code>parameter.iteraxis@r1</code></td>
-<td><code>choice (5 values)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Layout</td>
-<td>Split the plot into one panel per iteraxis value</td>
-</tr>
-<tr>
-<td><code>gridrows</code></td>
-<td><code>parameter.gridrows@r1</code></td>
-<td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Layout</td>
-<td>Requested grid row count for iterated plots</td>
-</tr>
-<tr>
-<td><code>gridcols</code></td>
-<td><code>parameter.gridcols@r1</code></td>
-<td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Layout</td>
-<td>Requested grid column count for iterated plots</td>
+<td><code>plotms.iteraxis@r1</code></td>
+<td><code>choice (21 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>The axis over which to iterate</td>
 </tr>
 <tr>
 <td><code>xselfscale</code></td>
 <td><code>parameter.xselfscale@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Layout</td>
+<td>Presentation</td>
 <td>Use per-panel X bounds on iterated plots</td>
 </tr>
 <tr>
@@ -7667,7 +7755,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>parameter.yselfscale@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Layout</td>
+<td>Presentation</td>
 <td>Use per-panel Y bounds on iterated plots</td>
 </tr>
 <tr>
@@ -7675,7 +7763,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>parameter.xsharedaxis@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Layout</td>
+<td>Presentation</td>
 <td>Force a shared X axis across iterated panels</td>
 </tr>
 <tr>
@@ -7683,200 +7771,400 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>parameter.ysharedaxis@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Layout</td>
+<td>Presentation</td>
 <td>Force a shared Y axis across iterated panels</td>
 </tr>
 <tr>
+<td><code>customsymbol</code></td>
+<td><code>plotms.customsymbol@r1</code></td>
+<td><code>variant</code></td>
+<td><code>[]</code>; optional</td>
+<td>Presentation</td>
+<td>Enable custom symbol(s) for unflagged points</td>
+</tr>
+<tr>
+<td><code>symbolshape</code></td>
+<td><code>plotms.symbolshape@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"autoscaling"</code>; optional</td>
+<td>Presentation</td>
+<td>Shape of plotted unflagged symbols</td>
+</tr>
+<tr>
+<td><code>symbolsize</code></td>
+<td><code>plotms.symbolsize@r1</code></td>
+<td><code>variant</code></td>
+<td><code>2</code>; optional</td>
+<td>Presentation</td>
+<td>Size of plotted unflagged symbols</td>
+</tr>
+<tr>
+<td><code>symbolcolor</code></td>
+<td><code>plotms.symbolcolor@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"0000ff"</code>; optional</td>
+<td>Presentation</td>
+<td>Color (name or hex code) of plotted unflagged symbols</td>
+</tr>
+<tr>
+<td><code>symbolfill</code></td>
+<td><code>plotms.symbolfill@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"fill"</code>; optional</td>
+<td>Presentation</td>
+<td>Fill type of plotted unflagged symbols</td>
+</tr>
+<tr>
+<td><code>symboloutline</code></td>
+<td><code>plotms.symboloutline@r1</code></td>
+<td><code>variant</code></td>
+<td><code>false</code>; optional</td>
+<td>Presentation</td>
+<td>Outline plotted unflagged symbols</td>
+</tr>
+<tr>
+<td><code>coloraxis</code></td>
+<td><code>plotms.coloraxis@r1</code></td>
+<td><code>choice (32 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Selects data axis for colorizing</td>
+</tr>
+<tr>
+<td><code>customflaggedsymbol</code></td>
+<td><code>plotms.customflaggedsymbol@r1</code></td>
+<td><code>variant</code></td>
+<td><code>false</code>; optional</td>
+<td>Presentation</td>
+<td>Enable custom symbol(s) for flagged points</td>
+</tr>
+<tr>
+<td><code>flaggedsymbolshape</code></td>
+<td><code>plotms.flaggedsymbolshape@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"circle"</code>; optional</td>
+<td>Presentation</td>
+<td>Shape of plotted flagged symbols</td>
+</tr>
+<tr>
+<td><code>flaggedsymbolsize</code></td>
+<td><code>plotms.flaggedsymbolsize@r1</code></td>
+<td><code>variant</code></td>
+<td><code>2</code>; optional</td>
+<td>Presentation</td>
+<td>Size of plotted flagged symbols</td>
+</tr>
+<tr>
+<td><code>flaggedsymbolcolor</code></td>
+<td><code>plotms.flaggedsymbolcolor@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"ff0000"</code>; optional</td>
+<td>Presentation</td>
+<td>Color (name or hex code) of plotted flagged symbols</td>
+</tr>
+<tr>
+<td><code>flaggedsymbolfill</code></td>
+<td><code>plotms.flaggedsymbolfill@r1</code></td>
+<td><code>variant</code></td>
+<td><code>"fill"</code>; optional</td>
+<td>Presentation</td>
+<td>Fill type of plotted flagged symbols</td>
+</tr>
+<tr>
+<td><code>flaggedsymboloutline</code></td>
+<td><code>plotms.flaggedsymboloutline@r1</code></td>
+<td><code>variant</code></td>
+<td><code>false</code>; optional</td>
+<td>Presentation</td>
+<td>Outline plotted flagged symbols</td>
+</tr>
+<tr>
+<td><code>xconnector</code></td>
+<td><code>plotms.xconnector@r1</code></td>
+<td><code>choice (4 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Set connector for data points (blank="none"; "line","step")</td>
+</tr>
+<tr>
+<td><code>timeconnector</code></td>
+<td><code>plotms.timeconnector@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Presentation</td>
+<td>Connect points by time rather than x-axis</td>
+</tr>
+<tr>
+<td><code>plotrange</code></td>
+<td><code>plotbandpass.plotrange@r1</code></td>
+<td><code>array&lt;float&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Axes</td>
+<td>The axes limits to use [x0,x1,y0,y1].</td>
+</tr>
+<tr>
 <td><code>title</code></td>
-<td><code>parameter.title@r1</code></td>
+<td><code>plotms.title@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Style</td>
-<td>Override the plot title</td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Title at top of plot</td>
+</tr>
+<tr>
+<td><code>titlefont</code></td>
+<td><code>plotms.titlefont@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Presentation</td>
+<td>Font size for plot title</td>
 </tr>
 <tr>
 <td><code>xlabel</code></td>
-<td><code>parameter.xlabel@r1</code></td>
+<td><code>plotms.xlabel@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Style</td>
-<td>Override the x-axis label</td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Text for horizontal x-axis. Blank for default.</td>
+</tr>
+<tr>
+<td><code>xaxisfont</code></td>
+<td><code>plotms.xaxisfont@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Presentation</td>
+<td>Font size for x-axis label</td>
 </tr>
 <tr>
 <td><code>ylabel</code></td>
-<td><code>parameter.ylabel@r1</code></td>
+<td><code>plotms.ylabel@r1</code></td>
 <td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Style</td>
-<td>Override the y-axis label</td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Text for vertical y-axis. Blank for default.</td>
 </tr>
 <tr>
-<td><code>symbol_size</code></td>
-<td><code>parameter.symbol_size@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Style</td>
-<td>Scatter marker radius in rendered pixels</td>
-</tr>
-<tr>
-<td><code>showlegend</code></td>
-<td><code>parameter.showlegend@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Style</td>
-<td>Show a legend for grouped series</td>
-</tr>
-<tr>
-<td><code>legendposition</code></td>
-<td><code>parameter.legendposition@r1</code></td>
-<td><code>choice (8 values)</code></td>
-<td><code>"upperRight"</code>; optional</td>
-<td>Style</td>
-<td>Position the legend inside or outside the plot</td>
+<td><code>yaxisfont</code></td>
+<td><code>plotms.yaxisfont@r1</code></td>
+<td><code>integer</code></td>
+<td><code>0</code>; optional</td>
+<td>Presentation</td>
+<td>Font size for y-axis label</td>
 </tr>
 <tr>
 <td><code>showmajorgrid</code></td>
 <td><code>parameter.showmajorgrid@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Style</td>
+<td>Presentation</td>
 <td>Show major grid lines</td>
+</tr>
+<tr>
+<td><code>majorwidth</code></td>
+<td><code>plotms.majorwidth@r1</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Presentation</td>
+<td>Line width in pixels of major grid lines</td>
+</tr>
+<tr>
+<td><code>majorstyle</code></td>
+<td><code>plotms.majorstyle@r1</code></td>
+<td><code>choice (5 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Major grid line style</td>
+</tr>
+<tr>
+<td><code>majorcolor</code></td>
+<td><code>plotms.majorcolor@r1</code></td>
+<td><code>string</code></td>
+<td><code>"B0B0B0"</code>; optional</td>
+<td>Presentation</td>
+<td>Color (name or hex code) of major grid lines</td>
 </tr>
 <tr>
 <td><code>showminorgrid</code></td>
 <td><code>parameter.showminorgrid@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Style</td>
+<td>Presentation</td>
 <td>Show minor grid lines</td>
 </tr>
 <tr>
-<td><code>headeritems</code></td>
-<td><code>parameter.headeritems@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Style</td>
-<td>Comma-separated CASA-style page header items</td>
-</tr>
-<tr>
-<td><code>max_points</code></td>
-<td><code>parameter.max_points@r1</code></td>
+<td><code>minorwidth</code></td>
+<td><code>plotms.minorwidth@r1</code></td>
 <td><code>integer</code></td>
-<td><code>10000000</code>; optional</td>
-<td>Export</td>
-<td>Hard cap on the total plotted points rendered by one request</td>
+<td><code>1</code>; optional</td>
+<td>Presentation</td>
+<td>Line width in pixels of minor grid lines</td>
 </tr>
 <tr>
-<td><code>plot_output</code></td>
-<td><code>parameter.plot_output@r1</code></td>
-<td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Export</td>
-<td>Write the plot's text point manifest to PATH</td>
+<td><code>minorstyle</code></td>
+<td><code>plotms.minorstyle@r1</code></td>
+<td><code>choice (5 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Minor grid line style</td>
 </tr>
 <tr>
-<td><code>plot_format</code></td>
-<td><code>parameter.plot_format@r2</code></td>
-<td><code>choice (1 values)</code></td>
-<td><code>"txt"</code>; optional</td>
-<td>Export</td>
-<td>Plot point-manifest export format</td>
+<td><code>minorcolor</code></td>
+<td><code>plotms.minorcolor@r1</code></td>
+<td><code>string</code></td>
+<td><code>"D0D0D0"</code>; optional</td>
+<td>Presentation</td>
+<td>Color (name or hex code) of minor grid lines</td>
 </tr>
 <tr>
-<td><code>flag_action</code></td>
-<td><code>parameter.flag_action@r1</code></td>
+<td><code>showlegend</code></td>
+<td><code>parameter.showlegend@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Presentation</td>
+<td>Show a legend for grouped series</td>
+</tr>
+<tr>
+<td><code>legendposition</code></td>
+<td><code>plotms.legendposition@r1</code></td>
+<td><code>choice (9 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Legend position, default upperRight.</td>
+</tr>
+<tr>
+<td><code>plotfile</code></td>
+<td><code>plotms.plotfile@r1</code></td>
+<td><code>path (file)</code></td>
+<td><code>""</code>; optional</td>
+<td>Export</td>
+<td>Name of plot file to save automatically</td>
+</tr>
+<tr>
+<td><code>expformat</code></td>
+<td><code>plotms.expformat@r1</code></td>
+<td><code>choice (6 values)</code></td>
+<td><code>""</code>; optional</td>
+<td>Export</td>
+<td>Export format type. If not provided, plotfile extension will be used to determine type.</td>
+</tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>plotms.verbose@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Export</td>
+<td>Include metadata in text export</td>
+</tr>
+<tr>
+<td><code>exprange</code></td>
+<td><code>plotms.exprange@r1</code></td>
 <td><code>choice (3 values)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Flag Editing</td>
-<td>Stage a rectangular flag or unflag edit against the plotted scatter points</td>
+<td><code>""</code>; optional</td>
+<td>Export</td>
+<td>Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported.</td>
 </tr>
 <tr>
-<td><code>flag_xmin</code></td>
-<td><code>parameter.flag_xmin@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Flag Editing</td>
-<td>Inclusive minimum X value for the staged edit region</td>
-</tr>
-<tr>
-<td><code>flag_xmax</code></td>
-<td><code>parameter.flag_xmax@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Flag Editing</td>
-<td>Inclusive maximum X value for the staged edit region</td>
-</tr>
-<tr>
-<td><code>flag_ymin</code></td>
-<td><code>parameter.flag_ymin@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Flag Editing</td>
-<td>Inclusive minimum Y value for the staged edit region</td>
-</tr>
-<tr>
-<td><code>flag_ymax</code></td>
-<td><code>parameter.flag_ymax@r1</code></td>
-<td><code>optional&lt;float&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Flag Editing</td>
-<td>Inclusive maximum Y value for the staged edit region</td>
-</tr>
-<tr>
-<td><code>flag_plotindex</code></td>
-<td><code>parameter.flag_plotindex@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Flag Editing</td>
-<td>Multi-plot page child plot index to target for staged edits</td>
-</tr>
-<tr>
-<td><code>flag_panel</code></td>
-<td><code>parameter.flag_panel@r2</code></td>
-<td><code>optional&lt;string&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Flag Editing</td>
-<td>Iterated panel key to target for staged edits, for example scan-1</td>
-</tr>
-<tr>
-<td><code>flag_extcorr</code></td>
-<td><code>parameter.flag_extcorr@r1</code></td>
+<td><code>highres</code></td>
+<td><code>plotms.highres@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Flag Editing</td>
-<td>Extend staged edits across all correlations on matching channels</td>
+<td>Export</td>
+<td>Use high resolution</td>
 </tr>
 <tr>
-<td><code>flag_extchannel</code></td>
-<td><code>parameter.flag_extchannel@r1</code></td>
+<td><code>dpi</code></td>
+<td><code>plotms.dpi@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Export</td>
+<td>DPI of exported plot</td>
+</tr>
+<tr>
+<td><code>width</code></td>
+<td><code>plotms.width@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Export</td>
+<td>Width in pixels of exported plot</td>
+</tr>
+<tr>
+<td><code>height</code></td>
+<td><code>plotms.height@r1</code></td>
+<td><code>integer</code></td>
+<td><code>-1</code>; optional</td>
+<td>Export</td>
+<td>Height in pixels of exported plot</td>
+</tr>
+<tr>
+<td><code>overwrite</code></td>
+<td><code>output.overwrite@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Flag Editing</td>
-<td>Extend staged edits across all channels on matching correlations</td>
+<td>Export</td>
+<td>Replace an existing output file</td>
 </tr>
 <tr>
-<td><code>flag_selected</code></td>
-<td><code>parameter.flag_selected@r1</code></td>
+<td><code>showgui</code></td>
+<td><code>plotms.showgui@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Export</td>
+<td>Show GUI</td>
+</tr>
+<tr>
+<td><code>clearplots</code></td>
+<td><code>plotms.clearplots@r1</code></td>
+<td><code>bool</code></td>
+<td><code>true</code>; optional</td>
+<td>Presentation</td>
+<td>Remove any existing plots so new ones can replace them.</td>
+</tr>
+<tr>
+<td><code>callib</code></td>
+<td><code>plotms.callib@r1</code></td>
+<td><code>array&lt;string&gt;</code></td>
+<td><code>[]</code>; optional</td>
+<td>Calibration</td>
+<td>Calibration library string or filename for on-the-fly calibration.</td>
+</tr>
+<tr>
+<td><code>headeritems</code></td>
+<td><code>plotms.headeritems@r1</code></td>
+<td><code>string</code></td>
+<td><code>""</code>; optional</td>
+<td>Presentation</td>
+<td>Comma-separated list of pre-defined page header items.</td>
+</tr>
+<tr>
+<td><code>showatm</code></td>
+<td><code>plotbandpass.showatm@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Flag Editing</td>
-<td>Apply the flag action to every FLAG sample in the selected MAIN rows</td>
+<td>Atmosphere</td>
+<td>Compute and overlay the atmospheric transmission curve</td>
 </tr>
 <tr>
-<td><code>flag_apply</code></td>
-<td><code>parameter.flag_apply@r1</code></td>
+<td><code>showtsky</code></td>
+<td><code>plotbandpass.showtsky@r1</code></td>
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
-<td>Flag Editing</td>
-<td>Apply the staged flag edit to MAIN FLAG / FLAG_ROW; omit for preview-only</td>
+<td>Atmosphere</td>
+<td>Compute and overlay the sky temperature curve instead of transmission</td>
 </tr>
 <tr>
-<td><code>flag_output</code></td>
-<td><code>parameter.flag_output@r1</code></td>
-<td><code>path (any)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Flag Editing</td>
-<td>Write the staged flag-edit preview JSON to PATH</td>
+<td><code>showimage</code></td>
+<td><code>plotbandpass.showimage@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Atmosphere</td>
+<td>also show the atmospheric curve for the image sideband (in black)</td>
+</tr>
+<tr>
+<td><code>colorizeoverlay</code></td>
+<td><code>plotms.colorizeoverlay@r1</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
+<td>Atmosphere</td>
+<td>Colorize the curve overlay using coloraxis</td>
 </tr>
 </tbody>
 </table>

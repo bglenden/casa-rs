@@ -2027,198 +2027,205 @@
 <a href=#2027 id=2027 data-nosnippet>2027</a>    }
 <a href=#2028 id=2028 data-nosnippet>2028</a>
 <a href=#2029 id=2029 data-nosnippet>2029</a>    <span class="attr">#[cfg(test)]
-<a href=#2030 id=2030 data-nosnippet>2030</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_cached_control_metadata(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#2031 id=2031 data-nosnippet>2031</a>        <span class="self">self</span>.lazy_rows
-<a href=#2032 id=2032 data-nosnippet>2032</a>            .as_ref()
-<a href=#2033 id=2033 data-nosnippet>2033</a>            .is_some_and(|source| source.read_metadata.get().is_some())
+<a href=#2030 id=2030 data-nosnippet>2030</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_buffered_array_column(<span class="kw-2">&amp;</span><span class="self">self</span>, column: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#2031 id=2031 data-nosnippet>2031</a>        <span class="self">self</span>.buffered_array_cells
+<a href=#2032 id=2032 data-nosnippet>2032</a>            .get(column)
+<a href=#2033 id=2033 data-nosnippet>2033</a>            .is_some_and(|cached| cached.get().is_some())
 <a href=#2034 id=2034 data-nosnippet>2034</a>    }
 <a href=#2035 id=2035 data-nosnippet>2035</a>
 <a href=#2036 id=2036 data-nosnippet>2036</a>    <span class="attr">#[cfg(test)]
-<a href=#2037 id=2037 data-nosnippet>2037</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cached_tiled_header_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#2037 id=2037 data-nosnippet>2037</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_cached_control_metadata(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#2038 id=2038 data-nosnippet>2038</a>        <span class="self">self</span>.lazy_rows
 <a href=#2039 id=2039 data-nosnippet>2039</a>            .as_ref()
-<a href=#2040 id=2040 data-nosnippet>2040</a>            .and_then(|source| source.read_metadata.get())
-<a href=#2041 id=2041 data-nosnippet>2041</a>            .map_or(<span class="number">0</span>, |metadata| metadata.tiled.cached_header_count())
-<a href=#2042 id=2042 data-nosnippet>2042</a>    }
-<a href=#2043 id=2043 data-nosnippet>2043</a>
-<a href=#2044 id=2044 data-nosnippet>2044</a>    <span class="attr">#[cfg(test)]
-<a href=#2045 id=2045 data-nosnippet>2045</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cached_control_metadata_heap_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#2046 id=2046 data-nosnippet>2046</a>        <span class="self">self</span>.lazy_rows
-<a href=#2047 id=2047 data-nosnippet>2047</a>            .as_ref()
-<a href=#2048 id=2048 data-nosnippet>2048</a>            .and_then(|source| source.read_metadata.get())
-<a href=#2049 id=2049 data-nosnippet>2049</a>            .and_then(|metadata| metadata.table_dat.retained_heap_bytes())
-<a href=#2050 id=2050 data-nosnippet>2050</a>            .unwrap_or(<span class="number">0</span>)
-<a href=#2051 id=2051 data-nosnippet>2051</a>    }
-<a href=#2052 id=2052 data-nosnippet>2052</a>
-<a href=#2053 id=2053 data-nosnippet>2053</a>    <span class="attr">#[cfg(test)]
-<a href=#2054 id=2054 data-nosnippet>2054</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cached_tiled_header_heap_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#2055 id=2055 data-nosnippet>2055</a>        <span class="self">self</span>.lazy_rows
-<a href=#2056 id=2056 data-nosnippet>2056</a>            .as_ref()
-<a href=#2057 id=2057 data-nosnippet>2057</a>            .and_then(|source| source.read_metadata.get())
-<a href=#2058 id=2058 data-nosnippet>2058</a>            .and_then(|metadata| metadata.tiled.retained_heap_bytes())
-<a href=#2059 id=2059 data-nosnippet>2059</a>            .unwrap_or(<span class="number">0</span>)
-<a href=#2060 id=2060 data-nosnippet>2060</a>    }
-<a href=#2061 id=2061 data-nosnippet>2061</a>
-<a href=#2062 id=2062 data-nosnippet>2062</a>    <span class="attr">#[cfg(test)]
-<a href=#2063 id=2063 data-nosnippet>2063</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_loaded_scalar_column(<span class="kw-2">&amp;</span><span class="self">self</span>, column: <span class="kw-2">&amp;</span>str) -&gt; bool {
-<a href=#2064 id=2064 data-nosnippet>2064</a>        <span class="self">self</span>.loaded_scalar_columns
-<a href=#2065 id=2065 data-nosnippet>2065</a>            .get(column)
-<a href=#2066 id=2066 data-nosnippet>2066</a>            .is_some_and(|cached| cached.get().is_some())
+<a href=#2040 id=2040 data-nosnippet>2040</a>            .is_some_and(|source| source.read_metadata.get().is_some())
+<a href=#2041 id=2041 data-nosnippet>2041</a>    }
+<a href=#2042 id=2042 data-nosnippet>2042</a>
+<a href=#2043 id=2043 data-nosnippet>2043</a>    <span class="attr">#[cfg(test)]
+<a href=#2044 id=2044 data-nosnippet>2044</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cached_tiled_header_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#2045 id=2045 data-nosnippet>2045</a>        <span class="self">self</span>.lazy_rows
+<a href=#2046 id=2046 data-nosnippet>2046</a>            .as_ref()
+<a href=#2047 id=2047 data-nosnippet>2047</a>            .and_then(|source| source.read_metadata.get())
+<a href=#2048 id=2048 data-nosnippet>2048</a>            .map_or(<span class="number">0</span>, |metadata| metadata.tiled.cached_header_count())
+<a href=#2049 id=2049 data-nosnippet>2049</a>    }
+<a href=#2050 id=2050 data-nosnippet>2050</a>
+<a href=#2051 id=2051 data-nosnippet>2051</a>    <span class="attr">#[cfg(test)]
+<a href=#2052 id=2052 data-nosnippet>2052</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cached_control_metadata_heap_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#2053 id=2053 data-nosnippet>2053</a>        <span class="self">self</span>.lazy_rows
+<a href=#2054 id=2054 data-nosnippet>2054</a>            .as_ref()
+<a href=#2055 id=2055 data-nosnippet>2055</a>            .and_then(|source| source.read_metadata.get())
+<a href=#2056 id=2056 data-nosnippet>2056</a>            .and_then(|metadata| metadata.table_dat.retained_heap_bytes())
+<a href=#2057 id=2057 data-nosnippet>2057</a>            .unwrap_or(<span class="number">0</span>)
+<a href=#2058 id=2058 data-nosnippet>2058</a>    }
+<a href=#2059 id=2059 data-nosnippet>2059</a>
+<a href=#2060 id=2060 data-nosnippet>2060</a>    <span class="attr">#[cfg(test)]
+<a href=#2061 id=2061 data-nosnippet>2061</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cached_tiled_header_heap_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#2062 id=2062 data-nosnippet>2062</a>        <span class="self">self</span>.lazy_rows
+<a href=#2063 id=2063 data-nosnippet>2063</a>            .as_ref()
+<a href=#2064 id=2064 data-nosnippet>2064</a>            .and_then(|source| source.read_metadata.get())
+<a href=#2065 id=2065 data-nosnippet>2065</a>            .and_then(|metadata| metadata.tiled.retained_heap_bytes())
+<a href=#2066 id=2066 data-nosnippet>2066</a>            .unwrap_or(<span class="number">0</span>)
 <a href=#2067 id=2067 data-nosnippet>2067</a>    }
 <a href=#2068 id=2068 data-nosnippet>2068</a>
 <a href=#2069 id=2069 data-nosnippet>2069</a>    <span class="attr">#[cfg(test)]
-<a href=#2070 id=2070 data-nosnippet>2070</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_pending_array_cells(<span class="kw-2">&amp;</span><span class="self">self</span>, column: <span class="kw-2">&amp;</span>str) -&gt; bool {
-<a href=#2071 id=2071 data-nosnippet>2071</a>        <span class="self">self</span>.pending_array_cells
-<a href=#2072 id=2072 data-nosnippet>2072</a>            .by_column
-<a href=#2073 id=2073 data-nosnippet>2073</a>            .get(column)
-<a href=#2074 id=2074 data-nosnippet>2074</a>            .is_some_and(|cells| !cells.rows.is_empty())
-<a href=#2075 id=2075 data-nosnippet>2075</a>    }
-<a href=#2076 id=2076 data-nosnippet>2076</a>
-<a href=#2077 id=2077 data-nosnippet>2077</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_pending_scalar_cells(<span class="kw-2">&amp;</span><span class="self">self</span>, column: <span class="kw-2">&amp;</span>str) -&gt; bool {
-<a href=#2078 id=2078 data-nosnippet>2078</a>        <span class="self">self</span>.pending_scalar_cells
+<a href=#2070 id=2070 data-nosnippet>2070</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_loaded_scalar_column(<span class="kw-2">&amp;</span><span class="self">self</span>, column: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#2071 id=2071 data-nosnippet>2071</a>        <span class="self">self</span>.loaded_scalar_columns
+<a href=#2072 id=2072 data-nosnippet>2072</a>            .get(column)
+<a href=#2073 id=2073 data-nosnippet>2073</a>            .is_some_and(|cached| cached.get().is_some())
+<a href=#2074 id=2074 data-nosnippet>2074</a>    }
+<a href=#2075 id=2075 data-nosnippet>2075</a>
+<a href=#2076 id=2076 data-nosnippet>2076</a>    <span class="attr">#[cfg(test)]
+<a href=#2077 id=2077 data-nosnippet>2077</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_pending_array_cells(<span class="kw-2">&amp;</span><span class="self">self</span>, column: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#2078 id=2078 data-nosnippet>2078</a>        <span class="self">self</span>.pending_array_cells
 <a href=#2079 id=2079 data-nosnippet>2079</a>            .by_column
 <a href=#2080 id=2080 data-nosnippet>2080</a>            .get(column)
-<a href=#2081 id=2081 data-nosnippet>2081</a>            .is_some_and(|cells| !cells.is_empty())
+<a href=#2081 id=2081 data-nosnippet>2081</a>            .is_some_and(|cells| !cells.rows.is_empty())
 <a href=#2082 id=2082 data-nosnippet>2082</a>    }
-<a href=#2083 id=2083 data-nosnippet>2083</a>}
-<a href=#2084 id=2084 data-nosnippet>2084</a>
-<a href=#2085 id=2085 data-nosnippet>2085</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>path_heap_bytes(path: <span class="kw-2">&amp;</span>std::path::Path) -&gt; usize {
-<a href=#2086 id=2086 data-nosnippet>2086</a>    <span class="attr">#[cfg(unix)]
-<a href=#2087 id=2087 data-nosnippet>2087</a>    </span>{
-<a href=#2088 id=2088 data-nosnippet>2088</a>        <span class="kw">use </span>std::os::unix::ffi::OsStrExt;
-<a href=#2089 id=2089 data-nosnippet>2089</a>        path.as_os_str().as_bytes().len()
-<a href=#2090 id=2090 data-nosnippet>2090</a>    }
-<a href=#2091 id=2091 data-nosnippet>2091</a>    <span class="attr">#[cfg(not(unix))]
-<a href=#2092 id=2092 data-nosnippet>2092</a>    </span>{
-<a href=#2093 id=2093 data-nosnippet>2093</a>        path.as_os_str().to_string_lossy().len()
-<a href=#2094 id=2094 data-nosnippet>2094</a>    }
-<a href=#2095 id=2095 data-nosnippet>2095</a>}
-<a href=#2096 id=2096 data-nosnippet>2096</a>
-<a href=#2097 id=2097 data-nosnippet>2097</a><span class="kw">fn </span>string_keyed_map_heap_bytes&lt;V&gt;(map: <span class="kw-2">&amp;</span>HashMap&lt;String, V&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-<a href=#2098 id=2098 data-nosnippet>2098</a>    map.capacity()
-<a href=#2099 id=2099 data-nosnippet>2099</a>        .checked_mul(size_of::&lt;(String, V)&gt;())<span class="question-mark">?
-<a href=#2100 id=2100 data-nosnippet>2100</a>        </span>.checked_add(
-<a href=#2101 id=2101 data-nosnippet>2101</a>            map.keys()
-<a href=#2102 id=2102 data-nosnippet>2102</a>                .try_fold(<span class="number">0_usize</span>, |bytes, key| bytes.checked_add(key.capacity()))<span class="question-mark">?</span>,
-<a href=#2103 id=2103 data-nosnippet>2103</a>        )
-<a href=#2104 id=2104 data-nosnippet>2104</a>}
-<a href=#2105 id=2105 data-nosnippet>2105</a>
-<a href=#2106 id=2106 data-nosnippet>2106</a><span class="kw">fn </span>required_scalar_column_data_len(values: <span class="kw-2">&amp;</span>RequiredScalarColumnData) -&gt; usize {
-<a href=#2107 id=2107 data-nosnippet>2107</a>    <span class="kw">match </span>values {
-<a href=#2108 id=2108 data-nosnippet>2108</a>        RequiredScalarColumnData::Bool(values) =&gt; values.len(),
-<a href=#2109 id=2109 data-nosnippet>2109</a>        RequiredScalarColumnData::Int32(values) =&gt; values.len(),
-<a href=#2110 id=2110 data-nosnippet>2110</a>        RequiredScalarColumnData::Float32(values) =&gt; values.len(),
-<a href=#2111 id=2111 data-nosnippet>2111</a>        RequiredScalarColumnData::Float64(values) =&gt; values.len(),
-<a href=#2112 id=2112 data-nosnippet>2112</a>    }
-<a href=#2113 id=2113 data-nosnippet>2113</a>}
-<a href=#2114 id=2114 data-nosnippet>2114</a>
-<a href=#2115 id=2115 data-nosnippet>2115</a><span class="kw">fn </span>set_required_scalar_column_value(
-<a href=#2116 id=2116 data-nosnippet>2116</a>    values: <span class="kw-2">&amp;mut </span>RequiredScalarColumnData,
-<a href=#2117 id=2117 data-nosnippet>2117</a>    row_index: usize,
-<a href=#2118 id=2118 data-nosnippet>2118</a>    value: <span class="kw-2">&amp;</span>ScalarValue,
-<a href=#2119 id=2119 data-nosnippet>2119</a>    column: <span class="kw-2">&amp;</span>str,
-<a href=#2120 id=2120 data-nosnippet>2120</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
-<a href=#2121 id=2121 data-nosnippet>2121</a>    <span class="kw">match </span>(values, value) {
-<a href=#2122 id=2122 data-nosnippet>2122</a>        (RequiredScalarColumnData::Bool(values), ScalarValue::Bool(value)) =&gt; {
-<a href=#2123 id=2123 data-nosnippet>2123</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = values.get_mut(row_index) <span class="kw">else </span>{
-<a href=#2124 id=2124 data-nosnippet>2124</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2125 id=2125 data-nosnippet>2125</a>                    <span class="string">"required scalar column {column} override row {row_index} is out of bounds"
-<a href=#2126 id=2126 data-nosnippet>2126</a>                </span>)));
-<a href=#2127 id=2127 data-nosnippet>2127</a>            };
-<a href=#2128 id=2128 data-nosnippet>2128</a>            <span class="kw-2">*</span>slot = <span class="kw-2">*</span>value;
-<a href=#2129 id=2129 data-nosnippet>2129</a>        }
-<a href=#2130 id=2130 data-nosnippet>2130</a>        (RequiredScalarColumnData::Int32(values), ScalarValue::Int32(value)) =&gt; {
-<a href=#2131 id=2131 data-nosnippet>2131</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = values.get_mut(row_index) <span class="kw">else </span>{
-<a href=#2132 id=2132 data-nosnippet>2132</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2133 id=2133 data-nosnippet>2133</a>                    <span class="string">"required scalar column {column} override row {row_index} is out of bounds"
-<a href=#2134 id=2134 data-nosnippet>2134</a>                </span>)));
-<a href=#2135 id=2135 data-nosnippet>2135</a>            };
-<a href=#2136 id=2136 data-nosnippet>2136</a>            <span class="kw-2">*</span>slot = <span class="kw-2">*</span>value;
-<a href=#2137 id=2137 data-nosnippet>2137</a>        }
-<a href=#2138 id=2138 data-nosnippet>2138</a>        (RequiredScalarColumnData::Float32(values), ScalarValue::Float32(value)) =&gt; {
-<a href=#2139 id=2139 data-nosnippet>2139</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = values.get_mut(row_index) <span class="kw">else </span>{
-<a href=#2140 id=2140 data-nosnippet>2140</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2141 id=2141 data-nosnippet>2141</a>                    <span class="string">"required scalar column {column} override row {row_index} is out of bounds"
-<a href=#2142 id=2142 data-nosnippet>2142</a>                </span>)));
-<a href=#2143 id=2143 data-nosnippet>2143</a>            };
-<a href=#2144 id=2144 data-nosnippet>2144</a>            <span class="kw-2">*</span>slot = <span class="kw-2">*</span>value;
-<a href=#2145 id=2145 data-nosnippet>2145</a>        }
-<a href=#2146 id=2146 data-nosnippet>2146</a>        (RequiredScalarColumnData::Float64(values), ScalarValue::Float64(value)) =&gt; {
-<a href=#2147 id=2147 data-nosnippet>2147</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = values.get_mut(row_index) <span class="kw">else </span>{
-<a href=#2148 id=2148 data-nosnippet>2148</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2149 id=2149 data-nosnippet>2149</a>                    <span class="string">"required scalar column {column} override row {row_index} is out of bounds"
-<a href=#2150 id=2150 data-nosnippet>2150</a>                </span>)));
-<a href=#2151 id=2151 data-nosnippet>2151</a>            };
-<a href=#2152 id=2152 data-nosnippet>2152</a>            <span class="kw-2">*</span>slot = <span class="kw-2">*</span>value;
-<a href=#2153 id=2153 data-nosnippet>2153</a>        }
-<a href=#2154 id=2154 data-nosnippet>2154</a>        (<span class="kw">_</span>, other) =&gt; {
-<a href=#2155 id=2155 data-nosnippet>2155</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2156 id=2156 data-nosnippet>2156</a>                <span class="string">"required scalar column {column} override has incompatible type {:?}"</span>,
-<a href=#2157 id=2157 data-nosnippet>2157</a>                other.primitive_type()
-<a href=#2158 id=2158 data-nosnippet>2158</a>            )));
-<a href=#2159 id=2159 data-nosnippet>2159</a>        }
-<a href=#2160 id=2160 data-nosnippet>2160</a>    }
-<a href=#2161 id=2161 data-nosnippet>2161</a>    <span class="prelude-val">Ok</span>(())
-<a href=#2162 id=2162 data-nosnippet>2162</a>}
-<a href=#2163 id=2163 data-nosnippet>2163</a>
-<a href=#2164 id=2164 data-nosnippet>2164</a><span class="kw">fn </span>required_scalar_column_data_from_optional_scalars(
-<a href=#2165 id=2165 data-nosnippet>2165</a>    values: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;ScalarValue&gt;],
-<a href=#2166 id=2166 data-nosnippet>2166</a>    column: <span class="kw-2">&amp;</span>str,
-<a href=#2167 id=2167 data-nosnippet>2167</a>) -&gt; <span class="prelude-ty">Result</span>&lt;RequiredScalarColumnData, TableError&gt; {
-<a href=#2168 id=2168 data-nosnippet>2168</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(first) = values.iter().find_map(|value| value.as_ref()) <span class="kw">else </span>{
-<a href=#2169 id=2169 data-nosnippet>2169</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2170 id=2170 data-nosnippet>2170</a>            <span class="string">"required scalar column {column} has no values"
-<a href=#2171 id=2171 data-nosnippet>2171</a>        </span>)));
-<a href=#2172 id=2172 data-nosnippet>2172</a>    };
-<a href=#2173 id=2173 data-nosnippet>2173</a>    <span class="kw">match </span>first {
-<a href=#2174 id=2174 data-nosnippet>2174</a>        ScalarValue::Bool(<span class="kw">_</span>) =&gt; values
-<a href=#2175 id=2175 data-nosnippet>2175</a>            .iter()
-<a href=#2176 id=2176 data-nosnippet>2176</a>            .enumerate()
-<a href=#2177 id=2177 data-nosnippet>2177</a>            .map(|(row, value)| <span class="kw">match </span>value {
-<a href=#2178 id=2178 data-nosnippet>2178</a>                <span class="prelude-val">Some</span>(ScalarValue::Bool(value)) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
-<a href=#2179 id=2179 data-nosnippet>2179</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2180 id=2180 data-nosnippet>2180</a>                    <span class="string">"required scalar column {column} row {row} is not Bool"
-<a href=#2181 id=2181 data-nosnippet>2181</a>                </span>))),
-<a href=#2182 id=2182 data-nosnippet>2182</a>            })
-<a href=#2183 id=2183 data-nosnippet>2183</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#2184 id=2184 data-nosnippet>2184</a>            .map(RequiredScalarColumnData::Bool),
-<a href=#2185 id=2185 data-nosnippet>2185</a>        ScalarValue::Int32(<span class="kw">_</span>) =&gt; values
-<a href=#2186 id=2186 data-nosnippet>2186</a>            .iter()
-<a href=#2187 id=2187 data-nosnippet>2187</a>            .enumerate()
-<a href=#2188 id=2188 data-nosnippet>2188</a>            .map(|(row, value)| <span class="kw">match </span>value {
-<a href=#2189 id=2189 data-nosnippet>2189</a>                <span class="prelude-val">Some</span>(ScalarValue::Int32(value)) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
-<a href=#2190 id=2190 data-nosnippet>2190</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2191 id=2191 data-nosnippet>2191</a>                    <span class="string">"required scalar column {column} row {row} is not Int32"
-<a href=#2192 id=2192 data-nosnippet>2192</a>                </span>))),
-<a href=#2193 id=2193 data-nosnippet>2193</a>            })
-<a href=#2194 id=2194 data-nosnippet>2194</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#2195 id=2195 data-nosnippet>2195</a>            .map(RequiredScalarColumnData::Int32),
-<a href=#2196 id=2196 data-nosnippet>2196</a>        ScalarValue::Float32(<span class="kw">_</span>) =&gt; values
-<a href=#2197 id=2197 data-nosnippet>2197</a>            .iter()
-<a href=#2198 id=2198 data-nosnippet>2198</a>            .enumerate()
-<a href=#2199 id=2199 data-nosnippet>2199</a>            .map(|(row, value)| <span class="kw">match </span>value {
-<a href=#2200 id=2200 data-nosnippet>2200</a>                <span class="prelude-val">Some</span>(ScalarValue::Float32(value)) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
-<a href=#2201 id=2201 data-nosnippet>2201</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2202 id=2202 data-nosnippet>2202</a>                    <span class="string">"required scalar column {column} row {row} is not Float32"
-<a href=#2203 id=2203 data-nosnippet>2203</a>                </span>))),
-<a href=#2204 id=2204 data-nosnippet>2204</a>            })
-<a href=#2205 id=2205 data-nosnippet>2205</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#2206 id=2206 data-nosnippet>2206</a>            .map(RequiredScalarColumnData::Float32),
-<a href=#2207 id=2207 data-nosnippet>2207</a>        ScalarValue::Float64(<span class="kw">_</span>) =&gt; values
-<a href=#2208 id=2208 data-nosnippet>2208</a>            .iter()
-<a href=#2209 id=2209 data-nosnippet>2209</a>            .enumerate()
-<a href=#2210 id=2210 data-nosnippet>2210</a>            .map(|(row, value)| <span class="kw">match </span>value {
-<a href=#2211 id=2211 data-nosnippet>2211</a>                <span class="prelude-val">Some</span>(ScalarValue::Float64(value)) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
-<a href=#2212 id=2212 data-nosnippet>2212</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2213 id=2213 data-nosnippet>2213</a>                    <span class="string">"required scalar column {column} row {row} is not Float64"
-<a href=#2214 id=2214 data-nosnippet>2214</a>                </span>))),
-<a href=#2215 id=2215 data-nosnippet>2215</a>            })
-<a href=#2216 id=2216 data-nosnippet>2216</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#2217 id=2217 data-nosnippet>2217</a>            .map(RequiredScalarColumnData::Float64),
-<a href=#2218 id=2218 data-nosnippet>2218</a>        other =&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
-<a href=#2219 id=2219 data-nosnippet>2219</a>            <span class="string">"required scalar column {column} has unsupported type {:?}"</span>,
-<a href=#2220 id=2220 data-nosnippet>2220</a>            other.primitive_type()
-<a href=#2221 id=2221 data-nosnippet>2221</a>        ))),
-<a href=#2222 id=2222 data-nosnippet>2222</a>    }
-<a href=#2223 id=2223 data-nosnippet>2223</a>}
+<a href=#2083 id=2083 data-nosnippet>2083</a>
+<a href=#2084 id=2084 data-nosnippet>2084</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>has_pending_scalar_cells(<span class="kw-2">&amp;</span><span class="self">self</span>, column: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#2085 id=2085 data-nosnippet>2085</a>        <span class="self">self</span>.pending_scalar_cells
+<a href=#2086 id=2086 data-nosnippet>2086</a>            .by_column
+<a href=#2087 id=2087 data-nosnippet>2087</a>            .get(column)
+<a href=#2088 id=2088 data-nosnippet>2088</a>            .is_some_and(|cells| !cells.is_empty())
+<a href=#2089 id=2089 data-nosnippet>2089</a>    }
+<a href=#2090 id=2090 data-nosnippet>2090</a>}
+<a href=#2091 id=2091 data-nosnippet>2091</a>
+<a href=#2092 id=2092 data-nosnippet>2092</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>path_heap_bytes(path: <span class="kw-2">&amp;</span>std::path::Path) -&gt; usize {
+<a href=#2093 id=2093 data-nosnippet>2093</a>    <span class="attr">#[cfg(unix)]
+<a href=#2094 id=2094 data-nosnippet>2094</a>    </span>{
+<a href=#2095 id=2095 data-nosnippet>2095</a>        <span class="kw">use </span>std::os::unix::ffi::OsStrExt;
+<a href=#2096 id=2096 data-nosnippet>2096</a>        path.as_os_str().as_bytes().len()
+<a href=#2097 id=2097 data-nosnippet>2097</a>    }
+<a href=#2098 id=2098 data-nosnippet>2098</a>    <span class="attr">#[cfg(not(unix))]
+<a href=#2099 id=2099 data-nosnippet>2099</a>    </span>{
+<a href=#2100 id=2100 data-nosnippet>2100</a>        path.as_os_str().to_string_lossy().len()
+<a href=#2101 id=2101 data-nosnippet>2101</a>    }
+<a href=#2102 id=2102 data-nosnippet>2102</a>}
+<a href=#2103 id=2103 data-nosnippet>2103</a>
+<a href=#2104 id=2104 data-nosnippet>2104</a><span class="kw">fn </span>string_keyed_map_heap_bytes&lt;V&gt;(map: <span class="kw-2">&amp;</span>HashMap&lt;String, V&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#2105 id=2105 data-nosnippet>2105</a>    map.capacity()
+<a href=#2106 id=2106 data-nosnippet>2106</a>        .checked_mul(size_of::&lt;(String, V)&gt;())<span class="question-mark">?
+<a href=#2107 id=2107 data-nosnippet>2107</a>        </span>.checked_add(
+<a href=#2108 id=2108 data-nosnippet>2108</a>            map.keys()
+<a href=#2109 id=2109 data-nosnippet>2109</a>                .try_fold(<span class="number">0_usize</span>, |bytes, key| bytes.checked_add(key.capacity()))<span class="question-mark">?</span>,
+<a href=#2110 id=2110 data-nosnippet>2110</a>        )
+<a href=#2111 id=2111 data-nosnippet>2111</a>}
+<a href=#2112 id=2112 data-nosnippet>2112</a>
+<a href=#2113 id=2113 data-nosnippet>2113</a><span class="kw">fn </span>required_scalar_column_data_len(values: <span class="kw-2">&amp;</span>RequiredScalarColumnData) -&gt; usize {
+<a href=#2114 id=2114 data-nosnippet>2114</a>    <span class="kw">match </span>values {
+<a href=#2115 id=2115 data-nosnippet>2115</a>        RequiredScalarColumnData::Bool(values) =&gt; values.len(),
+<a href=#2116 id=2116 data-nosnippet>2116</a>        RequiredScalarColumnData::Int32(values) =&gt; values.len(),
+<a href=#2117 id=2117 data-nosnippet>2117</a>        RequiredScalarColumnData::Float32(values) =&gt; values.len(),
+<a href=#2118 id=2118 data-nosnippet>2118</a>        RequiredScalarColumnData::Float64(values) =&gt; values.len(),
+<a href=#2119 id=2119 data-nosnippet>2119</a>    }
+<a href=#2120 id=2120 data-nosnippet>2120</a>}
+<a href=#2121 id=2121 data-nosnippet>2121</a>
+<a href=#2122 id=2122 data-nosnippet>2122</a><span class="kw">fn </span>set_required_scalar_column_value(
+<a href=#2123 id=2123 data-nosnippet>2123</a>    values: <span class="kw-2">&amp;mut </span>RequiredScalarColumnData,
+<a href=#2124 id=2124 data-nosnippet>2124</a>    row_index: usize,
+<a href=#2125 id=2125 data-nosnippet>2125</a>    value: <span class="kw-2">&amp;</span>ScalarValue,
+<a href=#2126 id=2126 data-nosnippet>2126</a>    column: <span class="kw-2">&amp;</span>str,
+<a href=#2127 id=2127 data-nosnippet>2127</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
+<a href=#2128 id=2128 data-nosnippet>2128</a>    <span class="kw">match </span>(values, value) {
+<a href=#2129 id=2129 data-nosnippet>2129</a>        (RequiredScalarColumnData::Bool(values), ScalarValue::Bool(value)) =&gt; {
+<a href=#2130 id=2130 data-nosnippet>2130</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = values.get_mut(row_index) <span class="kw">else </span>{
+<a href=#2131 id=2131 data-nosnippet>2131</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2132 id=2132 data-nosnippet>2132</a>                    <span class="string">"required scalar column {column} override row {row_index} is out of bounds"
+<a href=#2133 id=2133 data-nosnippet>2133</a>                </span>)));
+<a href=#2134 id=2134 data-nosnippet>2134</a>            };
+<a href=#2135 id=2135 data-nosnippet>2135</a>            <span class="kw-2">*</span>slot = <span class="kw-2">*</span>value;
+<a href=#2136 id=2136 data-nosnippet>2136</a>        }
+<a href=#2137 id=2137 data-nosnippet>2137</a>        (RequiredScalarColumnData::Int32(values), ScalarValue::Int32(value)) =&gt; {
+<a href=#2138 id=2138 data-nosnippet>2138</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = values.get_mut(row_index) <span class="kw">else </span>{
+<a href=#2139 id=2139 data-nosnippet>2139</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2140 id=2140 data-nosnippet>2140</a>                    <span class="string">"required scalar column {column} override row {row_index} is out of bounds"
+<a href=#2141 id=2141 data-nosnippet>2141</a>                </span>)));
+<a href=#2142 id=2142 data-nosnippet>2142</a>            };
+<a href=#2143 id=2143 data-nosnippet>2143</a>            <span class="kw-2">*</span>slot = <span class="kw-2">*</span>value;
+<a href=#2144 id=2144 data-nosnippet>2144</a>        }
+<a href=#2145 id=2145 data-nosnippet>2145</a>        (RequiredScalarColumnData::Float32(values), ScalarValue::Float32(value)) =&gt; {
+<a href=#2146 id=2146 data-nosnippet>2146</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = values.get_mut(row_index) <span class="kw">else </span>{
+<a href=#2147 id=2147 data-nosnippet>2147</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2148 id=2148 data-nosnippet>2148</a>                    <span class="string">"required scalar column {column} override row {row_index} is out of bounds"
+<a href=#2149 id=2149 data-nosnippet>2149</a>                </span>)));
+<a href=#2150 id=2150 data-nosnippet>2150</a>            };
+<a href=#2151 id=2151 data-nosnippet>2151</a>            <span class="kw-2">*</span>slot = <span class="kw-2">*</span>value;
+<a href=#2152 id=2152 data-nosnippet>2152</a>        }
+<a href=#2153 id=2153 data-nosnippet>2153</a>        (RequiredScalarColumnData::Float64(values), ScalarValue::Float64(value)) =&gt; {
+<a href=#2154 id=2154 data-nosnippet>2154</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(slot) = values.get_mut(row_index) <span class="kw">else </span>{
+<a href=#2155 id=2155 data-nosnippet>2155</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2156 id=2156 data-nosnippet>2156</a>                    <span class="string">"required scalar column {column} override row {row_index} is out of bounds"
+<a href=#2157 id=2157 data-nosnippet>2157</a>                </span>)));
+<a href=#2158 id=2158 data-nosnippet>2158</a>            };
+<a href=#2159 id=2159 data-nosnippet>2159</a>            <span class="kw-2">*</span>slot = <span class="kw-2">*</span>value;
+<a href=#2160 id=2160 data-nosnippet>2160</a>        }
+<a href=#2161 id=2161 data-nosnippet>2161</a>        (<span class="kw">_</span>, other) =&gt; {
+<a href=#2162 id=2162 data-nosnippet>2162</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2163 id=2163 data-nosnippet>2163</a>                <span class="string">"required scalar column {column} override has incompatible type {:?}"</span>,
+<a href=#2164 id=2164 data-nosnippet>2164</a>                other.primitive_type()
+<a href=#2165 id=2165 data-nosnippet>2165</a>            )));
+<a href=#2166 id=2166 data-nosnippet>2166</a>        }
+<a href=#2167 id=2167 data-nosnippet>2167</a>    }
+<a href=#2168 id=2168 data-nosnippet>2168</a>    <span class="prelude-val">Ok</span>(())
+<a href=#2169 id=2169 data-nosnippet>2169</a>}
+<a href=#2170 id=2170 data-nosnippet>2170</a>
+<a href=#2171 id=2171 data-nosnippet>2171</a><span class="kw">fn </span>required_scalar_column_data_from_optional_scalars(
+<a href=#2172 id=2172 data-nosnippet>2172</a>    values: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;ScalarValue&gt;],
+<a href=#2173 id=2173 data-nosnippet>2173</a>    column: <span class="kw-2">&amp;</span>str,
+<a href=#2174 id=2174 data-nosnippet>2174</a>) -&gt; <span class="prelude-ty">Result</span>&lt;RequiredScalarColumnData, TableError&gt; {
+<a href=#2175 id=2175 data-nosnippet>2175</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(first) = values.iter().find_map(|value| value.as_ref()) <span class="kw">else </span>{
+<a href=#2176 id=2176 data-nosnippet>2176</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2177 id=2177 data-nosnippet>2177</a>            <span class="string">"required scalar column {column} has no values"
+<a href=#2178 id=2178 data-nosnippet>2178</a>        </span>)));
+<a href=#2179 id=2179 data-nosnippet>2179</a>    };
+<a href=#2180 id=2180 data-nosnippet>2180</a>    <span class="kw">match </span>first {
+<a href=#2181 id=2181 data-nosnippet>2181</a>        ScalarValue::Bool(<span class="kw">_</span>) =&gt; values
+<a href=#2182 id=2182 data-nosnippet>2182</a>            .iter()
+<a href=#2183 id=2183 data-nosnippet>2183</a>            .enumerate()
+<a href=#2184 id=2184 data-nosnippet>2184</a>            .map(|(row, value)| <span class="kw">match </span>value {
+<a href=#2185 id=2185 data-nosnippet>2185</a>                <span class="prelude-val">Some</span>(ScalarValue::Bool(value)) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
+<a href=#2186 id=2186 data-nosnippet>2186</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2187 id=2187 data-nosnippet>2187</a>                    <span class="string">"required scalar column {column} row {row} is not Bool"
+<a href=#2188 id=2188 data-nosnippet>2188</a>                </span>))),
+<a href=#2189 id=2189 data-nosnippet>2189</a>            })
+<a href=#2190 id=2190 data-nosnippet>2190</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#2191 id=2191 data-nosnippet>2191</a>            .map(RequiredScalarColumnData::Bool),
+<a href=#2192 id=2192 data-nosnippet>2192</a>        ScalarValue::Int32(<span class="kw">_</span>) =&gt; values
+<a href=#2193 id=2193 data-nosnippet>2193</a>            .iter()
+<a href=#2194 id=2194 data-nosnippet>2194</a>            .enumerate()
+<a href=#2195 id=2195 data-nosnippet>2195</a>            .map(|(row, value)| <span class="kw">match </span>value {
+<a href=#2196 id=2196 data-nosnippet>2196</a>                <span class="prelude-val">Some</span>(ScalarValue::Int32(value)) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
+<a href=#2197 id=2197 data-nosnippet>2197</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2198 id=2198 data-nosnippet>2198</a>                    <span class="string">"required scalar column {column} row {row} is not Int32"
+<a href=#2199 id=2199 data-nosnippet>2199</a>                </span>))),
+<a href=#2200 id=2200 data-nosnippet>2200</a>            })
+<a href=#2201 id=2201 data-nosnippet>2201</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#2202 id=2202 data-nosnippet>2202</a>            .map(RequiredScalarColumnData::Int32),
+<a href=#2203 id=2203 data-nosnippet>2203</a>        ScalarValue::Float32(<span class="kw">_</span>) =&gt; values
+<a href=#2204 id=2204 data-nosnippet>2204</a>            .iter()
+<a href=#2205 id=2205 data-nosnippet>2205</a>            .enumerate()
+<a href=#2206 id=2206 data-nosnippet>2206</a>            .map(|(row, value)| <span class="kw">match </span>value {
+<a href=#2207 id=2207 data-nosnippet>2207</a>                <span class="prelude-val">Some</span>(ScalarValue::Float32(value)) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
+<a href=#2208 id=2208 data-nosnippet>2208</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2209 id=2209 data-nosnippet>2209</a>                    <span class="string">"required scalar column {column} row {row} is not Float32"
+<a href=#2210 id=2210 data-nosnippet>2210</a>                </span>))),
+<a href=#2211 id=2211 data-nosnippet>2211</a>            })
+<a href=#2212 id=2212 data-nosnippet>2212</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#2213 id=2213 data-nosnippet>2213</a>            .map(RequiredScalarColumnData::Float32),
+<a href=#2214 id=2214 data-nosnippet>2214</a>        ScalarValue::Float64(<span class="kw">_</span>) =&gt; values
+<a href=#2215 id=2215 data-nosnippet>2215</a>            .iter()
+<a href=#2216 id=2216 data-nosnippet>2216</a>            .enumerate()
+<a href=#2217 id=2217 data-nosnippet>2217</a>            .map(|(row, value)| <span class="kw">match </span>value {
+<a href=#2218 id=2218 data-nosnippet>2218</a>                <span class="prelude-val">Some</span>(ScalarValue::Float64(value)) =&gt; <span class="prelude-val">Ok</span>(<span class="kw-2">*</span>value),
+<a href=#2219 id=2219 data-nosnippet>2219</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2220 id=2220 data-nosnippet>2220</a>                    <span class="string">"required scalar column {column} row {row} is not Float64"
+<a href=#2221 id=2221 data-nosnippet>2221</a>                </span>))),
+<a href=#2222 id=2222 data-nosnippet>2222</a>            })
+<a href=#2223 id=2223 data-nosnippet>2223</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#2224 id=2224 data-nosnippet>2224</a>            .map(RequiredScalarColumnData::Float64),
+<a href=#2225 id=2225 data-nosnippet>2225</a>        other =&gt; <span class="prelude-val">Err</span>(TableError::Storage(<span class="macro">format!</span>(
+<a href=#2226 id=2226 data-nosnippet>2226</a>            <span class="string">"required scalar column {column} has unsupported type {:?}"</span>,
+<a href=#2227 id=2227 data-nosnippet>2227</a>            other.primitive_type()
+<a href=#2228 id=2228 data-nosnippet>2228</a>        ))),
+<a href=#2229 id=2229 data-nosnippet>2229</a>    }
+<a href=#2230 id=2230 data-nosnippet>2230</a>}
 </code></pre></div></section></main></body></html>

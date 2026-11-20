@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a>            document::document(<span class="string">"observe"</span>, panels, columns),
 <a href=#58 id=58 data-nosnippet>58</a>        ));
 <a href=#59 id=59 data-nosnippet>59</a>    }
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">let </span>bytes = payload.finish()<span class="question-mark">?</span>;
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">let </span>bytes = payload.finish().map_err(failure)<span class="question-mark">?</span>;
 <a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">for </span>plot <span class="kw">in </span><span class="kw-2">&amp;</span>plots {
 <a href=#62 id=62 data-nosnippet>62</a>        plot.document.validate_payload(bytes).map_err(failure)<span class="question-mark">?</span>;
 <a href=#63 id=63 data-nosnippet>63</a>    }
@@ -79,10 +79,10 @@
 <a href=#79 id=79 data-nosnippet>79</a>}
 <a href=#80 id=80 data-nosnippet>80</a>
 <a href=#81 id=81 data-nosnippet>81</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>open(path: <span class="kw-2">&amp;</span>std::path::Path) -&gt; <span class="prelude-ty">Result</span>&lt;Payload, SimobserveError&gt; {
-<a href=#82 id=82 data-nosnippet>82</a>    Payload::open(path)
+<a href=#82 id=82 data-nosnippet>82</a>    Payload::open(path).map_err(failure)
 <a href=#83 id=83 data-nosnippet>83</a>}
 <a href=#84 id=84 data-nosnippet>84</a>
 <a href=#85 id=85 data-nosnippet>85</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>open_append(path: <span class="kw-2">&amp;</span>std::path::Path) -&gt; <span class="prelude-ty">Result</span>&lt;Payload, SimobserveError&gt; {
-<a href=#86 id=86 data-nosnippet>86</a>    Payload::append(path)
+<a href=#86 id=86 data-nosnippet>86</a>    Payload::append(path).map_err(failure)
 <a href=#87 id=87 data-nosnippet>87</a>}
 </code></pre></div></section></main></body></html>
