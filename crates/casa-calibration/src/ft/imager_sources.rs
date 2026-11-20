@@ -39,10 +39,13 @@ impl ModelSources {
 
     pub(super) fn open_images(&mut self, paths: &[PathBuf]) -> MsResult<()> {
         for path in paths {
-            if let Entry::Vacant(slot) = self.images.entry(path.clone()) {
-                // Keep the table/file handle with a small cache so a live
-                // imager can still use an opened image after it moves.
-                slot.insert(PagedImage::open_with_cache(path, 1).map_err(invalid)?);
+            match self.images.entry(path.clone()) {
+                Entry::Occupied(slot) => slot.get().discard_clean_pixel_cache(),
+                Entry::Vacant(slot) => {
+                    // Keep the table/file handle with a small cache so a live
+                    // imager can still use an opened image after it moves.
+                    slot.insert(PagedImage::open_with_cache(path, 1).map_err(invalid)?);
+                }
             }
         }
         Ok(())

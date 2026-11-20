@@ -8107,3 +8107,13 @@ failure can occur with a Stokes axis because the method excludes Stokes
 from the edit. casa-rs changes both reference values on each enabled
 non-Stokes axis and preserves both values on the other axes. It publishes
 the updated coordinate state only after the complete edit succeeds.
+
+## `imager.ft` can crash after a refused duplicate image with a new component
+
+With the same live CASA 6.7.6.14 imager, predict an image, then submit that
+image again together with an unused component list. `ft` reports a duplicate
+image. A subsequent call with just the component reports that the component
+is already present, and a no-input `ft()` can terminate with `SIGSEGV`.
+casa-rs refuses the mixed duplicate request before adding the component.
+The same imager can repeat the original image prediction and can subsequently
+add the component alone.

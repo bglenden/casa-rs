@@ -76,6 +76,49 @@ def scratch_controls(root, dataset, factory, options, expected):
     assert tool.done()
 
 
+def mixed_duplicate(root, dataset, factory, options, expected):
+    target = root / 'mixed-duplicate.ms'
+    make_input(dataset, target, scratch=True)
+    tool = configured_imager(factory, target, root / 'unused-cache', scratch=True, machine='ft')
+    assert tool.ft(**options['image'])
+    before = data(target, 'MODEL_DATA')
+    assert not tool.ft(**options['image'], **options['components'])
+    np.testing.assert_array_equal(data(target, 'MODEL_DATA'), before)
+    assert tool.ft()
+    np.testing.assert_array_equal(data(target, 'MODEL_DATA'), before)
+    assert tool.ft(**options['components']) and tool.done()
+    np.testing.assert_array_equal(data(target, 'MODEL_DATA'), expected)
+
+
+def edited_sources(root, dataset, model, engines, results):
+    reader = image()
+    assert reader.open(str(model))
+    original = reader.getchunk()
+    assert reader.done()
+    for label, volume in (('single-tile', 1 << 28), ('many-tiles', 1)):
+        values = {}
+        for engine, factory in engines:
+            target = root / f'{label}-{engine}.ms'
+            local_model = root / f'{label}-{engine}.im'
+            make_input(dataset, target, scratch=True)
+            maker = configured_imager(imager, target, root / 'unused-cache', scratch=True, machine='ft')
+            assert maker.setoptions(imagetilevol=volume, numthreads=1)
+            assert maker.ft(str(local_model)) and maker.done()
+            assert reader.open(str(local_model))
+            entry = reader.summary()['tileshape']
+            assert (list(entry) == list(original.shape)) == (label == 'single-tile')
+            assert reader.putchunk(original) and reader.done()
+            tool = configured_imager(factory, target, root / 'unused-cache', scratch=True, machine='ft')
+            assert tool.ft(str(local_model))
+            first = data(target, 'MODEL_DATA')
+            assert reader.open(str(local_model))
+            assert reader.putchunk(original * 2.) and reader.done()
+            assert tool.ft() and tool.done()
+            values[engine] = data(target, 'MODEL_DATA')
+            assert relative_rms(values[engine], first) > .1, (label, engine)
+        compare(values['native'], values['casa'], f'{label}-edited-pixels', results)
+
+
 def moved_source(root, dataset, factory, first, second, model, expected):
     root.mkdir()
     local_model = root / 'model.im'
@@ -86,6 +129,11 @@ def moved_source(root, dataset, factory, first, second, model, expected):
     keywords = {'image': 'model', 'components': 'complist'}
     target = root / 'source-moved.ms'
     make_input(dataset, target, scratch=True)
+    if first == 'image':
+        pixel_files = list(local_model.glob('table.f*_TSM*'))
+        assert pixel_files
+        for path in pixel_files:
+            path.chmod(0o444)
     tool = configured_imager(factory, target, root / 'unused-cache', scratch=True, machine='ft')
     assert tool.ft(**{keywords[first]: str(paths[first])})
     paths[first].rename(root / 'moved-source')
@@ -162,8 +210,11 @@ def run(root, dataset, model):
                         controls = case / engine
                         controls.mkdir()
                         scratch_controls(controls, dataset, factory, options, scratch[engine])
+                    mixed_duplicate(case, dataset, native, options, scratch['native'])
                 else:
                     retry_image(case / 'retry', dataset, native, options, model, scratch['native'])
+    with TemporaryDirectory(dir=root) as attempt:
+        edited_sources(Path(attempt), dataset, model, engines, results)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
