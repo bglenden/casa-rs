@@ -1011,8 +1011,7 @@ def flagdata(
     ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
     ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
     ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
-    ``flagneartime``, ``flagnearfreq``, ``minrel``, ``maxrel``, ``minabs``,
-    ``maxabs``, ``basecnt``, ``fieldcnt``, ``display``, ``savepars``,
+    ``flagneartime``, ``flagnearfreq``, ``display``, ``savepars``,
     ``cmdreason``, ``outfile``, ``overwrite``, ``writeflags``.
     """
     return _call_casa(flagdata, locals())

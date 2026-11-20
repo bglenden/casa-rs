@@ -82,6 +82,12 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         summary_options: FlagSummaryOptions {
             spwchan: task.flag("spwchan")?,
             spwcorr: task.flag("spwcorr")?,
+            basecnt: task.flag("basecnt")?,
+            fieldcnt: task.flag("fieldcnt")?,
+            minrel: task.number("minrel")?,
+            maxrel: task.number("maxrel")?,
+            minabs: task.integer("minabs")?,
+            maxabs: task.integer("maxabs")?,
         },
         clipzeros: task.flag("clipzeros")?,
         quackinterval: task.number("quackinterval")?,
