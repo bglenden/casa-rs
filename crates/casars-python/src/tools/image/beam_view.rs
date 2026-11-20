@@ -38,6 +38,16 @@ impl BeamView {
         &self.record
     }
 
+    pub(super) fn apply_to(&self, info: &mut RecordValue) {
+        for field in BEAM_INFO_FIELDS {
+            if let Some(value) = self.record.get(field) {
+                info.upsert(field, value.clone());
+            } else {
+                info.remove(field);
+            }
+        }
+    }
+
     pub(super) fn beam_set(&self) -> Result<ImageBeamSet, Arc<ImageError>> {
         if let Some(error) = &self.invalid_info {
             return Err(Arc::clone(error));

@@ -22,8 +22,8 @@ use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_
 use super::imager_definition::ImagerDefinitionRequest;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
 use super::settings::{
-    ImagerGridder, ImagerLegacyPbWOptions, ImagerSingleDishSetup, ImagerTransformOptions,
-    PredictionGeometry,
+    ImagerGridder, ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerSingleDishSetup,
+    ImagerTransformOptions, PredictionGeometry,
 };
 use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
@@ -60,10 +60,12 @@ pub struct ImagerPrediction {
     ft_location: Option<MPosition>,
     options: ImagerTransformOptions,
     legacy_pbw: Option<ImagerLegacyPbWOptions>,
+    legacy_aw: Option<ImagerLegacyAwOptions>,
     single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
     apply_voltage_pattern: bool,
+    voltage_squint: bool,
     mosaic_voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
@@ -123,10 +125,12 @@ impl Default for ImagerPrediction {
             ft_location: None,
             options: ImagerTransformOptions::default(),
             legacy_pbw: None,
+            legacy_aw: None,
             single_dish_setup: ImagerSingleDishSetup::default(),
             taylor: (1, None),
             voltage_pattern: None,
             apply_voltage_pattern: false,
+            voltage_squint: false,
             mosaic_voltage_pattern: None,
             pending_publication: None,
             partial_batch: None,
@@ -173,6 +177,7 @@ impl ImagerPrediction {
         self.ft_location = options.observatory_override();
         self.options = options;
         self.legacy_pbw = None;
+        self.legacy_aw = None;
         self.reset_fourier_machine();
     }
 
@@ -197,6 +202,20 @@ impl ImagerPrediction {
     ) -> MsResult<()> {
         self.configure_transform(options)?;
         self.legacy_pbw = Some(legacy_pbw);
+        Ok(())
+    }
+
+    /// Select legacy AW prediction for subsequent transforms.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_legacy_aw(
+        &mut self,
+        options: ImagerTransformOptions,
+        legacy_aw: ImagerLegacyAwOptions,
+    ) -> MsResult<()> {
+        self.configure_transform(options)?;
+        self.legacy_aw = Some(legacy_aw);
         Ok(())
     }
 
@@ -245,6 +264,7 @@ impl ImagerPrediction {
     pub fn set_voltage_pattern(&mut self, pattern: Option<ImagerVoltagePattern>) {
         self.apply_voltage_pattern = pattern.is_some();
         self.voltage_pattern = pattern;
+        self.voltage_squint = false;
     }
 
     /// Update the voltage pattern for future predictions.
@@ -269,6 +289,20 @@ impl ImagerPrediction {
         pattern: Option<ImagerVoltagePattern>,
         apply: bool,
     ) -> MsResult<()> {
+        self.configure_voltage_pattern_squint(pattern, apply, false)
+    }
+
+    /// Configure the gridding beam and apply it with optional circular-feed
+    /// squint when preparing a polarized legacy Fourier model.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_voltage_pattern_squint(
+        &mut self,
+        pattern: Option<ImagerVoltagePattern>,
+        apply: bool,
+        squint: bool,
+    ) -> MsResult<()> {
         if self.partial_batch.is_some() || self.pending_publication.is_some() {
             return Err(invalid(
                 "finish publishing the previous imager prediction before changing the voltage pattern",
@@ -276,6 +310,7 @@ impl ImagerPrediction {
         }
         self.voltage_pattern = pattern;
         self.apply_voltage_pattern = apply;
+        self.voltage_squint = squint;
         Ok(())
     }
 
@@ -517,6 +552,14 @@ impl ImagerPrediction {
             return Ok(None);
         }
         let mosaic = matches!(self.options.gridder, ImagerGridder::Mosaic);
+        if self.apply_voltage_pattern
+            && self.voltage_squint
+            && (mosaic || self.options.single_dish.is_some())
+        {
+            return Err(invalid(
+                "this legacy beam-squint Fourier mode is pending #1520",
+            ));
+        }
         // MosaicFT uses its convolution beam directly.
         let pattern = self
             .voltage_pattern
@@ -629,7 +672,7 @@ impl ImagerPrediction {
                 let mut field = selected.clone();
                 for (_, rows) in fields {
                     field.selected_rows = rows;
-                    let voltage_pattern = pattern.prepare(ms, &field)?;
+                    let voltage_pattern = pattern.prepare(ms, &field, self.voltage_squint, true)?;
                     images.extend(self.prepare_images(
                         ms,
                         &field,
@@ -645,7 +688,7 @@ impl ImagerPrediction {
                 // virtual combinations. Its scratch iterator can change
                 // the beam as it advances to another field.
                 let voltage_pattern = pattern
-                    .map(|pattern| pattern.prepare(ms, selected))
+                    .map(|pattern| pattern.prepare(ms, selected, self.voltage_squint, scratch))
                     .transpose()?;
                 images = self.prepare_images(
                     ms,
@@ -712,11 +755,12 @@ impl ImagerPrediction {
         let facets = self.facet_count();
         let dish = self.options.single_dish;
         let legacy_pbw = self.legacy_pbw.as_ref();
-        if legacy_pbw.is_some()
+        let legacy_aw = self.legacy_aw.as_ref();
+        if (legacy_pbw.is_some() || legacy_aw.is_some())
             && (terms > 1 || facets > 1 || dish.is_some() || voltage_pattern.is_some())
         {
             return Err(invalid(
-                "this legacy pbwproject model combination is pending #1520",
+                "this legacy PB/W or AW model combination is pending #1520",
             ));
         }
         if let Some(choice) = dish {
@@ -786,6 +830,10 @@ impl ImagerPrediction {
             if let Some(legacy_pbw) = legacy_pbw {
                 images.extend(super::legacy_pbw::prepare_model(
                     ms, selected, path, &geometry, legacy_pbw, keep_zero, scratch,
+                )?);
+            } else if let Some(legacy_aw) = legacy_aw {
+                images.extend(super::legacy_aw::prepare_model(
+                    ms, selected, path, &geometry, legacy_aw, keep_zero, scratch,
                 )?);
             } else if dish.is_none_or(|choice| choice.combined) {
                 images.extend(prepare_configured_images(

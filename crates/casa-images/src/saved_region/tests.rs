@@ -108,6 +108,21 @@ fn region_statistics_follow_polygon_membership() {
 }
 
 #[test]
+fn polygon_bounds_on_large_cube_use_plane_selections() {
+    let coordinates = direction_spectral_coords();
+    let region = region_with(
+        &coordinates,
+        &[&[[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]]],
+    );
+    let bounds = region
+        .bounds(&coordinates, &[2048, 2048, 256])
+        .unwrap()
+        .unwrap();
+    assert_eq!(bounds.start, [1, 1, 0]);
+    assert_eq!(bounds.shape, [3, 3, 256]);
+}
+
+#[test]
 fn region_statistics_respect_image_mask_and_finite_values() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("region-masked-stats.image");

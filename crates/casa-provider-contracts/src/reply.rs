@@ -49,6 +49,10 @@ pub struct TaskRunRequest {
     /// scalars nested within records. A name must appear in only one map.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub typed_values: std::collections::BTreeMap<String, crate::ParameterValue>,
+    /// Caller-side argument representations for recorded commands. They are
+    /// separate from the values resolved and used to execute this request.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub argument_text: std::collections::BTreeMap<String, String>,
 }
 
 /// Why a task did not succeed.

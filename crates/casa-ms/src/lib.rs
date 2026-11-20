@@ -96,8 +96,8 @@ pub use flagging::calculate_flagdata_path;
 pub use flagging::{
     FlagCounts, FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
     FlagMerge, FlagSummaryBreakdown, FlagSummaryOptions, FlagVersionEntry, FlaggingError,
-    QuackMode, delete_flag_version, flag_version_ms_path, flagdata, flagdata_path,
-    initialize_flag_versions, list_flag_versions, rename_flag_version,
+    QuackMode, append_flag_command, delete_flag_version, flag_version_ms_path, flagdata,
+    flagdata_path, initialize_flag_versions, list_flag_versions, rename_flag_version,
     rename_flag_version_for_task, restore_flag_version, save_flag_version,
     save_next_casa_flag_backup, save_next_flag_backup, save_next_partition_flag_backup,
 };
@@ -190,7 +190,8 @@ pub use task_contract::{
 pub use task_front_end::{ms_task_success, task_flag_merge, task_selection_text};
 pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, MsTransformTaskOptions,
-    TimeAverageOptions, TransformDataColumn, TransformTaskHistory, mstransform, mstransform_task,
+    TimeAverageOptions, TransformDataColumn, TransformTaskHistory, append_task_history,
+    mstransform, mstransform_task,
 };
 pub use virtual_model::{
     VirtualModelCombinations, VirtualModelEntry, VirtualModelKind, VirtualModelRecord,

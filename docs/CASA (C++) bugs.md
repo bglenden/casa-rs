@@ -5665,6 +5665,24 @@ rejects the cycle before changing the component.
 CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
 casa-rs rejects a non-finite shape or error before mutation.
 
+## `image.toworld` and `image.topixel` abort on a multidimensional numeric record
+
+Attach a 4 by 4 float image, then call either method with
+`{"numeric": np.array([[1., 2.], [3., 4.]])}`. CASA 6.7.6.14 terminates
+with SIGABRT and `Vector<T>: ndim of other array > 1`. The casa-rs tool
+raises `RuntimeError` because the numeric field must be one-dimensional.
+The direct array form of a pixel position still accepts CASA's flattened
+input.
+
+## `image.topixel` can write outside the world vector for a sliced direction measure
+
+Create a CASA image with shape `[1, 8, 6]`, call `child = ia.subimage(dropdeg=True)`,
+then call `child.topixel(child.toworld([2, 1], "m"))`. CASA 6.7.6.14 aborts with
+`free(): invalid pointer` after assigning the removed longitude through a
+negative world-axis index. casa-rs uses the surviving declination and spectral
+measure and returns `[2, 1]`, consistent with the numeric, quantity, and
+string encodings of the same position.
+
 ## Measures spectral conversions reject or truncate valid vectors
 
 CASA 6.7.6.14 `me.tofrequency` and `me.toradialvelocity` return only the
@@ -7807,6 +7825,24 @@ casa-rs resolves the operand paths when creating the result and returns 6
 with the original FITS metadata. The FITS handle is opened on the first pixel
 read and retained for subsequent reads. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
 
+## `image.addnoise` can erase pixels or fail to return on unusable input
+
+Fill an image with nonzero pixels and call
+`ia.addnoise("normal", [0, -1], zero=True, seeds=[1, 2])`. CASA 6.7.6.14
+zeros the region before reporting an illegal variance. An unknown
+distribution such as `"bogus"` has the same destructive order. casa-rs
+validates the distribution before writing the existing image.
+Passing `seeds=None` explicitly can also change the image before the Python
+wrapper raises `SystemError`. casa-rs rejects that argument before changing
+pixels.
+
+CASA also fails to return for a one-pixel image with
+`ia.addnoise("geometric", [0], seeds=[1, 2])` or
+`ia.addnoise("poisson", [800], seeds=[1, 2])`. The geometric rejection loop
+cannot draw a uniform zero with those seeds. The Poisson bound underflows to
+zero, leaving its product loop true after the product reaches zero. casa-rs
+returns a Python error for these inputs.
+
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
 With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and
@@ -7974,6 +8010,7 @@ pixels, the same call can terminate the process.
 
 casa-rs averages valid pixels over the requested axes and retains all
 other axes, for every supported image pixel type (#1627).
+
 ## Image statistics can report an extremum outside the sampled pixels
 
 In CASA 6.7.6.14, `ia.statistics(region=...)` on a box starting at
@@ -7992,3 +8029,47 @@ process. casa-rs raises an error for the duplicate axis.
 
 The pinned biweight algorithm can also terminate when every selected
 pixel is masked. casa-rs returns a recoverable error for the empty sample.
+
+## Setting the pixels of a complex image can terminate CASA
+
+On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
+type="c")` followed by `image.set(pixels=2)` terminates Python with SIGSEGV.
+casa-rs raises `RuntimeError` and preserves the complex image. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Legacy AW prediction needs a usable sensitivity image for PB correction
+
+With CASA 6.7.6.14, the legacy `imager.ft` routes `awproject` and
+`mawproject` predict the same visibilities on the original VLA fixture.
+A `tclean` CFS cache works directly when `dopbgriddingcorrections=False`.
+With correction enabled, the legacy imager fails in its sensitivity-image
+lattice setup if the cache contains no `avgPB`. Supplying an `avgPB` image
+with the model's axes permits the corrected prediction. The cold legacy
+run on the same fixture fails while setting up its convolution cells.
+
+The legacy writer emits the model image and the `AWProjectWBFT` name but
+omits its convolution cache. Its own `ms.uvsub` reports `Unsupported
+FTMachine`. Casa-rs retains the kernel images with the model. CASA can
+open the backing images, and native `ms.uvsub` uses them after the source
+cache has moved. The native reader reports an error if the saved recipe
+has no retained kernel images.
+[`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## `image.insert` aborts for a source that misses along one axis
+
+CASA 6.7.6.14 terminates with SIGABRT and `Slicer error:end<start` for a
+`[2, 2]` source inserted into a `[4, 4]` target at `locate=[10, 1]`
+or `[-10, 1]`. One axis overlaps. The other yields an empty clipped interval.
+The casa-rs tool raises a Python `RuntimeError` before writing pixels or mask
+bits.
+
+## `image.insert` can replace unread source pixels during a self-insert
+
+Create a native float image from a 1510 by 1510 ramp in NumPy row order and
+insert the source region `box([0, 0], [1508, 1508])` into the same image at
+`locate=[1, 1]`. CASA 6.7.6.14 returns success and persists 27,063 wrong
+pixels. For example, `(2, 152)` contains 150 instead of the original value
+1661 from `(1, 151)`. The cursor writes overlap pixels that a subsequent
+cursor reads. casa-rs snapshots the selected pixels and validity before
+writing, using scratch storage when the overlap exceeds its memory budget.

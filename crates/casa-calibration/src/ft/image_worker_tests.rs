@@ -78,7 +78,9 @@ fn model_planes_use_distinct_workers_within_their_charge() {
                     images: vec![image],
                 }],
             };
-            operator.prepare_model(&model, ModelPrescale::Unit)
+            operator
+                .prepare_model(&model, ModelPrescale::Unit)
+                .map_err(invalid)
         },
         |index, grid| {
             assert_eq!(index, written);
