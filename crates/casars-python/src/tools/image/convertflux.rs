@@ -11,6 +11,7 @@ use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::beam_edit::beam_for_units;
+use super::beam_view::BeamView;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 
 struct FluxAreas {
@@ -72,9 +73,9 @@ fn checked_axis(axis: &Quantity, label: &str, radians: &Unit) -> PyResult<Quanti
 
 fn flux_conversion(
     image: &ImageHandle,
+    beam_view: &BeamView,
     value: Quantity,
-    major: Quantity,
-    minor: Quantity,
+    axes: [Quantity; 2],
     to_peak: bool,
     plane: (i64, i64),
     logs: &mut Vec<LogLine>,
@@ -90,8 +91,8 @@ fn flux_conversion(
             ))
         })?;
     let radians = Unit::new("rad").expect("built-in angle unit");
-    let major = checked_axis(&major, "Major", &radians)?;
-    let minor = checked_axis(&minor, "Minor", &radians)?;
+    let major = checked_axis(&axes[0], "Major", &radians)?;
+    let minor = checked_axis(&axes[1], "Minor", &radians)?;
     if major.value() < minor.value() {
         return Err(raised(
             "Exception: Major axis must be greater or equal to minor axis.",
@@ -99,7 +100,7 @@ fn flux_conversion(
     }
     let brightness =
         with_pixels!(image, storage => with_storage!(storage, image => image.units().to_owned()));
-    let beam = beam_for_units(image, plane.0, plane.1)?.map(|beam| {
+    let beam = beam_for_units(beam_view, plane.0, plane.1)?.map(|beam| {
         GaussianBeam::new(
             beam.component(BeamComponent::Major).get_si_value(),
             beam.component(BeamComponent::Minor).get_si_value(),
@@ -197,9 +198,12 @@ impl PyImageTool {
             }
             flux_conversion(
                 &image,
+                &attachment.beam_view(),
                 quantity(&value.unwrap_or(Variant::Empty))?,
-                quantity(&major.unwrap_or(Variant::Empty))?,
-                quantity(&minor.unwrap_or(Variant::Empty))?,
+                [
+                    quantity(&major.unwrap_or(Variant::Empty))?,
+                    quantity(&minor.unwrap_or(Variant::Empty))?,
+                ],
                 topeak,
                 (channel, polarization),
                 &mut logs,

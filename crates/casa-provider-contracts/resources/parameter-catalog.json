@@ -5782,10 +5782,10 @@
       "semantic_revision": 1,
       "casa_name": "quackinterval",
       "value_domain": {
-        "kind": "float"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "numeric_variant"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -5804,13 +5804,7 @@
       "semantic_revision": 2,
       "casa_name": "quackmode",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "beg",
-          "end",
-          "endb",
-          "tail"
-        ]
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -9284,7 +9278,7 @@
       "id": "flagdata.quackincrement",
       "semantic_revision": 1,
       "casa_name": "quackincrement",
-      "value_domain": {"kind": "bool"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
@@ -10001,15 +9995,87 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.field",
+      "semantic_revision": 7,
+      "casa_name": "field",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "field", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA field selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.spw",
+      "semantic_revision": 5,
+      "casa_name": "spw",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "spectral_window", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA spw selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 5,
+      "casa_name": "scan",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "scan", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA scan selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 6,
+      "casa_name": "antenna",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "antenna", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA antenna selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 5,
+      "casa_name": "timerange",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "casa_selector", "grammar": "time_range", "capabilities": ["ids", "names", "ranges", "wildcards"]},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {"summary": "CASA timerange selection for MeasurementSet transforms.", "details": null, "examples": [""]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "mstransform.timespan",
       "semantic_revision": 1,
       "casa_name": "timespan",
-      "value_domain": {"kind": "string"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {"summary": "Let time averages span 'scan', 'state' or both.", "details": null, "examples": ["''"]},
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.combine",
+      "semantic_revision": 2,
+      "casa_name": "combine",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Let time averages span scan, field or state boundaries.", "details": null, "examples": ["''", "'scan,field'"]},
       "persistence_class": "profile"
     },
     {
@@ -12700,7 +12766,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
-      "documentation": {"summary": "Applycal field selector text.", "details": null, "examples": [""]},
+      "documentation": {"summary": "CASA field selector text. Empty selects every field.", "details": null, "examples": [""]},
       "persistence_class": "profile"
     },
     {
@@ -12748,7 +12814,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
-      "documentation": {"summary": "Applycal timerange selector text.", "details": null, "examples": [""]},
+      "documentation": {"summary": "CASA time selection passed to the MeasurementSet parser as literal text.", "details": null, "examples": [""]},
       "persistence_class": "profile"
     },
     {

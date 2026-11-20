@@ -132,7 +132,7 @@ impl Pixels {
 
 // NumPy copies into a private contiguous buffer. No caller can mutate that
 // buffer while Rust reads it with the interpreter detached.
-fn snapshot_array<T: Element + Copy + Send + Sync>(
+pub(super) fn snapshot_array<T: Element + Copy + Send + Sync>(
     py: Python<'_>,
     source: &Bound<'_, PyUntypedArray>,
 ) -> PyResult<ArrayD<T>> {
@@ -411,11 +411,15 @@ impl PyImageTool {
         let _ = list;
         let value = py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(CasaValue::Bools { shape: vec![0], values: Vec::new() });
             };
-            let image = image.lock();
+            let mut image = attachment.lock();
+            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
             let shape = image.shape();
+            if image.coordinates().n_pixel_axes() != shape.len() {
+                return Err(raised("LCSlicer::makeComplete - referencePixel and newLatticeShape vectors do not have same length"));
+            }
             let chunk = Chunk::read(shape, &blc.map_or_else(Vec::new, |arg| arg.0), &trc.map_or_else(Vec::new, |arg| arg.0), &inc.map_or_else(Vec::new, |arg| arg.0))?;
             let axes = axes.map_or_else(Vec::new, |arg| arg.0);
             let axes = if matches!(axes.as_slice(), [only] if *only < 0) { &[][..] } else { axes.as_slice() };
@@ -431,12 +435,14 @@ impl PyImageTool {
                 let mask = (getmask || !collapse.is_empty()).then(|| pixels.mapv(|value| !value.is_nan()));
                 return chunk.format(&collapse, dropdeg, getmask, (f64::from, |v| f64::from(v as f32)), mask, || Ok(pixels));
             }
-            match &*image {
+            let value = match &*image {
                 ImageHandle::Float(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (f64::from, |v| f64::from(v as f32)))),
                 ImageHandle::Double(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (f64::from, std::convert::identity))),
                 ImageHandle::Complex(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (widen_complex, |v: Complex64| widen_complex(Complex32::new(v.re as f32, v.im as f32))))),
                 ImageHandle::DComplex(storage) => with_storage!(storage, image => chunk.get(image.as_ref(), &collapse, dropdeg, getmask, (std::convert::identity, std::convert::identity))),
-            }
+            }?;
+            image.release_requested_lock()?;
+            Ok(value)
         })?;
         value.into_python(py)
     }
@@ -456,8 +462,8 @@ impl PyImageTool {
         py.detach(|| {
             let state = self.state();
             let history = state.history;
-            let Some(image) = state.image.as_ref() else { return Ok(false) };
-            let mut image = image.lock();
+            let Some(attachment) = state.image.as_ref() else { return Ok(false) };
+            let mut image = attachment.lock();
             let pixels = pixels?;
             let blc = blc.unwrap_or_else(|| IntList::of(&[-1])).0;
             let inc = inc.unwrap_or_else(|| IntList::of(&[1])).0;
@@ -468,11 +474,18 @@ impl PyImageTool {
             if image.fits().is_some() {
                 return Err(raised("FITSImage::putSlice - is not possible as FITSImage is not writable"));
             }
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             match &mut *image {
                 ImageHandle::Float(storage) => chunk.put(storage, pixels.f32())?,
                 ImageHandle::Double(storage) => chunk.put(storage, pixels.f64())?,
                 ImageHandle::Complex(storage) => chunk.put(storage, pixels.c32())?,
                 ImageHandle::DComplex(storage) => chunk.put(storage, pixels.c64())?,
+            }
+            if locking && cfg!(unix) {
+                image.unlock_storage()?;
+            } else {
+                image.save().map_err(raised)?;
+                image.release_requested_lock()?;
             }
             if history {
                 let command = format!(
@@ -481,7 +494,6 @@ impl PyImageTool {
                 );
                 image.record_history("putchunk", command)?;
             }
-            image.save().map_err(raised)?;
             Ok(true)
         })
     }

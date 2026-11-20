@@ -1804,19 +1804,31 @@ where
     T: ImageExprValue + PartialOrd + ExprValueConvert,
     R: ImageResolver<'a, T>,
 {
+    let mask = subimage_mask_builder(expression, real, complex)?;
+    mask.compile().map_err(|error| ExprParseError {
+        message: error.to_string(),
+        position: 0,
+    })
+}
+
+pub(crate) fn subimage_mask_builder<'a, T, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+) -> Result<MaskExprBuilder<'a, T>, ExprParseError>
+where
+    T: ImageExprValue + PartialOrd + ExprValueConvert,
+    R: ImageResolver<'a, T>,
+{
     let mut parser = Parser::new(expression, real)?;
     parser.complex_resolver = Some(complex);
     let result = parser.parse_expression()?;
     parser.expect(&Token::Eof)?;
-    let mask = match result {
+    Ok(match result {
         ExprNode::Numeric(image, _) if !image.shape().is_empty() => {
             image.compare_scalar(T::from_f64(0.5), ImageExprCompareOp::GreaterEqual)
         }
         other => other.into_mask(0)?,
-    };
-    mask.compile().map_err(|error| ExprParseError {
-        message: error.to_string(),
-        position: 0,
     })
 }
 

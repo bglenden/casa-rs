@@ -52,7 +52,7 @@ enum WeightKind {
     Unit,
 }
 
-struct InputStatistic<'a> {
+pub(super) struct InputStatistic<'a> {
     scalar: ArrayView1<'a, f32>,
     spectrum: Option<ChannelMatrix<'a, f32>>,
 }
@@ -64,7 +64,7 @@ pub(super) struct SpectrumCells<'a> {
 }
 
 impl<'a> InputStatistic<'a> {
-    fn from_cells(
+    pub(super) fn from_cells(
         scalar: &'a ArrayValue,
         spectrum: Option<&'a ArrayValue>,
         shape: [usize; 2],
@@ -102,7 +102,7 @@ impl<'a> InputStatistic<'a> {
         Ok(Self { scalar, spectrum })
     }
 
-    fn value(&self, corr: usize, chan: usize) -> f32 {
+    pub(super) fn value(&self, corr: usize, chan: usize) -> f32 {
         self.spectrum
             .as_ref()
             .map_or_else(|| self.scalar[corr], |array| array.get(corr, chan))
@@ -126,8 +126,10 @@ pub(super) struct ChannelAverages<'a> {
     data: bool,
     corrected: bool,
     model: bool,
+    floating: bool,
     main: OptionalMainColumn,
     propagate_weights: bool,
+    time_averaged: bool,
 }
 
 struct BinStatistics {
@@ -143,7 +145,7 @@ impl<'a> ChannelAverages<'a> {
         sigma: &'a ArrayValue,
         spectra: SpectrumCells<'a>,
         columns: &VisibilityColumns,
-        propagate_weights: bool,
+        (propagate_weights, time_averaged): (bool, bool),
     ) -> Result<Self, TableError> {
         use OptionalMainColumn::{CorrectedData, Data, FloatData, LagData, ModelData};
 
@@ -164,6 +166,7 @@ impl<'a> ChannelAverages<'a> {
         let data = has(Data);
         let corrected = has(CorrectedData);
         let model = has(ModelData);
+        let floating = has(FloatData);
         let main = [Data, CorrectedData, ModelData, FloatData, LagData]
             .into_iter()
             .find(|&column| has(column))
@@ -193,8 +196,10 @@ impl<'a> ChannelAverages<'a> {
             data,
             corrected,
             model,
+            floating,
             main,
             propagate_weights,
+            time_averaged,
         })
     }
 
@@ -227,9 +232,13 @@ impl<'a> ChannelAverages<'a> {
     }
 
     pub(super) fn statistics(&self) -> AveragedStatistics {
-        let (weight, variance) = if self.corrected {
+        let observed = self.data || (self.time_averaged && self.floating);
+        let (weight, variance) = if self.time_averaged && !(observed && self.corrected) {
+            let weights = self.summed_weights(WeightKind::Calibrated);
+            (weights.clone(), weights)
+        } else if self.corrected {
             let calibrated = self.summed_weights(WeightKind::Calibrated);
-            let observed = if self.data {
+            let observed = if observed {
                 self.summed_weights(WeightKind::Observed)
             } else {
                 calibrated.clone()
@@ -263,6 +272,9 @@ impl<'a> ChannelAverages<'a> {
         }
         match column {
             OptionalMainColumn::Data => WeightKind::Observed,
+            OptionalMainColumn::FloatData if self.time_averaged && self.corrected => {
+                WeightKind::Observed
+            }
             OptionalMainColumn::ModelData if self.corrected => WeightKind::Calibrated,
             OptionalMainColumn::ModelData if self.data => WeightKind::Observed,
             OptionalMainColumn::ModelData | OptionalMainColumn::LagData => WeightKind::Unit,

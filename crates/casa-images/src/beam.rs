@@ -357,6 +357,45 @@ impl GaussianBeam {
             .map(|beam| beam.map(gaussian_beam))
             .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
     }
+
+    /// Fit a Gaussian source after removing its restoring beam with CASA's
+    /// relative resolution limit. The Boolean indicates that CASA treated
+    /// the source as unresolved and returned the restoring beam's size.
+    /// Returns `None` when the source cannot be resolved in one direction.
+    pub fn fitted_deconvolution(self, beam: Self) -> Option<(Self, bool)> {
+        let (source_sin, source_cos) = (self.position_angle.sin(), self.position_angle.cos());
+        let (beam_sin, beam_cos) = (beam.position_angle.sin(), beam.position_angle.cos());
+        let alpha = (self.major * source_cos).powi(2) + (self.minor * source_sin).powi(2)
+            - (beam.major * beam_cos).powi(2)
+            - (beam.minor * beam_sin).powi(2);
+        let beta = (self.major * source_sin).powi(2) + (self.minor * source_cos).powi(2)
+            - (beam.major * beam_sin).powi(2)
+            - (beam.minor * beam_cos).powi(2);
+        let gamma = 2.0
+            * ((self.minor.powi(2) - self.major.powi(2)) * source_sin * source_cos
+                - (beam.minor.powi(2) - beam.major.powi(2)) * beam_sin * beam_cos);
+        let sum = alpha + beta;
+        let separation = ((alpha - beta).powi(2) + gamma.powi(2)).sqrt();
+        if alpha < 0.0 || beta < 0.0 || sum < separation {
+            let smallest = self.minor.min(beam.minor);
+            let limit = 0.1 * smallest * smallest;
+            return (0.5 * (sum - separation) < limit && alpha > -limit && beta > -limit)
+                .then_some((beam, true));
+        }
+        let angle = if gamma.abs() + (alpha - beta).abs() == 0.0 {
+            0.0
+        } else {
+            0.5 * (-gamma).atan2(alpha - beta)
+        };
+        Some((
+            Self::new(
+                (0.5 * (sum + separation)).sqrt(),
+                (0.5 * (sum - separation)).sqrt(),
+                angle,
+            ),
+            false,
+        ))
+    }
 }
 
 fn angle_value_in(radians: f64, unit: &str) -> Result<f64, ImageError> {

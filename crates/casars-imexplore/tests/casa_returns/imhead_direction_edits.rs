@@ -3,6 +3,46 @@
 use super::*;
 
 #[test]
+fn imhead_refuses_to_save_direction_frames_without_conversion_context() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("frame-context.im");
+    copy_tree(&fixture, &path);
+    let table = path.join("table.dat");
+    let original_metadata = std::fs::read(&table).unwrap();
+    let original_history = casa_images::PagedImage::<f32>::open(&path)
+        .unwrap()
+        .history()
+        .unwrap();
+
+    // CASA 6.7.6.14 writes these changes successfully, then cannot reopen
+    // the image because the conversion to its saved J2000 frame lacks context.
+    for frame in ["JMEAN", "APP", "AZEL"] {
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "put", "hdkey": "equinox", "hdvalue": frame}),
+        );
+        assert!(matches!(reply, Some(TaskReply::Failed { .. })), "{frame}");
+        assert_eq!(std::fs::read(&table).unwrap(), original_metadata, "{frame}");
+        assert_eq!(
+            casa_images::PagedImage::<f32>::open(&path)
+                .unwrap()
+                .history()
+                .unwrap(),
+            original_history,
+            "{frame}",
+        );
+        let result = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "get", "hdkey": "equinox"}),
+        );
+        assert_eq!(result.to_plain_json(), "J2000", "{frame}");
+    }
+}
+
+#[test]
 fn direction_reference_edits_match_casa() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
     let oracle: Value = serde_json::from_slice(

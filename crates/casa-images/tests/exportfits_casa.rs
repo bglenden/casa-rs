@@ -766,6 +766,129 @@ fn exportfits_cli_flags_and_json_run() {
 }
 
 #[test]
+fn exportfits_preserves_b1950_vla_in_the_fits_image() {
+    use casa_coordinates::{CoordinateModel, CoordinateType};
+
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("b1950-vla.im");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::B1950Vla,
+        Projection::new(ProjectionType::SIN),
+        [1.0, 0.5],
+        [-1e-5, 1e-5],
+        [1.0, 1.0],
+    ));
+    let mut image = PagedImage::<f32>::create(vec![3, 3], coordinates, &source).unwrap();
+    image.save().unwrap();
+    drop(image);
+    let destination = temp.path().join("b1950-vla.fits");
+    exportfits(&ExportFitsRequest {
+        imagename: source,
+        fitsimage: destination.clone(),
+        ..ExportFitsRequest::default()
+    })
+    .unwrap();
+    let (header, _, _) = parse_fits_cards_and_raw_i16(&destination);
+    assert_eq!(header.get_string("RADESYS"), Some("FK4"));
+    assert_eq!(header.get_float("EQUINOX"), Some(1979.9));
+    let restored = casa_images::read_fits_image(destination).unwrap();
+    let index = restored
+        .coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .unwrap();
+    let CoordinateModel::Direction(direction) = restored.coordinates.coordinate(index) else {
+        panic!("expected direction coordinate");
+    };
+    assert_eq!(direction.direction_ref(), DirectionRef::B1950Vla);
+
+    // Older casacore writers spell the FITS equinox card EPOCH.
+    let mut bytes = fs::read(temp.path().join("b1950-vla.fits")).unwrap();
+    let card = bytes
+        .as_chunks_mut::<80>()
+        .0
+        .iter_mut()
+        .find(|card| &card[..8] == b"EQUINOX ")
+        .unwrap();
+    card[..8].copy_from_slice(b"EPOCH   ");
+    let legacy = temp.path().join("b1950-vla-legacy.fits");
+    fs::write(&legacy, bytes).unwrap();
+    let converted = temp.path().join("b1950-vla-legacy.im");
+    import_fits(&legacy, &converted, false).unwrap();
+    let image = PagedImage::<f32>::open(converted).unwrap();
+    let index = image
+        .coordinates()
+        .find_coordinate(CoordinateType::Direction)
+        .unwrap();
+    let CoordinateModel::Direction(direction) = image.coordinates().coordinate(index) else {
+        panic!("expected direction coordinate");
+    };
+    assert_eq!(direction.direction_ref(), DirectionRef::B1950Vla);
+}
+
+#[test]
+fn exportfits_remaps_projection_parameters_with_the_latitude_axis() {
+    use casa_coordinates::{CoordinateModel, CoordinateType};
+    use casa_images::read_fits_image;
+
+    let temp = tempfile::tempdir().unwrap();
+    for (kind, parameters) in [
+        (ProjectionType::AZP, vec![2.0, 30.0]),
+        (ProjectionType::AIR, vec![45.0]),
+        (ProjectionType::SZP, vec![2.0, 30.0, 45.0]),
+    ] {
+        let source = temp.path().join(format!("{kind}.im"));
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        let direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::with_parameters(kind, parameters.clone()),
+            [1.0, 0.5],
+            [-0.1, 0.1],
+            [2.0, 2.0],
+        );
+        coordinates.add_coordinate(direction.clone());
+        let mut image = PagedImage::<f32>::create(vec![1, 6, 5], coordinates, &source).unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        for (dropstokes, shape) in [(false, vec![6, 5, 1]), (true, vec![6, 5])] {
+            let destination = temp.path().join(format!("{kind}-{dropstokes}.fits"));
+            exportfits(&ExportFitsRequest {
+                imagename: source.clone(),
+                fitsimage: destination.clone(),
+                stokeslast: true,
+                dropstokes,
+                ..ExportFitsRequest::default()
+            })
+            .unwrap();
+            let (header, _, _) = parse_fits_cards_and_raw_i16(&destination);
+            assert_eq!(
+                header.get_string("CTYPE2"),
+                Some(format!("DEC--{kind}").as_str()),
+            );
+            for (index, &parameter) in (1..).zip(&parameters) {
+                assert_eq!(header.get_float(&format!("PV2_{index}")), Some(parameter));
+                assert!(header.get_float(&format!("PV3_{index}")).is_none());
+            }
+            let restored = read_fits_image(&destination).unwrap();
+            assert_eq!(restored.shape, shape);
+            let restored = restored.coordinates;
+            let index = restored.find_coordinate(CoordinateType::Direction).unwrap();
+            let CoordinateModel::Direction(restored) = restored.coordinate(index) else {
+                panic!("expected direction coordinate");
+            };
+            let pixel = [1.4, 3.1];
+            let expected = direction.pixel_to_world(pixel).unwrap();
+            let actual = restored.pixel_to_world(pixel).unwrap();
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+            }
+        }
+    }
+}
+
+#[test]
 fn exportfits_bitpix16_edge_cases_and_rotated_pc_remapping() {
     let tmp = tempfile::tempdir().unwrap();
 

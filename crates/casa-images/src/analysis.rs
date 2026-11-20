@@ -49,7 +49,7 @@ mod impv;
 mod lel_mask;
 
 use self::axes::direction_plane_axes;
-pub use self::exportfits::{ImageFitsHeader, image_fits_header};
+pub use self::exportfits::{ImageFitsHeader, image_fits_header, image_fits_header_with_beams};
 pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
 pub use self::lel_mask::evaluate_image_tool_mask;

@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use casa_components::ComponentList;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
@@ -17,12 +18,16 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
-use super::image::{ImageModel, TaylorTerm, prepare_configured_image, reference_frequency};
+use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
 use super::imager_definition::ImagerDefinitionRequest;
-use super::settings::{ImagerTransformOptions, PredictionGeometry};
+use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
+use super::settings::{
+    ImagerGridder, ImagerSingleDishSetup, ImagerTransformOptions, PredictionGeometry,
+};
+use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::ImagerVoltagePattern;
-use super::{invalid, model_entry, write_model_scratch};
+use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
 
 /// Geometry installed by the imager before creating a model image.
 pub struct ImagerImageDefinition {
@@ -51,9 +56,13 @@ pub struct ImagerPredictionModel<'a> {
 pub struct ImagerPrediction {
     definition: Option<ImageDefinition>,
     frequency_frame_valid: bool,
+    ft_location: Option<MPosition>,
     options: ImagerTransformOptions,
+    single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
+    apply_voltage_pattern: bool,
+    mosaic_voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
     ambiguous_scratch_write: bool,
@@ -76,6 +85,7 @@ struct PartialBatch {
     model: PredictionInputs,
     scratch: bool,
     completed: usize,
+    moving_anchor: Option<MovingSourceAnchor>,
 }
 
 struct PredictionInputs {
@@ -108,9 +118,13 @@ impl Default for ImagerPrediction {
         Self {
             definition: None,
             frequency_frame_valid: false,
+            ft_location: None,
             options: ImagerTransformOptions::default(),
+            single_dish_setup: ImagerSingleDishSetup::default(),
             taylor: (1, None),
             voltage_pattern: None,
+            apply_voltage_pattern: false,
+            mosaic_voltage_pattern: None,
             pending_publication: None,
             partial_batch: None,
             ambiguous_scratch_write: false,
@@ -144,9 +158,23 @@ impl ImagerPrediction {
         self.definition.is_some()
     }
 
+    fn facet_count(&self) -> usize {
+        match &self.definition {
+            Some(ImageDefinition::Requested(definition)) => definition.facets,
+            _ => 1,
+        }
+    }
+
     /// Replace the options used by the next Fourier transform.
     pub fn set_options(&mut self, options: ImagerTransformOptions) {
+        self.ft_location = options.observatory_override();
         self.options = options;
+        self.reset_fourier_machine();
+    }
+
+    /// Discard the Fourier machine after a visibility selection change.
+    pub fn reset_fourier_machine(&mut self) {
+        self.mosaic_voltage_pattern = None;
     }
 
     /// The current settings, including prior buffer sizes retained by setoptions.
@@ -168,8 +196,36 @@ impl ImagerPrediction {
         Ok(())
     }
 
+    /// Replace settings used by subsequent legacy SDGrid predictions.
+    ///
+    /// # Errors
+    /// The requested POINTING column is unknown, or a previous prediction
+    /// still has an unfinished publication.
+    pub fn configure_single_dish(&mut self, mut setup: ImagerSingleDishSetup) -> MsResult<()> {
+        if self.partial_batch.is_some() || self.pending_publication.is_some() {
+            return Err(invalid(
+                "finish publishing the previous imager prediction before changing single-dish settings",
+            ));
+        }
+        setup.pointing_column.make_ascii_uppercase();
+        if !matches!(
+            setup.pointing_column.as_str(),
+            "DIRECTION" | "TARGET" | "ENCODER" | "POINTING_OFFSET" | "SOURCE_OFFSET"
+        ) {
+            return Err(invalid(format!(
+                "no such direction column as {} in POINTING",
+                setup.pointing_column
+            )));
+        }
+        setup.convert_first.make_ascii_uppercase();
+        self.single_dish_setup = setup;
+        self.reset_fourier_machine();
+        Ok(())
+    }
+
     /// Enable a configured voltage pattern, or disable it with `None`.
     pub fn set_voltage_pattern(&mut self, pattern: Option<ImagerVoltagePattern>) {
+        self.apply_voltage_pattern = pattern.is_some();
         self.voltage_pattern = pattern;
     }
 
@@ -181,12 +237,27 @@ impl ImagerPrediction {
         &mut self,
         pattern: Option<ImagerVoltagePattern>,
     ) -> MsResult<()> {
+        let apply = pattern.is_some();
+        self.configure_voltage_pattern_application(pattern, apply)
+    }
+
+    /// Configure the gridding beam and separately enable its sky-model gain.
+    /// MosaicFT uses the beam even when sky-model gain is disabled.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_voltage_pattern_application(
+        &mut self,
+        pattern: Option<ImagerVoltagePattern>,
+        apply: bool,
+    ) -> MsResult<()> {
         if self.partial_batch.is_some() || self.pending_publication.is_some() {
             return Err(invalid(
                 "finish publishing the previous imager prediction before changing the voltage pattern",
             ));
         }
-        self.set_voltage_pattern(pattern);
+        self.voltage_pattern = pattern;
+        self.apply_voltage_pattern = apply;
         Ok(())
     }
 
@@ -227,13 +298,13 @@ impl ImagerPrediction {
         scratch: bool,
     ) -> Result<bool, AttachmentError> {
         let inputs = attachments.writable_inputs()?;
-        let first = match &self.partial_batch {
+        let (first, mut moving_anchor) = match &self.partial_batch {
             Some(batch)
                 if batch.inputs == inputs
                     && batch.scratch == scratch
                     && batch.model.matches(model) =>
             {
-                batch.completed
+                (batch.completed, batch.moving_anchor.clone())
             }
             Some(_) => {
                 return Err(invalid(
@@ -241,7 +312,7 @@ impl ImagerPrediction {
                 )
                 .into());
             }
-            None => 0,
+            None => (0, None),
         };
         if scratch {
             // CASA uses the last enrollment's destination for the whole
@@ -258,14 +329,15 @@ impl ImagerPrediction {
             }
         }
         for (index, input) in inputs.iter().enumerate().skip(first) {
-            let result = self.predict_to(input, model, scratch);
+            let result = self.predict_to(input, model, scratch, &mut moving_anchor);
             if !matches!(result, Ok(true)) {
-                if index > 0 {
+                if index > 0 || self.pending_publication.is_some() {
                     self.partial_batch = Some(PartialBatch {
                         inputs: inputs.to_vec(),
                         model: PredictionInputs::new(model),
                         scratch,
                         completed: index,
+                        moving_anchor,
                     });
                 }
                 return result;
@@ -290,7 +362,12 @@ impl ImagerPrediction {
         attachment: &CalibrationAttachment,
         model: ImagerPredictionModel<'_>,
     ) -> Result<bool, AttachmentError> {
-        self.predict_to(attachment, model, attachment.options().use_scratch)
+        self.predict_to(
+            attachment,
+            model,
+            attachment.options().use_scratch,
+            &mut None,
+        )
     }
 
     fn predict_to(
@@ -298,6 +375,7 @@ impl ImagerPrediction {
         attachment: &CalibrationAttachment,
         model: ImagerPredictionModel<'_>,
         scratch: bool,
+        moving_anchor: &mut Option<MovingSourceAnchor>,
     ) -> Result<bool, AttachmentError> {
         if self.ambiguous_scratch_write {
             return Err(invalid(
@@ -329,19 +407,58 @@ impl ImagerPrediction {
             if scratch && !has_column(ms, ModelData) {
                 return Ok(false);
             }
-            let Some((mut components, images)) = self
-                .prepare(ms, selection, &model, scratch)
-                .map_err(AttachmentError::PredictionPreparation)?
+            let Some((mut components, mut images)) =
+                self.prepare(ms, selection, &model, scratch)
+                    .map_err(AttachmentError::PredictionPreparation)?
             else {
                 return Ok(false);
             };
+            if self.facet_count() > 1
+                && !images.is_empty()
+                && images.iter().all(|image| !image.nonzero)
+                && (!scratch || model.incremental || !components.is_empty())
+            {
+                // An empty image set contributes nothing to an increment or
+                // a component prediction. CASA keeps the past virtual model
+                // when there are no components to publish.
+                images.clear();
+                if components.is_empty() {
+                    return Ok(true);
+                }
+            }
+            self.track_images(ms, selection, &mut images, moving_anchor)
+                .map_err(AttachmentError::PredictionPreparation)?;
             if scratch {
                 components.extend(images.iter().map(|image| image.entry.clone()));
+                let prepared = if !images.is_empty()
+                    && matches!(self.options.gridder, ImagerGridder::Mosaic)
+                {
+                    Some(
+                        prepare_mosaic_models(ms, selection, &components, true)
+                            .map_err(AttachmentError::PredictionPreparation)?,
+                    )
+                } else {
+                    None
+                };
                 // Virtual cleanup belongs to scratch attachment. An earlier
                 // virtual input in this iterator can still own recipes.
                 writing_scratch = !components.is_empty();
-                write_model_scratch(ms, selection, &components, model.incremental, false, lock)?;
+                write_model_scratch(
+                    ms,
+                    selection,
+                    &components,
+                    model.incremental,
+                    false,
+                    prepared,
+                    lock,
+                )?;
             } else {
+                if !images.is_empty() && matches!(self.options.gridder, ImagerGridder::Mosaic) {
+                    let mut all_entries = components.clone();
+                    all_entries.extend(images.iter().map(|image| image.entry.clone()));
+                    prepare_mosaic_models(ms, selection, &all_entries, false)
+                        .map_err(AttachmentError::PredictionPreparation)?;
+                }
                 let publication = VirtualFtPublication::new(
                     [&*ms].into_iter(),
                     components,
@@ -381,13 +498,22 @@ impl ImagerPrediction {
         {
             return Ok(None);
         }
-        if self.voltage_pattern.is_some() && model.components.is_some() {
+        let mosaic = matches!(self.options.gridder, ImagerGridder::Mosaic);
+        // MosaicFT uses its convolution beam directly.
+        let pattern = self
+            .voltage_pattern
+            .as_ref()
+            .filter(|_| self.apply_voltage_pattern && !mosaic);
+        if pattern.is_some() && model.components.is_some() {
             return Err(invalid(
                 "a radial imager voltage pattern currently needs image models",
             ));
         }
         let (terms, explicit_reference) = self.taylor;
-        if terms > 1 && model.images.len() != terms as usize {
+        if terms > 1 && mosaic {
+            return Ok(None);
+        }
+        if terms > 1 && self.facet_count() <= 1 && model.images.len() != terms as usize {
             return Err(invalid(
                 "the number of model images must match the Taylor terms",
             ));
@@ -396,17 +522,7 @@ impl ImagerPrediction {
             Some(ImageDefinition::Requested(request))
                 if model.images.iter().any(|path| !path.exists()) =>
             {
-                let location = self
-                    .options
-                    .observatory
-                    .map(|[longitude, latitude, radius]| {
-                        let horizontal = radius * latitude.cos();
-                        MPosition::new_itrf(
-                            horizontal * longitude.cos(),
-                            horizontal * longitude.sin(),
-                            radius * latitude.sin(),
-                        )
-                    });
+                let location = self.options.observatory_override();
                 Some(request.build_for_selection(ms, selected, location)?)
             }
             _ => None,
@@ -444,6 +560,9 @@ impl ImagerPrediction {
                 image.set_misc_info(misc).map_err(invalid)?;
                 image.set_table_subtype("GENERIC");
                 image.save().map_err(invalid)?;
+                if self.ft_location.is_none() {
+                    self.ft_location = definition.coordinates.obs_info().telescope_position.clone();
+                }
                 self.frequency_frame_valid = image
                     .coordinates()
                     .find_coordinate(CoordinateType::Spectral)
@@ -456,7 +575,7 @@ impl ImagerPrediction {
                     });
             }
         }
-        let reference_hz = if terms == 1 {
+        let reference_hz = if terms == 1 || model.images.is_empty() {
             None
         } else {
             Some(match explicit_reference {
@@ -476,8 +595,14 @@ impl ImagerPrediction {
                 )?);
             }
         }
+        if mosaic {
+            // setvp rebuilds the sky equation. The Fourier machine retains
+            // its beam until setoptions or selectvis invalidates it.
+            self.mosaic_voltage_pattern
+                .get_or_insert_with(|| self.voltage_pattern.clone().unwrap_or_default());
+        }
         let mut images = Vec::new();
-        match (self.voltage_pattern.as_ref(), scratch) {
+        match (pattern, scratch) {
             (Some(pattern), true) => {
                 let mut fields = BTreeMap::<_, Vec<_>>::new();
                 for row in &selected.selected_rows {
@@ -517,6 +642,45 @@ impl ImagerPrediction {
         Ok(Some((components, images)))
     }
 
+    fn track_images(
+        &self,
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+        images: &mut [ImageModel],
+        anchor: &mut Option<MovingSourceAnchor>,
+    ) -> MsResult<()> {
+        let Some(ImageDefinition::Requested(definition)) = &self.definition else {
+            return Ok(());
+        };
+        let Some(source) = &definition.moving_source else {
+            return Ok(());
+        };
+        if images.iter().all(|image| !image.nonzero) {
+            return Ok(());
+        }
+        if anchor.is_none() {
+            let position = self
+                .ft_location
+                .clone()
+                .unwrap_or_else(|| MPosition::new_itrf(0., 0., 0.));
+            *anchor = Some(MovingSourceAnchor {
+                source: Arc::new(ObservedSource::new(source.clone())?),
+                frame: first_tracking_frame(ms, selected, position)?,
+            });
+        }
+        let anchor = anchor.as_ref().expect("moving prediction has an anchor");
+        let tracked =
+            if definition.facets > 1 && matches!(self.options.gridder, ImagerGridder::Mosaic) {
+                &mut images[..1]
+            } else {
+                images
+            };
+        for image in tracked {
+            image.track(anchor)?;
+        }
+        Ok(())
+    }
+
     fn prepare_images(
         &self,
         ms: &MeasurementSet,
@@ -527,30 +691,96 @@ impl ImagerPrediction {
         voltage_pattern: Option<super::voltage_pattern::PreparedVoltagePattern>,
     ) -> MsResult<Vec<ImageModel>> {
         let terms = self.taylor.0;
-        let geometry = PredictionGeometry {
+        let facets = self.facet_count();
+        let dish = self.options.single_dish;
+        if let Some(choice) = dish {
+            if choice.combined && model.images.len() > 1 {
+                return Err(invalid(
+                    "joint single-dish and synthesis prediction needs one model image",
+                ));
+            }
+            let moving = matches!(&self.definition, Some(ImageDefinition::Requested(request)) if request.moving_source.is_some());
+            let components =
+                model.components.is_some() && (!choice.combined || !model.images.is_empty());
+            if terms > 1 || facets > 1 || moving || components {
+                return Err(invalid(
+                    "this single-dish imager model combination is pending #1520",
+                ));
+            }
+        }
+        let tangent = match &self.definition {
+            Some(ImageDefinition::Requested(definition))
+                if !matches!(self.options.gridder, ImagerGridder::Mosaic) =>
+            {
+                definition.tangent_point(ms)?
+            }
+            _ => None,
+        };
+        let mut geometry = PredictionGeometry {
             settings: self.options,
+            native_threads: self.options.threads,
+            facets,
+            tangent,
             phase_centre_time: model.phase_centre_time,
             frequency_frame_valid: self.frequency_frame_valid,
             voltage_pattern,
+            mosaic_voltage_table: self
+                .mosaic_voltage_pattern
+                .as_ref()
+                .and_then(|pattern| pattern.table.clone()),
+            single_dish_setup: if dish.is_some_and(|choice| !choice.combined) {
+                self.single_dish_setup.clone()
+            } else {
+                ImagerSingleDishSetup::default()
+            },
+            single_dish_voltage_table: self
+                .voltage_pattern
+                .as_ref()
+                .filter(|_| dish.is_some_and(|choice| !choice.combined))
+                .and_then(|pattern| pattern.table.clone()),
+            single_dish_cell_rad: match &self.definition {
+                Some(ImageDefinition::Requested(request)) => Some(request.cell_rad[1]),
+                _ => None,
+            },
         };
+        if dish.is_some_and(|choice| choice.combined) {
+            // GridBoth keeps the default mapper of each child machine.
+            geometry.settings.frequency_interpolation = 0;
+        }
         let mut images = Vec::new();
         for (index, path) in model.images.iter().enumerate() {
             let taylor = reference_hz.map(|reference_hz| TaylorTerm {
                 count: terms,
-                index: index as i32,
+                // The faceted sky model has one Taylor plane per image.
+                index: if facets > 1 { 0 } else { index as i32 },
                 reference_hz,
             });
-            if let Some(image) = prepare_configured_image(
-                ms,
-                selected,
-                path,
-                taylor,
-                scratch && !model.incremental && model.components.is_none() && index == 0,
-                scratch,
-                geometry.clone(),
-            )? {
-                images.push(image);
+            let keep_zero = facets > 1
+                || (scratch && !model.incremental && model.components.is_none() && index == 0);
+            if dish.is_none_or(|choice| choice.combined) {
+                images.extend(prepare_configured_images(
+                    ms,
+                    selected,
+                    path,
+                    taylor,
+                    keep_zero,
+                    scratch,
+                    &mut geometry,
+                )?);
             }
+            if let Some(choice) = dish {
+                images.extend(single_dish::prepare_model(
+                    ms,
+                    selected,
+                    path,
+                    choice.kernel,
+                    &geometry,
+                    keep_zero,
+                    scratch,
+                )?);
+            }
+            // WFCleanImageSkyModel subdivides the first model image.
+            geometry.facets = 1;
         }
         Ok(images)
     }

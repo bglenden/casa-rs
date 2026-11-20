@@ -128,21 +128,30 @@ impl Projection {
     /// The projection a direction coordinate of reference latitude
     /// `latitude_rad` states with the parameters CASA writes for it
     /// ([`Self::coordinate_projection`]), or `None` for one casa-rs does not
-    /// image in. Missing parameters are zero, as casacore pads them (casa-rs
-    /// wrote `SIN` with none before).
+    /// image in. Accept a saved projection only when its mapping survives
+    /// conversion to the model's parameters.
     #[must_use]
     pub fn of_coordinate(projection: &CoordinateProjection, latitude_rad: f64) -> Option<Self> {
-        let restricted = match projection.projection_type() {
-            ProjectionType::AZP => Some(Self::Azp),
-            ProjectionType::SZP => Some(Self::Szp),
-            ProjectionType::AIR => Some(Self::Air),
-            _ => None,
-        };
-        if let Some(kind) = restricted {
-            return projection
-                .validate_conversion_parameters()
-                .ok()
-                .map(|()| kind);
+        match projection.projection_type() {
+            // The mask model reconstructs perspective projections with tclean's defaults.
+            kind @ (ProjectionType::AZP | ProjectionType::SZP) => {
+                return projection
+                    .parameters()
+                    .iter()
+                    .zip(kind.fits_parameter_defaults())
+                    .all(|(value, default)| value == default)
+                    .then_some(if kind == ProjectionType::AZP {
+                        Self::Azp
+                    } else {
+                        Self::Szp
+                    });
+            }
+            // The model reconstructs AIR with tclean's explicit zero latitude.
+            // A saved AIR coordinate with a missing latitude defaults to 90°.
+            ProjectionType::AIR => {
+                return (projection.parameters().first() == Some(&0.0)).then_some(Self::Air);
+            }
+            _ => {}
         }
         let mut parameters = projection.parameters().to_vec();
         if parameters.len() < 2 {
@@ -337,7 +346,7 @@ mod tests {
                 ProjectionType::AIR,
                 Projection::Air,
                 vec![vec![0.0], vec![0.0, 0.0]],
-                vec![vec![], vec![1e-10, 0.0]],
+                vec![vec![], vec![90.0], vec![1e-10, 0.0]],
             ),
         ] {
             for parameters in accepted {

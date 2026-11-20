@@ -98,6 +98,9 @@ impl ImageHistoryEntry {
     }
 }
 
+#[cfg(unix)]
+mod locking;
+
 /// Read the image log including CASA priority, timestamp, and location.
 pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
     Ok(image_history_rows(path)?
@@ -755,6 +758,10 @@ pub struct PagedImage<T: ImagePixel> {
     /// needs mutation even through `&self` trait methods.
     tiled_io: Option<RefCell<TiledArrayStorage>>,
     max_cache_bytes: Cell<usize>,
+    #[cfg(unix)]
+    cached_modify_counter: Option<u32>,
+    #[cfg(unix)]
+    pending_tile_writes: bool,
     _pixel: PhantomData<T>,
 }
 
@@ -1015,6 +1022,10 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
             max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
+            #[cfg(unix)]
+            cached_modify_counter: None,
+            #[cfg(unix)]
+            pending_tile_writes: false,
             _pixel: PhantomData,
         })
     }
@@ -1092,6 +1103,10 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
             max_cache_bytes: Cell::new(cache_bytes),
+            #[cfg(unix)]
+            cached_modify_counter: None,
+            #[cfg(unix)]
+            pending_tile_writes: false,
             _pixel: PhantomData,
         })
     }
@@ -1110,19 +1125,16 @@ impl<T: ImagePixel> PagedImage<T> {
         } else {
             Table::open(TableOptions::new(&path))?
         };
-        let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
-                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
-            _ => CoordinateSystem::new(),
-        };
-        let units = match table.keywords().get("units") {
-            Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
-            _ => String::new(),
-        };
-        let misc_info = match table.keywords().get("miscinfo") {
-            Some(Value::Record(rec)) => rec.clone(),
-            _ => RecordValue::default(),
-        };
+        Self::from_disk(path, table, tiled_io, max_cache_bytes)
+    }
+
+    fn from_disk(
+        path: PathBuf,
+        table: Table,
+        tiled_io: Option<RefCell<TiledArrayStorage>>,
+        max_cache_bytes: usize,
+    ) -> Result<Self, ImageError> {
+        let (coords, units, misc_info) = Self::read_table_metadata(&table)?;
         let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
         if map_primitive != T::PRIMITIVE_TYPE {
             return Err(ImageError::InvalidMetadata(format!(
@@ -1142,8 +1154,12 @@ impl<T: ImagePixel> PagedImage<T> {
             (shape, ts)
         };
         Ok(Self {
+            #[cfg(unix)]
+            cached_modify_counter: table.locked_modify_counter().ok(),
+            #[cfg(unix)]
+            pending_tile_writes: false,
             table,
-            shape: shape.clone(),
+            shape,
             tile_shape,
             coords,
             path: Some(path),
@@ -1162,15 +1178,9 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
-    /// Opens an existing image from disk as the requested typed image.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
-        let path = path.as_ref().to_path_buf();
-        let tiled_io = Self::open_tiled_io(&path, 0).ok().map(RefCell::new);
-        let table = if tiled_io.is_some() {
-            Table::open_metadata_only(TableOptions::new(&path))?
-        } else {
-            Table::open(TableOptions::new(&path))?
-        };
+    fn read_table_metadata(
+        table: &Table,
+    ) -> Result<(CoordinateSystem, String, RecordValue), ImageError> {
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
@@ -1184,47 +1194,12 @@ impl<T: ImagePixel> PagedImage<T> {
             Some(Value::Record(rec)) => rec.clone(),
             _ => RecordValue::default(),
         };
+        Ok((coords, units, misc_info))
+    }
 
-        // Enable tile-aware I/O whenever the on-disk image has a compatible
-        // tiled payload. Rust-created `_tiled_io` images are the fast-path,
-        // but standard casacore images created by C++ may also be compatible.
-        let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
-        if map_primitive != T::PRIMITIVE_TYPE {
-            return Err(ImageError::InvalidMetadata(format!(
-                "image pixel type mismatch: requested {:?}, found {:?}",
-                T::PRIMITIVE_TYPE,
-                map_primitive
-            )));
-        }
-
-        // When tile-aware I/O is active, the real shape comes from the TSM header
-        // (the table cell may hold only a placeholder array).
-        let (shape, tile_shape) = if let Some(ref tio) = tiled_io {
-            let tio_ref = tio.borrow();
-            (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
-        } else {
-            let shape = Self::map_column_shape(&table)?;
-            let ts = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
-                .tile_shape()
-                .to_vec();
-            (shape, ts)
-        };
-
-        Ok(Self {
-            table,
-            shape: shape.clone(),
-            tile_shape,
-            coords,
-            path: Some(path),
-            units,
-            misc_info,
-            temp_masks: BTreeMap::new(),
-            persistent_masks: RefCell::new(BTreeMap::new()),
-            temp_history: Vec::new(),
-            tiled_io,
-            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
-            _pixel: PhantomData,
-        })
+    /// Opens an existing image from disk as the requested typed image.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
+        Self::open_with_cache(path, 0)
     }
 
     /// Detects the pixel type of an image on disk without opening it as a
@@ -2018,6 +1993,57 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Saves image metadata with history while holding the native log write lock.
+    /// With `info == None` the operation appends history only.
+    ///
+    /// # Errors
+    /// Returns an error if the record is invalid or if the image or its log
+    /// cannot be read, locked or written.
+    pub fn save_image_info_with_history(
+        &mut self,
+        info: Option<&RecordValue>,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        let path = Self::logtable_path(self.path.as_ref().ok_or(ImageError::NotPersistent)?);
+        self.ensure_logtable()?;
+        let mut lock = TableWriteLock::acquire_to_reread(&path, 0)?;
+        let mut log = Table::open(TableOptions::new(&path))?;
+        let time = ImageHistoryEntry::current_time()?;
+        Self::add_logtable_entries(
+            &mut log,
+            messages
+                .iter()
+                .map(|message| (time, location, message.as_str(), "INFO", "")),
+        )?;
+        let previous = self.table.keywords().get("imageinfo").cloned();
+        if let Some(info) = info {
+            self.set_image_info_record(info.clone())?;
+        }
+        let publish = self
+            .save()
+            .and_then(|()| log.save(TableOptions::new(&path)).map_err(ImageError::from));
+        if let Err(error) = publish {
+            if info.is_some() {
+                let keywords = self.table.keywords_mut();
+                if let Some(previous) = previous {
+                    keywords.upsert("imageinfo", previous);
+                } else {
+                    keywords.remove("imageinfo");
+                }
+                if let Err(restore) = self.save() {
+                    return Err(ImageError::Io(format!(
+                        "{error}; restoring the previous image metadata also failed: {restore}"
+                    )));
+                }
+            }
+            return Err(error);
+        }
+        lock.record_write();
+        lock.release()?;
+        Ok(())
+    }
+
     /// Append imported history with its original location and MJD time.
     ///
     /// # Errors
@@ -2509,6 +2535,10 @@ impl<T: ImagePixel> PagedImage<T> {
             // table.info. This preserves the existing tiled storage-manager
             // layout instead of rewriting the placeholder map cell.
             self.save_metadata_only(&path)?;
+            #[cfg(unix)]
+            {
+                self.pending_tile_writes = false;
+            }
         } else {
             if !self.temp_masks.is_empty() {
                 // Flush first so the image directory exists for mask sub-tables.
@@ -2709,6 +2739,17 @@ impl<T: ImagePixel> PagedImage<T> {
         // `logtable` CASA wrote unreadable to it.
         let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
+        Self::add_logtable_entries(&mut table, entries)?;
+        table.save(TableOptions::new(path))?;
+        lock.record_write();
+        lock.release()?;
+        Ok(())
+    }
+
+    fn add_logtable_entries<'a>(
+        table: &mut Table,
+        entries: impl IntoIterator<Item = (f64, &'a str, &'a str, &'a str, &'a str)>,
+    ) -> Result<(), ImageError> {
         for (time, location, message, priority, object_id) in entries {
             table.add_row(RecordValue::new(vec![
                 RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
@@ -2730,9 +2771,6 @@ impl<T: ImagePixel> PagedImage<T> {
                 ),
             ]))?;
         }
-        table.save(TableOptions::new(path))?;
-        lock.record_write();
-        lock.release()?;
         Ok(())
     }
 
@@ -3119,6 +3157,10 @@ fn paged_image_put_slice_view<T: ImagePixel>(
         }
     }
     if let Some(ref tio) = image.tiled_io {
+        #[cfg(unix)]
+        {
+            image.pending_tile_writes = true;
+        }
         if view_is_fortran_contiguous(&data)
             && let Some(slice) = data.as_slice_memory_order()
             && tio

@@ -71,15 +71,12 @@ idiomatic Rust request.
 Object surfaces expose stateful handles with constructors, properties, methods,
 and lifecycle operations.
 
-The object surfaces are `casars.data.Image` and the
-CASA tool classes of `casars.tools` (ADR-0017): `simulator` (CASA's `sm`),
-`measures` (`me`), `quanta` (`qa`), `componentlist` (`cl`), `image` (`ia`),
-`coordsys` (`cs`), `table` (`tb`), `msmetadata` (`msmd`) and `ms`.
-
-`casars.data.Image` is a persistent image access API; the `casars.tools`
-classes are CASA tools with CASA's method names, parameter order and
-effective defaults. All are used in-process from Python, are not forced into
-the task-binary model and have no standalone executable. One bundle,
+The object surfaces are the CASA tool classes of `casars.tools` (ADR-0017).
+They include `simulator` (CASA's `sm`), `measures` (`me`), `quanta` (`qa`),
+`componentlist` (`cl`), `image` (`ia`), `coordsys` (`cs`), `table` (`tb`),
+`msmetadata` (`msmd`) and `ms`. The classes use CASA's method names,
+parameter order and effective defaults. Python uses them in process through
+the native extension. One bundle,
 `casars_data_objects` (`casars.data.schema_bundle()`, protocol version 1),
 describes them all; its tool entries all come from one list of the
 `casars.tools` classes, and each names its own module in its projection

@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use casa_calibration::{
     AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerPrediction, ImagerPredictionModel, ImagerVoltagePattern,
+    ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup, ImagerVoltagePattern,
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -20,7 +20,7 @@ use pyo3::{
     types::{PyFloat, PyInt, PyList, PyString},
 };
 
-use crate::convert::{Variant, quantity_value};
+use crate::convert::{Variant, quantity, quantity_value};
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 const LOGGER: &str = "casars.tools.imager";
@@ -255,6 +255,45 @@ impl PyImager {
         })
     }
 
+    #[pyo3(signature = (scale = 1.0, weight = 1.0, convsupport = -1, pointingcolumntouse = "DIRECTION", truncate = Variant::Empty, gwidth = Variant::Empty, jwidth = Variant::Empty, minweight = 0.0, clipminmax = false, enablecache = false, convertfirst = "NEVER"), text_signature = "($self, scale=1.0, weight=1.0, convsupport=-1, pointingcolumntouse='DIRECTION', truncate=[], gwidth=[], jwidth=[], minweight=0.0, clipminmax=False, enablecache=False, convertfirst='NEVER')")]
+    #[allow(clippy::too_many_arguments)]
+    fn setsdoptions(
+        &self,
+        py: Python<'_>,
+        scale: f64,
+        weight: f64,
+        convsupport: i64,
+        pointingcolumntouse: &str,
+        truncate: Variant,
+        gwidth: Variant,
+        jwidth: Variant,
+        minweight: f64,
+        clipminmax: bool,
+        enablecache: bool,
+        convertfirst: &str,
+    ) -> PyResult<bool> {
+        // GridBoth and SDGrid consume these when accumulating data and
+        // weights into an image. A forward model prediction samples pixels.
+        let _ = (scale, weight, minweight, clipminmax);
+        let setup = ImagerSingleDishSetup {
+            support: convsupport,
+            truncate: quantity(&truncate)?,
+            gaussian_width: quantity(&gwidth)?,
+            jinc_width: quantity(&jwidth)?,
+            pointing_column: pointingcolumntouse.into(),
+            cache_pointings: enablecache,
+            convert_first: convertfirst.into(),
+        };
+        self.with_state(py, |state| {
+            state
+                .prediction
+                .configure_single_dish(setup)
+                .map_err(runtime_error)?;
+            state.model_in_sky_equation = false;
+            Ok(true)
+        })
+    }
+
     #[pyo3(signature = (dovp = false, usedefaultvp = true, vptable = "", dosquint = false, parangleinc = Variant::Empty, skyposthreshold = Variant::Empty, telescope = "", verbose = true), text_signature = "($self, dovp=False, usedefaultvp=True, vptable='', dosquint=False, parangleinc=[], skyposthreshold=[], telescope='', verbose=True)")]
     #[allow(clippy::too_many_arguments)]
     fn setvp(
@@ -289,12 +328,12 @@ impl PyImager {
         // SkyEquation chooses its default pattern from the attached observation.
         let _ = telescope;
         self.with_state(py, |state| {
-            let pattern = dovp.then(|| ImagerVoltagePattern {
+            let pattern = (dovp || !usedefaultvp).then(|| ImagerVoltagePattern {
                 table: (!usedefaultvp).then(|| PathBuf::from(vptable)),
             });
             state
                 .prediction
-                .configure_voltage_pattern(pattern)
+                .configure_voltage_pattern_application(pattern, dovp)
                 .map_err(runtime_error)?;
             state.model_in_sky_equation = false;
             Ok(())
@@ -387,6 +426,7 @@ impl PyImager {
                     let selected = result.map_err(runtime_error)?;
                     state.valid = selected;
                     if selected {
+                        state.prediction.reset_fourier_machine();
                         state.model_in_sky_equation = false;
                     }
                     Ok(Some(selected))

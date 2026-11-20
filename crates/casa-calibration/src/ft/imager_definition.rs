@@ -48,12 +48,16 @@ pub enum ImagerSpectralAxis {
 pub struct ImagerDefinitionRequest {
     /// Direction-axis lengths in pixels.
     pub shape: [usize; 2],
+    /// Number of facets on each direction axis of the first model.
+    pub facets: usize,
     /// Signed angular increments for longitude and latitude, in radians.
     pub cell_rad: [f64; 2],
     /// Polarization planes in image order.
     pub stokes: Vec<StokesType>,
     /// The direction to use at the image centre.
     pub centre: ImagerPhaseCentre,
+    /// A source whose changing observed direction shifts the Fourier phase centre.
+    pub moving_source: Option<MDirection>,
     /// The supported image projection.
     pub projection: ProjectionType,
     /// Spectral windows for the image grid. Empty uses the selected windows.
@@ -65,6 +69,17 @@ pub struct ImagerDefinitionRequest {
 }
 
 impl ImagerDefinitionRequest {
+    pub(super) fn tangent_point(&self, ms: &MeasurementSet) -> MsResult<Option<MDirection>> {
+        if self.facets <= 1 {
+            return Ok(None);
+        }
+        let direction = match &self.centre {
+            ImagerPhaseCentre::Field(field) => raw_field_phase_direction(ms, *field)?,
+            ImagerPhaseCentre::Direction(direction) => direction.clone(),
+        };
+        Ok(Some(direction))
+    }
+
     pub(super) fn build_for_selection(
         &self,
         ms: &MeasurementSet,
