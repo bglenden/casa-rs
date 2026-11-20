@@ -10,14 +10,17 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
-use casa_imaging_singledish::{GridFunction, KernelParameters, KernelTable};
+use casa_imaging_singledish::{GridFunction, KernelTable};
 use casa_ms::MeasurementSet;
-use casa_types::measures::direction::MDirection;
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::record::direction_from_record;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, Ix2};
 
 use crate::ft::image::{coordinate_index, match_channel, polarization_coordinate};
-use crate::ft::single_dish::{default_beam, validate_support};
+use crate::ft::single_dish::{
+    default_beam, has_saved_setup, kernel_function, read_kernel_parameters, validate_support,
+};
 
 use super::fourier::{
     FourierRow, complex_model_image_path, lsrk_frequency_ratio, scratch_channel_masked,
@@ -28,7 +31,14 @@ const IMAGE_METADATA_BYTES: u64 = 65_536;
 
 pub(super) struct SingleDishModel {
     record: RecordValue,
+    pointing: PointingQuery,
     prepared: Mutex<Option<PreparedModel>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct PointingQuery {
+    pub(super) column: String,
+    pub(super) convert_first: Option<DirectionRef>,
 }
 
 struct PreparedModel {
@@ -40,15 +50,67 @@ struct PreparedModel {
     pixel: Option<[f64; 2]>,
     sampled: Vec<Option<Complex32>>,
     convert_frequencies: bool,
+    cache_pointings: bool,
+    cached_pointing: Option<(PointingFrame, Option<[f64; 2]>)>,
     _memory: Reservation,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PointingFrame {
+    antenna: i32,
+    time: u64,
+    reference: DirectionRef,
+    position: [u64; 2],
+}
+
 impl SingleDishModel {
-    pub(super) fn new(record: RecordValue) -> Self {
-        Self {
-            record,
-            prepared: Mutex::default(),
+    pub(super) fn new(record: RecordValue) -> Result<Self, GainSolveError> {
+        let explicit = has_saved_setup(&record);
+        let name = |field, default| match record.get(field) {
+            Some(Value::Scalar(ScalarValue::String(name))) => Ok(name.as_str()),
+            None if !explicit => Ok(default),
+            _ => Err(model_error(format!(
+                "invalid single-dish recipe field {field}"
+            ))),
+        };
+        let convert_first = match name("casars_sd_convert_first", "NEVER")? {
+            "NEVER" => None,
+            "ALWAYS" => {
+                let Some(Value::Record(direction)) = record.get("mimage_rec") else {
+                    return Err(model_error("SDGrid recipe has no image direction"));
+                };
+                Some(
+                    direction_from_record(direction)
+                        .map_err(model_error)?
+                        .refer(),
+                )
+            }
+            mode => return Err(model_error(format!("illegal ConvertFirst name {mode}"))),
+        };
+        let column = name("pointingdircol", "DIRECTION")?;
+        if !matches!(
+            column,
+            "DIRECTION" | "TARGET" | "ENCODER" | "POINTING_OFFSET" | "SOURCE_OFFSET"
+        ) {
+            return Err(model_error(format!(
+                "unknown single-dish POINTING column {column}"
+            )));
         }
+        read_kernel_parameters(&record).map_err(model_error)?;
+        recipe_cache(&record)?;
+        let pointing = PointingQuery {
+            column: column.to_owned(),
+            convert_first,
+        };
+        Ok(Self {
+            record,
+            pointing,
+            prepared: Mutex::default(),
+        })
+    }
+
+    pub(super) fn pointing(&self) -> &PointingQuery {
+        &self.pointing
     }
 
     pub(super) fn predict(
@@ -82,8 +144,8 @@ impl PreparedModel {
                 ));
             }
         };
-        let function =
-            GridFunction::from_casa(name, KernelParameters::DEFAULT).map_err(model_error)?;
+        let parameters = read_kernel_parameters(record).map_err(model_error)?;
+        let function = kernel_function(name, parameters).map_err(model_error)?;
         let host = HostResources::detect().map_err(model_error)?;
         let _opening = admit(
             &host,
@@ -102,6 +164,9 @@ impl PreparedModel {
         let [nx, ny, pols, channels] = *image.shape() else {
             return Err(model_error("SDGrid needs a four-axis complex image"));
         };
+        if let Some(radius) = function.support() {
+            validate_support([nx, ny], radius).map_err(model_error)?;
+        }
         let coordinates = image.coordinates();
         let find = |kind| {
             coordinate_index(coordinates, kind)
@@ -190,8 +255,48 @@ impl PreparedModel {
             pixel: None,
             sampled: vec![None; sample_count],
             convert_frequencies,
+            cache_pointings: recipe_cache(record)?,
+            cached_pointing: None,
             _memory: memory,
         })
+    }
+
+    fn pointing_pixel(
+        &mut self,
+        row: &FourierRow<'_>,
+        pointing: &MDirection,
+    ) -> Result<Option<[f64; 2]>, GainSolveError> {
+        let (longitude, latitude) = pointing.as_angles();
+        let key = PointingFrame {
+            antenna: row.row.antenna1,
+            time: row.row.time_seconds.to_bits(),
+            reference: pointing.refer(),
+            position: [longitude.to_bits(), latitude.to_bits()],
+        };
+        if self.cache_pointings
+            && let Some((prior, pixel)) = self.cached_pointing
+            && prior == key
+        {
+            return Ok(pixel);
+        }
+        let coordinates = if pointing.refer() == self.direction.direction_ref() {
+            [longitude, latitude]
+        } else {
+            let frame = row
+                .engine
+                .antenna_frame(row.row.time_seconds, row.row.antenna1 as usize)
+                .map_err(|error| read_error(row.ms, error))?;
+            let direction = pointing
+                .convert_to(self.direction.direction_ref(), &frame)
+                .map_err(model_error)?;
+            let (longitude, latitude) = direction.as_angles();
+            [longitude, latitude]
+        };
+        let pixel = self.direction.world_to_pixel(coordinates).ok();
+        if self.cache_pointings {
+            self.cached_pointing = Some((key, pixel));
+        }
+        Ok(pixel)
     }
 
     fn predict(
@@ -201,15 +306,7 @@ impl PreparedModel {
         selection_mask: Option<&ArrayD<i32>>,
         output: &mut ArrayD<Complex32>,
     ) -> Result<(), GainSolveError> {
-        let frame = row
-            .engine
-            .antenna_frame(row.row.time_seconds, row.row.antenna1 as usize)
-            .map_err(|error| read_error(row.ms, error))?;
-        let direction = pointing
-            .convert_to(self.direction.direction_ref(), &frame)
-            .map_err(model_error)?;
-        let (longitude, latitude) = direction.as_angles();
-        let Ok(pixel) = self.direction.world_to_pixel([longitude, latitude]) else {
+        let Some(pixel) = self.pointing_pixel(row, pointing)? else {
             return Ok(());
         };
         if self.pixel != Some(pixel) {
@@ -267,6 +364,16 @@ impl PreparedModel {
             }
         }
         Ok(())
+    }
+}
+
+fn recipe_cache(record: &RecordValue) -> Result<bool, GainSolveError> {
+    match record.get("casars_sd_cache_pointings") {
+        Some(Value::Scalar(ScalarValue::Bool(cache))) => Ok(*cache),
+        None if !has_saved_setup(record) => Ok(false),
+        _ => Err(model_error(
+            "invalid single-dish recipe field casars_sd_cache_pointings",
+        )),
     }
 }
 

@@ -43,9 +43,9 @@ def prepare_ms(source, target, mode, *, scratch=True):
     assert tool.done()
 
 
-def setup(factory, target, mode, kernel, *, pinned, scratch=True, spw=''):
+def setup(factory, target, mode, kernel, *, pinned, scratch=True, spw='', field='0,1'):
     tool = factory()
-    assert tool.open(str(target), usescratch=scratch) and tool.selectvis(field='0,1', spw=spw)
+    assert tool.open(str(target), usescratch=scratch) and tool.selectvis(field=field, spw=spw)
     cell = '1.2arcsec' if kernel == 'PB' else '.3arcsec'
     assert tool.defineimage(nx=320, ny=320, cellx=cell, celly=cell,
                             phasecenter=0, outframe='TOPO')
@@ -66,7 +66,7 @@ def predict(factory, target, model, mode, kernel, *, pinned, scratch=True, spw='
     assert tool.done()
 
 
-def read_virtual(path, mode, kernel):
+def read_virtual(path, mode, kernel, *, selection=None):
     from casars.tools import ms
 
     table_tool = table()
@@ -88,7 +88,10 @@ def read_virtual(path, mode, kernel):
     corrected = table_tool.getcol('CORRECTED_DATA')
     assert table_tool.done()
     tool = ms()
-    assert tool.open(str(path), nomodify=False) and tool.uvsub() and tool.done()
+    assert tool.open(str(path), nomodify=False)
+    if selection is not None:
+        assert tool.msselect(selection)
+    assert tool.uvsub() and tool.done()
     assert table_tool.open(str(path))
     delta = corrected - table_tool.getcol('CORRECTED_DATA')
     assert table_tool.done()
@@ -105,7 +108,7 @@ def correlations(path):
     return auto, model, flags
 
 
-def analytic_gaussian(source, model, kernel, shape):
+def analytic_gaussian(source, model, kernel, shape, *, widths=None):
     """Evaluate CASA's documented kernel at the fixture's two pointings."""
     tool = table()
     assert tool.open(str(source / 'POINTING'))
@@ -128,12 +131,18 @@ def analytic_gaussian(source, model, kernel, shape):
         center = np.rint(position).astype(int)
         offset = np.rint((center - position) * 100.).astype(int)
         sampling = 100
-        width = math.sqrt(math.log(2.))
-        if kernel == 'GAUSS':
-            support, end = 3, int(3. * width * sampling + .5)
+        if widths is None:
+            width = math.sqrt(math.log(2.))
+            widths_for_kernel = (width, 3. * width, 1.55) if kernel == 'GAUSS' else (2.52 * width, -1., 1.55)
         else:
-            support, end = 4, int(3.8317059702 * 1.55 / math.pi * sampling)
-            width *= 2.52
+            widths_for_kernel = widths
+        width, cutoff, jinc = widths_for_kernel
+        if cutoff < 0.:
+            support = math.ceil(2. * jinc)
+            end = int(3.8317059702 * jinc / math.pi * sampling)
+        else:
+            support = math.ceil(cutoff)
+            end = int(cutoff * sampling + .5) - int(kernel == 'GJINC')
         value = 0.
         for dy in range(-support, support + 1):
             for dx in range(-support, support + 1):
@@ -142,7 +151,7 @@ def analytic_gaussian(source, model, kernel, shape):
                     continue
                 weight = math.exp(-math.log(2.) * (radius / sampling / width)**2)
                 if kernel == 'GJINC' and radius:
-                    argument = math.pi * radius / sampling / 1.55
+                    argument = math.pi * radius / sampling / jinc
                     weight *= 2. * j1(argument) / argument
                 value += weight * pixels[center[0] + dx - 1, center[1] + dy - 1]
         mask = visibility_times == time

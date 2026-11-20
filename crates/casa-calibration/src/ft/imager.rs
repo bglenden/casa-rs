@@ -21,7 +21,9 @@ use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
 use super::imager_definition::ImagerDefinitionRequest;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
-use super::settings::{ImagerGridder, ImagerTransformOptions, PredictionGeometry};
+use super::settings::{
+    ImagerGridder, ImagerSingleDishSetup, ImagerTransformOptions, PredictionGeometry,
+};
 use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::ImagerVoltagePattern;
@@ -56,6 +58,7 @@ pub struct ImagerPrediction {
     frequency_frame_valid: bool,
     ft_location: Option<MPosition>,
     options: ImagerTransformOptions,
+    single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
     apply_voltage_pattern: bool,
@@ -117,6 +120,7 @@ impl Default for ImagerPrediction {
             frequency_frame_valid: false,
             ft_location: None,
             options: ImagerTransformOptions::default(),
+            single_dish_setup: ImagerSingleDishSetup::default(),
             taylor: (1, None),
             voltage_pattern: None,
             apply_voltage_pattern: false,
@@ -189,6 +193,33 @@ impl ImagerPrediction {
             ));
         }
         self.set_options(options);
+        Ok(())
+    }
+
+    /// Replace settings used by subsequent legacy SDGrid predictions.
+    ///
+    /// # Errors
+    /// The requested POINTING column is unknown, or a previous prediction
+    /// still has an unfinished publication.
+    pub fn configure_single_dish(&mut self, mut setup: ImagerSingleDishSetup) -> MsResult<()> {
+        if self.partial_batch.is_some() || self.pending_publication.is_some() {
+            return Err(invalid(
+                "finish publishing the previous imager prediction before changing single-dish settings",
+            ));
+        }
+        setup.pointing_column.make_ascii_uppercase();
+        if !matches!(
+            setup.pointing_column.as_str(),
+            "DIRECTION" | "TARGET" | "ENCODER" | "POINTING_OFFSET" | "SOURCE_OFFSET"
+        ) {
+            return Err(invalid(format!(
+                "no such direction column as {} in POINTING",
+                setup.pointing_column
+            )));
+        }
+        setup.convert_first.make_ascii_uppercase();
+        self.single_dish_setup = setup;
+        self.reset_fourier_machine();
         Ok(())
     }
 
@@ -718,6 +749,15 @@ impl ImagerPrediction {
                 .mosaic_voltage_pattern
                 .as_ref()
                 .and_then(|pattern| pattern.table.clone()),
+            single_dish_setup: if dish.is_some_and(|choice| !choice.combined) {
+                self.single_dish_setup.clone()
+            } else {
+                ImagerSingleDishSetup::default()
+            },
+            single_dish_cell_rad: match &self.definition {
+                Some(ImageDefinition::Requested(request)) => Some(request.cell_rad[1]),
+                _ => None,
+            },
         };
         let mut images = Vec::new();
         for (index, path) in model.images.iter().enumerate() {

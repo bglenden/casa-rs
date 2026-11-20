@@ -149,7 +149,7 @@ def test_calibrater_method_returns_before_open() -> None:
 
 
 IMAGER_CALIBRATION = {"open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft"}
-IMAGER_SETTINGS = {"defineimage", "setoptions", "setvp"}
+IMAGER_SETTINGS = {"defineimage", "setoptions", "setsdoptions", "setvp"}
 
 
 def test_imager_calibration_signatures() -> None:

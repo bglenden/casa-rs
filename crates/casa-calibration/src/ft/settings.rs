@@ -4,8 +4,10 @@
 use std::path::PathBuf;
 
 use casa_imaging_operator::{GridPrecision, WPlaneCount};
+use casa_imaging_singledish::KernelParameters;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::position::MPosition;
+use casa_types::quanta::{Quantity, Unit};
 
 use super::voltage_pattern::PreparedVoltagePattern;
 
@@ -56,6 +58,75 @@ pub struct ImagerSingleDish {
     pub kernel: ImagerSingleDishKernel,
     /// Predict interferometric visibilities using GridFT as well.
     pub combined: bool,
+}
+
+/// Geometry and convolution settings supplied to `imager.setsdoptions`.
+#[derive(Clone, Debug)]
+pub struct ImagerSingleDishSetup {
+    /// Explicit kernel support in pixels, or a negative default marker.
+    pub support: i64,
+    /// Gaussian and Gaussian-jinc cutoff.
+    pub truncate: Quantity,
+    /// Gaussian half-width at half-maximum.
+    pub gaussian_width: Quantity,
+    /// Jinc scale parameter.
+    pub jinc_width: Quantity,
+    /// MeasurementSet POINTING direction column.
+    pub pointing_column: String,
+    /// Whether to cache the image coordinates of previous samples.
+    pub cache_pointings: bool,
+    /// Whether to convert the recorded directions before interpolation.
+    pub convert_first: String,
+}
+
+impl Default for ImagerSingleDishSetup {
+    fn default() -> Self {
+        Self {
+            support: -1,
+            truncate: Quantity::dimensionless(-1.),
+            gaussian_width: Quantity::dimensionless(-1.),
+            jinc_width: Quantity::dimensionless(-1.),
+            pointing_column: "DIRECTION".into(),
+            cache_pointings: false,
+            convert_first: "NEVER".into(),
+        }
+    }
+}
+
+impl ImagerSingleDishSetup {
+    pub(super) fn kernel_parameters(
+        &self,
+        kernel: ImagerSingleDishKernel,
+        cell_rad: f64,
+    ) -> casa_ms::MsResult<KernelParameters> {
+        let mut parameters = KernelParameters {
+            convsupport: self.support,
+            ..KernelParameters::DEFAULT
+        };
+        if matches!(
+            kernel,
+            ImagerSingleDishKernel::Gaussian | ImagerSingleDishKernel::GaussianJinc
+        ) {
+            let radians = Unit::new("rad").map_err(super::invalid)?;
+            let pixels = |width: &Quantity| {
+                let value = match width.unit().name() {
+                    "" | "pixel" => width.value(),
+                    _ => width.get_value_in(&radians).map_err(super::invalid)? / cell_rad.abs(),
+                };
+                let value = f64::from(value as f32);
+                if !value.is_finite() {
+                    return Err(super::invalid("single-dish kernel width must be finite"));
+                }
+                Ok::<_, casa_ms::MsError>(value)
+            };
+            parameters.truncate = pixels(&self.truncate)?;
+            parameters.gwidth = pixels(&self.gaussian_width)?;
+            if kernel == ImagerSingleDishKernel::GaussianJinc {
+                parameters.jwidth = pixels(&self.jinc_width)?;
+            }
+        }
+        Ok(parameters)
+    }
 }
 
 /// Convolution selected for the legacy imager's Fourier transform.
@@ -157,6 +228,8 @@ pub(super) struct PredictionGeometry {
     pub(super) frequency_frame_valid: bool,
     pub(super) voltage_pattern: Option<PreparedVoltagePattern>,
     pub(super) mosaic_voltage_table: Option<PathBuf>,
+    pub(super) single_dish_setup: ImagerSingleDishSetup,
+    pub(super) single_dish_cell_rad: Option<f64>,
 }
 
 impl PredictionGeometry {

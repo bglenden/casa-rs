@@ -7662,5 +7662,11 @@ antenna when the short sequence is interleaved. casa-rs interpolates over
 the recorded samples of the requested antenna. With an empty POINTING
 table, casa-rs applies the first feed's offset to the field direction.
 The paired test uses pinned measures to shift the field in its reference.
+The pinned SDGrid copy also drops the requested conversion order and
+disables the pointing cache. casa-rs retains both controls. In the
+conversion-order test, pinned CASA measures convert each AZEL control
+point at its recorded epoch. A second pinned run samples that converted
+track in the image frame.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
-[`imager_single_dish_oracle.py`](../tools/casa-compat/imager_single_dish_oracle.py)
+[`imager_single_dish_oracle.py`](../tools/casa-compat/imager_single_dish_oracle.py) ·
+[`imager_single_dish_options_oracle.py`](../tools/casa-compat/imager_single_dish_options_oracle.py)
