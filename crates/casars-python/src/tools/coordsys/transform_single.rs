@@ -166,7 +166,7 @@ impl WorldArgument {
         }
     }
 
-    fn values(self, state: &CoordinateState) -> PyResult<Vec<f64>> {
+    pub(super) fn values(self, state: &CoordinateState) -> PyResult<Vec<f64>> {
         self.values_with_defaults(state, None, world_reference(&state.coordinates))
     }
 

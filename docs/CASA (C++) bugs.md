@@ -21,6 +21,7 @@ CASA behaviours casa-rs follows for parity:
 CASA behaviours casa-rs does not follow:
 [a non-finite rest frequency](#coordsyssetrestfrequency-can-store-an-infinite-frequency),
 [a whitespace-only rest-frequency string](#coordsyssetrestfrequency-can-crash-on-a-whitespace-only-string),
+[a masked coordinate reference-location edit](#coordsyssetreferencelocation-can-crash-when-an-axis-is-masked),
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
@@ -8097,3 +8098,12 @@ list, active frequency and coordinate transform.
 CASA 6.7.6.14 terminates with `SIGSEGV` when `cs.setrestfrequency('  ')`
 tokenizes the string and tries to read the first quantity from an empty
 list. casa-rs raises `RuntimeError` and retains the existing list.
+
+## `coordsys.setreferencelocation` can crash when an axis is masked
+
+On a two-axis linear coordinate, CASA 6.7.6.14 terminates with `SIGSEGV`
+for `cs.setreferencelocation([2, 3], [8.0, 9.0], [True, False])`. The same
+failure can occur with a Stokes axis because the method excludes Stokes
+from the edit. casa-rs changes both reference values on each enabled
+non-Stokes axis and preserves both values on the other axes. It publishes
+the updated coordinate state only after the complete edit succeeds.

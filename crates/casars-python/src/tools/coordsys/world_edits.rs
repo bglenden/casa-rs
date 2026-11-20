@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::quanta::{Quantity, Unit};
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::{PyString, PyTuple};
 
 use super::inspect::coordinate_type;
 use super::transform_single::WorldArgument;
@@ -52,6 +53,101 @@ fn declared_value(value: f64, unit: Option<&str>) -> PyResult<f64> {
     } else {
         Ok(value)
     }
+}
+
+fn location_pixels(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<f64>> {
+    let Some(value) = value else {
+        return Ok(vec![-1.0]);
+    };
+    if value.is_instance_of::<PyTuple>() {
+        return Err(PySystemError::new_err(
+            "<built-in function coordsys_setreferencelocation> returned a result with an exception set",
+        ));
+    }
+    let pixel = |item: &Bound<'_, PyAny>| -> PyResult<f64> {
+        if let Ok(integer) = item.extract::<i64>() {
+            return Ok(integer as f64);
+        }
+        let value = if let Ok(text) = item.cast::<PyString>() {
+            text.to_str()?
+                .parse::<f64>()
+                .map_err(|_| PyTypeError::new_err("pixel must contain integer-valued inputs"))?
+        } else {
+            item.extract::<f64>()?
+        };
+        if !value.is_finite() || value < i64::MIN as f64 || value >= -(i64::MIN as f64) {
+            return Err(PyOverflowError::new_err(
+                "pixel is outside the integer range",
+            ));
+        }
+        Ok(value.trunc())
+    };
+    if !value.is_instance_of::<PyString>()
+        && let Ok(items) = value.try_iter()
+    {
+        items.map(|item| pixel(&item?)).collect()
+    } else {
+        Ok(vec![pixel(value)?])
+    }
+}
+
+fn location_mask(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<bool>> {
+    let Some(value) = value else {
+        return Ok(vec![false]);
+    };
+    if value.is_instance_of::<PyString>() {
+        return Err(PyTypeError::new_err("mask must contain boolean values"));
+    }
+    if let Ok(items) = value.try_iter() {
+        items.map(|item| item?.is_truthy()).collect()
+    } else {
+        Ok(vec![value.is_truthy()?])
+    }
+}
+
+fn apply_location(
+    state: &mut CoordinateState,
+    pixels: Vec<f64>,
+    world: PyResult<WorldArgument>,
+    mask: Vec<bool>,
+) -> PyResult<bool> {
+    let coordinates = &state.coordinates;
+    let axes = coordinates.n_pixel_axes();
+    let use_all = mask == [false];
+    if axes != pixels.len() || (!use_all && axes != mask.len()) {
+        return Ok(false);
+    }
+    let world = world?.values(state)?;
+    let canonical = coordinates
+        .to_pixel(&world)
+        .and_then(|pixels| coordinates.to_world(&pixels))
+        .map_err(raised)?;
+    let units =
+        (0..coordinates.n_coordinates()).flat_map(|index| match coordinates.coordinate(index) {
+            CoordinateModel::Direction(direction) => direction
+                .visible_world_units()
+                .into_iter()
+                .map(Some)
+                .collect(),
+            model => vec![None; model.n_world_axes()],
+        });
+    let mut updated = state.record.clone();
+    for (axis, ((pixel, value), unit)) in pixels.into_iter().zip(canonical).zip(units).enumerate() {
+        if !(use_all || mask[axis])
+            || coordinates.pixel_axis_type(axis) == Some(CoordinateType::Stokes)
+        {
+            continue;
+        }
+        let value = declared_value(value, unit.as_deref())?;
+        CoordinateSystem::set_reference_pixel_in_record(&mut updated, axis, pixel)
+            .map_err(raised)?;
+        CoordinateSystem::set_reference_value_in_record(&mut updated, axis, value)
+            .map_err(raised)?;
+    }
+    let mut edited = CoordinateState::from_record(updated)?;
+    edited.parent_name = std::mem::take(&mut state.parent_name);
+    *state = edited;
+    Ok(true)
 }
 
 fn apply_edit(
@@ -132,6 +228,20 @@ fn apply_edit(
 
 #[pymethods]
 impl PyCoordsys {
+    #[pyo3(signature = (pixel=None, world=None, mask=None), text_signature = "($self, pixel=[-1], world=[], mask=[False])")]
+    fn setreferencelocation(
+        &self,
+        py: Python<'_>,
+        pixel: Option<&Bound<'_, PyAny>>,
+        world: Option<&Bound<'_, PyAny>>,
+        mask: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let pixels = location_pixels(pixel)?;
+        let mask = location_mask(mask)?;
+        let world = WorldArgument::capture(py, world);
+        py.detach(|| apply_location(&mut self.state(), pixels, world, mask))
+    }
+
     #[pyo3(signature = (value=None, r#type=""), text_signature = "($self, value=[], type='')")]
     fn setincrement(
         &self,
