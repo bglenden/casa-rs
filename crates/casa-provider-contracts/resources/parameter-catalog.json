@@ -810,10 +810,10 @@
     },
     {
       "id": "impv.width",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "width",
       "value_domain": {
-        "kind": "integer"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -822,7 +822,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Averaging width in pixels",
+        "summary": "Odd averaging width in pixels or an angular width.",
         "details": null,
         "examples": [
           "1"
@@ -2684,20 +2684,20 @@
     },
     {
       "id": "parameter.end",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "end",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "End pixel coordinate",
-        "details": null,
+        "details": "Supply two zero-based pixel values or a sky direction as a pair or a frame-qualified string.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -6776,20 +6776,20 @@
     },
     {
       "id": "parameter.start",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "start",
       "value_domain": {
-        "kind": "string"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Cube-axis start channel, frequency, or velocity",
-        "details": null,
+        "details": "Supply two zero-based pixel values or a sky direction as a pair or a frame-qualified string.",
         "examples": []
       },
       "persistence_class": "profile"
@@ -8967,51 +8967,114 @@
       "persistence_class": "profile"
     },
     {
-      "id": "impv.mode",
+      "id": "impv.region",
       "semantic_revision": 1,
+      "casa_name": "region",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA region text, image region name, or a region record. Direction-axis cropping is refused.",
+        "details": null,
+        "examples": [
+          "",
+          "none"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "impv.mode",
+      "semantic_revision": 2,
       "casa_name": "mode",
-      "value_domain": {"kind": "choice", "values": ["coords", "length"]},
-      "normalization": {"kind": "identity"},
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "How the slice is given: by start and end, or by center, length and position angle.", "details": null, "examples": ["coords"]},
+      "documentation": {
+        "summary": "How the slice is given: by start and end, or by center, length and position angle.",
+        "details": null,
+        "examples": [
+          "coords"
+        ]
+      },
       "persistence_class": "profile"
     },
     {
       "id": "pv.center",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "center",
-      "value_domain": {"kind": "array", "element": {"kind": "string"}, "min_items": 0, "max_items": 2, "allow_scalar": true},
-      "normalization": {"kind": "trim"},
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Center of the slice in the direction plane, given with length and pa.", "details": null, "examples": ["['14:35:00', '-30.00.00']"]},
+      "documentation": {
+        "summary": "Center of the slice in the direction plane, given with length and pa.",
+        "details": "Supply two zero-based pixel values or a sky direction as a pair or a frame-qualified string.",
+        "examples": [
+          "['14:35:00', '-30.00.00']"
+        ]
+      },
       "persistence_class": "profile"
     },
     {
       "id": "impv.length",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "length",
-      "value_domain": {"kind": "string"},
-      "normalization": {"kind": "trim"},
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Length of the slice in the direction plane, given with center and pa.", "details": null, "examples": ["30arcsec"]},
+      "documentation": {
+        "summary": "Length of the slice in the direction plane, given with center and pa.",
+        "details": "Numeric lengths are in pixels. An angular quantity is accepted as well.",
+        "examples": [
+          "30arcsec"
+        ]
+      },
       "persistence_class": "profile"
     },
     {
       "id": "impv.pa",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "pa",
-      "value_domain": {"kind": "string"},
-      "normalization": {"kind": "trim"},
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
-      "documentation": {"summary": "Position angle of the slice, north through east, given with center and length.", "details": null, "examples": ["45deg"]},
+      "documentation": {
+        "summary": "Position angle of the slice, north through east, given with center and length.",
+        "details": null,
+        "examples": [
+          "45deg"
+        ]
+      },
       "persistence_class": "profile"
     },
     {

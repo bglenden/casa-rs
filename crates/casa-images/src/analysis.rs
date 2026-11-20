@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Tutorial-scoped image-analysis operations matching CASA image task semantics.
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -43,6 +42,7 @@ mod world_header;
 
 mod immoments;
 mod impbcor;
+mod impv;
 mod lel_mask;
 
 use self::axes::{direction_plane_axes, other_axes};
@@ -50,7 +50,7 @@ pub use self::exportfits::{ImageFitsHeader, image_fits_header};
 pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
 pub use self::list_log::imhead_list_log;
-use self::planes::{PlaneAt, pv_samples, unravel_index};
+use self::planes::{PlaneAt, unravel_index};
 #[cfg(casa_prebuilt_image_provider)]
 pub(crate) use self::schema::schema_maps_preserve_order;
 pub use self::schema::*;
@@ -217,12 +217,15 @@ pub fn immoments(request: &ImmomentsRequest) -> Result<MomentMapSummary, ImageEr
     }
 }
 
-/// Extract a CASA `impv`-style position-velocity image for pixel-coordinate slices.
+/// Extract a CASA-style position-velocity image from a slice of the sky plane.
+///
+/// # Errors
+/// Returns an error for an invalid strip, selection, coordinate system, or output.
 pub fn impv(request: &ImpvRequest) -> Result<PvImageSummary, ImageError> {
     let image = AnyPagedImage::open(&request.imagename)?;
     match &image {
-        AnyPagedImage::Float32(image) => impv_typed(image, request),
-        AnyPagedImage::Float64(image) => impv_typed(image, request),
+        AnyPagedImage::Float32(image) => impv::run(image, request),
+        AnyPagedImage::Float64(image) => impv::run(image, request),
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
             ImageError::InvalidMetadata("impv currently supports real-valued images".to_string()),
         ),
@@ -3554,14 +3557,6 @@ fn direction_pixel_area(coords: &CoordinateSystem) -> Option<f64> {
     None
 }
 
-fn collapsed_image_info<T: ImagePixel>(image: &PagedImage<T>) -> Result<ImageInfo, ImageError> {
-    let mut info = image.image_info()?;
-    if info.beam_set.is_multi() {
-        info.beam_set = ImageBeamSet::new(info.beam_set.common_beam()?);
-    }
-    Ok(info)
-}
-
 fn combined_selection_mask<T: ImagePixel>(
     image: &PagedImage<T>,
     selection: &imsubimage::region::SubimageSelection,
@@ -3906,192 +3901,6 @@ fn shift2(input: &Array2<Complex32>, inverse: bool) -> Array2<Complex32> {
         }
     }
     output
-}
-
-fn impv_typed<T>(image: &PagedImage<T>, request: &ImpvRequest) -> Result<PvImageSummary, ImageError>
-where
-    T: ImagePixel + Into<f64> + Copy,
-{
-    if !request.mode.eq_ignore_ascii_case("coords") {
-        return Err(ImageError::InvalidMetadata(format!(
-            "impv mode {:?} is not supported by the tutorial path; use mode='coords'",
-            request.mode
-        )));
-    }
-    if image.ndim() < 2 {
-        return Err(ImageError::InvalidMetadata(
-            "impv requires at least two image axes".to_string(),
-        ));
-    }
-    // The path runs in the direction plane; an image without a direction
-    // takes its first two axes. The output keeps the input's coordinates
-    // rather than a PV image's (#1024), so a direction elsewhere is refused
-    // until it has them, rather than labelled more wrongly (#1022 review).
-    let plane = direction_plane_axes(image)?;
-    if plane[0] != 0 {
-        return Err(ImageError::InvalidMetadata(format!(
-            "impv takes the direction from the image's first two axes until its output has a PV \
-             image's coordinates (#1024), but the image's axes are {}. In CASA, transpose the \
-             image (imtrans) to put the direction first",
-            image.axis_names().join(", ")
-        )));
-    }
-    let spectral_axis = image.find_axis(CoordinateType::Spectral);
-    if spectral_axis.is_some_and(|axis| plane.contains(&axis)) {
-        return Err(ImageError::InvalidMetadata(format!(
-            "impv draws its path on the image's first two axes when it has no direction, but \
-             its axes are {}; a path along the spectral axis is not a position-velocity cut",
-            image.axis_names().join(", ")
-        )));
-    }
-    if request.outfile.exists() {
-        if request.overwrite {
-            fs::remove_dir_all(&request.outfile)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-        } else {
-            return Err(ImageError::Io(format!(
-                "PV output already exists: {}",
-                request.outfile.display()
-            )));
-        }
-    }
-    let [x0, y0] = parse_pixel_pair(&request.start)?;
-    let [x1, y1] = parse_pixel_pair(&request.end)?;
-    let path = bresenham_line(x0, y0, x1, y1);
-    if path.is_empty() {
-        return Err(ImageError::InvalidMetadata(
-            "impv path contains no pixels".to_string(),
-        ));
-    }
-    let mut start = vec![0; image.ndim()];
-    let mut shape = image.shape().to_vec();
-    let channel_indices = if let (Some(axis), Some(chans)) = (
-        spectral_axis,
-        request
-            .chans
-            .as_deref()
-            .filter(|text| !text.trim().is_empty()),
-    ) {
-        let indices = parse_image_channel_selection(chans, image.shape()[axis])?;
-        start[axis] = indices[0];
-        shape[axis] = indices[indices.len() - 1] - indices[0] + 1;
-        Some((axis, indices))
-    } else {
-        None
-    };
-    let input = image.get_slice(&start, &shape)?;
-    let mut output_shape = shape.clone();
-    output_shape[plane[0]] = path.len();
-    output_shape[plane[1]] = 1;
-    // Each output channel's channel in `input`, which starts at `start`.
-    let channels = channel_indices.map(|(axis, indices)| {
-        output_shape[axis] = indices.len();
-        let local = indices.iter().map(|index| index - start[axis]).collect();
-        (axis, local)
-    });
-    let offsets = perpendicular_offsets(x0, y0, x1, y1, request.width.max(1));
-    let output_data = pv_samples(
-        &input,
-        plane,
-        &path,
-        &offsets,
-        channels.as_ref(),
-        &output_shape,
-    );
-    let mut output = TempImage::<f32>::new(
-        output_shape.clone(),
-        image.coordinates().clone(),
-        casa_lattices::TempStoragePolicy::Auto {
-            memory_budget_bytes: 64 * 1024 * 1024,
-            scratch: casa_lattices::ScratchSpace::SystemTemp,
-        },
-    )?;
-    output.set_units(image.units())?;
-    output.set_image_info(&collapsed_image_info(image)?)?;
-    output.set_misc_info(image.misc_info())?;
-    output.put_slice(&output_data, &vec![0; output.ndim()])?;
-    output.save_as(&request.outfile)?;
-    Ok(PvImageSummary {
-        imagename: request.imagename.display().to_string(),
-        outfile: request.outfile.display().to_string(),
-        shape: output_shape,
-        path_pixels: path.len(),
-        width: request.width.max(1),
-        units: output.units().to_string(),
-    })
-}
-
-fn parse_pixel_pair(text: &str) -> Result<[isize; 2], ImageError> {
-    let values = text
-        .split(',')
-        .map(|part| {
-            part.trim().parse::<isize>().map_err(|error| {
-                ImageError::InvalidMetadata(format!("invalid pixel coordinate {text:?}: {error}"))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if values.len() != 2 {
-        return Err(ImageError::InvalidMetadata(format!(
-            "pixel coordinate must be x,y, got {text:?}"
-        )));
-    }
-    Ok([values[0], values[1]])
-}
-
-fn bresenham_line(x0: isize, y0: isize, x1: isize, y1: isize) -> Vec<(isize, isize)> {
-    let mut points = Vec::new();
-    let mut x = x0;
-    let mut y = y0;
-    let dx = (x1 - x0).abs();
-    let sx = if x0 < x1 { 1 } else { -1 };
-    let dy = -(y1 - y0).abs();
-    let sy = if y0 < y1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    loop {
-        points.push((x, y));
-        if x == x1 && y == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
-        }
-    }
-    points
-}
-
-fn perpendicular_offsets(
-    x0: isize,
-    y0: isize,
-    x1: isize,
-    y1: isize,
-    width: usize,
-) -> Vec<(isize, isize)> {
-    let dx = (x1 - x0) as f64;
-    let dy = (y1 - y0) as f64;
-    let length = (dx * dx + dy * dy).sqrt();
-    let (px, py) = if length > 0.0 {
-        (-dy / length, dx / length)
-    } else {
-        (0.0, 1.0)
-    };
-    let center = (width as isize - 1) as f64 / 2.0;
-    (0..width)
-        .map(|index| {
-            let offset = index as f64 - center;
-            (
-                (px * offset).round() as isize,
-                (py * offset).round() as isize,
-            )
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
 }
 
 #[cfg(test)]
@@ -4466,24 +4275,17 @@ mod tests {
         assert_eq!(masked_moment.products[0].valid_profiles, 3);
 
         let pv_path = temp.path().join("pv.image");
-        let pv_result = run_image_analysis_task(ImageAnalysisTaskRequest::Impv(ImpvRequest {
+        let pv_error = run_image_analysis_task(ImageAnalysisTaskRequest::Impv(ImpvRequest {
             imagename: source_path.clone(),
             outfile: pv_path.clone(),
-            mode: "coords".to_string(),
-            start: "0,0".to_string(),
-            end: "1,1".to_string(),
-            width: 1,
-            chans: Some("1~2".to_string()),
-            overwrite: false,
+            start: Some(PvPosition::Pixel([0.0, 0.0])),
+            end: Some(PvPosition::Pixel([1.0, 1.0])),
+            chans: Some("1~2".into()),
+            ..ImpvRequest::default()
         }))
-        .unwrap();
-        let ImageAnalysisTaskResult::Impv(pv) = pv_result else {
-            panic!("expected impv result");
-        };
-        assert_eq!(pv.shape, vec![2, 1, 2]);
-        assert_eq!(pv.path_pixels, 2);
-        let pv_image = PagedImage::<f32>::open(&pv_path).unwrap();
-        assert_eq!(pv_image.shape(), &[2, 1, 2]);
+        .unwrap_err();
+        assert!(pv_error.to_string().contains("square direction pixels"));
+        assert!(!pv_path.exists());
 
         let subimage_path = temp.path().join("sub.image");
         let subimage_result =

@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 809
+- Concepts: 810
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -41,7 +41,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 5 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
 | [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 6 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA or FITS image |
-| [Position Velocity](#surface-impv)<br><code>impv</code> | task | 5 | <code>image_analysis</code> | 16 | Extract a CASA-style position-velocity image |
+| [Position Velocity](#surface-impv)<br><code>impv</code> | task | 6 | <code>image_analysis</code> | 16 | Extract a CASA-style position-velocity image |
 | [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 5 | <code>image_analysis</code> | 12 | Extract a CASA-style image section |
 | [Image Math](#surface-immath)<br><code>immath</code> | task | 5 | <code>image_analysis</code> | 16 | Evaluate mathematical expressions and spectral or polarization operations on images |
 | [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 5 | <code>image_analysis</code> | 10 | Regrid a CASA image onto a template image |
@@ -1178,7 +1178,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Position Velocity (<code>impv</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Extract a CASA-style position-velocity image
@@ -1187,16 +1187,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
 | <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
-| <code>mode</code> | <code>impv.mode@r1</code> | <code>choice (2 values)</code> | <code>"coords"</code>; optional | Slice | How the slice is given: by start and end, or by center, length and position angle. |
-| <code>start</code> | <code>parameter.start@r1</code> | <code>string</code> | <code>""</code>; required | Slice | Cube-axis start channel, frequency, or velocity |
-| <code>end</code> | <code>parameter.end@r1</code> | <code>string</code> | <code>""</code>; required | Slice | End pixel coordinate |
-| <code>center</code> | <code>pv.center@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Slice | Center of the slice in the direction plane, given with length and pa. |
-| <code>length</code> | <code>impv.length@r1</code> | <code>string</code> | <code>""</code>; optional | Slice | Length of the slice in the direction plane, given with center and pa. |
-| <code>pa</code> | <code>impv.pa@r1</code> | <code>string</code> | <code>""</code>; optional | Slice | Position angle of the slice, north through east, given with center and length. |
-| <code>width</code> | <code>impv.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Slice | Averaging width in pixels |
+| <code>mode</code> | <code>impv.mode@r2</code> | <code>string</code> | <code>"coords"</code>; optional | Slice | How the slice is given: by start and end, or by center, length and position angle. |
+| <code>start</code> | <code>parameter.start@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | Cube-axis start channel, frequency, or velocity |
+| <code>end</code> | <code>parameter.end@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | End pixel coordinate |
+| <code>center</code> | <code>pv.center@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | Center of the slice in the direction plane, given with length and pa. |
+| <code>length</code> | <code>impv.length@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | Length of the slice in the direction plane, given with center and pa. |
+| <code>pa</code> | <code>impv.pa@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | Position angle of the slice, north through east, given with center and length. |
+| <code>width</code> | <code>impv.width@r2</code> | <code>variant</code> | <code>1</code>; optional | Slice | Odd averaging width in pixels or an angular width. |
 | <code>unit</code> | <code>impv.unit@r1</code> | <code>string</code> | <code>"arcsec"</code>; optional | Output | Angular unit of the output's offset axis. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
-| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>region</code> | <code>impv.region@r1</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA region text, image region name, or a region record. Direction-axis cropping is refused. |
 | <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
 | <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |

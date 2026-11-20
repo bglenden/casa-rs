@@ -858,7 +858,7 @@ fn parse_crtf_pix(text: &str) -> Result<Option<f64>, ImageError> {
     Ok(Some(val))
 }
 
-fn parse_world_angle(text: &str) -> Result<f64, ImageError> {
+pub(in crate::analysis) fn parse_world_angle(text: &str) -> Result<f64, ImageError> {
     let trimmed = text.trim();
     if trimmed.contains(':') {
         return parse_colon_hms(trimmed);

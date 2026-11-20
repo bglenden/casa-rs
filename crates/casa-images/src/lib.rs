@@ -90,11 +90,11 @@ pub use analysis::{
     ImageRegridSummary, ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest,
     ImmomentsRequest, ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest,
     ImstatOutcome, ImstatPlanesSummary, ImstatRequest, ImsubimageRequest, MomentImageSummary,
-    MomentMapSummary, PbcorBeam, PbcorRegion, PbcorSummary, PvImageSummary, export_fits,
-    exportfits, feather, image_analysis_protocol_descriptor, image_analysis_task_schema_bundle,
-    imhead, imhead_add_delete, imhead_extrema, imhead_put, immath, immoments, impbcor, import_fits,
-    importfits, impv, imregrid, imstat, imsubimage, parse_image_channel_selection,
-    parse_imstat_algorithm, run_image_analysis_task,
+    MomentMapSummary, PbcorBeam, PbcorRegion, PbcorSummary, PvAmount, PvImageSummary, PvPosition,
+    export_fits, exportfits, feather, image_analysis_protocol_descriptor,
+    image_analysis_task_schema_bundle, imhead, imhead_add_delete, imhead_extrema, imhead_put,
+    immath, immoments, impbcor, import_fits, importfits, impv, imregrid, imstat, imsubimage,
+    parse_image_channel_selection, parse_imstat_algorithm, run_image_analysis_task,
 };
 pub use beam::{BeamComponent, GaussianBeam, ImageBeamSet, StoredGaussianBeam};
 pub use casa_lattices::{

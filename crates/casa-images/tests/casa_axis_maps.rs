@@ -27,7 +27,7 @@ use casa_coordinates::{
 };
 use casa_images::{
     FeatherRequest, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType, ImpvRequest,
-    ImsubimageRequest, PagedImage, feather, impv, imsubimage,
+    ImsubimageRequest, PagedImage, PvPosition, feather, impv, imsubimage,
 };
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::DirectionRef;
@@ -396,23 +396,18 @@ fn regions_take_the_direction_wherever_its_axes_are() {
 }
 
 #[test]
-fn impv_refuses_a_direction_off_the_first_two_axes() {
-    // impv's output keeps its input's coordinates rather than a PV image's
-    // (#1024), so a direction elsewhere stays refused (#1022 review).
+fn impv_checks_edge_distances_on_the_actual_direction_axes() {
     let scratch = tempfile::tempdir().expect("scratch");
     for name in ["transposed.image", "spectral_first.image"] {
         let error = impv(&ImpvRequest {
             imagename: copy_image(name, scratch.path()),
             outfile: scratch.path().join("pv.image"),
-            mode: "coords".into(),
-            start: "0,1".into(),
-            end: "3,1".into(),
-            width: 1,
-            chans: None,
-            overwrite: false,
+            start: Some(PvPosition::Pixel([0.0, 1.0])),
+            end: Some(PvPosition::Pixel([3.0, 1.0])),
+            ..ImpvRequest::default()
         })
         .unwrap_err();
-        assert!(error.to_string().contains("#1024"), "{name}: {error}");
+        assert!(error.to_string().contains("two pixels"), "{name}: {error}");
     }
 }
 
