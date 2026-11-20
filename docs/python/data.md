@@ -1,13 +1,11 @@
 # Data API
 
-`casars.data` exposes persistent file-backed objects only.
+Use `casars.tools` to work with image and table files in process.
+`casars.data` provides data helpers and publishes the native object protocol.
 
-The module also publishes its canonical object-surface contract directly from
-Rust:
-
-- `protocol_info()` returns the stable object protocol descriptor
-- `schema_bundle()` returns the canonical schema bundle for `Image`
-  and the `casars.tools` classes
+- `protocol_info()` returns the stable object protocol descriptor.
+- `schema_bundle()` returns the canonical schema bundle for the
+  `casars.tools` classes.
 
 ## Images
 
@@ -79,6 +77,10 @@ Use `ia.open("example.im")` to reopen the product. Use
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.rotatebeam("15deg")` to rotate all stored restoring beams. On a
+directly opened FITS image, the rotation applies only to the open tool.
+Each open tool keeps its own view of the restoring beams. Reopen a native
+image to read beam changes made through another tool.
 Use `ia.summary(list=False)` to read the shape, coordinate axes, mask names
 and restoring beams and return the two report messages. The default
 `list=True` sends the report to the logger.
@@ -91,9 +93,30 @@ shape and compatible coordinates as a native float or complex image.
 Use `ia.convertflux(value, major, minor)` to convert a Gaussian's integrated
 flux to peak brightness. Pass `topeak=False` for the reverse conversion and
 select the channel and polarization for an image with per-plane beams.
+Use `ia.deconvolvecomponentlist(cl.torecord())` to remove the restoring beam
+from Gaussian components on an attached float or complex image. Point
+components are returned intact. For a per-plane beam grid, select the
+channel and polarization on each nondegenerate axis.
+Use `ia.modify(cl.torecord(), subtract=False)` to add a component model to a
+float image. The default subtracts the model. A region limits the pixel
+section. CASA validates an explicit mask and applies the edit to the stored
+pixels in that section.
+Use `ia.imageconcat(infiles=["a.im", "b.im"], axis=0)` for a temporary
+concatenation, or give `outfile` for a native image. The default
+concatenation axis is spectral. `reorder=True` sorts inputs along the
+selected coordinate. Virtual modes are tracked in #1749.
+Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
+float or complex image. Use `update=True` to validate the selected native
+pixel mask after replacement.
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
+
+For a native image, `ia.haslock()` reports its read and write locks in that
+order. Use `ia.lock(writelock=True, nattempts=1)` to try for a write lock
+without waiting. `ia.unlock()` flushes pending changes and releases the
+lock. `putchunk` normally releases the lock after writing. Pass
+`locking=False` to keep it while making several updates.
 
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
@@ -104,8 +127,21 @@ writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.
 `zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
-a separate image tool. The remaining
-CASA image and coordinate operations are tracked in
+a separate image tool.
+
+`ia.torecord()` captures the pixels, coordinates and image info, including
+restoring beams. `ia.fromrecord(record)` restores a temporary image. Pass an
+output path to write a native CASA image. As in CASA, restoring a record uses
+single-precision pixels and starts a new history.
+
+Use `ia.fromimage(outfile="copy.im", infile="example.im")` to copy an image
+with its coordinates, active pixel mask, metadata and history. Use
+`newimagefromimage` to keep the current attachment and receive a separate tool.
+An absolute CASA `LCSlicer` region selects a pixel box and its stride. The
+copy retains the selected frequencies and restoring beams. Additional region
+forms are tracked in #1625.
+
+The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
 Use `ia.maketestimage()` to load `demo/Images/imagetestimage.fits` as a
@@ -128,26 +164,33 @@ references, and unit-stride boxes and polygon records.
 An existing entry inside the input image cannot be replaced, protecting
 the source's history and mask tables.
 
-### Access an existing image through the Data API
+### Migrate an existing image reader or writer
 
-Use `Image.open(path, writable=False)` to open an existing CASA-compatible image. The v1 surface is intentionally narrow:
+The former `casars.data.Image` and `casars.Image` exports have been retired.
+Create an `image()` tool, call `open(path)`, and call `done()` when finished.
 
-- metadata access through `shape`, `pixel_type`, `units`, `image_info`, `misc_info`, `mask_names`, and `default_mask_name`
-- pixel I/O through `get_slice`, `put_slice`, `get_plane`, and `get_mask_slice`
+| Previous operation | CASA image tool |
+| --- | --- |
+| `shape`, `pixel_type`, `units` | `shape()`, `pixeltype()`, `brightnessunit()` |
+| `coordinate_system`, `misc_info` | `coordsys().torecord()`, `miscinfo()` |
+| `image_info` | `torecord()["imageinfo"]`, or `restoringbeam()` for beam quantities |
+| `mask_names`, `default_mask_name` | `maskhandler("get")`, `maskhandler("default")` |
+| `get_slice(start, shape, stride=...)` | `getchunk(blc=start, trc=last, inc=stride)` |
+| `get_mask_slice(...)` | `getchunk(..., getmask=True)` |
+| `put_slice(pixels, start)` | `putchunk(pixels, blc=start)` |
 
-Read operations return NumPy arrays for numeric payloads. Writes accept NumPy-compatible inputs and materialize them into the image as owned copies.
+`blc` and `trc` are inclusive zero-based pixel coordinates.
+For each axis, calculate `last = start + (shape - 1) * stride`.
+To read a plane, give that axis the same start and end, and squeeze that
+axis from the resulting array. Use `casars.imexplore.data` for a plane with
+its native NumPy dtype, mask and WCS.
 
-### V1 write policy
-
-Image writes are part of the supported v1 API, but only in a narrow form:
-
-- supported: pixel-slice updates on existing persistent images via `put_slice`
-- supported: reads from the persisted default mask via `get_mask_slice`
-- not part of v1: image creation from Python
-- not part of v1: coordinate-system authoring or editing from Python
-- not part of v1: general metadata authoring beyond the persisted fields exposed for read access
-
-In other words, `casars.data.Image` is a stable read/write pixel-access surface for existing images, not a full Python image-construction or image-metadata editing API.
+Like CASA, `getchunk` returns real pixels as `float64` and complex pixels as
+`complex128`. Use the storage type from `pixeltype()` if your caller needs
+the original width. An unmasked chunk returns an all-true mask. Use
+`maskhandler("default")` if your caller distinguishes a missing default mask.
+CASA returns `[""]` for a missing default mask and `["T"]` when listing an
+unmasked image.
 
 ### Stitch independently CLEANed pointings
 

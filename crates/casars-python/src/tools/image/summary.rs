@@ -15,6 +15,7 @@ use crate::convert::value::CasaValue;
 use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
+use super::beam_view::BeamView;
 use super::beams::{image_info, restoring_beam};
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 
@@ -55,6 +56,7 @@ fn mask_description(masks: &[String], default: &str, has_mask: bool) -> String {
 
 fn describe(
     image: &ImageHandle,
+    beam_view: &BeamView,
     doppler: DopplerRef,
     list: bool,
     pixel_order: bool,
@@ -121,7 +123,7 @@ fn describe(
     let record = image.coordinate_record();
     let coords = CoordinateSystem::from_record(&record).map_err(raised)?;
     let mut fields = coordinates::fields(&record, pixel_order)?;
-    let beams = &info.beam_set;
+    let beams = beam_view.beam_set().map_err(raised)?;
     if let Some(beam) = beams.single_beam() {
         let width_unit = if beam.minor_in("deg").map_err(raised)? < 1.0 {
             "arcsec"
@@ -136,10 +138,10 @@ fn describe(
             "\nRestoring Beam   : {major} {width_unit}, {minor} {width_unit}, {pa} deg"
         )
         .unwrap();
-        fields.push(("restoringbeam", restoring_beam(image, -1, -1, "list")?));
+        fields.push(("restoringbeam", restoring_beam(beam_view, -1, -1, "list")?));
     } else if beams.is_multi() {
-        plane_beams::append(&mut header, &record, &coords, beams, list && verbose)?;
-        fields.push(("perplanebeams", restoring_beam(image, -1, -1, "list")?));
+        plane_beams::append(&mut header, &record, &coords, &beams, list && verbose)?;
+        fields.push(("perplanebeams", restoring_beam(beam_view, -1, -1, "list")?));
     }
 
     let mut messages = vec![
@@ -188,8 +190,11 @@ impl PyImageTool {
                     DopplerRef::RADIO
                 })
             };
+            let mut image = attachment.lock();
+            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
             describe(
-                &attachment.lock(),
+                &image,
+                &attachment.beam_view(),
                 doppler,
                 list,
                 pixelorder,

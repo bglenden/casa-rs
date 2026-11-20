@@ -23,7 +23,7 @@ def fits_fields(path):
 def main():
     root = Path('crates/casars-imexplore/tests/data/imhead_crpix')
     cases = [(source, 'equinox', value, None) for source in ('normal','transposed','projection_pointing')
-             for value in ('J2000','GALACTIC','ICRS','B1950','ECLIPTIC','SUPERGAL')]
+             for value in ('J2000','GALACTIC','ICRS','B1950','B1950_VLA','ECLIPTIC','SUPERGAL')]
     cases += [('normal','equinox','GAL',None), ('normal','EQUINOX','j2',None), ('normal','equinox','J',None), ('normal','equinox','bad',None),
               ('normal','equinox','ICRS','GALACTIC'), ('normal','equinox','J2000','GALACTIC')]
     expected = {'casa_version':version_string(), 'cases':[]}

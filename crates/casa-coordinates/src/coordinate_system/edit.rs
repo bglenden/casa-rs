@@ -4,7 +4,22 @@
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::CoordinateSystem;
-use crate::{Coordinate, CoordinateError, CoordinateType};
+use crate::{Coordinate, CoordinateError, CoordinateType, ProjectionType};
+
+/// Casacore's Projection constructor resizes a short vector without copying
+/// its original contents. Vectors already long enough retain all entries.
+fn apply_casa_projection_defaults(kind: ProjectionType, parameters: &mut Vec<f64>) {
+    let defaults: &[f64] = match kind {
+        ProjectionType::AZP | ProjectionType::SIN => &[0.0, 0.0],
+        ProjectionType::SZP => &[0.0, 0.0, 90.0],
+        ProjectionType::AIR => &[90.0],
+        _ => &[],
+    };
+    if parameters.len() < defaults.len() {
+        parameters.clear();
+        parameters.extend_from_slice(defaults);
+    }
+}
 
 /// Store WCSLIB's resolved latitude of the native pole after changing a
 /// direction's projection or reference value.
@@ -498,9 +513,9 @@ impl CoordinateSystem {
 
     /// Change the first direction coordinate's projection, preserving axis maps.
     ///
-    /// Returns the old projection when it changed. Supports standard zenithal,
-    /// cylindrical, pseudocylindrical, and quadrilateralized cube projections
-    /// with default parameters. A separate direction conversion frame is preserved.
+    /// Returns the old projection when it changed. CASA carries the old
+    /// parameters when the vector is long enough, otherwise it uses the new
+    /// projection's defaults. The direction conversion frame is preserved.
     ///
     /// # Errors
     ///
@@ -525,42 +540,34 @@ impl CoordinateSystem {
         let (field, direction) = Self::first_direction_in_record(record)?
             .ok_or_else(|| CoordinateError::InvalidRecord("no direction coordinate".into()))?;
         let name = projection.to_ascii_uppercase();
-        let supported = [
-            "SIN", "TAN", "ARC", "ZEA", "STG", "CAR", "SFL", "MER", "AIT", "PAR", "MOL", "PCO",
-            "TSC", "CSC", "QSC",
-        ];
         if name == "NCP" {
             return Err(CoordinateError::InvalidRecord(format!(
                 "unknown projection {projection:?}"
             )));
         }
-        if crate::ProjectionType::from_name(&name).is_none() {
-            return Err(CoordinateError::InvalidRecord(format!(
+        let kind = ProjectionType::from_name(&name).ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!(
                 "unknown or unsupported projection {projection:?} (#977)"
-            )));
-        }
-        let old = direction.projection().name().to_string();
+            ))
+        })?;
+        let previous = direction.projection();
+        let old = previous.name().to_string();
         if old == name {
             return Ok((system, None));
         }
-        if !supported.contains(&old.as_str())
-            || !supported.contains(&name.as_str())
-            || direction
-                .projection()
-                .parameters()
-                .iter()
-                .any(|value| *value != 0.0)
-        {
-            return Err(CoordinateError::InvalidRecord(
-                "projection transition is not implemented (#977)".into(),
-            ));
-        }
+        let mut parameters = previous.parameters().to_vec();
+        apply_casa_projection_defaults(previous.projection_type(), &mut parameters);
+        apply_casa_projection_defaults(kind, &mut parameters);
         let mut updated = record.clone();
         let Some(Value::Record(direction)) = updated.get_mut(&field) else {
             unreachable!()
         };
         normalize_direction_matrix(direction)?;
         direction.upsert("projection", Value::Scalar(ScalarValue::String(name)));
+        direction.upsert(
+            "projection_parameters",
+            Value::Array(ArrayValue::from_f64_vec(parameters)),
+        );
         refresh_direction_pole(direction)?;
         let system = Self::from_record(&updated)?;
         *record = updated;

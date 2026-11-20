@@ -31,7 +31,8 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::{
-    SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
+    MaskReplacementOptions, MaskReplacementOutcome, SubimageOptions, SubimagePlan, SubimageRegion,
+    ensure_outfile_does_not_alias_input, replace_masked_complex_pixels, replace_masked_real_pixels,
 };
 mod list_log;
 mod planes;
@@ -48,7 +49,7 @@ mod impv;
 mod lel_mask;
 
 use self::axes::direction_plane_axes;
-pub use self::exportfits::{ImageFitsHeader, image_fits_header};
+pub use self::exportfits::{ImageFitsHeader, image_fits_header, image_fits_header_with_beams};
 pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
 pub use self::imsubimage::ImageNoise;

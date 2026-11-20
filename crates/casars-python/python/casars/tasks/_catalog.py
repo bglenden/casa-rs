@@ -470,7 +470,7 @@ def mstransform(
     preaverage: bool = False,
     timeaverage: bool = False,
     timebin: str = '0s',
-    timespan: str = '',
+    timespan: str | list[str] | tuple[str, ...] = '',
     maxuvwdistance: float = 0.0,
     docallib: bool = False,
     callib: StrPath = '',
@@ -495,11 +495,10 @@ def mstransform(
     ``realmodelcol``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,
     ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,
     ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,
-    ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,
-    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,
-    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,
-    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,
-    ``monolithic_processing``, ``reindex``.
+    ``preaverage``, ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``,
+    ``fitorder``, ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``,
+    ``disableparallel``, ``ddistart``, ``monolithic_processing``,
+    ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -507,10 +506,10 @@ def split(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     outputvis: StrPath = '',
     keepmms: bool = True,
-    field: str = '',
-    spw: str = '',
-    scan: str = '',
-    antenna: str = '',
+    field: str | int = '',
+    spw: str | int = '',
+    scan: str | int = '',
+    antenna: str | int = '',
     correlation: str | list[str] = '',
     timerange: str = '',
     intent: str = '',
@@ -522,15 +521,13 @@ def split(
     keepflags: bool = True,
     width: int | str | list[int] | tuple[int, ...] = 1,
     timebin: str = '0s',
-    combine: str = '',
+    combine: str | list[str] | tuple[str, ...] = '',
     *,
     msselect: str = '',
 ) -> Any:
     """Create a selected MeasurementSet subset, equivalent to CASA split.
 
     CASA's ``split``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``, ``timebin``, ``combine``.
     """
     return _call_casa(split, locals())
 
@@ -938,7 +935,7 @@ def flagdata(
     scan: str = '',
     intent: str = '',
     array: str = '',
-    observation: str = '',
+    observation: str | int = '',
     feed: str = '',
     clipminmax: float | list[float] | tuple[float, ...] = [],
     datacolumn: str = 'DATA',
@@ -948,9 +945,9 @@ def flagdata(
     timeavg: bool = False,
     timebin: str = '0s',
     clipzeros: bool = False,
-    quackinterval: float = 1.0,
-    quackmode: Literal['beg', 'end', 'endb', 'tail'] = 'beg',
-    quackincrement: bool = False,
+    quackinterval: float | list[float] = 1.0,
+    quackmode: str | list[str] = 'beg',
+    quackincrement: bool | list[bool] = False,
     tolerance: float = 0.0,
     addantenna: str = '',
     lowerlimit: float = 0.0,
@@ -1004,15 +1001,14 @@ def flagdata(
 
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``autocorr``, ``inpfile``, ``reason``, ``tbuff``, ``uvrange``,
-    ``timerange``, ``correlation``, ``intent``, ``array``, ``observation``,
-    ``feed``, ``channelavg``, ``chanbin``, ``timeavg``, ``timebin``,
-    ``quackincrement``, ``tolerance``, ``addantenna``, ``lowerlimit``,
-    ``upperlimit``, ``ntime``, ``combinescans``, ``timefit``, ``freqfit``,
-    ``maxnpieces``, ``flagdimension``, ``usewindowstats``, ``halfwin``,
-    ``winsize``, ``antint_ref_antenna``, ``minchanfrac``, ``verbose``,
-    ``growaround``, ``flagneartime``, ``flagnearfreq``, ``display``,
-    ``savepars``, ``cmdreason``, ``outfile``, ``overwrite``.
+    ``inpfile``, ``reason``, ``tbuff``, ``correlation``, ``channelavg``,
+    ``chanbin``, ``timeavg``, ``timebin``, ``tolerance``, ``addantenna``,
+    ``lowerlimit``, ``upperlimit``, ``ntime``, ``combinescans``,
+    ``timefit``, ``freqfit``, ``maxnpieces``, ``flagdimension``,
+    ``usewindowstats``, ``halfwin``, ``winsize``, ``antint_ref_antenna``,
+    ``minchanfrac``, ``verbose``, ``growaround``, ``flagneartime``,
+    ``flagnearfreq``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,
+    ``overwrite``.
     """
     return _call_casa(flagdata, locals())
 

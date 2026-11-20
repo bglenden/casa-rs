@@ -11,7 +11,7 @@ use crate::TableError;
 /// separately for its I/O.
 pub struct TableUseLock {
     #[cfg(unix)]
-    _lock_file: LockFile,
+    _lock_file: Option<LockFile>,
     #[cfg(unix)]
     directory: std::fs::File,
 }
@@ -23,6 +23,29 @@ impl TableUseLock {
     /// Returns an error if the table cannot be opened or a writer holds an
     /// access lock while this handle attaches.
     pub fn acquire(path: &Path) -> Result<Self, TableError> {
+        Self::open(path, false, 1)
+    }
+
+    /// Marks the table open, waiting if another process holds its write lock.
+    ///
+    /// Like an automatic casacore open, a wait registers this process in
+    /// the table's request list. The temporary read lock is released after
+    /// the in-use marker is established.
+    pub fn acquire_waiting(path: &Path) -> Result<Self, TableError> {
+        Self::open(path, false, 0)
+    }
+
+    /// Mark a read-only attachment as open where locking is available.
+    /// A read-only directory without a lock file can still be read. The
+    /// guard retains the directory identity even when it cannot mark it open.
+    ///
+    /// # Errors
+    /// Returns an error for an unreadable table or a conflicting writer.
+    pub fn acquire_readonly(path: &Path) -> Result<Self, TableError> {
+        Self::open(path, true, 1)
+    }
+
+    fn open(path: &Path, readonly: bool, attempts: u32) -> Result<Self, TableError> {
         #[cfg(unix)]
         {
             let lock_io = |error: std::io::Error| TableError::LockIo {
@@ -30,29 +53,47 @@ impl TableUseLock {
                 message: error.to_string(),
             };
             let directory = std::fs::File::open(path).map_err(lock_io)?;
-            let mut lock_file = LockFile::create_or_open(
+            let mut lock_file = match LockFile::create_or_open(
                 path,
                 false,
                 LockOptions::default().inspection_interval,
                 false,
-            )
-            .map_err(lock_io)?;
-            let outcome = lock_file.acquire(LockType::Read, 1).map_err(lock_io)?;
+            ) {
+                Ok(lock_file) => lock_file,
+                Err(error)
+                    if readonly
+                        && matches!(
+                            error.kind(),
+                            std::io::ErrorKind::PermissionDenied
+                                | std::io::ErrorKind::ReadOnlyFilesystem
+                        )
+                        && !path.join("table.lock").exists() =>
+                {
+                    return Ok(Self {
+                        _lock_file: None,
+                        directory,
+                    });
+                }
+                Err(error) => return Err(lock_io(error)),
+            };
+            let outcome = lock_file
+                .acquire(LockType::Read, attempts)
+                .map_err(lock_io)?;
             if !outcome.is_acquired() {
                 return Err(TableError::LockFailed {
                     path: path.display().to_string(),
-                    message: outcome.refusal(LockType::Read, 1),
+                    message: outcome.refusal(LockType::Read, attempts),
                 });
             }
             lock_file.release().map_err(lock_io)?;
             Ok(Self {
-                _lock_file: lock_file,
+                _lock_file: Some(lock_file),
                 directory,
             })
         }
         #[cfg(not(unix))]
         {
-            let _ = path;
+            let _ = (path, readonly, attempts);
             Ok(Self {})
         }
     }

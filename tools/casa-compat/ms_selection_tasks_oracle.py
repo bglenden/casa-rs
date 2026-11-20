@@ -205,6 +205,36 @@ def malformed_spw(root, source, name):
         assert not path.exists(), path
 
 
+def compare_split_taql(root, source):
+    """Compare split's TaQL extension with casacore and ordinary CASA selectors."""
+    predicate = "SCAN_NUMBER == 2 && ANTENNA1 == 2 && ANTENNA2 == 4"
+    reference, native = (root / f"split-taql-{side}.ms" for side in ("casa", "native"))
+    arguments = dict(vis=str(source), datacolumn="data", spw="0:1~3", antenna="A2&A4")
+    assert casatasks.split(outputvis=str(reference), scan="2", **arguments) is None
+    assert tasks.split(outputvis=str(native), msselect=predicate, **arguments) is None
+    compare_columns(reference, native, MAIN, "split TaQL MAIN")
+    for subtable, names in SUBTABLES.items():
+        compare_columns(reference / subtable, native / subtable, names, f"split TaQL {subtable}")
+    with core_table(str(source), ack=False) as original, original.query(predicate) as selected:
+        expected = selected.getcol("DATA")[:, 1:4, :]
+        assert 0 < selected.nrows() < original.nrows()
+        np.testing.assert_array_equal(columns_from_casacore(native, ("DATA",))["DATA"], expected)
+
+    refusals = (
+        ("empty", "SCAN_NUMBER < 0", "MSSelectionNullSelection"),
+        ("invalid", "ANTENNA1 ==", "TaQL error: parse error"),
+    )
+    for name, expression, message in refusals:
+        output = root / f"split-taql-{name}.ms"
+        try:
+            tasks.split(outputvis=str(output), msselect=expression, **arguments)
+        except RuntimeError as error:
+            assert message in str(error), (expression, error)
+            assert not output.exists(), output
+        else:
+            raise AssertionError(f"split accepted {name} TaQL expression {expression!r}")
+
+
 def rejected_selector_types(root, source, name):
     cases = (
         ("observation", None, AssertionError, "null value not allowed"),
@@ -358,6 +388,7 @@ def main():
                 succeeds(root, source, name, case, options)
             empty_selection(root, source, name, times[-1] + 1)
             malformed_spw(root, source, name)
+        compare_split_taql(root, source)
         for column, values in columns_from_casacore(source, MAIN).items():
             np.testing.assert_array_equal(values, before[column], err_msg=f"input {column}")
         add_second_window(source)
@@ -392,7 +423,7 @@ def main():
             succeeds(root, source, name, "provider-scalar-array", {"observation": np.array(1)}, subtables, via_run=True)
             succeeds(root, interleaved, name, "interleaved-observations-and-states", {"observation": "2,0", "intent": "2,1"})
             rejected += rejected_selector_types(root, source, name)
-        products = (len(cases) + len(observation_cases) + 6) * 2
+        products = (len(cases) + len(observation_cases) + 6) * 2 + 1
         add_arrays_and_feeds(source)
         before = columns_from_casacore(source, MAIN)
         for name in ("split", "mstransform"):
@@ -402,6 +433,7 @@ def main():
         for column, values in columns_from_casacore(source, MAIN).items():
             np.testing.assert_array_equal(values, before[column], err_msg=f"input {column}")
         print(f"{products} selected products and {rejected} rejected calls matched CASA 6.7.6.14")
+        print("The split TaQL extension also matched casacore, and two rejections left no output")
 
 
 if __name__ == "__main__":

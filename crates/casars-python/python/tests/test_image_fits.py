@@ -266,6 +266,10 @@ def test_read_fits_pixels_and_mask_without_importing(tmp_path, oracle, method):
         assert expected_parent.done()
     assert image.ispersistent() and image.name() == str(path)
     assert image.pixeltype() == "float"
+    _assert_value(image.haslock(), expected.haslock())
+    assert image.unlock() and expected.unlock()
+    assert image.lock(writelock=True, nattempts=1) and expected.lock(writelock=True, nattempts=1)
+    _assert_value(image.haslock(), expected.haslock())
     assert image.miscinfo() == expected.miscinfo() == {"foobar": 73}
     assert image.history() == expected.history() == ["first custom history"]
     assert image.maskhandler("get") == expected.maskhandler("get") == ["T"]

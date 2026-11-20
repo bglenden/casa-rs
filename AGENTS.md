@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-11-12
+Last reality check: 2026-11-20
 Verification: just docs-check
 
 casa-rs is a native Rust implementation of casacore/CASA libraries and
@@ -57,10 +57,9 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
 - Rust at least `Cargo.toml`'s `rust-version` (`rustup update stable`); set
   `CARGO_INCREMENTAL=0` for raw cargo. Install `cargo-nextest` so tests run
   in parallel; without it `scripts/test-workspace.sh` runs them serially.
-- Use focused local checks for the selected behavior. PR CI selects checks
-  for changed packages, direct consumers and affected interfaces. Build or
-  unclear changes get full coverage on ready PRs. Nightly CI and release
-  tags run the broad gates.
+- Use focused local checks for PRs. Run hosted checks only for a specific
+  required result the local environment cannot establish, or when the owner
+  requests a hosted run. Nightly CI and release tags run the broad gates.
   `just quick` reproduces the broad local gate. Use `just verify` for
   milestones and releases. `just --list` shows the other commands.
 - Python package tests: `scripts/test-python-package.sh`. Python binds Rust
@@ -122,8 +121,8 @@ locations are in `docs/agent-reference.md`.
 
 ## Work And Git
 
-- Issues and pull requests are the work record. A PR is the CI gate in
-  front of `main`, one per outcome. It lands as one squashed commit whose
+- Issues and pull requests are the work record. Submit one PR per outcome
+  and merge through it. A PR lands as one squashed commit whose
   message is the PR's title and description, so write them as that commit
   message: subject; what changed and why; `Work issue: #N` (or
   `Work source: <reason>`); `Evidence:`; `Decisions:`; `Review:` if there
@@ -156,8 +155,8 @@ locations are in `docs/agent-reference.md`.
   cover their own integration. Do not duplicate progress narratives in
   the parent, catalogs or new files, or reset valid completed work.
   Keep one bounded behavior under implementation and queue unrelated findings
-  on the appropriate backlog. While checks run, take only an already listed,
-  independent behavior. Report merged behaviors and issue totals separately;
+  on the appropriate backlog. While checks run, continue the next authorized
+  behavior that can advance. Report merged behaviors and issue totals separately;
   do not equate an open broad issue
   with zero delivery or create completed issues retrospectively.
   Keep this bookkeeping cheap: no duplicate ledgers, SHA/hash inventories,
@@ -170,8 +169,8 @@ locations are in `docs/agent-reference.md`.
 - Push work longer than a day in increments at least daily to the same PR,
   refusing what is not finished yet. Merge `main` into a branch that lives
   longer; after a squash merge, start new work from `main`.
-- Do not commit directly to `main`, except docs-only changes that pass
-  `just docs-check`.
+- Take changes to `main` through pull requests, including docs. The
+  owner-authorized release command retains its documented release push.
 - Cleanup is mostly automatic. With `core.hooksPath` set to `.githooks`,
   the post-commit hook runs daily housekeeping (`just housekeeping`): it
   removes merged and squash-merged worktrees and branches whose HEAD has
@@ -231,20 +230,18 @@ reason to stop useful work.
   PRs must not close an unfinished ticket. Do not narrow acceptance or invent
   retrospective tickets to claim success. Lead progress reports with completed
   tickets out of the assigned set; PR counts are secondary context.
-- A choice not on the stop list is yours: make it, list it under
-  `Decisions:` (what, why, the alternative not taken), add the
-  `owner-review` label and continue. An overturned decision becomes
-  ordinary follow-up work.
-- Act on authorized work without routine confirmation. A recommendation is
-  not a substitute for implementation when implementation was requested.
-  Continue useful authorized work through progress checkpoints without
-  asking the owner to say "please continue". Move to the next listed ticket
-  after closure. While the primary ticket's complete implementation and evidence
-  await only final CI/merge, or a concrete blocker prevents further action on it,
-  advance at most one independent listed ticket. Immediately return to failures,
-  merge and closure of the primary ticket. Stop only when no useful authorized
-  work can advance. Follow
-  "While Checks Run" for pending ownership; do not invent work to keep a session active.
+- Make routine, reversible decisions yourself. For unusual or malformed
+  inputs, follow established behavior or choose and test a conservative
+  handling that preserves data. Record consequential decisions within scope
+  under `Decisions:` and add `owner-review`. Continue while those decisions
+  remain reviewable. An overturned decision becomes ordinary follow-up work.
+- Work through the assigned outcomes without asking the owner to restart
+  work at milestones. Finish the primary ticket's actionable criteria first.
+  If it cannot advance yet, take the next authorized independent item in
+  order. Continue through the queue as items become ready, and return to the
+  primary ticket when its dependency or result becomes actionable. Keep one
+  active implementation at a time. Follow "Continuation and Blockers" for
+  external results.
 - Use the cheapest capable model and effort for the work. No additional
   agents or expensive reviews by default; use one reviewer for the progress
   checks above, when Review requires it, or when the owner asks. No speculative
@@ -260,7 +257,8 @@ reason to stop useful work.
   action, any blocker or owner decision, and the next ticket in order. Keep
   detailed evidence, reviews and waivers on the child or PR that owns them.
   A handoff is the status comment plus a startup prompt naming no model or
-  host-specific tool. A resumed branch follows `AGENTS.md` on `origin/main`.
+  host-specific tool. At startup and on resumption, use the current `AGENTS.md`
+  on `origin/main` for delivery rules, including on older worktrees.
 - Never weaken an acceptance check to finish. Unfinished work stays open on
   its issue and the PR does not claim it; that includes relaxations
   `TESTING.md` reserves for the owner.
@@ -308,7 +306,7 @@ By how far a change reaches:
    they have the behaviour, else an analytic result, never the code's own
    output. On-disk changes add `TESTING.md`'s casacore interop cases. Docs,
    tests, tooling, and refactors or speedups whose results are checked
-   unchanged need only green CI.
+   unchanged need only their applicable validation.
 2. **Not isolated: one local review.** The change reaches shared machinery
    (table storage managers, the MeasurementSet layer, the imaging operator
    and runtime, the task front end) or spans areas, as an imaging speedup
@@ -346,16 +344,18 @@ isolated, strengthen its demonstration test instead of adding a review.
 - During implementation, run the cheapest meaningful test that distinguishes
   the selected behavior. On a stable diff, run one affected validation batch:
   `cargo fmt`, clippy `-D warnings`, relevant tests and `just arch-check`.
-  Docs-only changes need `just docs-check`. Batch related changes on one PR
-  and use draft pushes for focused checks. Leave broad suites to CI unless
-  the change's risk or `TESTING.md` calls for them locally. Preserve
-  scientific, interop, performance and memory acceptance. Reuse green results
-  under `TESTING.md`'s evidence-reuse rules. Do not rebuild or revalidate an
-  unchanged component per case.
-- A PR may open as a draft while work continues. Once its focused checks
-  pass and any review is resolved, mark it ready and set
-  `gh pr merge --auto --squash`. Ready triggers the merge checks. Additional
-  implementation follows the bounded assignment and progress-check rules.
+  Docs-only changes need `just docs-check`. Batch related changes on one PR.
+  Run broader suites when the change's risk or `TESTING.md` calls for them.
+  Preserve scientific, interop, performance and memory acceptance. Reuse
+  green results under `TESTING.md`'s evidence-reuse rules. Do not rebuild or
+  revalidate an unchanged component per case.
+- A PR may open as a draft while work continues. After applicable checks and
+  review pass, record the evidence in the PR, mark it ready and squash merge
+  with `gh pr merge --squash --match-head-commit <validated-head-sha>`.
+  Verify the merge and applicable issue closure. A known failure in required
+  evidence still blocks the merge. Record the reason and link for exceptional
+  hosted checks and verify the requested jobs passed at the validated head
+  before merging. See `TESTING.md` for selection and commands.
 - Keep responsibility for the PR until it merges or is explicitly handed
   off. When CI fails, investigate and fix failures caused by the change;
   rerun a known flaky job (noting it on the flake's issue) or a timing gate
@@ -367,38 +367,32 @@ isolated, strengthen its demonstration test instead of adding a review.
   was wrong. A failure is not a flake until it is shown to be one.
 - If `main` turns red because of your merge, revert it at once (by PR),
   then fix.
-- "Merge as-is" from the owner waives the review and check gates: merge
-  with `gh pr merge --admin --squash` and record the waiver in the
-  description.
+- "Merge as-is" from the owner waives the named review or check gates.
+  Record the waiver in the PR and use normal squash merge unless a GitHub
+  rule still needs the explicitly authorized bypass.
 - Missing test data or disk space is an environment problem, not a code
   regression; say so.
-- A change's pre-merge work is complete when its required evidence and review are
-  green, auto-merge is set, its description says what was run, what it
-  showed, what was not run and what was decided, and the docs match the
-  code. The change is delivered when it merges; the authorized task is
-  complete only at its stated end point.
+- A change is delivered when it merges. The assignment is complete when its
+  authorized outcomes and required closeout are verified. Record what ran,
+  the result, and any known limitation in the PR.
 
-### While Checks Run
+### Continuation and Blockers
 
-- Finish all actionable criteria of the primary ticket before taking another
-  ticket alongside CI or review. A partial PR waiting for checks does not permit
-  leaving the primary ticket's other criteria unfinished. When only final
-  CI/merge or a concrete blocker remains, the Delivery First rule permits one
-  independent listed ticket. Preserve the revision under test on its own branch.
-- Before stopping for CI, review or runtime waits, first check for remaining
-  work on the primary ticket, then for the permitted independent listed work.
-  Continue when available. Pending CI alone does not block the programme or
-  require another owner prompt. CI failures and final issue closure take priority
-  over implementation on the next ticket.
-- When no such work can advance and only an external result remains, stop
-  active model work. Use existing result notifications when available. Otherwise leave one short handoff in
-  the existing issue/PR: link, pending result and next action. State that a
-  resume is needed; do not imply automatic follow-through without a working
-  mechanism. Do not burn model budget polling, spawn a watcher fleet or build
-  new waiting infrastructure for this purpose.
-- Ending a waiting invocation does not abandon the PR. Retain ownership and
-  resume on the result or next invocation to fix relevant failures and finish
-  the merge. Stop background jobs you started once they are no longer needed.
+- While a check, review or run is pending, advance the next actionable part
+  of the assigned work. Keep the revision under test on its own branch. Take
+  responsibility for actionable failures and final merge or closure as soon
+  as they surface.
+- When a running job is the sole remaining dependency and can return within
+  the authorized run limits, use one existing wait or result notification
+  and carry through the result. Avoid repeated status queries and duplicate
+  runs. A notification can take over follow-through only if it can resume
+  this work on success and failure.
+- Diagnose recoverable failures yourself. End before delivery only for an
+  explicit stop or agreed limit, or when a concrete blocker or owner decision
+  required by the scope or stop list leaves no useful authorized work.
+  For a real blocker, record the missing prerequisite or exact decision, the
+  pending work and what can resume it in the existing issue or PR. Never
+  imply that an idle chat will resume on its own.
 
 ## Imaging
 

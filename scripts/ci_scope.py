@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Select CI checks for the checked-out PR merge commit."""
+"""Select hosted checks for a revision and its reviewed merge base."""
 
 import argparse
 from dataclasses import asdict, dataclass
@@ -31,9 +31,7 @@ class Scope:
     perf: bool = False
 
 
-def full_scope(*, draft=False):
-    if draft:
-        return Scope(docs=True)
+def full_scope():
     return Scope(rust="full", python="full", docs=True, perf=True)
 
 
@@ -42,11 +40,11 @@ def command(*args):
 
 
 def changed_paths(base):
-    # GitHub checks out the test merge commit on pull_request. Compare its
-    # first parent so the selection describes the exact tree the jobs test.
-    parents = command("git", "show", "-s", "--format=%P", "HEAD").decode().split()
-    if len(parents) != 2 or parents[0] != base:
-        raise ValueError("checkout is not the expected PR merge commit")
+    if not re.fullmatch(r"[a-f0-9]{40}", base):
+        raise ValueError("affected checks require a full base commit SHA")
+    if base == command("git", "rev-parse", "HEAD").decode().strip():
+        raise ValueError("the base must precede the revision under test")
+    command("git", "merge-base", "--is-ancestor", base, "HEAD")
     names = command("git", "diff", "--name-only", "--no-renames", "-z", base, "HEAD", "--")
     return [os.fsdecode(name) for name in names.split(b"\0") if name]
 
@@ -74,9 +72,9 @@ def workspace_packages():
     return owners, dependencies
 
 
-def pr_scope(paths, *, draft=False):
+def affected_scope(paths):
     if not paths:
-        return full_scope(draft=draft)
+        return full_scope()
 
     cargo_paths = []
     prose = python = perf = False
@@ -97,9 +95,9 @@ def pr_scope(paths, *, draft=False):
         ):
             cargo_paths.append(("/".join(parts[:2]), parts[2]))
         else:
-            return full_scope(draft=draft)
+            return full_scope()
 
-    sources, tests = set(), {"casars-python"} if python and not draft else set()
+    sources, tests = set(), {"casars-python"} if python else set()
     if cargo_paths:
         owners, dependencies = workspace_packages()
         for directory, area in cargo_paths:
@@ -108,15 +106,14 @@ def pr_scope(paths, *, draft=False):
                 sources.add(name)
             else:
                 tests.add(name)
-        if not draft:
-            tests.update(name for name, inputs in dependencies.items() if inputs & sources)
+        tests.update(name for name, inputs in dependencies.items() if inputs & sources)
         python |= bool(sources & PYTHON_INTERFACE)
         tests.update(sources)
 
     return Scope(
         rust="affected" if tests else "static",
         packages=" ".join(sorted(tests)),
-        python="editable" if python and not draft else "none",
+        python="editable" if python else "none",
         docs=prose or python,
         perf=perf,
     )
@@ -124,17 +121,24 @@ def pr_scope(paths, *, draft=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", help="first parent of the PR test merge commit")
-    parser.add_argument("--draft", action="store_true")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--base", help="full SHA of the reviewed merge base")
+    selection.add_argument("--static", action="store_true", help="format, architecture and docs checks")
     args = parser.parse_args()
-    if args.base is None:
+    if args.static:
+        scope = Scope(docs=True)
+    elif args.base is None:
         scope = full_scope()
     else:
         try:
-            scope = pr_scope(changed_paths(args.base), draft=args.draft)
+            paths = changed_paths(args.base)
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            parser.error(f"could not compare the selected base to HEAD: {error}")
+        try:
+            scope = affected_scope(paths)
         except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
-            print(f"Unable to scope the PR change, using conservative coverage: {error}")
-            scope = full_scope(draft=args.draft)
+            print(f"Unable to scope the change, using full coverage: {error}")
+            scope = full_scope()
 
     print(json.dumps(asdict(scope), indent=2))
     if output := os.environ.get("GITHUB_OUTPUT"):

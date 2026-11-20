@@ -114,11 +114,12 @@ impl PyImageTool {
                 return Ok(false);
             };
             let product = publish_image(outfile, overwrite, |path| {
-                let real = attachment.lock();
+                let mut real = attachment.lock();
                 if !matches!(*real, ImageHandle::Float(_) | ImageHandle::Double(_)) {
                     return Err(raised("The attached image must be float valued"));
                 }
-                let imaginary = ImageHandle::open(Path::new(imag)).map_err(raised)?;
+                attachment.require_lock(&mut real, casa_tables::LockType::Read)?;
+                let imaginary = ImageHandle::open_read(Path::new(imag)).map_err(raised)?;
                 if !matches!(imaginary, ImageHandle::Float(_) | ImageHandle::Double(_)) {
                     return Err(raised(format!("{imag} does not have supported real valued pixels")));
                 }

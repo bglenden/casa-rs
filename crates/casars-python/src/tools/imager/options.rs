@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Convert the legacy imager's Python Fourier settings.
 
-use casa_calibration::{ImagerGridder, ImagerTransformOptions};
+use casa_calibration::{
+    ImagerGridder, ImagerSingleDish, ImagerSingleDishKernel, ImagerTransformOptions,
+};
 use casa_types::measures::position::PositionRef;
 use pyo3::prelude::*;
 
@@ -30,6 +32,20 @@ impl TransformArguments<'_> {
     ) -> PyResult<ImagerTransformOptions> {
         let machine = self.machine.to_ascii_lowercase();
         let convolution = self.convolution.to_ascii_lowercase();
+        previous.single_dish = if matches!(machine.as_str(), "sd" | "both") {
+            let kernel = ImagerSingleDishKernel::from_name(&convolution).ok_or_else(|| {
+                runtime_error(format!(
+                    "Unknown single-dish grid function {}",
+                    self.convolution
+                ))
+            })?;
+            Some(ImagerSingleDish {
+                kernel,
+                combined: machine == "both",
+            })
+        } else {
+            None
+        };
         if machine != "sd" && matches!(convolution.as_str(), "gauss" | "gjinc") {
             return Err(runtime_error(format!(
                 "Grid function {} is available only for single dish imaging",
@@ -38,14 +54,16 @@ impl TransformArguments<'_> {
         }
         previous.gridder = match machine.as_str() {
             "wproject" => ImagerGridder::w_project(self.planes),
-            "mosaic" | "pbwproject" | "pbmosaic" | "awproject" | "mawproject" | "sd" | "both"
-            | "nift" => {
+            "mosaic" => ImagerGridder::Mosaic,
+            "sd" | "both" => ImagerGridder::Spheroidal,
+            "pbwproject" | "pbmosaic" | "awproject" | "mawproject" => {
                 return not_yet_implemented_in(
                     "imager",
                     "setoptions for this Fourier machine",
                     1520,
                 );
             }
+            // CASA's rGridFT (nift) and GridFT give the same predictions.
             _ => match convolution.as_str() {
                 "box" => ImagerGridder::Boxcar,
                 "sf" => ImagerGridder::Spheroidal,

@@ -20,7 +20,7 @@ use crate::{ImageError, ImageInterface, ImagePixel, PolygonRegion};
 
 use super::SubimageRegion;
 
-mod saved;
+pub(super) mod saved;
 
 use saved::{load_saved_region, parse_saved_region};
 

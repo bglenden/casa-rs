@@ -438,6 +438,74 @@ impl SpectralResampler {
         self.finish_prediction_with_coverage(operator, row, placed, scratch, output)
     }
 
+    /// Interpolate already sampled image channels for a legacy imager that
+    /// samples its sky in the image plane, such as SDGrid. `sample` fills a
+    /// plane's correlations in row order. Returns false for a one-channel
+    /// or nearest-neighbour prediction, which the caller samples directly.
+    ///
+    /// # Errors
+    /// The native flags or output do not have one cell per channel and
+    /// correlation, or the live cubic grid is too short for interpolation.
+    pub fn predict_sampled_spectrum(
+        &self,
+        row: &NativeRow<'_>,
+        correlations: usize,
+        scratch: &mut PredictionScratch,
+        output: &mut [Complex32],
+        mut sample: impl FnMut(u32, &mut [Complex32]),
+    ) -> Result<bool, OperatorError> {
+        let Some((axis, order)) = self.interpolated_prediction(row) else {
+            return Ok(false);
+        };
+        if correlations == 0
+            || output.len() != row.frequencies_hz.len() * correlations
+            || row.flags.len() != output.len()
+        {
+            return Err(OperatorError::NativeRow {
+                reason: "sampled spectrum does not match native channel and correlation dimensions",
+            });
+        }
+        if row.row_flag {
+            output.fill(Complex32::default());
+            return Ok(true);
+        }
+        self.validate_legacy_prediction(row.frequencies_hz)?;
+        scratch.begin(correlations);
+        scratch.predicted.clear();
+        if let Some(channels) = self.interpolated_planes(axis, order, row.frequencies_hz) {
+            for channel in channels {
+                let start = scratch.predicted.len();
+                scratch
+                    .predicted
+                    .resize(start + correlations, Complex32::default());
+                sample(channel, &mut scratch.predicted[start..]);
+                scratch.sources.push(Source {
+                    slot: channel,
+                    count: 1,
+                    placement: (start / correlations) as u32,
+                });
+            }
+        }
+        let placed = PlacedRow {
+            start: 0,
+            end: scratch.sources.len(),
+        };
+        if self.uses_legacy_spline() {
+            self.finish_spline(axis, row, placed, scratch, (output, None));
+        } else {
+            self.native_terms(row, correlations, placed, scratch, 0);
+            interpolate_terms(
+                &scratch.predicted,
+                correlations,
+                &scratch.terms,
+                output,
+                0,
+                false,
+            );
+        }
+        Ok(true)
+    }
+
     fn prediction_channels<'a>(&self, native: &'a [f64]) -> impl Iterator<Item = f64> + Clone + 'a {
         let [start, count, step] = self
             .legacy_prediction_map
