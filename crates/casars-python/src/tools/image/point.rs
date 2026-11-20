@@ -23,7 +23,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ArrayConstant {
 }
 use crate::convert::{DoubleList, value::CasaValue};
 
-fn pixel_position(
+pub(super) fn pixel_position(
     coordinates: &casa_coordinates::CoordinateSystem,
     shape: &[usize],
     requested: &[i64],
@@ -57,14 +57,22 @@ fn pixel_record<T: ImagePixel>(
     let Some(pixel) = pixel_position(image.coordinates(), image.shape(), requested) else {
         return Ok(CasaValue::empty_record());
     };
+    let (pixel_value, mask) = pixel_sample(image, &pixel)?;
+    Ok(point_reply(pixel, mask, image.units(), value(pixel_value)))
+}
+
+pub(super) fn pixel_sample<T: ImagePixel>(
+    image: &(impl ImageInterface<T> + ?Sized),
+    pixel: &[usize],
+) -> PyResult<(T, bool)> {
     let one = vec![1; pixel.len()];
     let mask = image
-        .get_mask_slice(&pixel, &one, &one)
+        .get_mask_slice(pixel, &one, &one)
         .map_err(raised)?
         .and_then(|mask| mask.first().copied())
         .unwrap_or(true);
-    let pixel_value = image.get_at(&pixel).map_err(raised)?;
-    Ok(point_reply(pixel, mask, image.units(), value(pixel_value)))
+    let pixel_value = image.get_at(pixel).map_err(raised)?;
+    Ok((pixel_value, mask))
 }
 
 fn point_reply(pixel: Vec<usize>, mask: bool, units: &str, value: CasaValue) -> CasaValue {

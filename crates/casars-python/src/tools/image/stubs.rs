@@ -156,17 +156,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixel = None, dframe = None, sframe = None), text_signature = "($self, pixel=[-1.0], dframe='cl', sframe='cl')")]
-    fn coordmeasures(
-        &self,
-        pixel: Option<&Bound<'_, PyAny>>,
-        dframe: Option<&Bound<'_, PyAny>>,
-        sframe: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("coordmeasures")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, axes = None, overwrite = None, region = None, r#box = None, chans = None, stokes = None, mask = None, stretch = None, wantreturn = None), text_signature = "($self, outfile='', axes=[], overwrite=False, region={}, box='', chans='', stokes='', mask='', stretch=False, wantreturn=True)")]
     fn crop(
         &self,
@@ -877,26 +866,9 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
-    fn topixel(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("topixel")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn torecord(&self) -> PyResult<Py<PyAny>> {
         stub("torecord")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None, format = None, dovelocity = None), text_signature = "($self, value=[], format='n', dovelocity=True)")]
-    fn toworld(
-        &self,
-        value: Option<&Bound<'_, PyAny>>,
-        format: Option<&Bound<'_, PyAny>>,
-        dovelocity: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("toworld")
     }
 
     /// Not yet implemented in casa-rs.

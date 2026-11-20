@@ -8,6 +8,7 @@ mod beam_edit;
 mod beams;
 mod conformance;
 mod convertflux;
+mod coordinate_conversion;
 mod create;
 mod default_record;
 mod fits_header;
