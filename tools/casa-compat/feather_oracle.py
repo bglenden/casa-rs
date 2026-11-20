@@ -27,6 +27,7 @@ CASES = {
     "high_mask": {"highres": "masked_high.im", "effdishdiam": 1600.0},
     "both_masks": {"highres": "masked_high.im", "lowres": "masked_low.im", "effdishdiam": 1600.0},
     "unmasked_smaller_low": {"lowres": "cropped_low.im", "effdishdiam": 1600.0},
+    "integer_aligned_smaller_low": {"lowres": "integer_low.im", "effdishdiam": 1600.0},
 }
 
 
@@ -94,6 +95,7 @@ def run_cases():
     # Keep the source edge off the exact integer where linear extrapolation
     # switches to zero after a sky-coordinate round trip.
     make_image("cropped_low.im", sky(18, 24)[1], LOW_BEAM, longitude_shift=0.25)
+    make_image("integer_low.im", sky(18, 24)[1], LOW_BEAM)
     for prefix, dimensions in [("odd", (25, 27)), ("even", (26, 24))]:
         high, low = sky(*dimensions)
         make_image(f"{prefix}_high.im", high, HIGH_BEAM)
