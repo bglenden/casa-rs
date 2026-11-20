@@ -22,22 +22,65 @@ pub(super) fn text(
     absolute: bool,
     scientific: bool,
 ) -> PyResult<String> {
-    let requested = match record.and_then(|record| record.get("formatUnit")) {
-        Some(Value::Scalar(ScalarValue::String(unit))) if !unit.is_empty() => unit.as_str(),
-        _ => native_unit,
-    };
+    let requested = format_unit(record, native_unit);
     let display_unit =
         Unit::new(requested).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    let Some(value) = display_value(
+        spectral,
+        record,
+        value,
+        native_unit,
+        &display_unit,
+        absolute,
+    )?
+    else {
+        return Ok(format!("Fail {requested}"));
+    };
+    let hz = Unit::new("Hz").expect("known unit");
+    let rendered = if display_unit.conformant(&hz) {
+        let increment = casa_coordinates::Coordinate::increment(spectral)[0];
+        let converted = display_value(
+            spectral,
+            record,
+            increment,
+            native_unit,
+            &display_unit,
+            false,
+        )?
+        .expect("frequency conversion has a value");
+        format_number(value, converted, scientific)
+    } else if scientific {
+        scientific_with_precision(value, 8)
+    } else {
+        casa_coordinates::display::format_stream_value(value)
+    };
+    Ok(format!("{rendered} {requested}"))
+}
+
+pub(in crate::tools) fn format_unit<'a>(
+    record: Option<&'a RecordValue>,
+    native_unit: &'a str,
+) -> &'a str {
+    match record.and_then(|record| record.get("formatUnit")) {
+        Some(Value::Scalar(ScalarValue::String(unit))) if !unit.is_empty() => unit.as_str(),
+        _ => native_unit,
+    }
+}
+
+pub(in crate::tools) fn display_value(
+    spectral: &SpectralCoordinate,
+    record: Option<&RecordValue>,
+    value: f64,
+    native_unit: &str,
+    display_unit: &Unit,
+    absolute: bool,
+) -> PyResult<Option<f64>> {
     let hz = Unit::new("Hz").expect("known unit");
     if display_unit.conformant(&hz) {
-        let convert = |value| -> PyResult<f64> {
-            Quantity::new(value, native_unit)
-                .and_then(|q| q.get_value_in(&display_unit))
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))
-        };
-        let increment = casa_coordinates::Coordinate::increment(spectral)[0];
-        let value = format_number(convert(value)?, convert(increment)?, scientific);
-        return Ok(format!("{value} {requested}"));
+        return Quantity::new(value, native_unit)
+            .and_then(|quantity| quantity.get_value_in(display_unit))
+            .map(Some)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()));
     }
 
     let origin = spectral
@@ -58,7 +101,7 @@ pub(super) fn text(
             .rest_frequency_hz()
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         if rest <= 0.0 {
-            return Ok(format!("Fail {requested}"));
+            return Ok(None);
         }
         let code = integer_field(record, "velType");
         let reference = DopplerRef::from_casacore_code(code).unwrap_or(DopplerRef::RADIO);
@@ -85,17 +128,12 @@ pub(super) fn text(
             "Requested units must be consistent with km/s, m, or Hz for a SpectralCoordinate",
         ));
     }
-    .and_then(|quantity| quantity.get_value_in(&display_unit))
+    .and_then(|quantity| quantity.get_value_in(display_unit))
     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-    let text = if scientific {
-        scientific_with_precision(value, 8)
-    } else {
-        casa_coordinates::display::format_stream_value(value)
-    };
-    Ok(format!("{text} {requested}"))
+    Ok(Some(value))
 }
 
-fn integer_field(record: Option<&RecordValue>, field: &str) -> i32 {
+pub(in crate::tools) fn integer_field(record: Option<&RecordValue>, field: &str) -> i32 {
     match record.and_then(|record| record.get(field)) {
         Some(Value::Scalar(ScalarValue::Int32(code))) => *code,
         Some(Value::Scalar(ScalarValue::Int64(code))) => i32::try_from(*code).unwrap_or_default(),

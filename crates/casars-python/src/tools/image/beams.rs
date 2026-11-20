@@ -77,7 +77,7 @@ fn beam_matrix(
     })
 }
 
-fn restoring_beam(
+pub(super) fn restoring_beam(
     image: &ImageHandle,
     channel: i64,
     polarization: i64,

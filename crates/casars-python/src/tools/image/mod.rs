@@ -24,6 +24,7 @@ mod point;
 mod records;
 mod stubs;
 mod subimage;
+mod summary;
 pub(crate) mod surface;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};

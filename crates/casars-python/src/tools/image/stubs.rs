@@ -840,18 +840,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (doppler = None, list = None, pixelorder = None, verbose = None), text_signature = "($self, doppler='RADIO', list=True, pixelorder=True, verbose=False)")]
-    fn summary(
-        &self,
-        doppler: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        pixelorder: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("summary")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, velocity = None, optical = None, bitpix = None, minpix = None, maxpix = None, region = None, mask = None, overwrite = None, dropdeg = None, deglast = None, dropstokes = None, stokeslast = None, wavelength = None, airwavelength = None, stretch = None, history = None), text_signature = "($self, outfile='', velocity=False, optical=True, bitpix=-32, minpix=1.0, maxpix=-1.0, region={}, mask='', overwrite=False, dropdeg=False, deglast=False, dropstokes=False, stokeslast=True, wavelength=False, airwavelength=False, stretch=False, history=True)")]
     fn tofits(
         &self,

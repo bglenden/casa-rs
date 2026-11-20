@@ -205,6 +205,20 @@ impl FitsToolImport {
         &self.source.shape
     }
 
+    /// The cursor shape used by a directly attached FITS image.
+    pub fn tile_shape(&self) -> Vec<usize> {
+        super::fits_tile_shape(self.shape())
+    }
+
+    /// Whether this HDU defines invalid pixels through NaN or integer BLANK.
+    pub fn has_implicit_mask(&self) -> bool {
+        self.source
+            .header
+            .get_int("BITPIX")
+            .is_some_and(|bitpix| bitpix < 0)
+            || self.source.header.get("BLANK").is_some()
+    }
+
     /// Coordinate system selected from the FITS header.
     pub fn coordinates(&self) -> &CoordinateSystem {
         &self.source.coordinates
