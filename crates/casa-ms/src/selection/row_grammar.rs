@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Connect the CASA selector grammars to the bounded row selection API.
 
+use super::array_expr::ArraySelection;
+use super::feed_expr::FeedSelection;
 use super::syntax::{ChannelSelection, ChannelSelectionSegment, parse_numeric_row_id_ranges};
+use super::uv_expr::UvDistanceSelection;
 use super::{
     BaselineSelection, CompiledMsSelection, TimeCondition, TimeDefaults, TimeSelectorDefaults,
     int_list, resolve_time_selector,
@@ -13,8 +16,9 @@ pub(super) fn apply(
     ms: &MeasurementSet,
     mut compiled: CompiledMsSelection,
     options: &ListObsOptions,
+    flagdata: bool,
 ) -> MsResult<CompiledMsSelection> {
-    if let Some(text) = options.spw.as_deref() {
+    if !flagdata && let Some(text) = options.spw.as_deref() {
         let spw = ms.resolve_spw_selector(text)?;
         compiled.spw_data_desc_ids = spw
             .row_data_descriptions()
@@ -49,35 +53,127 @@ pub(super) fn apply(
         }
     }
     if let Some(text) = options.antenna.as_deref().filter(|text| !text.is_empty()) {
-        let baseline = ms.resolve_antenna_selector(text)?;
-        compiled = compiled.taql(&baseline_predicate(&baseline));
+        let baseline = if flagdata {
+            ms.resolve_flagdata_antenna_selector(text)?
+        } else {
+            ms.resolve_antenna_selector(text)?
+        };
+        compiled.casa_taql_exprs.push(baseline_predicate(&baseline));
+        compiled.casa_baseline = Some(baseline);
     }
-    for (column, label, text) in [
-        ("SCAN_NUMBER", "scan", &options.scan),
-        ("OBSERVATION_ID", "observation", &options.observation),
+    for (column, label, text, target) in [
+        (
+            "SCAN_NUMBER",
+            "scan",
+            options.scan.as_deref(),
+            &mut compiled.casa_scan_ranges,
+        ),
+        (
+            "OBSERVATION_ID",
+            "observation",
+            options.observation.as_deref(),
+            &mut compiled.casa_observation_ranges,
+        ),
     ] {
-        if let Some(text) = text.as_deref().filter(|text| !text.is_empty()) {
+        let text = if flagdata {
+            text.map(flagdata_c_string)
+        } else {
+            text
+        };
+        if let Some(text) = text.filter(|text| !text.is_empty()) {
+            let text = if flagdata {
+                flagdata_lexer_prefix(text)
+            } else {
+                text
+            };
             let ranges = parse_numeric_row_id_ranges(text, label)?;
-            let terms = ranges
-                .into_iter()
-                .map(|(start, end)| {
-                    if start == end {
-                        format!("{column}=={start}")
-                    } else {
-                        format!("({column}>={start} AND {column}<={end})")
-                    }
-                })
-                .collect::<Vec<_>>();
-            compiled = compiled.taql(&disjunction(terms));
+            compiled
+                .casa_taql_exprs
+                .push(row_ids_predicate(column, &ranges));
+            *target = Some(ranges);
         }
     }
     Ok(compiled)
+}
+
+pub(super) fn flagdata_c_string(text: &str) -> &str {
+    text.split_once('\0').map_or(text, |(prefix, _)| prefix)
+}
+
+/// CASA's flagdata row lexers stop at the first non-ASCII byte.
+pub(super) fn flagdata_lexer_prefix(text: &str) -> &str {
+    text.split_once(|character: char| !character.is_ascii())
+        .map_or(text, |(prefix, _)| prefix)
+}
+
+pub(super) fn apply_array_feed_uv(
+    ms: &MeasurementSet,
+    mut compiled: CompiledMsSelection,
+    options: &ListObsOptions,
+    flagdata: bool,
+) -> MsResult<CompiledMsSelection> {
+    let array = options.array.as_deref();
+    let array = if flagdata {
+        array.map(flagdata_c_string)
+    } else {
+        array
+    };
+    if let Some(text) = array.filter(|text| !text.is_empty()) {
+        let ranges = if flagdata {
+            // Flagging preserves the stored ARRAY_IDs and needs only their row predicate.
+            parse_numeric_row_id_ranges(flagdata_lexer_prefix(text), "array")?
+        } else {
+            ArraySelection::parse(text)?.ranges
+        };
+        compiled
+            .casa_taql_exprs
+            .push(row_ids_predicate("ARRAY_ID", &ranges));
+        compiled.casa_array_ranges = Some(ranges);
+    }
+    if let Some(text) = options.feed.as_deref().filter(|text| !text.is_empty()) {
+        let selection = FeedSelection::parse(ms, text)?;
+        compiled.casa_taql_exprs.push(selection.to_taql());
+        compiled.casa_feed = Some(selection);
+    }
+    let uvrange = options.uvrange.as_deref();
+    let uvrange = if flagdata {
+        uvrange.map(flagdata_c_string)
+    } else {
+        uvrange
+    };
+    if let Some(text) = uvrange.filter(|text| !text.is_empty()) {
+        let text = if flagdata {
+            flagdata_lexer_prefix(text)
+        } else {
+            text
+        };
+        let selection = UvDistanceSelection::parse(ms, text)?;
+        compiled.casa_taql_exprs.push(selection.to_taql());
+        compiled.casa_uv = Some(selection);
+    }
+    Ok(compiled)
+}
+
+fn row_ids_predicate(column: &str, ranges: &[(i32, i32)]) -> String {
+    disjunction(
+        ranges
+            .iter()
+            .map(|&(start, end)| {
+                if start == end {
+                    format!("{column}=={start}")
+                } else {
+                    format!("({column}>={start} AND {column}<={end})")
+                }
+            })
+            .collect(),
+    )
 }
 
 pub(super) fn with_time(
     ms: &MeasurementSet,
     selection: CompiledMsSelection,
     text: &str,
+    rows_per_block: Option<usize>,
 ) -> MsResult<CompiledMsSelection> {
     if text.is_empty() {
         return Ok(selection);
@@ -95,7 +191,7 @@ pub(super) fn with_time(
         }
         first
     } else {
-        selection.apply(ms)?.first().copied().unwrap_or(0)
+        selection.first_match(ms, rows_per_block)?.unwrap_or(0)
     };
     let defaults = |row| -> MsResult<TimeDefaults> {
         Ok(TimeDefaults {
@@ -126,7 +222,10 @@ pub(super) fn with_time(
             format!("((TIME > {lower_s} OR ABS(TIME - {lower_s}) < {edge}) AND (TIME < {upper_s} OR ABS(TIME - {upper_s}) < {edge}))")
         }
     }).collect();
-    Ok(selection.taql(&disjunction(terms)))
+    let mut selection = selection;
+    selection.casa_taql_exprs.push(disjunction(terms));
+    selection.casa_time = Some(time);
+    Ok(selection)
 }
 
 fn disjunction(terms: Vec<String>) -> String {

@@ -167,8 +167,8 @@ impl TsysPlan {
                 ..
             }
         ) {
-            relative_input = bandpass::relative_axis(input);
-            relative_output = bandpass::relative_axis(output);
+            relative_input = crate::lookup_frequency::relative_axis(input);
+            relative_output = crate::lookup_frequency::relative_axis(output);
             (relative_input.as_slice(), relative_output.as_slice())
         } else {
             (input.as_slice(), output.as_slice())

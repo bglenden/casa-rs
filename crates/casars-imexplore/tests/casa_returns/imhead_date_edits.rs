@@ -4,6 +4,40 @@
 use super::*;
 
 #[test]
+fn large_representable_observation_date_matches_casa() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("large-epoch.im");
+    copy_tree(&fixture, &path);
+    for (mjd, date) in [
+        (1.01e9, "2767144/12/15/00:00:00.000000"),
+        (2_145_030_000.0, "5874751/07/19/00:00:00.000000"),
+    ] {
+        assert_eq!(
+            returned(
+                workspace.path(),
+                "imhead",
+                json!({
+                    "imagename": path, "mode": "put", "hdkey": "epoch",
+                    "hdvalue": {"unit": "d", "value": mjd}
+                })
+            ),
+            CasaValue::None
+        );
+        assert_eq!(
+            returned(
+                workspace.path(),
+                "imhead",
+                json!({
+                    "imagename": path, "mode": "get", "hdkey": "epoch",
+                })
+            ),
+            CasaValue::string(date)
+        );
+    }
+}
+
+#[test]
 fn observation_date_edits_match_casa() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_dates");
     let oracle: Value =
@@ -79,15 +113,17 @@ fn extreme_observation_date_does_not_modify_image() {
         .unwrap()
         .history()
         .unwrap();
-    let (_, reply) = json_run(
-        workspace.path(),
-        "imhead",
-        json!({
-            "imagename": path, "mode": "put", "hdkey": "epoch",
-            "hdvalue": {"unit": "d", "value": 1.0e30}
-        }),
-    );
-    assert!(matches!(reply, Some(TaskReply::Failed { .. })), "{reply:?}");
+    for mjd in [1.0e30, -2_149_883_649.0] {
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": "epoch",
+                "hdvalue": {"unit": "d", "value": mjd}
+            }),
+        );
+        assert!(matches!(reply, Some(TaskReply::Failed { .. })), "{reply:?}");
+    }
     let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
     assert_eq!(
         image

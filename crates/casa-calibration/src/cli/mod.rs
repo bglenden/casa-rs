@@ -21,15 +21,21 @@
 //! [`CalibrationTaskRequest`]: crate::CalibrationTaskRequest
 //! [`CalibrationTaskResult`]: crate::CalibrationTaskResult
 
+mod calstat;
 mod casa_read;
 mod ft;
 mod getantposalma;
 mod history;
 mod initweights;
+mod listcal;
 mod model_columns;
 mod multi_ms;
+mod plotbandpass;
+mod plotweather;
 mod read;
 mod render;
+mod rerefant;
+mod smoothcal;
 mod statwt;
 mod uvmodelfit;
 
@@ -60,17 +66,35 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+    if task.surface() == "listcal" {
+        return listcal::run(task);
+    }
+    if task.surface() == "calstat" {
+        return calstat::run(task);
+    }
     if task.surface() == "getantposalma" {
         return getantposalma::run(task);
     }
     if task.surface() == "ft" {
         return ft::run(task);
     }
+    if task.surface() == "rerefant" {
+        return rerefant::run(task);
+    }
+    if task.surface() == "smoothcal" {
+        return smoothcal::run(task);
+    }
+    if task.surface() == "plotbandpass" {
+        return plotbandpass::run(task);
+    }
     if task.surface() == "uvmodelfit" {
         return uvmodelfit::run(task);
     }
     if task.surface() == "initweights" {
         return initweights::run(task);
+    }
+    if task.surface() == "plotweather" {
+        return plotweather::run(task);
     }
     if task.surface() == "statwt" {
         return statwt::run(task);

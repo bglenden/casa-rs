@@ -3,10 +3,12 @@
 //! and `plotms` task provider, on the shared task front end. Its first word
 //! names the surface (`msexplore plotms ...`); `msexplore` runs otherwise.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    casa_ms::msexplore::cli::task_front_end().main(
+    let payload = std::env::var_os("CASARS_PLOT_PAYLOAD").map(PathBuf::from);
+    casa_ms::msexplore::cli::task_front_end_with_plot_payload(payload).main(
         std::env::args_os().skip(1),
         casa_task_runtime::CasaLoggingConfig::from_env(),
         std::env::set_current_dir,

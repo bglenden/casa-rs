@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA ft task selection, prediction and provenance.
 
-use std::collections::BTreeSet;
-
 use casa_components::ComponentList;
 use casa_ms::schema::main_table::VisibilityDataColumn;
-use casa_ms::virtual_model::{put_virtual_model_holding, virtual_model_target};
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
@@ -14,10 +11,10 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::Quantity;
 
 use crate::ft::image::{ImageModel, TaylorTerm, prepare_image, reference_frequency};
+use crate::ft::virtual_publication::VirtualFtPublication;
 use crate::ft::{model_entry, write_model_scratch};
-use crate::session::resolve_casa_calibration_selection;
 
-use super::multi_ms::OpenedMs;
+use crate::attachment::OpenedMs;
 
 const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
 
@@ -42,24 +39,23 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .at("usescratch"));
     }
     let path = task.input_path("vis")?;
-    let mut ms = OpenedMs::open(&path)?;
+    let mut ms = OpenedMs::open(&path).map_err(execution)?;
     let mut parts = super::multi_ms::partition_paths(&path)?
         .unwrap_or_default()
         .iter()
         .map(|path| {
-            let opened = OpenedMs::open(path)?;
+            let opened = OpenedMs::open(path).map_err(execution)?;
             if scratch {
-                opened.initialize(MODEL)
+                opened.initialize(MODEL).map_err(execution)
             } else {
                 Ok(opened)
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
     if scratch && parts.is_empty() {
-        ms = ms.initialize(MODEL)?;
+        ms = ms.initialize(MODEL).map_err(execution)?;
     }
-    let selected =
-        resolve_casa_calibration_selection(&ms.measurement_set, &selection).map_err(execution)?;
+    let selected = ms.resolve(&selection).map_err(execution)?;
     let request = read_model(task, scratch)?;
     if !selected.selected_rows.is_empty() && request.images_are_tables(task) {
         if parts.is_empty() || !scratch {
@@ -74,9 +70,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
     }
     for part in parts {
-        part.release()?;
+        part.release().map_err(execution)?;
     }
-    ms.release()?;
+    ms.release().map_err(execution)?;
     super::history::record_task(task, &path);
     TaskSuccess::new(CasaValue::None, &())
 }
@@ -178,6 +174,8 @@ fn write_scratch(
         selected,
         &entries,
         request.incremental,
+        true,
+        None,
         &mut ms.lock,
     )
     .map_err(execution)
@@ -221,64 +219,25 @@ fn write_virtual(
     root: &mut OpenedMs,
     parts: &mut [OpenedMs],
     request: &ModelRequest,
-    (entries, mut images): Models,
+    (entries, images): Models,
 ) -> Result<(), TaskFailure> {
-    let Some(first) = entries
-        .first()
-        .or_else(|| images.first().map(|image| &image.entry))
-        .cloned()
-    else {
-        return Ok(());
-    };
-    let is_multi_ms = !parts.is_empty();
-    let mut written = BTreeSet::new();
-    for (partition, target) in std::iter::once(root).chain(parts).enumerate() {
-        let path = virtual_model_target(&target.measurement_set, &first).map_err(execution)?;
-        if partition == 0 && is_multi_ms && target.measurement_set.main_table().path() == Some(path)
-        {
-            // Concatenated MAIN has no independently writable keyword set.
-            continue;
-        }
-        if !written.insert(path.canonicalize().map_err(execution)?) {
-            continue;
-        }
-        // CASA appends repeated component recipes when no image is written.
-        for entry in &entries {
-            put_virtual_model_holding(&mut target.measurement_set, entry, true, &mut target.lock)
-                .map_err(execution)?;
-        }
-        if partition == 0 {
-            put_image_models(target, &mut images, request.incremental)?;
-        } else {
-            // Independent SOURCE tables must not share a backing path.
-            // Replacing a record owns deletion of the grid named in it.
-            let mut copies = images
-                .iter()
-                .map(|model| model.copy_to(&target.measurement_set))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(execution)?;
-            put_image_models(target, &mut copies, request.incremental)?;
-        }
-    }
-    Ok(())
-}
-
-fn put_image_models(
-    target: &mut OpenedMs,
-    images: &mut [ImageModel],
-    incremental: bool,
-) -> Result<(), TaskFailure> {
-    for (index, model) in images.iter_mut().enumerate() {
-        put_virtual_model_holding(
-            &mut target.measurement_set,
-            &model.entry,
-            index > 0 || incremental,
-            &mut target.lock,
+    let tables = std::iter::once(&root.measurement_set)
+        .chain(parts.iter().map(|part| &part.measurement_set));
+    let mut publication = VirtualFtPublication::new(
+        tables,
+        entries,
+        images,
+        request.incremental,
+        !parts.is_empty(),
+    )
+    .map_err(execution)?;
+    publication
+        .publish(
+            std::iter::once(root)
+                .chain(parts)
+                .map(|opened| (&mut opened.measurement_set, &mut opened.lock)),
         )
-        .map_err(execution)?;
-        model.retain();
-    }
-    Ok(())
+        .map_err(execution)
 }
 
 fn image_models(

@@ -56,6 +56,31 @@ pub(crate) fn reset_scratch_columns(
     Ok(lock)
 }
 
+pub(crate) fn initialize_calibrater_columns(
+    ms: &mut MeasurementSet,
+    compress: bool,
+    add_corrected: bool,
+    add_model: bool,
+    mut lock: TableWriteLock,
+) -> MsResult<TableWriteLock> {
+    let missing = [(MODEL, add_model), (CORRECTED, add_corrected)]
+        .into_iter()
+        .filter(|&(column, requested)| requested && !has_column(ms, column))
+        .map(|(column, _)| column)
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        // Calibrater preserves both existing scratch cells and virtual
+        // recipes on open. Adding a missing MODEL_DATA clears the recipes.
+        return Ok(lock);
+    }
+    let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
+    if compress {
+        compression::initialize_columns(ms, all, &missing, &mut lock)?;
+        return Ok(lock);
+    }
+    reset(ms, all, &missing, true, false, lock)
+}
+
 /// Reset existing scratch columns for `calibrater.initcalset`.
 ///
 /// `calset=1` removes virtual models from the entire MeasurementSet before
@@ -107,13 +132,18 @@ fn reset_existing_scratch(
     reset(ms, selected, columns, false, clear_virtual, lock)
 }
 
-/// Add one absent visibility scratch column before data selection.
+/// Prepare a visibility scratch column at attachment, before data selection.
 pub(crate) fn initialize_scratch_column(
     ms: &mut MeasurementSet,
     column: VisibilityDataColumn,
-    lock: TableWriteLock,
+    mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
     if has_column(ms, column) {
+        if column == MODEL {
+            // CASA invalidates virtual recipes when it attaches a scratch
+            // model iterator, even if the scratch samples already exist.
+            scratch_columns::prepare_write_holding(ms, column, false, &mut lock)?;
+        }
         return Ok(lock);
     }
     let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
@@ -272,9 +302,9 @@ pub(crate) fn scratch_write_plan(
             scratch_columns::prepare_write_holding(ms, column, true, lock)?;
         }
         for &column in columns {
-            let keyword = ms
-                .main_table()
-                .column_keywords(observed_column(ms))
+            let keyword = (column == CORRECTED)
+                .then(|| ms.main_table().column_keywords(observed_column(ms)))
+                .flatten()
                 .cloned();
             let schema =
                 casa_ms::column_def::build_table_schema(&[*column.optional_column().column_def()])

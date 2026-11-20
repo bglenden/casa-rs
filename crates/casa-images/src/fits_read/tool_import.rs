@@ -4,9 +4,10 @@ use std::ffi::{CStr, c_long};
 use std::path::Path;
 
 use casa_coordinates::{
-    CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
+    Coordinate, CoordinateModel, CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
     fits::coordinate_util::from_fits_header_with_axis_order,
 };
+use casa_lattices::{Lattice, LatticeError};
 use casa_types::measures::{
     EpochRef, MEpoch, MPosition,
     direction::{DirectionRef, MDirection},
@@ -19,17 +20,20 @@ use fitsio::{
     hdu::{FitsHdu, HduInfo},
     threadsafe_fitsfile::ThreadsafeFitsFile,
 };
-use ndarray::{Axis, IxDyn, ShapeBuilder};
+use ndarray::{Array2, Axis, IxDyn, ShapeBuilder};
 
 use super::{
     PrimaryHdu, brightness_unit, history::history_from_cards, image_info_from_fits_header,
+    read_fits_axis_shape,
 };
-use crate::{ImageError, MutableImageInterface, image::ImageHistoryRow};
+use crate::{
+    ImageError, ImageInfo, ImageInterface, MutableImageInterface, TempImage, image::ImageHistoryRow,
+};
 
 /// A selected FITS image ready to copy into a CASA image.
 ///
-/// `fromfits` and `newimagefromfits` use this path with single-precision
-/// pixels, unlike importfits's separate task contract.
+/// The image tools and the `importfits` task share this single-precision
+/// reader.
 pub struct FitsToolImport {
     source: PrimaryHdu,
     /// Coordinate record as the CASA FITS image tool saves it.
@@ -52,6 +56,23 @@ impl FitsToolImport {
     /// Returns an error for an unreadable FITS file, a missing image HDU,
     /// or invalid coordinate or beam metadata.
     pub fn open(path: &Path, which_rep: usize, which_hdu: i64) -> Result<Self, ImageError> {
+        Self::open_impl(path, which_rep, which_hdu, false)
+    }
+
+    /// Read the first FITS image using the linear WCS layout of CASA's image concatenator.
+    ///
+    /// # Errors
+    /// As [`Self::open`].
+    pub fn open_for_concatenation(path: &Path) -> Result<Self, ImageError> {
+        Self::open_impl(path, 0, -1, true)
+    }
+
+    fn open_impl(
+        path: &Path,
+        which_rep: usize,
+        which_hdu: i64,
+        group_linear_axes: bool,
+    ) -> Result<Self, ImageError> {
         let mut fits = FitsFile::open(path).map_err(|_| {
             ImageError::CasaSelection(format!(
                 "Exception: {} does not exist or is not readable.",
@@ -82,7 +103,6 @@ impl FitsToolImport {
         else {
             unreachable!("image HDU selected above");
         };
-        let shape = shape.iter().rev().copied().collect::<Vec<_>>();
         let cards = read_hdu_cards(&mut fits)?;
         let physical = FitsHeader::from_cards(
             &cards
@@ -92,19 +112,27 @@ impl FitsToolImport {
                 .collect::<Vec<_>>(),
         );
         let mut header = select_wcs(&physical, which_rep);
-        // Tile compression stores the pixels in a binary table, whose
-        // physical NAXIS cards describe rows rather than image dimensions.
-        header.set("NAXIS", FitsValue::Integer(shape.len() as i64));
-        for (axis, &length) in shape.iter().enumerate() {
-            header.set(
-                format!("NAXIS{}", axis + 1),
-                FitsValue::Integer(length as i64),
-            );
-        }
+        let shape = if is_tile_compressed(&physical) {
+            // The physical NAXIS cards describe the compression table rows.
+            let shape: Vec<_> = shape.iter().rev().copied().collect();
+            header.set("NAXIS", FitsValue::Integer(shape.len() as i64));
+            for (axis, &length) in shape.iter().enumerate() {
+                header.set(
+                    format!("NAXIS{}", axis + 1),
+                    FitsValue::Integer(length as i64),
+                );
+            }
+            shape
+        } else {
+            read_fits_axis_shape(&mut fits, &hdu)?
+        };
         if header.get("RADESYS").is_none() {
             let system = match header.get_string("RADECSYS") {
                 Some(system) => system,
-                None => match header.get_float("EQUINOX") {
+                None => match header
+                    .get_float("EQUINOX")
+                    .or_else(|| header.get_float("EPOCH"))
+                {
                     Some(epoch) if epoch < 1984.0 => "FK4",
                     Some(_) => "FK5",
                     None => "ICRS",
@@ -132,6 +160,8 @@ impl FitsToolImport {
                 LinearCoordinate::new(ndim, vec![String::new(); ndim], vec![String::new(); ndim])
                     .with_reference_pixel(vec![-1.0; ndim]),
             );
+        } else if group_linear_axes {
+            coordinates = group_linear_wcs(&coordinates, &axis_order, &header);
         }
         let obs = coordinates.obs_info_mut();
         if obs.observer.is_empty() {
@@ -197,6 +227,20 @@ impl FitsToolImport {
         &self.source.shape
     }
 
+    /// The cursor shape used by a directly attached FITS image.
+    pub fn tile_shape(&self) -> Vec<usize> {
+        super::fits_tile_shape(self.shape())
+    }
+
+    /// Whether this HDU defines invalid pixels through NaN or integer BLANK.
+    pub fn has_implicit_mask(&self) -> bool {
+        self.source
+            .header
+            .get_int("BITPIX")
+            .is_some_and(|bitpix| bitpix < 0)
+            || self.source.header.get("BLANK").is_some()
+    }
+
     /// Coordinate system selected from the FITS header.
     pub fn coordinates(&self) -> &CoordinateSystem {
         &self.source.coordinates
@@ -209,10 +253,7 @@ impl FitsToolImport {
 
     /// Whether the selected image is stored as a tile-compressed FITS table.
     pub fn is_tile_compressed(&self) -> bool {
-        matches!(
-            self.source.header.get("ZIMAGE"),
-            Some(FitsValue::Logical(true))
-        )
+        is_tile_compressed(&self.source.header)
     }
 
     /// Copy single-precision pixels and the FITS validity mask into an image.
@@ -226,10 +267,38 @@ impl FitsToolImport {
         image: &mut impl MutableImageInterface<f32>,
         zero_blanks: bool,
     ) -> Result<(), ImageError> {
-        let shape = &self.source.shape;
-        if image.shape() != shape {
+        let axes: Vec<_> = (0..self.source.shape.len()).collect();
+        self.copy_pixels_with_axes(image, zero_blanks, &axes)
+    }
+
+    // Destination axes in source order, with singleton axes appended beyond
+    // the FITS rank before applying the same permutation to pixels and masks.
+    pub(crate) fn copy_pixels_with_axes(
+        &mut self,
+        image: &mut impl MutableImageInterface<f32>,
+        zero_blanks: bool,
+        axes: &[usize],
+    ) -> Result<(), ImageError> {
+        let mut shape = self.source.shape.clone();
+        let ndim = shape.len();
+        if axes.len() < ndim {
+            return Err(ImageError::InvalidMetadata(
+                "FITS axes were dropped during import".into(),
+            ));
+        }
+        let mut remaining = vec![true; axes.len()];
+        for &axis in axes {
+            if !remaining.get_mut(axis).is_some_and(std::mem::take) {
+                return Err(ImageError::InvalidMetadata(
+                    "invalid FITS axis order".into(),
+                ));
+            }
+        }
+        shape.resize(axes.len(), 1);
+        let expected: Vec<_> = axes.iter().map(|&axis| shape[axis]).collect();
+        if image.shape() != expected {
             return Err(ImageError::ShapeMismatch {
-                expected: shape.clone(),
+                expected,
                 got: image.shape().to_vec(),
             });
         }
@@ -240,21 +309,24 @@ impl FitsToolImport {
         let quota = 1_048_576;
         let mut stride = 1;
         let mut axis = 0;
-        while axis + 1 < shape.len() && stride * shape[axis] <= quota {
+        while axis + 1 < ndim && stride * shape[axis] <= quota {
             stride *= shape[axis];
             axis += 1;
         }
-        let mut block_shape = vec![1; shape.len()];
+        let mut block_shape = vec![1; axes.len()];
         block_shape[..axis].copy_from_slice(&shape[..axis]);
-        let mut origin = vec![0; shape.len()];
+        let mut origin = vec![0; axes.len()];
+        let mut output_origin = origin.clone();
         let mut start = 0;
         let mut mask = None;
-        let shape = shape.clone();
         while start < total {
             let mut offset = start;
             for (position, length) in origin.iter_mut().zip(&shape) {
                 *position = offset % length;
                 offset /= length;
+            }
+            for (position, &source_axis) in output_origin.iter_mut().zip(axes) {
+                *position = origin[source_axis];
             }
             let run = (quota / stride).min(shape[axis] - origin[axis]);
             block_shape[axis] = run;
@@ -271,17 +343,21 @@ impl FitsToolImport {
             }
             let block = ArrayD::from_shape_vec(IxDyn(&block_shape).f(), values)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-            image.put_slice(&block, &origin)?;
+            image.put_slice(&block.permuted_axes(IxDyn(axes)), &output_origin)?;
             start += count;
         }
         if let Some(mask) = mask {
             let mask = ArrayD::from_shape_vec(IxDyn(&shape).f(), mask)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
-            image.put_mask("mask0", &mask)?;
+            image.put_mask("mask0", &mask.permuted_axes(IxDyn(axes)))?;
             image.set_default_mask("mask0")?;
         }
         Ok(())
     }
+}
+
+fn is_tile_compressed(header: &FitsHeader) -> bool {
+    matches!(header.get("ZIMAGE"), Some(FitsValue::Logical(true)))
 }
 
 /// A read-only pixel stream for a specific FITS image HDU.
@@ -336,6 +412,103 @@ impl FitsSectionReader {
     ) -> Result<ArrayD<f32>, ImageError> {
         let mut file = self.file.lock().map_err(fits_error)?;
         read_section(&mut file, &self.shape, self.bitpix, start, count, stride)
+    }
+}
+
+/// Borrow FITS metadata and a lazy section reader as a read-only image.
+pub fn fits_section_image<'a>(
+    shape: &'a [usize],
+    metadata: &'a TempImage<f32>,
+    path: &'a Path,
+    read: impl Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError> + 'a,
+) -> impl ImageInterface<f32> + 'a {
+    FitsSectionImage {
+        shape,
+        metadata,
+        path,
+        read,
+    }
+}
+
+struct FitsSectionImage<'a, F> {
+    shape: &'a [usize],
+    metadata: &'a TempImage<f32>,
+    path: &'a Path,
+    read: F,
+}
+
+impl<F> Lattice<f32> for FitsSectionImage<'_, F>
+where
+    F: Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError>,
+{
+    fn shape(&self) -> &[usize] {
+        self.shape
+    }
+
+    fn is_writable(&self) -> bool {
+        false
+    }
+
+    fn get_at(&self, position: &[usize]) -> Result<f32, LatticeError> {
+        let ones = vec![1; self.ndim()];
+        let data = self.get_slice(position, &ones, &ones)?;
+        Ok(*data.first().expect("read one FITS pixel"))
+    }
+
+    fn get_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<f32>, LatticeError> {
+        (self.read)(start, shape, stride).map_err(|error| LatticeError::Table(error.to_string()))
+    }
+}
+
+impl<F> ImageInterface<f32> for FitsSectionImage<'_, F>
+where
+    F: Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError>,
+{
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
+    fn coordinates(&self) -> &CoordinateSystem {
+        self.metadata.coordinates()
+    }
+
+    fn units(&self) -> &str {
+        self.metadata.units()
+    }
+
+    fn misc_info(&self) -> RecordValue {
+        self.metadata.misc_info()
+    }
+
+    fn image_info(&self) -> Result<ImageInfo, ImageError> {
+        self.metadata.image_info()
+    }
+
+    fn name(&self) -> Option<&Path> {
+        Some(self.path)
+    }
+
+    fn has_pixel_mask(&self) -> bool {
+        // FITS blanks are discovered while reading the selected pixel sections.
+        true
+    }
+
+    fn get_mask_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        let pixels = (self.read)(start, shape, stride)?;
+        Ok(pixels
+            .iter()
+            .any(|value| value.is_nan())
+            .then(|| pixels.mapv(|value| !value.is_nan())))
     }
 }
 
@@ -398,6 +571,78 @@ fn read_section(
     check_status(status).map_err(fits_error)?;
     ArrayD::from_shape_vec(IxDyn(count).f(), values)
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
+}
+
+fn group_linear_wcs(
+    input: &CoordinateSystem,
+    axis_order: &[usize],
+    header: &FitsHeader,
+) -> CoordinateSystem {
+    let mut output = CoordinateSystem::new().with_obs_info(input.obs_info().clone());
+    let mut index = 0;
+    let mut offset = 0;
+    while index < input.n_coordinates() {
+        let mut axes = Vec::new();
+        while index < input.n_coordinates() {
+            let CoordinateModel::Linear(axis) = input.coordinate(index) else {
+                break;
+            };
+            axes.push(axis);
+            index += 1;
+        }
+        if axes.is_empty() {
+            let coordinate = input.coordinate(index);
+            offset += coordinate.n_pixel_axes();
+            output.add_coordinate(coordinate.clone());
+            index += 1;
+            continue;
+        }
+        let count = axes.iter().map(|axis| axis.n_pixel_axes()).sum();
+        let (transform, increments) = read_linear_wcs(header, &axis_order[offset..offset + count]);
+        offset += count;
+        let names = axes.iter().flat_map(|axis| axis.axis_names()).collect();
+        let units = axes.iter().flat_map(|axis| axis.axis_units()).collect();
+        output.add_coordinate(
+            LinearCoordinate::new(count, names, units)
+                .with_reference_value(
+                    axes.iter()
+                        .flat_map(|axis| axis.reference_value())
+                        .collect(),
+                )
+                .with_reference_pixel(
+                    axes.iter()
+                        .flat_map(|axis| axis.reference_pixel())
+                        .collect(),
+                )
+                .with_increment(increments)
+                .with_pc_matrix(transform),
+        );
+    }
+    output
+}
+
+fn read_linear_wcs(header: &FitsHeader, axes: &[usize]) -> (Array2<f64>, Vec<f64>) {
+    let matrix = |key: &str, row: usize, column: usize| {
+        header.get_float(&format!("{key}{}_{}", axes[row] + 1, axes[column] + 1))
+    };
+    let dimensions = (axes.len(), axes.len());
+    let cd = Array2::from_shape_fn(dimensions, |(row, column)| matrix("CD", row, column));
+    // casacore represents linear CD matrices directly with unit increments.
+    if cd.iter().any(Option::is_some) {
+        return (cd.mapv(|value| value.unwrap_or(0.0)), vec![1.0; axes.len()]);
+    }
+    let pc = Array2::from_shape_fn(dimensions, |(row, column)| {
+        matrix("PC", row, column).unwrap_or(if row == column { 1.0 } else { 0.0 })
+    });
+    let increments = axes
+        .iter()
+        .map(|axis| {
+            header
+                .get_float(&format!("CDELT{}", axis + 1))
+                .unwrap_or(1.0)
+        })
+        .collect();
+    (pc, increments)
 }
 
 fn fits_coordinate_record(
@@ -616,6 +861,7 @@ fn wcs_key(name: &str) -> bool {
             | "RADESYS"
             | "RADECSYS"
             | "EQUINOX"
+            | "EPOCH"
             | "SPECSYS"
             | "SSYSOBS"
             | "LONPOLE"
@@ -721,6 +967,11 @@ fn miscellaneous(header: &FitsHeader) -> RecordValue {
 
 #[cfg(test)]
 mod section_tests {
+    use std::cell::Cell;
+
+    use crate::TempStoragePolicy;
+    use crate::analysis::{SubimageOptions, SubimagePlan};
+
     use fitsio::images::{ImageDescription, ImageType};
 
     use super::*;
@@ -752,5 +1003,50 @@ mod section_tests {
         let region = reader.read(&[1, 0, 1], &[1, 2, 2], &[1, 2, 2]).unwrap();
         assert_eq!(region.shape(), [1, 2, 2]);
         assert_eq!(region.as_slice_memory_order().unwrap(), [7., 11., 19., 23.]);
+    }
+
+    #[test]
+    fn complex_product_reads_fits_masks_in_sections() {
+        let shape = vec![1025, 1025];
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(LinearCoordinate::new(
+            2,
+            vec!["X".into(), "Y".into()],
+            vec!["".into(); 2],
+        ));
+        let metadata =
+            TempImage::new(vec![1, 1], coordinates.clone(), TempStoragePolicy::Memory).unwrap();
+        let largest = Cell::new(0);
+        let image = fits_section_image(
+            &shape,
+            &metadata,
+            Path::new("virtual.fits"),
+            |origin, extent, _| {
+                largest.set(largest.get().max(extent.iter().product()));
+                let mut pixels = ArrayD::from_elem(IxDyn(extent), 1.0);
+                if origin == [0, 0] {
+                    pixels[[0, 0]] = f32::NAN;
+                }
+                Ok(pixels)
+            },
+        );
+        let plan = SubimagePlan::new(
+            &image,
+            None,
+            SubimageOptions {
+                region: None,
+                dropdeg: false,
+                keepaxes: &[],
+            },
+        )
+        .unwrap();
+        let mut product =
+            TempImage::new(shape.clone(), coordinates, TempStoragePolicy::Memory).unwrap();
+        plan.make_complex_to(&image, &image, &mut product, None)
+            .unwrap();
+        assert!(largest.get() > 0 && largest.get() < shape.iter().product());
+        let mask = product.get_named_mask("mask0").unwrap();
+        assert!(!mask[[0, 0]]);
+        assert_eq!(mask.iter().filter(|&&valid| !valid).count(), 1);
     }
 }

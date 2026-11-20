@@ -108,7 +108,7 @@ use crate::error::ImageError;
 use crate::image::ImageInterface;
 use crate::image_expr::{
     ImageExprBinaryOp, ImageExprBuilder, ImageExprCompareOp, ImageExprUnaryOp, ImageExprValue,
-    ImageExpression, MaskExprBuilder, MaskExpression,
+    ImageExpression, MaskExprBuilder, MaskExpression, ReductionOp,
 };
 use crate::image_expr_ops::{apply_binary, apply_unary};
 
@@ -554,18 +554,58 @@ pub fn referenced_images(expression: &str) -> Result<Vec<String>, ExprParseError
 // Parser intermediate representation
 // ---------------------------------------------------------------------------
 
+mod complex;
+
+use casa_types::Complex64;
+use complex::{arithmetic_complex, compare_complex, complex_constructor, complex_function};
+
+#[derive(Clone, Copy)]
+struct ScalarLiteral {
+    value: f64,
+    single_precision: bool,
+}
+
+impl ScalarLiteral {
+    fn double(value: f64) -> Self {
+        Self {
+            value,
+            single_precision: false,
+        }
+    }
+
+    fn single(value: f32) -> Self {
+        Self {
+            value: f64::from(value),
+            single_precision: true,
+        }
+    }
+}
+
 /// Intermediate parse result: either a numeric expression or a boolean mask.
 enum ExprNode<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> {
-    Numeric(Box<ImageExprBuilder<'a, T>>),
-    Scalar(f64),
+    Numeric(Box<ImageExprBuilder<'a, T>>, bool),
+    Complex(Box<ImageExprBuilder<'a, Complex64>>),
+    Scalar(ScalarLiteral),
     Mask(MaskExprBuilder<'a, T>),
     IntArray(Vec<i64>),
 }
 
 impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
+    fn numeric(builder: ImageExprBuilder<'a, T>, single: bool) -> Self {
+        Self::Numeric(Box::new(builder), single)
+    }
+
+    fn single_precision(&self) -> bool {
+        match self {
+            Self::Scalar(value) => value.single_precision,
+            Self::Numeric(_, single) => *single,
+            _ => false,
+        }
+    }
+
     fn into_numeric(self, pos: usize) -> Result<ImageExprBuilder<'a, T>, ExprParseError> {
         match self {
-            Self::Numeric(e) => Ok(*e),
+            Self::Numeric(e, _) => Ok(*e),
             Self::Scalar(_) => Err(ExprParseError {
                 message: "bare scalar cannot be used as an image expression (no shape context)"
                     .into(),
@@ -573,6 +613,10 @@ impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
             }),
             Self::Mask(_) => Err(ExprParseError {
                 message: "expected numeric expression but found boolean mask".into(),
+                position: pos,
+            }),
+            Self::Complex(_) => Err(ExprParseError {
+                message: "expected real expression but found a complex image".into(),
                 position: pos,
             }),
             Self::IntArray(_) => Err(ExprParseError {
@@ -600,13 +644,26 @@ impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
         pos: usize,
     ) -> Result<ImageExprBuilder<'a, T>, ExprParseError> {
         match self {
-            Self::Numeric(expression) => Ok(*expression),
-            Self::Scalar(value) => Ok(ImageExprBuilder::scalar(T::from_f64(value))),
-            Self::Mask(_) | Self::IntArray(_) => Err(ExprParseError {
+            Self::Numeric(expression, _) => Ok(*expression),
+            Self::Scalar(value) => Ok(ImageExprBuilder::scalar(T::from_f64(value.value))),
+            Self::Mask(_) | Self::IntArray(_) | Self::Complex(_) => Err(ExprParseError {
                 message: "expected numeric expression".into(),
                 position: pos,
             }),
         }
+    }
+}
+
+fn round_real_reduction<'a, T: ImageExprValue + ExprValueConvert>(
+    expression: ImageExprBuilder<'a, T>,
+    single: bool,
+) -> ImageExprBuilder<'a, T> {
+    if single {
+        expression.custom_unary("float reduction", |value: T| {
+            T::from_f64(f64::from(value.to_f64() as f32))
+        })
+    } else {
+        expression
     }
 }
 
@@ -619,6 +676,9 @@ struct Parser<'a, 's, T: ImageExprValue + PartialOrd + ExprValueConvert, R: Imag
     current: Token,
     current_pos: usize,
     resolver: &'s R,
+    complex_resolver: Option<&'s dyn ImageResolver<'a, Complex64>>,
+    casa_scalar_literals: bool,
+    single_precision_sources: Option<&'s dyn Fn(&str) -> bool>,
     _marker: std::marker::PhantomData<&'a T>,
 }
 
@@ -635,6 +695,9 @@ where
             current: tok,
             current_pos: pos,
             resolver,
+            complex_resolver: None,
+            casa_scalar_literals: false,
+            single_precision_sources: None,
             _marker: std::marker::PhantomData,
         })
     }
@@ -669,52 +732,83 @@ where
         op: ImageExprBinaryOp,
         pos: usize,
     ) -> Result<ExprNode<'a, T>, ExprParseError> {
+        if matches!(&lhs, ExprNode::Complex(_)) || matches!(&rhs, ExprNode::Complex(_)) {
+            return arithmetic_complex(lhs, rhs, op, pos);
+        }
+        if lhs.single_precision()
+            && rhs.single_precision()
+            && (!matches!(&lhs, ExprNode::Scalar(_)) || !matches!(&rhs, ExprNode::Scalar(_)))
+        {
+            return lhs
+                .into_numeric_or_constant(pos)?
+                .binary_expr_with_name(
+                    rhs.into_numeric_or_constant(pos)?,
+                    "float arithmetic",
+                    std::sync::Arc::new(move |a: T, b: T| {
+                        let output = apply_binary(op, a.to_f64() as f32, b.to_f64() as f32);
+                        T::from_f64(f64::from(output))
+                    }),
+                )
+                .map(|expression| ExprNode::numeric(expression, true))
+                .map_err(|error| ExprParseError {
+                    message: error.to_string(),
+                    position: pos,
+                });
+        }
         match (&lhs, &rhs) {
             (ExprNode::Scalar(a), ExprNode::Scalar(b)) => {
                 // Both scalars: compute at parse time
-                let a_t = Self::convert_f64_to_t(*a);
-                let b_t = Self::convert_f64_to_t(*b);
-                let result = apply_binary(op, a_t, b_t);
-                Ok(ExprNode::Scalar(result.to_f64()))
+                let result = if a.single_precision && b.single_precision {
+                    ScalarLiteral::single(apply_binary(op, a.value as f32, b.value as f32))
+                } else {
+                    let a = Self::convert_f64_to_t(a.value);
+                    let b = Self::convert_f64_to_t(b.value);
+                    ScalarLiteral::double(apply_binary(op, a, b).to_f64())
+                };
+                Ok(ExprNode::Scalar(result))
             }
-            (ExprNode::Scalar(s), ExprNode::Numeric(img)) => {
+            (ExprNode::Scalar(s), ExprNode::Numeric(img, _)) => {
                 // scalar op image
                 match op {
                     // Commutative ops: rewrite as image op scalar
                     ImageExprBinaryOp::Add
                     | ImageExprBinaryOp::Multiply
                     | ImageExprBinaryOp::Min
-                    | ImageExprBinaryOp::Max => Ok(ExprNode::Numeric(Box::new(
+                    | ImageExprBinaryOp::Max => Ok(ExprNode::numeric(
                         (**img)
                             .clone()
-                            .binary_scalar(Self::convert_f64_to_t(*s), op),
-                    ))),
+                            .binary_scalar(Self::convert_f64_to_t(s.value), op),
+                        false,
+                    )),
                     // Non-commutative: use scalar_left_binary for correct Inf/NaN handling
-                    _ => Ok(ExprNode::Numeric(Box::new(
+                    _ => Ok(ExprNode::numeric(
                         ImageExprBuilder::scalar_left_binary(
-                            Self::convert_f64_to_t(*s),
+                            Self::convert_f64_to_t(s.value),
                             (**img).clone(),
                             op,
                         ),
-                    ))),
+                        false,
+                    )),
                 }
             }
-            (ExprNode::Numeric(img), ExprNode::Scalar(s)) => Ok(ExprNode::Numeric(Box::new(
+            (ExprNode::Numeric(img, _), ExprNode::Scalar(s)) => Ok(ExprNode::numeric(
                 (**img)
                     .clone()
-                    .binary_scalar(Self::convert_f64_to_t(*s), op),
-            ))),
-            (ExprNode::Numeric(_), ExprNode::Numeric(_)) => {
+                    .binary_scalar(Self::convert_f64_to_t(s.value), op),
+                false,
+            )),
+            (ExprNode::Numeric(_, _), ExprNode::Numeric(_, _)) => {
                 let lhs_expr = lhs.into_numeric(pos)?;
                 let rhs_expr = rhs.into_numeric(pos)?;
-                Ok(ExprNode::Numeric(Box::new(
+                Ok(ExprNode::numeric(
                     lhs_expr
                         .binary_expr(rhs_expr, op)
                         .map_err(|e| ExprParseError {
                             message: e.to_string(),
                             position: pos,
                         })?,
-                )))
+                    false,
+                ))
             }
             _ => Err(ExprParseError {
                 message: "cannot apply arithmetic operator to boolean mask expression".into(),
@@ -790,8 +884,12 @@ where
             self.advance()?;
             let right = self.parse_add_expr()?;
 
+            if matches!(&left, ExprNode::Complex(_)) || matches!(&right, ExprNode::Complex(_)) {
+                return compare_complex(left, right, op, pos);
+            }
             match (&left, &right) {
                 (ExprNode::Scalar(lhs), ExprNode::Scalar(rhs)) => {
+                    let (lhs, rhs) = (lhs.value, rhs.value);
                     let value = match op {
                         ImageExprCompareOp::GreaterThan => lhs > rhs,
                         ImageExprCompareOp::LessThan => lhs < rhs,
@@ -804,21 +902,21 @@ where
                         ndarray::arr0(value).into_dyn(),
                     )));
                 }
-                (ExprNode::Numeric(img), ExprNode::Scalar(s)) => {
+                (ExprNode::Numeric(img, _), ExprNode::Scalar(s)) => {
                     let mask = (**img)
                         .clone()
-                        .compare_scalar(Self::convert_f64_to_t(*s), op);
+                        .compare_scalar(Self::convert_f64_to_t(s.value), op);
                     return Ok(ExprNode::Mask(mask));
                 }
-                (ExprNode::Scalar(s), ExprNode::Numeric(img)) => {
+                (ExprNode::Scalar(s), ExprNode::Numeric(img, _)) => {
                     // Flip the comparison: scalar op image => image flipped_op scalar
                     let flipped = flip_compare_op(op);
                     let mask = (**img)
                         .clone()
-                        .compare_scalar(Self::convert_f64_to_t(*s), flipped);
+                        .compare_scalar(Self::convert_f64_to_t(s.value), flipped);
                     return Ok(ExprNode::Mask(mask));
                 }
-                (ExprNode::Numeric(lhs), ExprNode::Numeric(rhs)) => {
+                (ExprNode::Numeric(lhs, _), ExprNode::Numeric(rhs, _)) => {
                     let mask = (**lhs)
                         .clone()
                         .compare_expr((**rhs).clone(), op)
@@ -891,8 +989,14 @@ where
                 self.advance()?;
                 let inner = self.parse_unary_expr()?;
                 match inner {
-                    ExprNode::Scalar(v) => Ok(ExprNode::Scalar(-v)),
-                    ExprNode::Numeric(expr) => Ok(ExprNode::Numeric(Box::new((*expr).negate()))),
+                    ExprNode::Scalar(mut literal) => {
+                        literal.value = -literal.value;
+                        Ok(ExprNode::Scalar(literal))
+                    }
+                    ExprNode::Numeric(expr, single) => {
+                        Ok(ExprNode::numeric((*expr).negate(), single))
+                    }
+                    ExprNode::Complex(expr) => Ok(ExprNode::Complex(Box::new((*expr).negate()))),
                     ExprNode::Mask(_) | ExprNode::IntArray(_) => Err(ExprParseError {
                         message: "cannot negate a non-numeric expression".into(),
                         position: pos,
@@ -976,8 +1080,10 @@ where
     fn eval_function_0(&self, name: &str, pos: usize) -> Result<ExprNode<'a, T>, ExprParseError> {
         let lower = name.to_ascii_lowercase();
         match lower.as_str() {
-            "pi" => Ok(ExprNode::Scalar(std::f64::consts::PI)),
-            "e" => Ok(ExprNode::Scalar(std::f64::consts::E)),
+            "pi" => Ok(ExprNode::Scalar(ScalarLiteral::double(
+                std::f64::consts::PI,
+            ))),
+            "e" => Ok(ExprNode::Scalar(ScalarLiteral::double(std::f64::consts::E))),
             _ => Err(ExprParseError {
                 message: format!("unknown 0-argument function: {name}"),
                 position: pos,
@@ -1016,18 +1122,52 @@ where
             _ => None,
         };
 
+        if let ExprNode::Complex(expr) = arg {
+            return complex_function(&lower, *expr, unary_op, pos);
+        }
+        let reduction = match lower.as_str() {
+            "sum" => Some(ReductionOp::Sum),
+            "min1d" | "min" => Some(ReductionOp::Min),
+            "max1d" | "max" => Some(ReductionOp::Max),
+            "mean1d" | "mean" => Some(ReductionOp::Mean),
+            "median1d" | "median" => Some(ReductionOp::Median),
+            "variance" | "variance1d" => Some(ReductionOp::Variance),
+            "stddev" | "stddev1d" => Some(ReductionOp::Stddev),
+            "avdev" | "avdev1d" => Some(ReductionOp::Avdev),
+            _ => None,
+        };
+        if let Some(op) = reduction {
+            let single = arg.single_precision();
+            let expression = arg.into_numeric(pos)?.make_reduction(op);
+            return Ok(ExprNode::numeric(
+                round_real_reduction(expression, single),
+                single,
+            ));
+        }
         if let Some(op) = unary_op {
             match arg {
-                ExprNode::Scalar(v) => {
-                    let t = Self::convert_f64_to_t(v);
-                    let result = apply_unary(op, t);
-                    Ok(ExprNode::Scalar(result.to_f64()))
+                ExprNode::Scalar(literal) => {
+                    let result = if literal.single_precision {
+                        ScalarLiteral::single(apply_unary(op, literal.value as f32))
+                    } else {
+                        let value = Self::convert_f64_to_t(literal.value);
+                        ScalarLiteral::double(apply_unary(op, value).to_f64())
+                    };
+                    Ok(ExprNode::Scalar(result))
                 }
-                ExprNode::Numeric(expr) => Ok(ExprNode::Numeric(Box::new((*expr).unary(op)))),
-                ExprNode::Mask(_) | ExprNode::IntArray(_) => Err(ExprParseError {
-                    message: format!("function '{name}' requires a numeric argument"),
-                    position: pos,
-                }),
+                ExprNode::Numeric(expr, true) => Ok(ExprNode::numeric(
+                    expr.custom_unary("float arithmetic", move |value: T| {
+                        T::from_f64(f64::from(apply_unary(op, value.to_f64() as f32)))
+                    }),
+                    true,
+                )),
+                ExprNode::Numeric(expr, false) => Ok(ExprNode::numeric((*expr).unary(op), false)),
+                ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(_) => {
+                    Err(ExprParseError {
+                        message: format!("function '{name}' requires a numeric argument"),
+                        position: pos,
+                    })
+                }
             }
         } else {
             // Wave 14 functions
@@ -1035,7 +1175,7 @@ where
                 "isnan" => match arg {
                     ExprNode::Scalar(v) => {
                         // Constant-fold: isnan of a literal
-                        let is_nan = v.is_nan();
+                        let is_nan = v.value.is_nan();
                         // We need a shape context to produce a MaskExprBuilder; without an image
                         // we cannot create one. Return error like other scalar-only cases.
                         Err(ExprParseError {
@@ -1047,52 +1187,25 @@ where
                             position: pos,
                         })
                     }
-                    ExprNode::Numeric(expr) => Ok(ExprNode::Mask((*expr).isnan())),
-                    ExprNode::Mask(_) | ExprNode::IntArray(_) => Err(ExprParseError {
-                        message: "isnan() requires a numeric argument".into(),
-                        position: pos,
-                    }),
+                    ExprNode::Numeric(expr, _) => Ok(ExprNode::Mask((*expr).isnan())),
+                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(_) => {
+                        Err(ExprParseError {
+                            message: "isnan() requires a numeric argument".into(),
+                            position: pos,
+                        })
+                    }
                 },
                 "ndim" => {
                     let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Scalar(expr.ndim_value() as f64))
+                    Ok(ExprNode::Scalar(ScalarLiteral::double(
+                        expr.ndim_value() as f64
+                    )))
                 }
                 "nelem" | "nelements" => {
                     let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Scalar(expr.nelem_value() as f64))
-                }
-                // Wave 14b: 1-arg reductions
-                "sum" => {
-                    let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(expr.sum_reduce())))
-                }
-                "min1d" | "min" => {
-                    let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(expr.min_reduce())))
-                }
-                "max1d" | "max" => {
-                    let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(expr.max_reduce())))
-                }
-                "mean1d" | "mean" => {
-                    let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(expr.mean_reduce())))
-                }
-                "median1d" | "median" => {
-                    let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(expr.median_reduce())))
-                }
-                "variance" | "variance1d" => {
-                    let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(expr.variance_reduce())))
-                }
-                "stddev" | "stddev1d" => {
-                    let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(expr.stddev_reduce())))
-                }
-                "avdev" | "avdev1d" => {
-                    let expr = arg.into_numeric(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(expr.avdev_reduce())))
+                    Ok(ExprNode::Scalar(ScalarLiteral::double(
+                        expr.nelem_value() as f64
+                    )))
                 }
                 // Wave 14c: mask-aware 1-arg functions
                 "all" => {
@@ -1105,11 +1218,11 @@ where
                 }
                 "ntrue" => {
                     let mask = arg.into_mask(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(ImageExprBuilder::ntrue(mask))))
+                    Ok(ExprNode::numeric(ImageExprBuilder::ntrue(mask), false))
                 }
                 "nfalse" => {
                     let mask = arg.into_mask(pos)?;
-                    Ok(ExprNode::Numeric(Box::new(ImageExprBuilder::nfalse(mask))))
+                    Ok(ExprNode::numeric(ImageExprBuilder::nfalse(mask), false))
                 }
                 "mask" => {
                     let expr = arg.into_numeric(pos)?;
@@ -1121,21 +1234,46 @@ where
                     Ok(ExprNode::Mask(MaskExprBuilder::from_constant(mask)))
                 }
                 "value" => match arg {
-                    ExprNode::Numeric(expr) => {
-                        Ok(ExprNode::Numeric(Box::new((*expr).strip_mask())))
+                    ExprNode::Numeric(expr, single) => {
+                        Ok(ExprNode::numeric((*expr).strip_mask(), single))
                     }
                     ExprNode::Scalar(_) => Ok(arg),
-                    ExprNode::Mask(_) | ExprNode::IntArray(_) => Err(ExprParseError {
-                        message: "value() requires a numeric argument".into(),
+                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(_) => {
+                        Err(ExprParseError {
+                            message: "value() requires a numeric argument".into(),
+                            position: pos,
+                        })
+                    }
+                },
+                "float" if !T::is_complex() => match arg {
+                    ExprNode::Scalar(value) => {
+                        Ok(ExprNode::Scalar(ScalarLiteral::single(value.value as f32)))
+                    }
+                    ExprNode::Numeric(expr, _) => Ok(ExprNode::numeric(
+                        expr.custom_unary("float", |value| {
+                            T::from_f64(f64::from(value.to_f64() as f32))
+                        }),
+                        true,
+                    )),
+                    _ => Err(ExprParseError {
+                        message: "'float()' requires a numeric argument".into(),
                         position: pos,
                     }),
                 },
-                "real" | "float" | "double" if !T::is_complex() => match arg {
-                    ExprNode::Numeric(_) | ExprNode::Scalar(_) => Ok(arg),
-                    ExprNode::Mask(_) | ExprNode::IntArray(_) => Err(ExprParseError {
-                        message: format!("'{lower}()' requires a numeric argument"),
-                        position: pos,
-                    }),
+                "real" | "double" if !T::is_complex() => match arg {
+                    ExprNode::Scalar(literal) if lower == "double" => {
+                        Ok(ExprNode::Scalar(ScalarLiteral::double(literal.value)))
+                    }
+                    ExprNode::Numeric(expr, _) if lower == "double" => {
+                        Ok(ExprNode::numeric(*expr, false))
+                    }
+                    ExprNode::Numeric(_, _) | ExprNode::Scalar(_) => Ok(arg),
+                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(_) => {
+                        Err(ExprParseError {
+                            message: format!("'{lower}()' requires a numeric argument"),
+                            position: pos,
+                        })
+                    }
                 },
                 // Wave 14d: type-changing functions (typed API only for complex types)
                 "amplitude" | "real" | "imag" | "arg" | "complex" => Err(ExprParseError {
@@ -1176,10 +1314,11 @@ where
 
         // Wave 14 2-arg functions
         match lower.as_str() {
+            "complex" => complex_constructor(arg1, arg2, pos),
             "length" => {
                 let expr = arg1.into_numeric(pos)?;
                 let axis = match arg2 {
-                    ExprNode::Scalar(v) => v as usize,
+                    ExprNode::Scalar(v) => v.value as usize,
                     _ => {
                         return Err(ExprParseError {
                             message: "length() second argument must be a scalar axis index".into(),
@@ -1188,7 +1327,7 @@ where
                     }
                 };
                 match expr.length_value(axis) {
-                    Some(len) => Ok(ExprNode::Scalar(len as f64)),
+                    Some(len) => Ok(ExprNode::Scalar(ScalarLiteral::double(len as f64))),
                     None => Err(ExprParseError {
                         message: format!(
                             "axis {axis} out of range for {}-d image",
@@ -1201,7 +1340,7 @@ where
             "fractile1d" | "fractile" => {
                 let expr = arg1.into_numeric(pos)?;
                 let frac = match arg2 {
-                    ExprNode::Scalar(v) => v,
+                    ExprNode::Scalar(v) => v.value,
                     _ => {
                         return Err(ExprParseError {
                             message: "fractile1d() second argument must be a scalar fraction"
@@ -1210,13 +1349,13 @@ where
                         });
                     }
                 };
-                Ok(ExprNode::Numeric(Box::new(expr.fractile(frac))))
+                Ok(ExprNode::numeric(expr.fractile(frac), false))
             }
             "fractilerange1d" | "fractilerange" => {
                 // 2-arg variant: fractilerange1d(expr, frac) = range from frac to 1-frac
                 let expr = arg1.into_numeric(pos)?;
                 let frac = match arg2 {
-                    ExprNode::Scalar(v) => v,
+                    ExprNode::Scalar(v) => v.value,
                     _ => {
                         return Err(ExprParseError {
                             message: "fractilerange1d() second argument must be a scalar fraction"
@@ -1225,9 +1364,10 @@ where
                         });
                     }
                 };
-                Ok(ExprNode::Numeric(Box::new(
+                Ok(ExprNode::numeric(
                     expr.fractile_range(frac, 1.0 - frac),
-                )))
+                    false,
+                ))
             }
             "replace" => {
                 // replace(image, replacement) — replaces masked-out pixels while keeping mask.
@@ -1244,7 +1384,7 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::Numeric(Box::new(r)))
+                    .map(|r| ExprNode::numeric(r, false))
             }
             "spectralindex" => {
                 if T::is_complex() {
@@ -1260,7 +1400,7 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::Numeric(Box::new(r)))
+                    .map(|r| ExprNode::numeric(r, false))
             }
             "pa" => {
                 if T::is_complex() {
@@ -1269,8 +1409,8 @@ where
                         position: pos,
                     });
                 }
-                let u_is_num = matches!(arg1, ExprNode::Numeric(_));
-                let q_is_num = matches!(arg2, ExprNode::Numeric(_));
+                let u_is_num = matches!(arg1, ExprNode::Numeric(_, _));
+                let q_is_num = matches!(arg2, ExprNode::Numeric(_, _));
                 if !u_is_num && !q_is_num {
                     return Err(ExprParseError {
                         message: "pa() requires at least one image expression".into(),
@@ -1284,11 +1424,13 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::Numeric(Box::new(r)))
+                    .map(|r| ExprNode::numeric(r, false))
             }
             "indexin" => {
                 let axis = match arg1 {
-                    ExprNode::Scalar(v) if (v - v.round()).abs() < 1e-9 => v.round() as i64,
+                    ExprNode::Scalar(v) if (v.value - v.value.round()).abs() < 1e-9 => {
+                        v.value.round() as i64
+                    }
                     _ => {
                         return Err(ExprParseError {
                             message: "indexin() first argument must be an integer axis".into(),
@@ -1298,7 +1440,9 @@ where
                 };
                 let indices = match arg2 {
                     ExprNode::IntArray(vals) => vals,
-                    ExprNode::Scalar(v) if (v - v.round()).abs() < 1e-9 => vec![v.round() as i64],
+                    ExprNode::Scalar(v) if (v.value - v.value.round()).abs() < 1e-9 => {
+                        vec![v.value.round() as i64]
+                    }
                     _ => {
                         return Err(ExprParseError {
                             message:
@@ -1314,7 +1458,9 @@ where
                 let expr = arg1.into_numeric(pos)?;
                 let raw_factors = match arg2 {
                     ExprNode::IntArray(vals) => vals,
-                    ExprNode::Scalar(v) if (v - v.round()).abs() < 1e-9 => vec![v.round() as i64],
+                    ExprNode::Scalar(v) if (v.value - v.value.round()).abs() < 1e-9 => {
+                        vec![v.value.round() as i64]
+                    }
                     _ => {
                         return Err(ExprParseError {
                             message: "rebin() second argument must be an integer factor vector"
@@ -1341,7 +1487,7 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::Numeric(Box::new(r)))
+                    .map(|r| ExprNode::numeric(r, false))
             }
             _ => Err(ExprParseError {
                 message: format!("unknown 2-argument function: {name}"),
@@ -1371,13 +1517,13 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::Numeric(Box::new(r)))
+                    .map(|r| ExprNode::numeric(r, false))
             }
             "fractilerange1d" | "fractilerange" => {
                 // fractilerange1d(expr, frac1, frac2)
                 let expr = arg1.into_numeric(pos)?;
                 let frac1 = match arg2 {
-                    ExprNode::Scalar(v) => v,
+                    ExprNode::Scalar(v) => v.value,
                     _ => {
                         return Err(ExprParseError {
                             message: "fractilerange1d() second argument must be a scalar".into(),
@@ -1386,7 +1532,7 @@ where
                     }
                 };
                 let frac2 = match arg3 {
-                    ExprNode::Scalar(v) => v,
+                    ExprNode::Scalar(v) => v.value,
                     _ => {
                         return Err(ExprParseError {
                             message: "fractilerange1d() third argument must be a scalar".into(),
@@ -1394,9 +1540,7 @@ where
                         });
                     }
                 };
-                Ok(ExprNode::Numeric(Box::new(
-                    expr.fractile_range(frac1, frac2),
-                )))
+                Ok(ExprNode::numeric(expr.fractile_range(frac1, frac2), false))
             }
             _ => Err(ExprParseError {
                 message: format!("unknown 3-argument function: {name}"),
@@ -1406,6 +1550,17 @@ where
     }
 
     fn resolve_image(&self, name: &str, pos: usize) -> Result<ExprNode<'a, T>, ExprParseError> {
+        if let Some(source) = self
+            .complex_resolver
+            .and_then(|resolver| resolver.resolve(name).ok())
+        {
+            return ImageExprBuilder::from_dyn(source)
+                .map(|expr| ExprNode::Complex(Box::new(expr)))
+                .map_err(|error| ExprParseError {
+                    message: error.to_string(),
+                    position: pos,
+                });
+        }
         let image = self.resolver.resolve(name).map_err(|e| ExprParseError {
             message: e.to_string(),
             position: pos,
@@ -1414,7 +1569,10 @@ where
             message: e.to_string(),
             position: pos,
         })?;
-        Ok(ExprNode::Numeric(Box::new(expr)))
+        let single = self
+            .single_precision_sources
+            .is_some_and(|source| source(name));
+        Ok(ExprNode::numeric(expr, single))
     }
 
     fn parse_array_element(&mut self) -> Result<i64, ExprParseError> {
@@ -1485,8 +1643,22 @@ where
             }
             Token::LBracket => self.parse_array_literal(),
             Token::Number(value) => {
+                let text = &self.lexer.src[self.current_pos..self.lexer.pos];
+                let literal = if self.casa_scalar_literals {
+                    if let Some((mantissa, _)) = text.split_once(['d', 'D']) {
+                        // CASA recognizes a D exponent as a Double literal but its
+                        // numeric conversion consumes only the leading mantissa.
+                        ScalarLiteral::double(mantissa.parse().expect("valid numeric mantissa"))
+                    } else if text.contains(['e', 'E']) || !text.contains('.') {
+                        ScalarLiteral::single(value as f32)
+                    } else {
+                        ScalarLiteral::double(value)
+                    }
+                } else {
+                    ScalarLiteral::double(value)
+                };
                 self.advance()?;
-                Ok(ExprNode::Scalar(value))
+                Ok(ExprNode::Scalar(literal))
             }
             Token::QuotedPath(path) => {
                 let pos = self.current_pos;
@@ -1630,6 +1802,126 @@ where
         });
     }
     result.into_mask(0)
+}
+
+pub(crate) fn parse_subimage_mask_expr<'a, T, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+) -> Result<MaskExpression<T>, ExprParseError>
+where
+    T: ImageExprValue + PartialOrd + ExprValueConvert,
+    R: ImageResolver<'a, T>,
+{
+    let mask = subimage_mask_builder(expression, real, complex)?;
+    mask.compile().map_err(|error| ExprParseError {
+        message: error.to_string(),
+        position: 0,
+    })
+}
+
+pub(crate) fn subimage_mask_builder<'a, T, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+) -> Result<MaskExprBuilder<'a, T>, ExprParseError>
+where
+    T: ImageExprValue + PartialOrd + ExprValueConvert,
+    R: ImageResolver<'a, T>,
+{
+    let mut parser = Parser::new(expression, real)?;
+    parser.complex_resolver = Some(complex);
+    let result = parser.parse_expression()?;
+    parser.expect(&Token::Eof)?;
+    Ok(match result {
+        ExprNode::Numeric(image, _) if !image.shape().is_empty() => {
+            image.compare_scalar(T::from_f64(0.5), ImageExprCompareOp::GreaterEqual)
+        }
+        other => other.into_mask(0)?,
+    })
+}
+
+fn parse_casa_pixel_expression<'a, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+    single_precision: &dyn Fn(&str) -> bool,
+) -> Result<ExprNode<'a, f64>, ExprParseError>
+where
+    R: ImageResolver<'a, f64>,
+{
+    let mut parser = Parser::new(expression, real)?;
+    parser.complex_resolver = Some(complex);
+    parser.casa_scalar_literals = true;
+    parser.single_precision_sources = Some(single_precision);
+    let result = parser.parse_expression()?;
+    parser.expect(&Token::Eof)?;
+    Ok(result)
+}
+
+pub(crate) enum ReplacementPixels {
+    Real(ndarray::ArrayD<f64>),
+    Complex(ndarray::ArrayD<Complex64>),
+}
+
+pub(crate) fn evaluate_replacement<'a, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+    single_precision: &dyn Fn(&str) -> bool,
+    selected_shape: &[usize],
+    want_complex: bool,
+) -> Result<ReplacementPixels, ImageError>
+where
+    R: ImageResolver<'a, f64>,
+{
+    let check_shape = |shape: &[usize]| {
+        if shape.is_empty() || shape == selected_shape {
+            Ok(())
+        } else {
+            Err(ImageError::CasaSelection(
+                "LELAttribute: shapes of operands mismatch".into(),
+            ))
+        }
+    };
+    if let Some(vector) = expression
+        .trim()
+        .strip_prefix('[')
+        .and_then(|text| text.strip_suffix(']'))
+        && let Ok(values) = vector
+            .split(',')
+            .map(|item| item.trim().parse::<f64>())
+            .collect::<Result<Vec<_>, _>>()
+    {
+        check_shape(&[values.len()])?;
+        return Ok(ReplacementPixels::Real(
+            ndarray::Array1::from_vec(values).into_dyn(),
+        ));
+    }
+    let result = parse_casa_pixel_expression(expression, real, complex, single_precision)?;
+    match result {
+        ExprNode::Scalar(literal) => Ok(ReplacementPixels::Real(
+            ndarray::arr0(literal.value).into_dyn(),
+        )),
+        ExprNode::Numeric(builder, _) => {
+            check_shape(builder.shape())?;
+            Ok(ReplacementPixels::Real(builder.compile()?.get()?))
+        }
+        ExprNode::Complex(builder) if want_complex => {
+            check_shape(builder.shape())?;
+            Ok(ReplacementPixels::Complex(builder.compile()?.get()?))
+        }
+        ExprNode::IntArray(values) => {
+            check_shape(&[values.len()])?;
+            let values = ndarray::Array1::from_iter(values.into_iter().map(|value| value as f64));
+            Ok(ReplacementPixels::Real(values.into_dyn()))
+        }
+        _ => Err(ImageError::CasaSelection(format!(
+            "LatticeExprNode::make{} - conversion to {} not possible",
+            if want_complex { "Complex" } else { "Float" },
+            if want_complex { "Complex" } else { "Float" },
+        ))),
+    }
 }
 
 /// Parses and compiles a LEL mask expression into the canonical owned

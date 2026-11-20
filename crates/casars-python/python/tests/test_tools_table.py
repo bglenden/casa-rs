@@ -1366,6 +1366,20 @@ def test_statistics_nan_inf_and_column_types(tmp_path: Path) -> None:
     one.done()
 
 
+@pytest.mark.parametrize("rows", [[69, 67], [67, 69]])
+def test_statistics_rejects_unequal_tiled_shapes_in_a_view(
+    fixtures: dict[str, Path], rows: list[int]
+) -> None:
+    tool = tools.table()
+    assert tool.open(str(fixtures["ms"]))
+    view = tool.selectrows(rows)
+    assert {view.getcell("DATA", row).shape for row in range(2)} == {(4, 1), (4, 64)}
+    with pytest.raises(RuntimeError, match="getArrayColumnCells shape mismatch in column DATA"):
+        view.statistics("DATA", "real")
+    view.done()
+    tool.done()
+
+
 def test_summary_recurse_cycles_and_headless_browse(
     fixtures: dict[str, Path], tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

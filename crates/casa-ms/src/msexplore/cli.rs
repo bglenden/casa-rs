@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
@@ -17,8 +17,9 @@ use super::{
     MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction,
     MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
     MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset,
-    MsPlotSpec, MsPlotStyleSpec, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
-    export_msexplore_plot, preview_msexplore_flag_edit_for_request,
+    MsPlotSpec, MsPlotStyleSpec, PlotMsCalibration, apply_msexplore_flag_edit_for_request,
+    build_calibrated_plotms_payload, build_msexplore_payload, export_msexplore_plot,
+    preview_msexplore_flag_edit_for_request,
 };
 use crate::{MeasurementSet, MsSelection};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
@@ -36,6 +37,7 @@ struct CliOptions {
     y_axis: Option<MsAxis>,
     y_axis2: Option<MsAxis>,
     data_column: MsDataColumn,
+    x_data_column: Option<MsDataColumn>,
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
     avgtime: Option<f64>,
@@ -164,19 +166,68 @@ const fn one() -> usize {
 /// default) and `plotms`.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
+    task_front_end_with_plot_payload(None)
+}
+
+/// Provide a caller-owned array payload for PlotMS figures.
+pub fn task_front_end_with_plot_payload(
+    payload: Option<PathBuf>,
+) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
+    task_front_end_with_calibration(payload, None)
+}
+
+/// Load transient PlotMS calibration from the user's callibrary entries.
+pub type PlotMsCalibrationLoader =
+    fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
+
+/// Use the existing PlotMS front end with a caller-provided calibration engine.
+pub fn task_front_end_with_calibration(
+    payload: Option<PathBuf>,
+    load_calibration: Option<PlotMsCalibrationLoader>,
+) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     TaskFrontEnd::new_with_deferred_schema(
         "msexplore",
         msexplore_task_schema_bundle(),
         &["msexplore", "plotms"],
-        run_task,
+        move |task| run_task(task, payload.as_deref(), load_calibration),
     )
     .expect("the msexplore contract carries msexplore and plotms")
 }
 
 /// Run one resolved `msexplore` or `plotms` request. `msexplore` returns its
 /// summary, as CASA's `listobs` returns its record; `plotms` returns None.
-fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let outcome = run(options_from(task)?)?;
+fn run_task(
+    task: &TaskInvocation<'_>,
+    payload: Option<&Path>,
+    load_calibration: Option<PlotMsCalibrationLoader>,
+) -> Result<TaskSuccess, TaskFailure> {
+    if task.surface() == "plotms"
+        && let Some(path) = super::calibration::input(task)?
+    {
+        return super::calibration::run(task, &path, payload);
+    }
+    let (options, calibration) = if task.surface() == "plotms" {
+        let library = task.texts("callib")?;
+        let calibration = if library.is_empty() {
+            None
+        } else {
+            let load = load_calibration.ok_or_else(|| {
+                TaskFailure::validation("use casars.tasks.plotms for on-the-fly calibration")
+                    .at("callib")
+            })?;
+            Some((load, library))
+        };
+        (
+            options_from_plotms(task, calibration.is_some())?,
+            calibration,
+        )
+    } else {
+        (options_from(task)?, None)
+    };
+    if let Some((load, library)) = calibration {
+        return run_calibrated_plot(task, options, payload, load, &library);
+    }
+    let outcome = run(options)?;
     let success = if task.surface() == "plotms" {
         TaskSuccess::new(CasaValue::None, &outcome.result)?
     } else {
@@ -189,6 +240,68 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         Some(note) => success.with_note(note),
         None => success,
     })
+}
+
+fn run_calibrated_plot(
+    task: &TaskInvocation<'_>,
+    mut options: CliOptions,
+    array_payload: Option<&Path>,
+    load: PlotMsCalibrationLoader,
+    library: &[String],
+) -> Result<TaskSuccess, TaskFailure> {
+    let output = options.plot_output.as_deref();
+    super::task_contract::refuse_unwritable_outputs(
+        &[("plotfile", output)],
+        options.overwrite,
+        "set overwrite=True to replace it",
+    )
+    .map_err(TaskFailure::validation)?;
+    let ms = MeasurementSet::open(&options.ms_path).map_err(|error| {
+        TaskFailure::execution(format!(
+            "open MeasurementSet {}: {error}",
+            options.ms_path.display()
+        ))
+    })?;
+    if !options.selection.selectdata {
+        options.selection = MsSelection::default();
+    }
+    let mut calibration = load(&ms, &options.selection, library)?;
+    calibration.x_data_column = options.x_data_column;
+    let show = task.flag("showgui")?;
+    let format = task.text("expformat")?.filter(|ext| !ext.is_empty());
+    let is_text = output.is_some_and(|path| {
+        format
+            .as_deref()
+            .or_else(|| path.extension().and_then(std::ffi::OsStr::to_str))
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+    });
+    let text_file = output.filter(|_| is_text);
+    let figure_file = output.filter(|_| !is_text);
+    let mut plots = Vec::new();
+    if output.is_some() || show {
+        let spec = build_explore_spec(&options).map_err(TaskFailure::validation)?;
+        let payload = build_calibrated_plotms_payload(&ms, &spec, &calibration)
+            .map_err(TaskFailure::execution)?;
+        if show || figure_file.is_some() {
+            let arrays = array_payload.ok_or_else(|| {
+                TaskFailure::validation("use casars.tasks.plotms for rendered figures")
+            })?;
+            plots.push(super::plotms_figure::prepare(
+                task,
+                &payload,
+                arrays,
+                figure_file,
+                show,
+            )?);
+        }
+        if let Some(path) = text_file {
+            super::plotms_text::write_calibrated_export(task, &ms, &payload, path, library)?;
+        }
+    }
+    TaskSuccess::new(
+        CasaValue::None,
+        &serde_json::json!({"text_file": text_file, "plots": plots}),
+    )
 }
 
 /// Run one command line. Everything a refusal can find is checked before the
@@ -905,6 +1018,7 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
         y_axis: parsed(task, "y_axis", MsAxis::parse)?,
         y_axis2: parsed(task, "y_axis2", MsAxis::parse)?,
         data_column: required(task, "datacolumn", MsDataColumn::parse)?,
+        x_data_column: None,
         color_by: required(task, "color_by", MsColorAxis::parse)?,
         avgchannel: parsed(task, "avgchannel", number::<usize>)?,
         avgtime: parsed(task, "avgtime", number::<f64>)?,
@@ -952,6 +1066,198 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
     let plot_control_used = PLOT_CONTROLS.iter().any(|name| task.is_set(name));
     check_options(&options, plot_control_used).map_err(TaskFailure::validation)?;
     Ok(options)
+}
+
+/// Translate the CASA PlotMS spellings to the existing MS exploration request.
+fn options_from_plotms(
+    task: &TaskInvocation<'_>,
+    on_the_fly: bool,
+) -> Result<CliOptions, TaskFailure> {
+    if task.flag("showatm")? || task.flag("showtsky")? {
+        return Err(TaskFailure::validation(
+            "MeasurementSet atmospheric overlays are pending #1526",
+        ));
+    }
+
+    let text = |name| {
+        task.text(name)
+            .map(|text| text.filter(|value| !value.is_empty()))
+    };
+    let plot_output = text("plotfile")?.map(PathBuf::from);
+    let export_format = text("expformat")?.or_else(|| {
+        plot_output
+            .as_deref()
+            .and_then(std::path::Path::extension)
+            .and_then(std::ffi::OsStr::to_str)
+            .map(str::to_owned)
+    });
+    let plot_format = if on_the_fly {
+        MsExportFormat::Txt
+    } else {
+        export_format
+            .as_deref()
+            .map(MsExportFormat::parse)
+            .transpose()
+            .map_err(|_| TaskFailure::validation("MeasurementSet figure export is pending #1032"))?
+            .unwrap_or(MsExportFormat::Txt)
+    };
+    let x_axis = text("xaxis")?
+        .map_or(Ok(MsAxis::Time), |axis| {
+            MsAxis::parse(&axis.to_ascii_lowercase())
+        })
+        .map_err(TaskFailure::validation)?;
+    let mut ordinates = super::calibration::axis_names(task.value("yaxis"))
+        .map_err(TaskFailure::validation)?
+        .into_iter()
+        .map(|axis| MsAxis::parse(&axis.to_ascii_lowercase()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(TaskFailure::validation)?
+        .into_iter();
+    let y_axis = ordinates.next().unwrap_or(MsAxis::Amplitude);
+    let y_axis2 = ordinates.next();
+    if ordinates.next().is_some() {
+        return Err(TaskFailure::validation(
+            "more than two MeasurementSet ordinates are pending #1032",
+        ));
+    }
+    let averaging = task.flag("averagedata")?;
+    let average = |name| Ok::<_, TaskFailure>(averaging && task.flag(name)?);
+    let average_text = |name| if averaging { text(name) } else { Ok(None) };
+    let data_column = |column: Option<String>| {
+        column
+            .map(|column| MsDataColumn::parse(&column))
+            .transpose()
+            .map_err(TaskFailure::validation)
+    };
+    let x_column = data_column(text("xdatacolumn")?)?;
+    let y_column = data_column(plotms_column(task.value("ydatacolumn"))?)?;
+    let data_column = if on_the_fly {
+        y_column.unwrap_or(MsDataColumn::Data)
+    } else {
+        y_column.or(x_column).unwrap_or(MsDataColumn::Data)
+    };
+    let x_data_column = if on_the_fly {
+        Some(x_column.unwrap_or(MsDataColumn::Data))
+    } else {
+        x_column
+    }
+    .filter(|column| *column != data_column);
+    if x_data_column.is_some() && !on_the_fly {
+        return Err(TaskFailure::validation(
+            "distinct MeasurementSet X and Y data columns are pending #1032",
+        ));
+    }
+    let color_by = text("coloraxis")?
+        .map_or(Ok(MsColorAxis::None), |axis| {
+            MsColorAxis::parse(&axis.to_ascii_lowercase())
+        })
+        .map_err(TaskFailure::validation)?;
+    let correlation = text("correlation")?.or(text("polarization")?);
+    let transform = task.flag("transform")?;
+    Ok(CliOptions {
+        ms_path: task.path("vis")?,
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
+        summary_output: None,
+        overwrite: task.flag("overwrite")?,
+        selection: MsSelection {
+            selectdata: task.flag("selectdata")?,
+            field: text("field")?,
+            spw: text("spw")?,
+            timerange: text("timerange")?,
+            uvrange: text("uvrange")?,
+            antenna: text("antenna")?,
+            scan: text("scan")?,
+            correlation,
+            observation: text("observation")?,
+            array: text("array")?,
+            intent: text("intent")?,
+            feed: text("feed")?,
+            msselect: text("msselect")?,
+            ..MsSelection::default()
+        },
+        page_spec: None,
+        preset: None,
+        x_axis: Some(x_axis),
+        y_axis: Some(y_axis),
+        y_axis2,
+        data_column,
+        x_data_column,
+        color_by,
+        avgchannel: average_text("avgchannel")?
+            .map(|value| number::<usize>(&value))
+            .transpose()
+            .map_err(TaskFailure::validation)?,
+        avgtime: average_text("avgtime")?
+            .map(|value| number::<f64>(&value))
+            .transpose()
+            .map_err(TaskFailure::validation)?,
+        avgscan: average("avgscan")?,
+        avgfield: average("avgfield")?,
+        avgbaseline: average("avgbaseline")?,
+        avgantenna: average("avgantenna")?,
+        avgspw: average("avgspw")?,
+        scalar: average("scalar")?,
+        freqframe: if transform { text("freqframe")? } else { None },
+        restfreq: if transform { text("restfreq")? } else { None },
+        veldef: if transform {
+            task.required_text("veldef")?
+        } else {
+            "RADIO".into()
+        },
+        iteraxis: text("iteraxis")?
+            .map(|value| MsIterationAxis::parse(&value.to_ascii_lowercase()))
+            .transpose()
+            .map_err(TaskFailure::validation)?,
+        gridrows: count(task, "gridrows")?.max(1),
+        gridcols: count(task, "gridcols")?.max(1),
+        xselfscale: task.flag("xselfscale")?,
+        yselfscale: task.flag("yselfscale")?,
+        xsharedaxis: task.flag("xsharedaxis")?,
+        ysharedaxis: task.flag("ysharedaxis")?,
+        title: text("title")?,
+        xlabel: text("xlabel")?,
+        ylabel: text("ylabel")?,
+        symbol_size: task
+            .optional_number("symbolsize")?
+            .map(|value| value as u32),
+        showlegend: task.flag("showlegend")?,
+        legendposition: text("legendposition")?
+            .map_or(Ok(MsLegendPosition::UpperRight), |value| {
+                legend_position(&value)
+            })
+            .map_err(TaskFailure::validation)?,
+        showmajorgrid: task.flag("showmajorgrid")?,
+        showminorgrid: task.flag("showminorgrid")?,
+        headeritems: text("headeritems")?,
+        max_points: usize::MAX,
+        flag_action: None,
+        flag_xmin: None,
+        flag_xmax: None,
+        flag_ymin: None,
+        flag_ymax: None,
+        flag_plotindex: None,
+        flag_panel: None,
+        flag_extcorr: false,
+        flag_extchannel: false,
+        flag_selected: false,
+        flag_apply: false,
+        flag_output: None,
+        plot_output,
+        plot_format,
+    })
+}
+
+fn plotms_column(value: Option<&ParameterValue>) -> Result<Option<String>, TaskFailure> {
+    let columns = super::calibration::axis_names(value).map_err(TaskFailure::validation)?;
+    let first = columns.first().copied().filter(|name| !name.is_empty());
+    if let Some(first) = first
+        && columns.iter().any(|name| *name != first)
+    {
+        return Err(TaskFailure::validation(
+            "multiple MeasurementSet data columns are pending #1032",
+        ));
+    }
+    Ok(first.map(str::to_owned))
 }
 
 /// Refuse the combinations a plot or flag edit cannot take.

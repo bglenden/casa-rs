@@ -16,7 +16,8 @@
 
 use std::path::Path;
 
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::measures::direction::MDirection;
+use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 /// What CASA's machine knew of the first visibility buffer it degridded:
@@ -171,6 +172,110 @@ impl GridFt<'_> {
     }
 }
 
+/// Set the common tangent point used to project every facet of a model.
+pub fn set_grid_tangent(record: &mut RecordValue, tangent: &MDirection) {
+    let (lon, lat) = tangent.as_angles();
+    record.upsert("tangentspecified", boolean(true));
+    record.upsert(
+        "mtangent_rec",
+        direction([lon, lat], tangent.refer().as_str()),
+    );
+}
+
+/// Save the legacy moving source and its initially observed direction.
+pub fn set_grid_motion(
+    record: &mut RecordValue,
+    source: &MDirection,
+    anchor: &MDirection,
+    location: &casa_types::measures::position::MPosition,
+) {
+    let measure = |value: &MDirection| {
+        let (longitude, latitude) = value.as_angles();
+        direction([longitude, latitude], value.refer().as_str())
+    };
+    record.upsert("movingdir_rec", measure(source));
+    record.upsert("firstmovingdir_rec", measure(anchor));
+    record.upsert("fixmovingsource", boolean(true));
+    let (lon, lat, radius) = location.as_spherical();
+    record.upsert("mlocation_rec", position([lon, lat, radius]));
+}
+
+/// Turn the common Fourier record into the legacy `MosaicFT` state.
+/// CASA's reader constructs the convolution from the next buffer when
+/// the `HetArrayConvFunc` cache is empty.
+pub fn legacy_mosaic(record: &mut RecordValue, stokes: &str, beam_class: i32, sampling: u16) {
+    legacy_array_mosaic(record, stokes, beam_class, "", sampling);
+}
+
+/// Record an externally supplied table of per-antenna image voltage patterns.
+pub fn legacy_image_mosaic(record: &mut RecordValue, stokes: &str, table: &str, sampling: u16) {
+    legacy_array_mosaic(record, stokes, 8, table, sampling);
+}
+
+fn legacy_array_mosaic(
+    record: &mut RecordValue,
+    stokes: &str,
+    beam_class: i32,
+    table: &str,
+    sampling: u16,
+) {
+    let beam = RecordValue::new(vec![
+        RecordField::new("name", text("HetArrayConvFunc")),
+        RecordField::new("ndefined", int(0)),
+        RecordField::new("actualconvindex", int(0)),
+        RecordField::new(
+            "donemainconv",
+            Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[0]), false))),
+        ),
+        RecordField::new("vptable", text(table)),
+        RecordField::new("pbclass", int(beam_class)),
+    ]);
+    legacy_mosaic_record(record, stokes, sampling, beam);
+}
+
+/// Record a legacy MosaicFT common beam. The C++ reader rebuilds the
+/// convolution when it initializes the next visibility buffer.
+pub fn legacy_common_mosaic(
+    record: &mut RecordValue,
+    stokes: &str,
+    telescope: &str,
+    sampling: u16,
+) {
+    let beam = RecordValue::new(vec![
+        RecordField::new("name", text("SimplePBConvFunc")),
+        RecordField::new("numconv", int(0)),
+        RecordField::new("actualconvindex", int(-1)),
+        RecordField::new(
+            "donemainconv",
+            Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[0]), false))),
+        ),
+        RecordField::new("pbclass", int(1)),
+    ]);
+    record.upsert("telescope", text(telescope));
+    legacy_mosaic_record(record, stokes, sampling, beam);
+}
+
+fn legacy_mosaic_record(record: &mut RecordValue, stokes: &str, sampling: u16, beam: RecordValue) {
+    record.upsert("name", text("MosaicFT"));
+    record.upsert("stokes", text(stokes));
+    record.upsert("usezero", boolean(true));
+    record.upsert("convsampling", int(i32::from(sampling)));
+    record.upsert("convsize", int(0));
+    record.upsert("convsupport", int(0));
+    for name in ["convfunc", "weightconvfunc"] {
+        record.upsert(
+            name,
+            Value::Array(ArrayValue::Complex32(ArrayD::<Complex32>::zeros(IxDyn(
+                &[0; 5],
+            )))),
+        );
+    }
+    for name in ["convsupportplanes", "convsizeplanes", "convRowMap"] {
+        record.upsert(name, ints(&[0], &[]));
+    }
+    record.upsert("pbconvfunc", Value::Record(beam));
+}
+
 /// `MultiTermFTNew::toRecord` of a prediction machine: its Taylor terms'
 /// `GridFT` records, each naming its own grid image.
 pub fn multi_term(terms: Vec<RecordValue>, reference_hz: f64) -> RecordValue {
@@ -222,8 +327,9 @@ pub fn legacy_multi_term(
     let mut record = grid.clone();
     record.remove("diskimage");
     record.upsert("name", text("MultiTermFT"));
+    let name = grid.get("name").cloned().unwrap_or_else(|| text("GridFT"));
     record.upsert("subftm", Value::Record(grid));
-    record.upsert("subftname", text("GridFT"));
+    record.upsert("subftname", name);
     record.upsert("nterms", int(terms));
     record.upsert("thisterm", int(term));
     record.upsert("reffreq", double(reference_hz));

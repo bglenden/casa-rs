@@ -259,6 +259,7 @@ pub(crate) mod storage;
 
 pub mod ascii;
 pub mod publication;
+pub mod statistics;
 pub mod table_measures;
 pub mod table_quantum;
 pub mod taql;
@@ -276,6 +277,7 @@ pub use schema::{
     TableSchema,
 };
 pub use sorting::{TableGroup, TableIterator};
+pub use storage::table_control::read_table_record_file;
 #[doc(hidden)]
 pub use storage::virtual_compress::{ComplexCompression, ComplexScale};
 pub use storage::{
@@ -293,12 +295,12 @@ pub use storage::{
 };
 pub use table::{
     ColumnAddition, ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride,
-    ColumnOverrides, DataManagerKind, EndianFormat, GeneratedArrayColumn, GeneratedArrayValueRun,
-    GeneratedScalarColumn, GeneratedScalarValueRun, IncrementalCorruption, IncrementalLayoutCheck,
-    ManagerAddition, PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult,
-    RecordColumnCell, RecordColumnIter, RequiredScalarColumnDestination,
-    RequiredScalarColumnValues, RequiredScalarColumnValuesMut, RowRange,
-    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
+    ColumnOverrides, CompressedComplexArray, DataManagerKind, EndianFormat, GeneratedArrayColumn,
+    GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun, IncrementalCorruption,
+    IncrementalLayoutCheck, ManagerAddition, PreparedRowAppender, PreparedTableRow,
+    PreparedTableRowMut, QueryResult, RecordColumnCell, RecordColumnIter,
+    RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
+    RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
     SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
     SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
     StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,

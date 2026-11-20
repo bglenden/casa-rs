@@ -5,25 +5,38 @@
 
 mod attachment;
 mod beam_edit;
+mod beam_rotate;
+mod beam_view;
 mod beams;
+mod concatenate;
+mod conformance;
+mod convertflux;
 mod copy;
 mod copy_region;
 mod create;
 mod data_compat;
+mod deconvolve_components;
 mod default_record;
+mod fits_header;
 mod fits_import;
+mod fits_rename;
 mod handle;
 mod lifecycle;
 mod locking;
+mod makecomplex;
 mod mask_expression;
 mod masks;
 mod metadata;
+mod modify;
 mod pixels;
 mod point;
 mod records;
 mod region_read;
+mod replace_masked;
 mod serialization;
 mod stubs;
+mod subimage;
+mod summary;
 pub(crate) mod surface;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};

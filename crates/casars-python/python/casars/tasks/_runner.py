@@ -9,12 +9,13 @@ stdout says how it ended. A Python task call neither loads nor saves Last.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, replace
 import functools
 from http import HTTPStatus
 import inspect
-from json import JSONDecodeError
+from json import JSONDecodeError, loads
+from math import isnan
 import os
 from os import PathLike
 from pathlib import Path
@@ -183,6 +184,18 @@ def run(
     else:
         resolved = TaskParameters.defaults(task, workspace=resolved_workspace)
     if values:
+        if task in ("split", "mstransform"):
+            if "correlation" in values:
+                try:
+                    values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
+                except AssertionError as error:
+                    raise ValueError(str(error)) from error
+            for selector in ("array", "uvrange", "feed"):
+                if selector in values and not isinstance(values[selector], str):
+                    try:
+                        _ms_transform_selector_variant(selector, values[selector])
+                    except AssertionError as error:
+                        raise ValueError(str(error)) from error
         resolved.set_many(values)
     return _execute(task, resolved, resolved_workspace)
 
@@ -211,7 +224,29 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     }
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
-        _validate_required_vis(values, arguments["vis"])
+        _validate_required_path(values, "vis", arguments["vis"])
+    if name == "plotms":
+        return _call_plotms(values, arguments)
+    if name == "importfits":
+        try:
+            return run(name, **values).value
+        except TaskParameterError as error:
+            if error.completion.parameter in ("beam", "defaultaxesvalues"):
+                raise TypeError(error.completion.message) from error
+            raise
+    if name == "listcal":
+        return _call_listcal(values, arguments)
+    if name == "calstat":
+        _validate_required_path(values, "caltable", arguments["caltable"], search_data=True)
+        for parameter in ("axis", "datacolumn"):
+            value = arguments[parameter]
+            if not isinstance(value, str):
+                message = "null value not allowed" if value is None else "must be of cStr type"
+                raise AssertionError(str({parameter: [message]}))
+        try:
+            return run(name, **values).value
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
     if name == "applycal":
         return _call_applycal(values)
     if name == "gencal":
@@ -220,6 +255,37 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_getantposalma(values)
     if name == "initweights":
         return _call_initweights(values)
+    if name == "plotbandpass":
+        return _call_plotbandpass(values, arguments)
+    if name == "plotweather":
+        return _call_plotweather(values, arguments)
+    if name in ("split", "mstransform"):
+        _validate_ms_transform_datacolumn(arguments["datacolumn"])
+        _coerce_ms_task_options(name, arguments, values)
+        _coerce_ms_transform_selectors(name, values)
+        _coerce_ms_channel_width(name, values)
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            if name == "split" and error.completion.message == "Unable to continue with MMS processing":
+                raise Exception(error.completion.message) from error
+            raise
+        except TaskParameterError as error:
+            message = error.completion.message or ""
+            if error.completion.parameter == "outputvis":
+                if message.startswith("Output MS "):
+                    raise OSError(message) from error
+                if message.startswith("input and output MeasurementSet paths must differ: "):
+                    path = arguments["outputvis"]
+                    raise OSError(f"Output MS {path} already exists - will not overwrite it.") from error
+            if error.completion.parameter == "spw" and message.startswith("invalid spectral-window selection "):
+                raise RuntimeError(message) from error
+            if error.completion.parameter == "datacolumn" and message.startswith("unsupported datacolumn "):
+                invalid = arguments["datacolumn"]
+                raise AssertionError(str({"datacolumn": [f"unallowed value {invalid}"]})) from error
+            if error.completion.parameter == "width" and message == "list index out of range":
+                raise IndexError(message) from error
+            raise
     if name == "ft":
         for selector in ("uvrange", "observation"):
             if not isinstance(arguments[selector], str):
@@ -231,6 +297,15 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except TaskParameterError:
             raise
+        except (TypeError, ValueError) as error:
+            raise AssertionError(str(error)) from error
+    if name in ("smoothcal", "rerefant"):
+        for path in ("vis", "tablein"):
+            _validate_required_path(values, path, arguments[path])
+        if name == "smoothcal" and isinstance(arguments["smoothtime"], bool):
+            values["smoothtime"] = float(arguments["smoothtime"])
+        try:
+            return run(name, **values).value
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     if name == "uvmodelfit":
@@ -247,7 +322,408 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
+    if name == "flagdata":
+        _coerce_flagdata_options(values)
     return run(name, **values).value
+
+
+def _call_plotms(values, arguments):
+    from ._plotms_plot import validate
+
+    paths = {name: arguments[name].strip() for name in ("vis", "caltable")
+             if isinstance(arguments[name], str) and arguments[name].strip()}
+    if len(paths) > 1:
+        raise RuntimeError("Cannot set both vis and caltable parameters")
+    if not paths and arguments["plotfile"]:
+        raise RuntimeError("vis and caltable not set, cannot export empty plot")
+    for name, path in paths.items():
+        absolute = os.path.abspath(path)
+        if not os.path.exists(absolute):
+            raise RuntimeError(f"Input file not found:\n{absolute}")
+        values[name] = absolute
+    index = arguments["plotindex"]
+    if isinstance(index, int) and index < 0:
+        raise ValueError("a negative plotindex is not valid.")
+    if isinstance(index, int) and index and arguments["clearplots"]:
+        raise ValueError("a nonzero plotindex is not valid when clearing plots.")
+    if arguments["correlation"] and arguments["polarization"]:
+        raise RuntimeError("Cannot select both correlation and polarization.")
+    if arguments["averagedata"]:
+        if arguments["avgantenna"] and arguments["avgbaseline"]:
+            raise ValueError("averaging over baselines is mutually exclusive with per-antenna averaging.")
+        if arguments["avgchannel"] and float(arguments["avgchannel"]) < 0:
+            raise ValueError("cannot average negative number of channels")
+        try:
+            if arguments["avgtime"] and float(arguments["avgtime"]) < 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError("avgtime value must be numerical string in seconds (no units)") from None
+    validate(arguments)
+    if arguments["showatm"] or arguments["showtsky"]:
+        if arguments["showatm"] and arguments["showtsky"]:
+            print("Warning: you have selected both showatm and showtsky.  Defaulting to showatm=True only.")
+            values["showtsky"] = False
+        if arguments["xaxis"] not in ("", "chan", "channel", "Channel", "freq", "frequency", "Frequency"):
+            raise ValueError("xaxis must be channel or frequency for showatm and showtsky")
+    elif arguments["showimage"]:
+        values["showimage"] = False
+    if not paths and all(isinstance(arguments[name], str) for name in ("vis", "caltable")):
+        return None
+    callib = arguments["callib"]
+    entries = [callib] if isinstance(callib, str) else callib
+    if isinstance(entries, (list, tuple)) and len(entries) == 1:
+        filename = entries[0]
+        if isinstance(filename, str) and "=" not in filename and not os.path.exists(filename):
+            raise RuntimeError("callib file does not exist")
+    for name in ("field", "spw"):
+        if name in values and isinstance(values[name], (int, float)):
+            values[name] = str(values[name])
+    try:
+        return run("plotms", **values).value
+    except (TaskExecutionError, TaskParameterError) as error:
+        if error.completion.message == "Remove duplicate y-axes.":
+            raise RuntimeError(error.completion.message) from error
+        raise
+
+
+def _call_plotbandpass(values, arguments):
+    from json import loads
+    from ._bandpass_arguments import normalize
+
+    caltable = arguments["caltable"]
+    if caltable is None:
+        raise AssertionError("{'caltable': ['null value not allowed']}")
+    if not isinstance(caltable, str):
+        raise AssertionError(f"the caltable parameter must be a path that exists ('{caltable}' does not exist)")
+    _validate_required_path(values, "caltable", caltable, search_data=True)
+    normalize(values, arguments)
+    try:
+        completion = run("plotbandpass", **values)
+    except TaskExecutionError as error:
+        message = error.completion.message
+        exceptions = {
+            "name 'resampleSolution' is not defined": NameError,
+            "cannot access local variable 'mytime' where it is not associated with a value": UnboundLocalError,
+            "expected string or bytes-like object, got 'float'": TypeError,
+            "unsupported operand type(s) for //=: 'str' and 'int'": TypeError,
+        }
+        if message is not None and message.startswith("invalid literal for int()"):
+            raise ValueError(message) from error
+        if message in exceptions:
+            raise exceptions[message](message) from error
+        raise
+    if completion.value is not None:
+        return _bandpass_statistics(completion.value)
+    return () if loads(completion.stdout)["result"]["empty_tuple"] else None
+
+
+def _bandpass_statistics(value):
+    import numpy as np
+
+    if isinstance(value, dict):
+        return {key: _bandpass_statistics(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_bandpass_statistics(item) for item in value]
+    if isinstance(value, float):
+        return np.float64(value)
+    return value
+
+
+def _coerce_flagdata_options(values: dict[str, Any]) -> None:
+    import numpy as np
+
+    cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
+    cint = (int, np.int32, np.int64)
+    errors: dict[str, list[str]] = {}
+    vector_selectors = []
+    for parameter in ("field", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if isinstance(value, str):
+            values[parameter] = str(value)
+        elif value is None:
+            errors[parameter] = ["null value not allowed"] * 3
+        elif _flagdata_string_vector(value):
+            vector_selectors.append(parameter)
+        else:
+            errors[parameter] = ["must be of cStr type", "must be of cStrVec type"]
+    if "observation" in values:
+        value = values["observation"]
+        if value is None:
+            errors["observation"] = ["null value not allowed"] * 3
+        elif isinstance(value, str):
+            values["observation"] = str(value)
+        elif isinstance(value, (np.int32, np.int64)):
+            values["observation"] = int(value)
+        elif isinstance(value, int):
+            if not -(2**63) <= value < 2**63:
+                # Preserve the selector for native range validation even
+                # when the transport cannot represent it as an integer.
+                values["observation"] = str(value)
+        else:
+            errors["observation"] = ["must be of cStr type", "must be of cInt type"]
+    for parameter, default in (("clipoutside", True), ("quackincrement", False)):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["null value not allowed"] * 3
+        else:
+            converted = _flagdata_bool_option(value, numpy_default=default)
+            if converted is None:
+                errors[parameter] = ["must be of cBool type", "must be of cBoolVec type"]
+            else:
+                values[parameter] = converted
+    _coerce_flagdata_quack_options(values, errors, cfloat, cint)
+    for parameter, expected, casa_type in (
+        ("autocorr", bool, "cBool"),
+        ("spwchan", bool, "cBool"),
+        ("spwcorr", bool, "cBool"),
+        ("basecnt", bool, "cBool"),
+        ("fieldcnt", bool, "cBool"),
+        ("name", str, "cStr"),
+        ("minrel", cfloat, "cFloat"),
+        ("maxrel", cfloat, "cFloat"),
+        ("minabs", cint, "cInt"),
+        ("maxabs", cint, "cInt"),
+        ("clipzeros", bool, "cBool"),
+        ("writeflags", bool, "cBool"),
+    ):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["null value not allowed"]
+        elif expected is bool and isinstance(value, np.bool_):
+            # CASA admits these scalars and uses the switch defaults.
+            # Preserve autocorr=True to avoid flagging cross-correlations.
+            values[parameter] = bool(value) if parameter in ("autocorr", "writeflags") else False
+        elif not isinstance(value, expected):
+            errors[parameter] = [f"must be of {casa_type} type"]
+        elif casa_type == "cFloat":
+            fraction = float(value)
+            if np.isnan(fraction):
+                # CASA's comparisons ignore a NaN bound.
+                fraction = 0.0 if parameter == "minrel" else 1.0
+            values[parameter] = max(-sys.float_info.max, min(fraction, sys.float_info.max))
+        elif casa_type == "cInt":
+            # Counts from stored MeasurementSets fit in a signed 64-bit value.
+            values[parameter] = max(-(2**63), min(int(value), 2**63 - 1))
+    if "clipminmax" in values:
+        try:
+            values["clipminmax"] = _flagdata_clip_range(
+                values["clipminmax"], cfloat, outside=values.get("clipoutside") is not False,
+            )
+        except ValueError as error:
+            errors["clipminmax"] = [str(error)]
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
+    if vector_selectors and values.get("action") not in ("", "none"):
+        raise TypeError(f"argument _{vector_selectors[0]} must be a string")
+    for parameter in vector_selectors:
+        del values[parameter]
+
+
+def _flagdata_string_vector(value: Any) -> bool:
+    import numpy as np
+
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        return value.dtype.type is np.str_
+    return isinstance(value, Iterable) and all(isinstance(item, str) for item in value)
+
+
+def _flagdata_bool_option(value: Any, *, numpy_default: bool) -> bool | list[bool] | None:
+    import numpy as np
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, np.bool_):
+        return numpy_default
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        if value.dtype.type is not np.bool_:
+            return None
+        value = (value[()],)
+    if isinstance(value, Iterable) and not isinstance(value, str):
+        items = list(value)
+        if all(isinstance(item, (bool, np.bool_)) for item in items):
+            return [bool(item) for item in items]
+    return None
+
+
+def _coerce_flagdata_quack_options(
+    values: dict[str, Any],
+    errors: dict[str, list[str]],
+    numeric: tuple[type, ...],
+    integer: tuple[type, ...],
+) -> None:
+    import numpy as np
+
+    if "quackmode" in values:
+        mode = values["quackmode"]
+        if isinstance(mode, str):
+            values["quackmode"] = str(mode)
+        elif mode is None:
+            errors["quackmode"] = ["null value not allowed"] * 3
+        else:
+            if isinstance(mode, np.ndarray) and mode.ndim == 0:
+                options = [mode[()]] if mode.dtype.type is np.str_ else None
+            else:
+                options = list(mode) if isinstance(mode, Iterable) else None
+            if options is not None and all(isinstance(item, str) for item in options):
+                values["quackmode"] = [str(item) for item in options]
+            else:
+                errors["quackmode"] = ["must be of cStr type", "must be of cStrVec type"]
+
+    if "quackinterval" not in values:
+        return
+    interval = values["quackinterval"]
+    if isinstance(interval, numeric):
+        values["quackinterval"] = _flagdata_quack_seconds(interval)
+        return
+    if interval is None:
+        errors["quackinterval"] = ["null value not allowed"] * 5
+        return
+
+    messages = [f"must be of {kind} type" for kind in ("cFloat", "cFloatVec", "cInt", "cIntVec")]
+    if isinstance(interval, np.ndarray) and interval.ndim == 0:
+        if interval.dtype.type in integer:
+            interval = (interval[()],)
+        else:
+            if interval.dtype.type in numeric:
+                messages[1] = "field 'quackinterval' cannot be coerced: iteration over a 0-d array"
+            errors["quackinterval"] = messages
+            return
+    options = list(interval) if isinstance(interval, Iterable) and not isinstance(interval, str) else None
+    if options is not None and all(isinstance(item, numeric) for item in options):
+        values["quackinterval"] = [_flagdata_quack_seconds(item) for item in options]
+    else:
+        errors["quackinterval"] = messages
+
+
+def _flagdata_quack_seconds(value: Any) -> float:
+    seconds = float(value)
+    # The profile carries finite numbers. NaN disables the agent and an
+    # infinite positive interval covers the entire finite scan.
+    if isnan(seconds):
+        return 0.0
+    return max(-sys.float_info.max, min(seconds, sys.float_info.max))
+
+
+def _flagdata_clip_range(
+    value: Any, numeric: tuple[type, ...], *, outside: bool
+) -> list[float]:
+    if value is None:
+        raise ValueError("null value not allowed")
+    if isinstance(value, numeric) and not isinstance(value, bool):
+        items = [value]
+    elif isinstance(value, Iterable) and not isinstance(value, str):
+        try:
+            items = list(value)
+        except TypeError as error:
+            raise ValueError(f"field 'clipminmax' cannot be coerced: {error}") from error
+    else:
+        raise ValueError("must be of cFloatVec type")
+    if not all(isinstance(item, numeric) for item in items):
+        raise ValueError("must be of cFloatVec type")
+    bounds = [float(item) for item in items]
+    # The parameter profile accepts finite values. The clipping agent's
+    # single-precision bounds turn these finite doubles into infinities.
+    limit = sys.float_info.max
+    if len(bounds) == 2 and not outside and any(isnan(bound) for bound in bounds):
+        return [limit, -limit]
+    for index, bound in enumerate(bounds):
+        if isnan(bound):
+            bounds[index] = -limit if index == 0 else limit
+        else:
+            bounds[index] = max(-limit, min(bound, limit))
+    return bounds
+
+
+def _call_plotweather(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    import numpy as np
+
+    errors: dict[str, list[str]] = {}
+    vis = arguments["vis"]
+    if vis is None:
+        errors["vis"] = ["null value not allowed"]
+    elif not isinstance(vis, str):
+        raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+    else:
+        _validate_required_path(values, "vis", vis, search_data=True)
+    types = {
+        "seasonal_weight": ((float, int, np.int32, np.int64, np.float32, np.float64), "cFloat", float),
+        "doPlot": ((bool, np.bool_), "cBool", bool),
+        "plotName": ((str,), "cStr", str),
+    }
+    for name, (expected, casa_type, convert) in types.items():
+        value = arguments[name]
+        if value is None:
+            errors[name] = ["null value not allowed"]
+        elif not isinstance(value, expected):
+            errors[name] = [f"must be of {casa_type} type"]
+        elif name in values:
+            values[name] = convert(value)
+    if errors:
+        raise AssertionError(str(dict(sorted(errors.items()))))
+    try:
+        value = run("plotweather", **values).value
+    except TaskExecutionError as error:
+        if error.completion.message in {"array of sample points is empty", "Axis limits cannot be NaN or Inf"}:
+            raise ValueError(error.completion.message) from error
+        raise
+    return [np.float64(item) for item in value]
+
+
+def _call_listcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> None:
+    for name in ("vis", "caltable"):
+        value = arguments[name]
+        if not isinstance(value, str):
+            raise AssertionError(f"the {name} parameter must be a path that exists ('{value}' does not exist)")
+        _validate_required_path(values, name, value, search_data=True)
+    for name in ("field", "antenna", "spw", "listfile"):
+        if not isinstance(arguments[name], str):
+            message = "null value not allowed" if arguments[name] is None else "must be of cStr type"
+            raise AssertionError(str({name: [message]}))
+    pagerows = arguments["pagerows"]
+    if not isinstance(pagerows, int):
+        import numpy as np
+
+        if not isinstance(pagerows, (np.int32, np.int64)):
+            message = "null value not allowed" if pagerows is None else "must be of cInt type"
+            raise AssertionError(str({"pagerows": [message]}))
+        values["pagerows"] = int(pagerows)
+    elif isinstance(pagerows, bool):
+        values["pagerows"] = int(pagerows)
+    try:
+        completion = run("listcal", **values)
+    except (TypeError, ValueError) as error:
+        raise AssertionError(str(error)) from error
+    report = loads(completion.stdout)["result"]
+    if report["listfile"] is not None:
+        print(f"Writing output to file: {report['listfile']}")
+        return
+    prompt = True
+    quit_requested = False
+    solutions = 0
+    listing = report["listing"]
+    for part in listing["parts"]:
+        print(part["text"], end="")
+        solutions = part["solutions"]
+        if prompt and part["prompt"]:
+            try:
+                response = input("Type Q to quit, A to list all, or RETURN to continue [continue]: ")
+            except EOFError:
+                response = ""
+            command = response[:1].lower()
+            quit_requested |= command == "q"
+            prompt &= command != "a"
+        if quit_requested and part["last_in_integration"]:
+            break
+    else:
+        if listing["error"] is not None:
+            raise RuntimeError(listing["error"])
+    print(f"\nListed {solutions} antenna solutions.\n")
 
 
 def _call_initweights(values: dict[str, Any]) -> Any:
@@ -282,6 +758,174 @@ def _call_initweights(values: dict[str, Any]) -> Any:
         raise
     except (TypeError, ValueError) as error:
         raise AssertionError(str(error)) from error
+
+
+def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
+    import numpy as np
+
+    for name in ("field", "spw", "scan", "antenna", "timerange"):
+        if name not in values or isinstance(values[name], str):
+            continue
+        original = values[name]
+        candidate = original
+        if not isinstance(original, np.ndarray):
+            try:
+                candidate = list(original)
+            except TypeError:
+                pass
+        converted, record_type = _ms_transform_selector_variant(name, candidate)
+        # Preserve scalar NumPy provenance even for a value whose tool
+        # record CASA omits, or whose split selector is read as text.
+        scalar_array = isinstance(original, np.ndarray) and original.ndim == 0
+        values[name] = original if record_type is None or scalar_array else converted
+        if not (task == "split" and name != "timerange") and record_type is not None:
+            raise RuntimeError(
+                "RecordRep::get_pointer - incorrect data type String   "
+                f"used for field {name} with type {record_type:<8}"
+            )
+    if "correlation" in values:
+        values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
+    for name in ("observation", "intent", "array", "uvrange", "feed"):
+        if name not in values:
+            continue
+        value = values[name]
+        if isinstance(value, str):
+            continue
+        converted, record_type = _ms_transform_selector_variant(name, value)
+        if name == "observation" or (task == "split" and name in ("array", "feed")):
+            values[name] = converted
+        elif record_type is None:
+            # The Rust tool omits NumPy integer selectors where CASA
+            # does. Keep their values available for provenance.
+            if name == "intent":
+                del values[name]
+        else:
+            raise RuntimeError(
+                "RecordRep::get_pointer - incorrect data type String   "
+                f"used for field {name} with type {record_type:<8}"
+            )
+
+
+def _coerce_ms_channel_width(task: str, values: dict[str, Any]) -> None:
+    import numpy as np
+
+    name = "width" if task == "split" else "chanbin"
+    if name not in values:
+        return
+    value = values[name]
+    integers = (int, np.int32, np.int64)
+    if isinstance(value, np.ndarray) and value.ndim == 0 and value.dtype.type in integers:
+        values[name] = value.item()
+        return
+    if isinstance(value, integers):
+        return
+    if name == "width" and isinstance(value, str):
+        return
+    if not isinstance(value, (str, bytes)):
+        try:
+            vector = list(iter(value))
+        except TypeError:
+            vector = None
+        if vector is not None and all(isinstance(item, integers) for item in vector):
+            values[name] = vector
+            return
+        if name == "width" and vector and all(isinstance(item, str) for item in vector):
+            # A numeric string list is converted to a map by CASA's Python
+            # task. The processing raises at the subsequent scalar comparison.
+            if vector[0].isdigit():
+                list(map(int, vector))
+                raise TypeError("'>' not supported between instances of 'map' and 'int'")
+            raise TypeError("'int' object is not iterable")
+    kinds = ["cStr", "cStrVec"] if name == "width" else []
+    kinds.extend(["cInt", "cIntVec"])
+    if value is None:
+        raise AssertionError(str({name: ["null value not allowed"] * len(kinds)}))
+    raise AssertionError(str({name: [f"must be of {kind} type" for kind in kinds]}))
+
+
+def _validate_ms_transform_datacolumn(value: Any) -> None:
+    if value is None:
+        raise AssertionError(str({"datacolumn": ["unallowed value None", "null value not allowed"]}))
+    if not isinstance(value, str):
+        raise AssertionError(str({"datacolumn": ["must be of cStr type"]}))
+    # Retain the original casa-rs aliases and spelling for the two existing layouts.
+    if value.strip().lower() in ("data", "corrected", "corrected_data"):
+        return
+    if value != value.strip() or value not in (value.lower(), value.upper()):
+        raise AssertionError(str({"datacolumn": [f"unallowed value {value}"]}))
+
+
+def _ms_transform_selector_variant(name: str, value: Any) -> tuple[Any, str | None]:
+    import numpy as np
+
+    if value is None:
+        raise AssertionError(str({name: ["null value not allowed"] * 5}))
+    if type(value) is bool:
+        return value, "Bool"
+    if isinstance(value, int):
+        return int(value), "Int"
+    if isinstance(value, (np.int32, np.int64)):
+        return int(value), None
+    if isinstance(value, np.ndarray):
+        scalar_dtype = value.dtype.type in (np.int32, np.int64, np.str_)
+        if value.ndim == 0 and scalar_dtype:
+            return value.item(), "unknown"
+        if value.ndim == 1 and (not value.size or scalar_dtype or value.dtype.kind == "O"):
+            value = value.tolist()
+    if isinstance(value, (list, tuple)) and (
+        all(isinstance(item, str) for item in value)
+        or all(isinstance(item, (int, np.int32, np.int64)) for item in value)
+    ):
+        return list(value), "unknown"
+    types = ("cStr", "cStrVec", "cInt", "cIntVec")
+    raise AssertionError(str({name: [f"must be of {kind} type" for kind in types]}))
+
+
+def _coerce_ms_task_options(
+    task: str, arguments: Mapping[str, Any], values: dict[str, Any]
+) -> None:
+    import numpy as np
+
+    def check(name: str, types: tuple[type, ...], casa_type: str) -> Any:
+        value = arguments[name]
+        if not isinstance(value, types):
+            message = "null value not allowed" if value is None else f"must be of {casa_type} type"
+            raise AssertionError(str({name: [message]}))
+        return value
+
+    check("timebin", (str,), "cStr")
+    span = "combine" if task == "split" else "timespan"
+    if span in values:
+        values[span] = _ms_transform_string_or_vector(span, values[span])
+    if task == "split":
+        keep_mms = check("keepmms", (bool, np.bool_), "cBool")
+        if "keepmms" in values:
+            values["keepmms"] = bool(keep_mms)
+    else:
+        active = check("timeaverage", (bool, np.bool_), "cBool")
+        distance = check("maxuvwdistance", (float, int, np.float32, np.float64, np.int32, np.int64),
+                         "cFloat")
+        if "timeaverage" in values:
+            values["timeaverage"] = bool(active)
+        if "maxuvwdistance" in values:
+            values["maxuvwdistance"] = float(distance)
+
+
+def _ms_transform_string_or_vector(name: str, value: Any) -> Any:
+    if isinstance(value, str):
+        return value
+    import numpy as np
+
+    if value is None:
+        raise AssertionError(str({name: ["null value not allowed"] * 3}))
+    if isinstance(value, np.ndarray):
+        if value.ndim == 0 and value.dtype.type is np.str_:
+            return value
+        if value.ndim == 1 and (not value.size or value.dtype.kind in ("U", "O")):
+            value = value.tolist()
+    if isinstance(value, (list, tuple)) and all(isinstance(label, str) for label in value):
+        return value
+    raise AssertionError(str({name: ["must be of cStr type", "must be of cStrVec type"]}))
 
 
 def _call_gencal(values: dict[str, Any]) -> Any:
@@ -371,17 +1015,37 @@ def _call_getantposalma(values: dict[str, Any]) -> Any:
         raise AssertionError(str(error)) from error
 
 
-def _validate_required_vis(values: dict[str, Any], vis: Any) -> None:
-    # CASA's required-path validation runs before calibrater opens the MS.
-    # Keep PathLike as the native API's additional path form.
-    if isinstance(vis, (str, PathLike)):
-        path = os.path.expanduser(os.fspath(vis))
-        if not path or not os.path.exists(path):
-            raise AssertionError(f"the vis parameter must be a path that exists ('{path}' does not exist)")
-        if path != os.fspath(vis):
-            values["vis"] = path
+def _validate_required_path(
+    values: dict[str, Any], name: str, argument: Any, *, search_data: bool = False
+) -> None:
+    # CASA validates and expands a required path before opening the table.
+    if isinstance(argument, (str, PathLike)):
+        original = os.fspath(argument)
+        path = os.path.expanduser(original)
+        if (search_data and path and not Path(path).is_absolute()
+                and not path.startswith(("./", "../")) and not os.path.exists(path)):
+            path = _resolve_relative_data_path(path)
+        if path and os.path.exists(path):
+            if path != original:
+                values[name] = path
+            return
     else:
-        raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+        path = argument
+    raise AssertionError(f"the {name} parameter must be a path that exists ('{path}' does not exist)")
+
+
+def _resolve_relative_data_path(path: str) -> str:
+    roots = []
+    if configured := os.environ.get("CASA_RS_MEASURESPATH"):
+        roots.append(Path(configured))
+    if installation := os.environ.get("CASAPATH", "").split():
+        roots.append(Path(installation[0]) / "data")
+    roots.append(Path.home() / ".casa" / "data")
+    for root in roots:
+        candidate = root / path
+        if candidate.exists():
+            return str(candidate)
+    return path
 
 
 def _call_applycal(values: dict[str, Any]) -> Any:
@@ -449,7 +1113,12 @@ def _require_plotting() -> None:
 
 
 def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCompletion:
-    if task in {"simobserve", "simanalyze", "simalma"} and resolved.get("graphics") in {"file", "screen", "both"}:
+    use_payload = task in {"simobserve", "simanalyze", "simalma"} and resolved.get("graphics") in {"file", "screen", "both"}
+    if task == "plotms":
+        path = resolved.get("plotfile") or ""
+        export = resolved.get("expformat") or Path(path).suffix.lstrip(".")
+        use_payload = resolved.get("showgui") or (bool(path) and export.lower() != "txt")
+    if use_payload:
         # Import the renderer before the task creates scientific products.
         _require_plotting()
 
@@ -460,15 +1129,27 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
     return _execute_task(task, resolved, workspace, None)
 
 
-def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None) -> TaskCompletion:
+def _execute_task(
+    task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None,
+    *, bandpass_completed_pages: int | None = None,
+) -> TaskCompletion:
     invocation = resolved.provider_invocation()
-    executable = _task_executable(task)
-    command = (executable, *invocation.args)
+    if task == "plotms" and resolved.get("callib"):
+        command = (_task_executable("calibrate"), "plotms", *invocation.args)
+    else:
+        command = (_task_executable(task), *invocation.args)
     environment = dict(os.environ)
-    if task in {"simobserve", "simanalyze", "simalma"}:
+    if task == "listcal":
+        # A later listing error takes effect only when the reader reaches it.
+        environment["CASARS_LISTCAL_PAGED_REPLY"] = "1"
+    if task in {"simobserve", "simanalyze", "simalma", "plotms"}:
         environment.pop("CASARS_PLOT_PAYLOAD", None)
     if payload is not None:
         environment["CASARS_PLOT_PAYLOAD"] = str(payload)
+    if task == "plotbandpass":
+        environment.pop("CASARS_BANDPASS_COMPLETED_PAGES", None)
+        if bandpass_completed_pages is not None:
+            environment["CASARS_BANDPASS_COMPLETED_PAGES"] = str(bandpass_completed_pages)
     try:
         # The task runs in its own session, so a terminal's Ctrl-C reaches
         # Python alone, which passes it on once, in a terminal as in a
@@ -486,15 +1167,22 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
             env=environment,
         )
     except OSError as error:
-        raise TaskInvocationError(f"cannot start {task} ({executable}): {error}") from error
+        raise TaskInvocationError(f"cannot start {task} ({command[0]}): {error}") from error
     stdout, stderr = _communicate(process, invocation.stdin or "")
 
     if payload is not None:
         try:
             plots = _native().task_plot_documents(task, process.returncode, stdout, payload.stat().st_size)
-            _render_task_plots(plots, payload, workspace)
+            _render_task_plots(plots, payload, workspace, resolved if task == "plotms" else None)
         except Exception as error:
             raise TaskResultError(f"{task} plot rendering failed: {error}") from error
+
+    if task == "plotweather" and process.returncode == 0:
+        plot = loads(stdout)["result"]["plot"]
+        if plot is not None:
+            from ._weather_plot import render_weather
+
+            render_weather(plot, workspace)
 
     values = [
         (name, _display_value(state.value))
@@ -531,10 +1219,21 @@ def _execute_task(task: str, resolved: SurfaceParameters, workspace: Path, paylo
         raise TaskParameterError(completion)
     if not completion.successful:
         raise TaskExecutionError(completion)
+    if task == "plotbandpass" and bandpass_completed_pages is None:
+        from json import loads
+        from ._bandpass_plot import render_bandpass
+
+        reply = loads(stdout)["result"]
+        completed, immediate = render_bandpass(reply, workspace)
+        if immediate:
+            return replace(completion, value=None)
+        if completion.value is not None and completed < len(reply["pages"]):
+            partial = _execute_task(task, resolved, workspace, payload, bandpass_completed_pages=completed)
+            return replace(completion, value=partial.value)
     return completion
 
 
-def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
+def _render_task_plots(plots, payload: Path, workspace: Path, plotms=None) -> None:
     """Draw validated native artists, then release the temporary array file."""
 
     if not plots:
@@ -547,14 +1246,22 @@ def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
     # NumPy owns the mapping for as long as any view needs it, including
     # views retained in an artist's exception traceback. Explicit mmap.close
     # could invalidate those arrays while their Python objects are still live.
-    mapped = np.memmap(payload, dtype="u1", mode="r")
+    mapped = np.memmap(payload, dtype="u1", mode="r") if payload.stat().st_size else None
     try:
         for plot in plots:
-            figure, _ = render_document(plot["document"], payload=mapped)
+            figure, panel_axes = render_document(plot["document"], payload=mapped)
             completed = False
             try:
+                if plotms is not None:
+                    from ._plotms_plot import configure
+
+                    configure(figure, panel_axes, plot["document"], plotms)
                 if plot["output_file"] is not None:
-                    _save_figure(figure, workspace / plot["output_file"])
+                    output = workspace / plot["output_file"]
+                    if plotms is None:
+                        _save_figure(figure, output)
+                    else:
+                        _save_plotms_figure(figure, output, plotms)
                 if plot["show"]:
                     figure.show()
                 completed = True
@@ -565,14 +1272,30 @@ def _render_task_plots(plots, payload: Path, workspace: Path) -> None:
         del mapped
 
 
-def _save_figure(figure, destination: Path) -> None:
-    """Publish a complete PNG, preserving the previous figure on failure."""
+def _save_plotms_figure(figure, destination: Path, options) -> None:
+    format_ = options.get("expformat") or destination.suffix.lstrip(".") or "png"
+    dpi = options.get("dpi")
+    if dpi <= 0:
+        dpi = 300 if options.get("highres") else figure.dpi
+    width, height = options.get("width"), options.get("height")
+    if width > 0 or height > 0:
+        current_width, current_height = figure.get_size_inches()
+        figure.set_size_inches(width / dpi if width > 0 else current_width,
+                               height / dpi if height > 0 else current_height)
+    _save_figure(figure, destination, replace_existing=options.get("overwrite"), format=format_.lower(), dpi=dpi)
 
-    with tempfile.NamedTemporaryFile(prefix=f".{destination.name}.", suffix=".png", dir=destination.parent, delete=False) as staged:
+
+def _save_figure(figure, destination: Path, *, replace_existing=True, **options) -> None:
+    """Publish a complete figure, preserving the previous file on failure."""
+
+    with tempfile.NamedTemporaryFile(prefix=f".{destination.name}.", suffix=destination.suffix or ".png", dir=destination.parent, delete=False) as staged:
         path = Path(staged.name)
     try:
-        figure.savefig(path)
-        path.replace(destination)
+        figure.savefig(path, **options)
+        if replace_existing:
+            path.replace(destination)
+        else:
+            os.link(path, destination)
     finally:
         path.unlink(missing_ok=True)
 

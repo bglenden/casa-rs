@@ -14,7 +14,7 @@ use std::process::{Command, Output};
 
 use casa_images::PagedImage;
 use ndarray::ArrayD;
-use support::write_image;
+use support::{write_image, write_image_with_geometry};
 
 /// Every file under `path`, by relative path, with its bytes.
 fn snapshot(path: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -120,7 +120,7 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
     write_image(&path.join("other.image"), 3.0);
     write_image(&path.join("low.image"), 0.5);
 
-    let cases: [(&str, &[&str], &str); 8] = [
+    let cases: [(&str, &[&str], &str); 7] = [
         (
             env!("CARGO_BIN_EXE_imsubimage"),
             &["in.image", "out.sub"],
@@ -180,19 +180,6 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
             "out.feather",
         ),
         (
-            env!("CARGO_BIN_EXE_impv"),
-            &[
-                "in.image",
-                "--outfile",
-                "out.pv",
-                "--start",
-                "0,0",
-                "--end",
-                "3,3",
-            ],
-            "out.pv",
-        ),
-        (
             env!("CARGO_BIN_EXE_exportfits"),
             &["in.image", "out.fits"],
             "out.fits",
@@ -201,6 +188,25 @@ fn each_image_task_refuses_its_existing_product_without_overwrite() {
     for (binary, args, product) in cases {
         assert_guards_its_product(binary, args, product, ("in.image", "other.image"), path);
     }
+    // PV requires square pixels and endpoints two pixels inside the direction plane.
+    let increment = [-2.0e-6, 2.0e-6];
+    write_image_with_geometry(&path.join("pv-in.image"), 1.0, 8, increment);
+    write_image_with_geometry(&path.join("pv-other.image"), 3.0, 8, increment);
+    assert_guards_its_product(
+        env!("CARGO_BIN_EXE_impv"),
+        &[
+            "pv-in.image",
+            "--outfile",
+            "out.pv",
+            "--start",
+            "2,3",
+            "--end",
+            "5,3",
+        ],
+        "out.pv",
+        ("pv-in.image", "pv-other.image"),
+        path,
+    );
     // importfits reads the FITS files exportfits writes: out.fits now holds
     // other.image's pixels, and in.fits holds in.image's.
     let exportfits = env!("CARGO_BIN_EXE_exportfits");

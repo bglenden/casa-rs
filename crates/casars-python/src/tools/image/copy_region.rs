@@ -110,12 +110,6 @@ impl Selection {
         array
     }
 
-    pub fn is_full(&self, shape: &[usize]) -> bool {
-        self.shape == shape
-            && self.start.iter().all(|&i| i == 0)
-            && self.stride.iter().all(|&s| s == 1)
-    }
-
     pub fn coordinates(
         &self,
         mut record: RecordValue,
@@ -138,7 +132,7 @@ impl Selection {
                     }
                 } else if shift != 0 || step != 1 || self.shape[axis] != image_shape[axis] {
                     if kind == CoordinateType::Spectral
-                        && self.crop_tabular_spectral(&mut record, axis, method)?
+                        && self.crop_tabular_spectral(&mut record, axis)?
                     {
                         continue;
                     }
@@ -176,12 +170,7 @@ impl Selection {
         self.project_coordinates(&record)
     }
 
-    fn crop_tabular_spectral(
-        &self,
-        record: &mut RecordValue,
-        axis: usize,
-        method: &str,
-    ) -> PyResult<bool> {
+    fn crop_tabular_spectral(&self, record: &mut RecordValue, axis: usize) -> PyResult<bool> {
         let field = CoordinateSystem::record_coordinates(record)
             .map_err(raised)?
             .into_iter()
@@ -191,11 +180,13 @@ impl Selection {
         let Some(Value::Record(spectral)) = record.get_mut(&field) else {
             return Ok(false);
         };
-        if spectral.get("tabular").is_some() && self.stride[axis] != 1 {
-            return Err(stub(method).unwrap_err());
-        }
-        SpectralCoordinate::subimage_tabular_record(spectral, self.start[axis], self.shape[axis])
-            .map_err(raised)
+        SpectralCoordinate::subimage_tabular_record_with_stride(
+            spectral,
+            self.start[axis],
+            self.shape[axis],
+            self.stride[axis],
+        )
+        .map_err(raised)
     }
 
     fn project_coordinates(&self, record: &RecordValue) -> PyResult<RecordValue> {
@@ -299,11 +290,6 @@ impl Selection {
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| raised("Stokes coordinate does not cover the selected pixels"))?;
-        let first = f64::from(values[0].code());
-        record.upsert(
-            format!("worldreplace{}", &stored.field["stokes".len()..]),
-            Value::Array(ArrayValue::from_f64_vec(vec![first])),
-        );
         record.upsert(
             stored.field,
             Value::Record(CoordinateModel::from(StokesCoordinate::new(values)).to_record()),

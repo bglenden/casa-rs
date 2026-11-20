@@ -9,6 +9,9 @@ from collections.abc import Mapping
 from os import PathLike
 from typing import Any, Literal, TypeAlias
 
+from numpy import floating
+from numpy.typing import NDArray
+
 from ..parameters import ParameterData
 from ._runner import TaskCompletion, _call_casa, _run
 
@@ -388,7 +391,7 @@ def imstat(
 def immoments(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     moments: int | list[int] | tuple[int, ...] = [0],
-    axis: str = 'spectral',
+    axis: int | str = 'spectral',
     region: str = '',
     box: str = '',
     chans: str = '',
@@ -404,8 +407,6 @@ def immoments(
     """Create CASA-style image moment maps
 
     CASA's ``immoments``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``axis``, ``region``, ``box``, ``stokes``, ``excludepix``, ``stretch``.
     """
     return _call_casa(immoments, locals())
 
@@ -426,9 +427,6 @@ def exportfits(
     """Export CASA images to FITS
 
     CASA's ``exportfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``optical``, ``bitpix``, ``minpix``, ``maxpix``, ``dropstokes``,
-    ``stokeslast``, ``history``, ``dropdeg``.
     """
     return _call_casa(exportfits, locals())
 
@@ -448,7 +446,7 @@ def mstransform(
     intent: str = '',
     array: str = '',
     uvrange: str = '',
-    observation: str = '',
+    observation: str | int = '',
     feed: str = '',
     datacolumn: str = 'corrected',
     realmodelcol: bool = False,
@@ -456,7 +454,7 @@ def mstransform(
     usewtspectrum: bool = False,
     combinespws: bool = False,
     chanaverage: bool = False,
-    chanbin: int = 1,
+    chanbin: int | list[int] | tuple[int, ...] = 1,
     hanning: bool = False,
     regridms: bool = False,
     mode: str = 'channel',
@@ -472,7 +470,7 @@ def mstransform(
     preaverage: bool = False,
     timeaverage: bool = False,
     timebin: str = '0s',
-    timespan: str = '',
+    timespan: str | list[str] | tuple[str, ...] = '',
     maxuvwdistance: float = 0.0,
     docallib: bool = False,
     callib: StrPath = '',
@@ -494,15 +492,13 @@ def mstransform(
     CASA's ``mstransform``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``createmms``, ``separationaxis``, ``numsubms``, ``tileshape``,
-    ``correlation``, ``intent``, ``array``, ``uvrange``, ``observation``,
-    ``feed``, ``realmodelcol``, ``usewtspectrum``, ``combinespws``,
-    ``hanning``, ``regridms``, ``mode``, ``nchan``, ``start``, ``width``,
-    ``nspw``, ``interpolation``, ``phasecenter``, ``restfreq``,
-    ``outframe``, ``veltype``, ``preaverage``, ``timeaverage``, ``timebin``,
-    ``timespan``, ``maxuvwdistance``, ``docallib``, ``callib``,
-    ``douvcontsub``, ``fitspw``, ``fitorder``, ``want_cont``,
-    ``denoising_lib``, ``nthreads``, ``niter``, ``disableparallel``,
-    ``ddistart``, ``monolithic_processing``, ``reindex``.
+    ``realmodelcol``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,
+    ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,
+    ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,
+    ``preaverage``, ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``,
+    ``fitorder``, ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``,
+    ``disableparallel``, ``ddistart``, ``monolithic_processing``,
+    ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -510,31 +506,28 @@ def split(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     outputvis: StrPath = '',
     keepmms: bool = True,
-    field: str = '',
-    spw: str = '',
-    scan: str = '',
-    antenna: str = '',
-    correlation: str = '',
+    field: str | int = '',
+    spw: str | int = '',
+    scan: str | int = '',
+    antenna: str | int = '',
+    correlation: str | list[str] = '',
     timerange: str = '',
     intent: str = '',
-    array: str = '',
+    array: str | int = '',
     uvrange: str = '',
-    observation: str = '',
-    feed: str = '',
+    observation: str | int = '',
+    feed: str | int = '',
     datacolumn: str = 'corrected',
     keepflags: bool = True,
-    width: int = 1,
+    width: int | str | list[int] | tuple[int, ...] = 1,
     timebin: str = '0s',
-    combine: str = '',
+    combine: str | list[str] | tuple[str, ...] = '',
     *,
     msselect: str = '',
 ) -> Any:
     """Create a selected MeasurementSet subset, equivalent to CASA split.
 
     CASA's ``split``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``, ``correlation``, ``intent``, ``array``, ``uvrange``,
-    ``observation``, ``feed``, ``timebin``, ``combine``.
     """
     return _call_casa(split, locals())
 
@@ -811,76 +804,120 @@ def gencal(
     return _call_casa(gencal, locals())
 
 def plotms(
-    *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] | object = _UNSET,
-    format: Literal['json', 'text'] | object = _UNSET,
-    output: StrPath | object = _UNSET,
-    overwrite: bool | object = _UNSET,
-    selectdata: bool | object = _UNSET,
-    field: str | object = _UNSET,
-    spw: str | object = _UNSET,
-    timerange: str | object = _UNSET,
-    uvrange: str | object = _UNSET,
-    antenna: str | object = _UNSET,
-    scan: str | object = _UNSET,
-    correlation: str | object = _UNSET,
-    observation: str | object = _UNSET,
-    array: str | object = _UNSET,
-    intent: str | object = _UNSET,
-    feed: str | object = _UNSET,
-    msselect: str | object = _UNSET,
-    page_spec: StrPath | object = _UNSET,
-    preset: Literal['amplitude_phase_vs_time_stacked', 'amplitude_vs_channel', 'amplitude_vs_frequency', 'amplitude_vs_time', 'amplitude_vs_uv_distance', 'amplitude_vs_velocity', 'antenna_layout', 'azimuth_vs_elevation', 'azimuth_vs_time', 'elevation_vs_time', 'flag_vs_time', 'flagrow_vs_time', 'hour_angle_vs_time', 'none', 'parallactic_angle_vs_time', 'phase_vs_channel', 'phase_vs_frequency', 'phase_vs_time', 'phase_vs_velocity', 'real_vs_imaginary', 'scan_timeline', 'sigma_spectrum_vs_time', 'sigma_vs_time', 'spectral_window_coverage', 'uv_coverage', 'weight_spectrum_vs_time', 'weight_vs_time'] | object = _UNSET,
-    x_axis: str | object = _UNSET,
-    y_axis: str | object = _UNSET,
-    y_axis2: str | object = _UNSET,
-    datacolumn: str | object = _UNSET,
-    color_by: Literal['baseline', 'correlation', 'field', 'none', 'scan', 'spw'] | object = _UNSET,
-    avgchannel: int | Literal['none'] | object = _UNSET,
-    avgtime: float | Literal['none'] | object = _UNSET,
-    avgscan: bool | object = _UNSET,
-    avgfield: bool | object = _UNSET,
-    avgbaseline: bool | object = _UNSET,
-    avgantenna: bool | object = _UNSET,
-    avgspw: bool | object = _UNSET,
-    scalar: bool | object = _UNSET,
-    freqframe: Literal['BARY', 'CMB', 'GALACTO', 'GEO', 'LGROUP', 'LSRD', 'LSRK', 'TOPO', 'none'] | object = _UNSET,
-    restfreq: str | object = _UNSET,
-    veldef: Literal['OPTICAL', 'RADIO', 'TRUE'] | object = _UNSET,
-    iteraxis: Literal['correlation', 'field', 'none', 'scan', 'spw'] | object = _UNSET,
-    gridrows: int | object = _UNSET,
-    gridcols: int | object = _UNSET,
-    xselfscale: bool | object = _UNSET,
-    yselfscale: bool | object = _UNSET,
-    xsharedaxis: bool | object = _UNSET,
-    ysharedaxis: bool | object = _UNSET,
-    title: str | object = _UNSET,
-    xlabel: str | object = _UNSET,
-    ylabel: str | object = _UNSET,
-    symbol_size: float | Literal['none'] | object = _UNSET,
-    showlegend: bool | object = _UNSET,
-    legendposition: Literal['exteriorBottom', 'exteriorLeft', 'exteriorRight', 'exteriorTop', 'lowerLeft', 'lowerRight', 'upperLeft', 'upperRight'] | object = _UNSET,
-    showmajorgrid: bool | object = _UNSET,
-    showminorgrid: bool | object = _UNSET,
-    headeritems: str | object = _UNSET,
-    max_points: int | object = _UNSET,
-    plot_output: StrPath | object = _UNSET,
-    plot_format: Literal['txt'] | object = _UNSET,
-    flag_action: Literal['flag', 'none', 'unflag'] | object = _UNSET,
-    flag_xmin: float | Literal['none'] | object = _UNSET,
-    flag_xmax: float | Literal['none'] | object = _UNSET,
-    flag_ymin: float | Literal['none'] | object = _UNSET,
-    flag_ymax: float | Literal['none'] | object = _UNSET,
-    flag_plotindex: int | Literal['none'] | object = _UNSET,
-    flag_panel: str | object = _UNSET,
-    flag_extcorr: bool | object = _UNSET,
-    flag_extchannel: bool | object = _UNSET,
-    flag_selected: bool | object = _UNSET,
-    flag_apply: bool | object = _UNSET,
-    flag_output: StrPath | object = _UNSET,
-) -> TaskCompletion:
-    """Plot MeasurementSet visibility data with CASA plotms-style selections and axes."""
-    return _run("plotms", _explicit(locals(), ('vis', 'format', 'output', 'overwrite', 'selectdata', 'field', 'spw', 'timerange', 'uvrange', 'antenna', 'scan', 'correlation', 'observation', 'array', 'intent', 'feed', 'msselect', 'page_spec', 'preset', 'x_axis', 'y_axis', 'y_axis2', 'datacolumn', 'color_by', 'avgchannel', 'avgtime', 'avgscan', 'avgfield', 'avgbaseline', 'avgantenna', 'avgspw', 'scalar', 'freqframe', 'restfreq', 'veldef', 'iteraxis', 'gridrows', 'gridcols', 'xselfscale', 'yselfscale', 'xsharedaxis', 'ysharedaxis', 'title', 'xlabel', 'ylabel', 'symbol_size', 'showlegend', 'legendposition', 'showmajorgrid', 'showminorgrid', 'headeritems', 'max_points', 'plot_output', 'plot_format', 'flag_action', 'flag_xmin', 'flag_xmax', 'flag_ymin', 'flag_ymax', 'flag_plotindex', 'flag_panel', 'flag_extcorr', 'flag_extchannel', 'flag_selected', 'flag_apply', 'flag_output')))
+    vis: StrPath = '',
+    caltable: StrPath = '',
+    gridrows: int = 1,
+    gridcols: int = 1,
+    rowindex: int = 0,
+    colindex: int = 0,
+    plotindex: int = 0,
+    xaxis: Literal['parangle', 'baseline', 'delay', 'antenna position', 'swp', 'u', 'tec', 'ant-parang', 'gamp', 'Antenna1', 'UVdist', 'WeightSpectrum', 'Baseline', 'flag', 'Real', 'switchedpower', 'timeint', 'WtSp', 'Ant-Elevation', 'GainReal', 'time_interval', 'uvdist_l', 'GainAmp', 'ant1', 'flagrow', 'Wt', 'Velocity', 'opac', 'Feed2', 'corr', 'imaginary', 'gainamp', 'Vwave', 'wwave', 'Frequency', 'observation', 'feed1', 'ant-azimuth', 'rate', 'Elevation', 'Intent', 'Row', 'swpower', 'antpos', 'ant-elevation', 'antenna', 'v', 'V', 'interval', 'sigmaspectrum', 'DelayRate', 'tsys', 'gainphase', 'Ant-Parangle', 'imag', 'Radial Velocity', 'UVwave', 'Observation', 'Poln', 'W', 'timeinterval', 'Channel', 'snr', 'SNR', 'frequency', 'Interval', 'uvdistl', 'disp', 'Imag', 'dispdelay', 'Feed1', 'rho', 'Ant-RA', 'delayrate', 'spgain', 'Antenna', 'Uwave', 'SigmaSpectrum', 'Azimuth', 'Scan', 'Tsys', 'polarization', 'intent', 'phase', 'amp', 'ant-parangle', 'SigmaSp', 'freq', 'wt*amp', 'channel', 'uwave', 'Flag', 'correlation', 'FlagRow', 'TEC', 'SwPower', 'GainPhase', 'GainImag', 'ant-parallacticangle', 'real', 'Time', 'weight', 'antenna2', 'gainimag', 'gimag', 'Antenna2', 'spw', 'gphase', 'Opac', 'parang', 'Amp', 'ant-ra', 'Sigma', 'amplitude', 'Ant-DEC', 'HourAngle', 'U', 'row', 'Wt*Amp', 'gainreal', 'chan', 'Field', 'DispDelay', 'hourang', 'vwave', 'radialvelocity', 'sigma', 'Antenna Position', 'Delay', 'uvwave', 'vel', 'uvdist', 'velocity', 'hourangle', 'poln', 'ant2', 'Phase', 'azimuth', 'Corr', 'parallacticangle', 'weightspectrum', 'Ant-Azimuth', 'wtsp', '', 'Distance', 'opacity', 'antenna1', 'feed2', 'sigmasp', 'time', 'w', 'wt', 'field', 'greal', 'elevation', 'del', 'ant', 'ant-dec', 'Spw', 'scan', 'Wwave', 'ParAngle'] = '',
+    xdatacolumn: Literal['model', 'corrected', 'data-model_vector', 'data-model', 'corrected/model_vector', 'residual', 'corrected-model', 'data/model', 'data/model_scalar', 'float', 'corrected/model_scalar', 'corrected/model', '', 'corrected-model_vector', 'data-model_scalar', 'corrected-model_scalar', 'data', 'data/model_vector'] = '',
+    xframe: Literal['icrs', 'azelgeo', 'b1950', 'galactic', '', 'j2000'] = '',
+    xinterp: Literal['', 'nearest', 'cubic spline', 'spline'] = '',
+    yaxis: str | list[str] | tuple[str, ...] = '',
+    ydatacolumn: str | list[str] | tuple[str, ...] = '',
+    yframe: str | list[str] | tuple[str, ...] = '',
+    yinterp: str | list[str] | tuple[str, ...] = '',
+    yaxislocation: str | list[str] | tuple[str, ...] = '',
+    selectdata: bool = True,
+    field: str = '',
+    spw: str = '',
+    timerange: str = '',
+    uvrange: str = '',
+    antenna: str = '',
+    scan: str = '',
+    correlation: str = '',
+    polarization: str = '',
+    antpos: str = '',
+    array: str = '',
+    observation: str = '',
+    intent: str = '',
+    feed: str = '',
+    msselect: str = '',
+    averagedata: bool = True,
+    avgchannel: str = '',
+    avgtime: str = '',
+    avgscan: bool = False,
+    avgfield: bool = False,
+    avgbaseline: bool = False,
+    avgantenna: bool = False,
+    avgspw: bool = False,
+    scalar: bool = False,
+    transform: bool = True,
+    freqframe: Literal['LSRK', 'CMB', 'GALACTO', 'GEO', 'TOPO', 'LSRD', 'LGROUP', 'BARY', ''] = '',
+    restfreq: str = '',
+    veldef: Literal['RADIO', 'OPTICAL', 'TRUE'] = 'RADIO',
+    phasecenter: str = '',
+    extendflag: bool = False,
+    extcorr: bool = False,
+    extchannel: bool = False,
+    iteraxis: Literal['baseline', 'Baseline', 'corr', 'antpos', 'antenna', 'Poln', 'AntPos', 'Antenna', 'Scan', 'polarization', 'correlation', 'Time', 'spw', 'Field', 'poln', 'Corr', '', 'time', 'field', 'Spw', 'scan'] = '',
+    xselfscale: bool = False,
+    yselfscale: bool = False,
+    xsharedaxis: bool = False,
+    ysharedaxis: bool = False,
+    customsymbol: bool | list[bool] | tuple[bool, ...] = [],
+    symbolshape: str | list[str] | tuple[str, ...] = 'autoscaling',
+    symbolsize: int | list[int] | tuple[int, ...] = 2,
+    symbolcolor: str | list[str] | tuple[str, ...] = '0000ff',
+    symbolfill: str | list[str] | tuple[str, ...] = 'fill',
+    symboloutline: bool | list[bool] | tuple[bool, ...] = False,
+    coloraxis: Literal['baseline', 'Antenna1', 'Baseline', 'ant1', 'corr', 'observation', 'Intent', 'antpos', 'Observation', 'Poln', 'Channel', 'AntPos', 'Scan', 'polarization', 'intent', 'channel', 'correlation', 'Time', 'antenna2', 'Antenna2', 'spw', 'chan', 'Field', 'poln', 'ant2', 'Corr', '', 'antenna1', 'time', 'field', 'Spw', 'scan'] = '',
+    customflaggedsymbol: bool | list[bool] | tuple[bool, ...] = False,
+    flaggedsymbolshape: str | list[str] | tuple[str, ...] = 'circle',
+    flaggedsymbolsize: int | list[int] | tuple[int, ...] = 2,
+    flaggedsymbolcolor: str | list[str] | tuple[str, ...] = 'ff0000',
+    flaggedsymbolfill: str | list[str] | tuple[str, ...] = 'fill',
+    flaggedsymboloutline: bool | list[bool] | tuple[bool, ...] = False,
+    xconnector: Literal['', 'none', 'line', 'step'] = '',
+    timeconnector: bool = False,
+    plotrange: float | list[float] | tuple[float, ...] = [],
+    title: str = '',
+    titlefont: int = 0,
+    xlabel: str = '',
+    xaxisfont: int = 0,
+    ylabel: str = '',
+    yaxisfont: int = 0,
+    showmajorgrid: bool = False,
+    majorwidth: int = 1,
+    majorstyle: Literal['none', 'dot', 'solid', 'dash', ''] = '',
+    majorcolor: str = 'B0B0B0',
+    showminorgrid: bool = False,
+    minorwidth: int = 1,
+    minorstyle: Literal['none', 'dot', 'solid', 'dash', ''] = '',
+    minorcolor: str = 'D0D0D0',
+    showlegend: bool = False,
+    legendposition: Literal['exteriorRight', 'lowerRight', 'exteriorTop', 'exteriorLeft', 'lowerLeft', 'upperRight', 'upperLeft', 'exteriorBottom', ''] = '',
+    plotfile: StrPath = '',
+    expformat: Literal['pdf', 'jpg', 'png', 'txt', 'ps', ''] = '',
+    verbose: bool = True,
+    exprange: Literal['', 'current', 'all'] = '',
+    highres: bool = False,
+    dpi: int = -1,
+    width: int = -1,
+    height: int = -1,
+    overwrite: bool = False,
+    showgui: bool = True,
+    clearplots: bool = True,
+    callib: str | list[str] | tuple[str, ...] = [],
+    headeritems: str = '',
+    showatm: bool = False,
+    showtsky: bool = False,
+    showimage: bool = False,
+    colorizeoverlay: bool = False,
+) -> Any:
+    """Plot selected MeasurementSet or calibration table data.
+
+    CASA's ``plotms``: its parameters, defaults and return value.
+    Accepted only at CASA's default, where CASA reads them, until #1032:
+    ``rowindex``, ``colindex``, ``plotindex``, ``xframe``, ``xinterp``,
+    ``yframe``, ``yinterp``, ``phasecenter``, ``extendflag``, ``extcorr``,
+    ``extchannel``, ``clearplots``.
+    Accepted only at CASA's default, where CASA reads them, until #1526:
+    ``colorizeoverlay``.
+    """
+    return _call_casa(plotms, locals())
 
 def flagdata(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
@@ -898,19 +935,19 @@ def flagdata(
     scan: str = '',
     intent: str = '',
     array: str = '',
-    observation: str = '',
+    observation: str | int = '',
     feed: str = '',
-    clipminmax: list[float] | tuple[float, ...] = [],
+    clipminmax: float | list[float] | tuple[float, ...] = [],
     datacolumn: str = 'DATA',
-    clipoutside: bool = True,
+    clipoutside: bool | list[bool] = True,
     channelavg: bool = False,
     chanbin: int = 1,
     timeavg: bool = False,
     timebin: str = '0s',
     clipzeros: bool = False,
-    quackinterval: float = 1.0,
-    quackmode: Literal['beg', 'end', 'endb', 'tail'] = 'beg',
-    quackincrement: bool = False,
+    quackinterval: float | list[float] = 1.0,
+    quackmode: str | list[str] = 'beg',
+    quackincrement: bool | list[bool] = False,
     tolerance: float = 0.0,
     addantenna: str = '',
     lowerlimit: float = 0.0,
@@ -964,18 +1001,14 @@ def flagdata(
 
     CASA's ``flagdata``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``autocorr``, ``inpfile``, ``reason``, ``tbuff``, ``uvrange``,
-    ``timerange``, ``correlation``, ``intent``, ``array``, ``observation``,
-    ``feed``, ``clipminmax``, ``clipoutside``, ``channelavg``, ``chanbin``,
-    ``timeavg``, ``timebin``, ``quackincrement``, ``tolerance``,
-    ``addantenna``, ``lowerlimit``, ``upperlimit``, ``ntime``,
-    ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
-    ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
-    ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
-    ``flagneartime``, ``flagnearfreq``, ``minrel``, ``maxrel``, ``minabs``,
-    ``maxabs``, ``spwchan``, ``spwcorr``, ``basecnt``, ``fieldcnt``,
-    ``name``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,
-    ``overwrite``, ``writeflags``.
+    ``inpfile``, ``reason``, ``tbuff``, ``correlation``, ``channelavg``,
+    ``chanbin``, ``timeavg``, ``timebin``, ``tolerance``, ``addantenna``,
+    ``lowerlimit``, ``upperlimit``, ``ntime``, ``combinescans``,
+    ``timefit``, ``freqfit``, ``maxnpieces``, ``flagdimension``,
+    ``usewindowstats``, ``halfwin``, ``winsize``, ``antint_ref_antenna``,
+    ``minchanfrac``, ``verbose``, ``growaround``, ``flagneartime``,
+    ``flagnearfreq``, ``display``, ``savepars``, ``cmdreason``, ``outfile``,
+    ``overwrite``.
     """
     return _call_casa(flagdata, locals())
 
@@ -995,39 +1028,37 @@ def flagmanager(
 
 def impbcor(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
-    pbimage: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
+    pbimage: StrPath | NDArray[floating] | list[ParameterData] | tuple[ParameterData, ...] = [],
     outfile: StrPath = '',
     overwrite: bool = False,
     box: str = '',
-    region: str = '',
+    region: StrPath | Mapping[str, ParameterData] = '',
     chans: str = '',
     stokes: str = '',
     mask: str = '',
-    mode: Literal['divide', 'multiply'] = 'divide',
+    mode: str = 'divide',
     cutoff: float = -1.0,
     stretch: bool = False,
 ) -> Any:
-    """Apply primary-beam correction to a CASA image
+    """Apply primary-beam correction to a CASA or FITS image
 
     CASA's ``impbcor``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``box``, ``region``, ``chans``, ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impbcor, locals())
 
 def impv(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     outfile: StrPath = '',
-    mode: Literal['coords', 'length'] = 'coords',
-    start: str = '',
-    end: str = '',
-    center: str | list[str] | tuple[str, ...] = '',
-    length: str = '',
-    pa: str = '',
-    width: int = 1,
+    mode: str = 'coords',
+    start: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    end: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    center: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    length: float | str | Mapping[str, ParameterData] = '',
+    pa: str | Mapping[str, ParameterData] = '',
+    width: int | str | Mapping[str, ParameterData] = 1,
     unit: str = 'arcsec',
     overwrite: bool = False,
-    region: str = '',
+    region: StrPath | Mapping[str, ParameterData] = '',
     chans: str = '',
     stokes: str = '',
     mask: str = '',
@@ -1036,9 +1067,6 @@ def impv(
     """Extract a CASA-style position-velocity image
 
     CASA's ``impv``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``mode``, ``center``, ``length``, ``pa``, ``unit``, ``region``,
-    ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impv, locals())
 
@@ -1059,9 +1087,6 @@ def imsubimage(
     """Extract a CASA-style image section
 
     CASA's ``imsubimage``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``region``, ``stokes``, ``mask``, ``dropdeg``, ``verbose``, ``stretch``,
-    ``keepaxes``.
     """
     return _call_casa(imsubimage, locals())
 
@@ -1092,12 +1117,12 @@ def immath(
 
 def imregrid(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
-    template: StrPath = 'get',
+    template: StrPath | Mapping[str, ParameterData] = 'get',
     output: StrPath = '',
     asvelocity: bool = True,
     axes: int | list[int] | tuple[int, ...] = [-1],
     shape: int | list[int] | tuple[int, ...] = [-1],
-    interpolation: Literal['linear', 'nearest'] = 'linear',
+    interpolation: Literal['linear', 'nearest', 'cubic'] = 'linear',
     decimate: int = 10,
     replicate: bool = False,
     overwrite: bool = False,
@@ -1105,8 +1130,6 @@ def imregrid(
     """Regrid a CASA image onto a template image
 
     CASA's ``imregrid``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``asvelocity``, ``axes``, ``shape``, ``decimate``, ``replicate``.
     """
     return _call_casa(imregrid, locals())
 
@@ -1123,8 +1146,6 @@ def feather(
     """Combine high-resolution and low-resolution images in the Fourier domain
 
     CASA's ``feather``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``effdishdiam``, ``lowpassfiltersd``.
     """
     return _call_casa(feather, locals())
 
@@ -1136,15 +1157,12 @@ def importfits(
     zeroblanks: bool = True,
     overwrite: bool = False,
     defaultaxes: bool = False,
-    defaultaxesvalues: str | list[str] | tuple[str, ...] = [],
+    defaultaxesvalues: ParameterData | list[ParameterData] | tuple[ParameterData, ...] = [],
     beam: str | list[str] | tuple[str, ...] = [],
 ) -> Any:
-    """Import a FITS primary image into a CASA image
+    """Import a FITS image into a CASA image
 
     CASA's ``importfits``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``whichrep``, ``whichhdu``, ``zeroblanks``, ``defaultaxes``,
-    ``defaultaxesvalues``, ``beam``.
     """
     return _call_casa(importfits, locals())
 
@@ -1328,6 +1346,46 @@ def getantposalma(
     """
     return _call_casa(getantposalma, locals())
 
+def smoothcal(
+    vis: StrPath = '',
+    tablein: StrPath = '',
+    caltable: StrPath = '',
+    field: str | list[str] | tuple[str, ...] = [],
+    smoothtype: str = 'median',
+    smoothtime: float = 60.0,
+    ratesmooth: bool = False,
+) -> Any:
+    """Smooth selected calibration solutions in time.
+
+    CASA's ``smoothcal``: its parameters, defaults and return value.
+    """
+    return _call_casa(smoothcal, locals())
+
+def rerefant(
+    vis: StrPath = '',
+    tablein: StrPath = '',
+    caltable: StrPath = '',
+    refantmode: Literal['flex', 'strict'] = 'flex',
+    refant: str = '',
+) -> Any:
+    """Change the reference antenna in a calibration table.
+
+    CASA's ``rerefant``: its parameters, defaults and return value.
+    """
+    return _call_casa(rerefant, locals())
+
+def plotweather(
+    vis: str = '',
+    seasonal_weight: float = 0.5,
+    doPlot: bool = True,
+    plotName: str = '',
+) -> Any:
+    """Estimate zenith opacity and plot MeasurementSet weather.
+
+    CASA's ``plotweather``: its parameters, defaults and return value.
+    """
+    return _call_casa(plotweather, locals())
+
 def initweights(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     wtmode: Literal['delwtsp', 'nyq', 'ones', 'tsys', 'weight', 'tinttsys', 'sigma', 'delsigsp'] = 'nyq',
@@ -1376,6 +1434,89 @@ def statwt(
     """
     return _call_casa(statwt, locals())
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'initweights', 'statwt')
+def calstat(
+    caltable: StrPath = '',
+    axis: str = 'amplitude',
+    datacolumn: str = 'gain',
+) -> Any:
+    """Compute descriptive statistics for a calibration table column.
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'initweights', 'statwt']
+    CASA's ``calstat``: its parameters, defaults and return value.
+    """
+    return _call_casa(calstat, locals())
+
+def listcal(
+    vis: StrPath = '',
+    caltable: StrPath = '',
+    field: str = '',
+    antenna: str = '',
+    spw: str = '',
+    listfile: StrPath = '',
+    pagerows: int = 50,
+) -> Any:
+    """List selected antenna calibration solutions and flags.
+
+    CASA's ``listcal``: its parameters, defaults and return value.
+    """
+    return _call_casa(listcal, locals())
+
+def plotbandpass(
+    caltable: str = '',
+    antenna: str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...] = '',
+    field: str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...] = '',
+    spw: str | int | list[str] | tuple[str, ...] | list[int] | tuple[int, ...] = '',
+    yaxis: str = 'amp',
+    xaxis: str = 'chan',
+    figfile: str = '',
+    plotrange: float | list[float] | tuple[float, ...] = [0.0, 0.0, 0.0, 0.0],
+    caltable2: str = '',
+    overlay: str = '',
+    showflagged: bool = False,
+    timeranges: str = '',
+    buildpdf: bool = False,
+    caltable3: str = '',
+    markersize: int = 3,
+    density: int = 108,
+    interactive: bool = True,
+    showpoints: str | bool = 'auto',
+    showlines: str | bool = 'auto',
+    subplot: str | int = '22',
+    zoom: str = '',
+    poln: list[str] | tuple[str, ...] | str = '',
+    showatm: bool = False,
+    pwv: float | str = 'auto',
+    gs: str = 'gs',
+    convert: str = 'convert',
+    chanrange: str | list[int] | tuple[int, ...] = '',
+    solutionTimeThresholdSeconds: float = 30.0,
+    debug: bool = False,
+    phase: list[int] | tuple[int, ...] | str = '',
+    vis: str = '',
+    showtsky: bool = False,
+    showfdm: bool = False,
+    showatmfield: int | str = '',
+    lo1: str | float = '',
+    showimage: bool = False,
+    showatmpoints: bool = False,
+    parentms: str = '',
+    pdftk: str = 'pdftk',
+    channeldiff: bool | float = False,
+    edge: int = 8,
+    resample: int = 1,
+    platformingThreshold: float = 10.0,
+    platformingSigma: float = 10.0,
+    basebands: int | str | list[int] | tuple[int, ...] = '',
+    showBasebandNumber: bool = False,
+    scans: int | str | list[int] | tuple[int, ...] = '',
+    figfileSequential: bool = False,
+    chanrangeSetXrange: bool = False,
+) -> Any:
+    """Plot calibration spectra and channel derivatives.
+
+    CASA's ``plotbandpass``: its parameters, defaults and return value.
+    """
+    return _call_casa(plotbandpass, locals())
+
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass')
+
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'tclean', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'uvsub', 'ft', 'uvmodelfit', 'clearcal', 'delmod', 'gencal', 'plotms', 'flagdata', 'flagmanager', 'impbcor', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'msconvert', 'simanalyze', 'tsdimaging', 'concat', 'simalma', 'getantposalma', 'smoothcal', 'rerefant', 'plotweather', 'initweights', 'statwt', 'calstat', 'listcal', 'plotbandpass']

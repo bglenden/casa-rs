@@ -34,6 +34,21 @@ does not implement yet is taken only at CASA's default; its docstring names
 the issue. The other wrappers take keyword arguments and return the
 `TaskCompletion`.
 
+On a single MeasurementSet, `split` and `mstransform` accept named fields
+and spectral windows, antenna baselines, scan predicates, calendar times,
+observation IDs and intents, array IDs, UV distances, and feed pairs.
+Channel selectors can include disjoint ranges and strides. Use a
+spectral-window qualifier such as `correlation="SPW0:XX,YY"` to select
+correlation products within a window. The CASA comparison checks unaveraged
+visibilities, flags, weights, and remapped metadata. Remaining behaviors
+are tracked in
+[#978](https://github.com/bglenden/casa-rs/issues/978).
+
+For stored visibilities, `datacolumn="model"` and `"corrected"` copy the
+selected source into `DATA`. Combined layouts retain the named columns.
+`"all"` copies the available physical visibility columns, including
+`FLOAT_DATA` and `LAG_DATA` when present.
+
 A value the contract refuses raises `ValueError` before anything starts, or
 `TypeError` for a value of the wrong type. A task that refuses its
 parameters raises `TaskParameterError`, a `ValueError`, and one that starts

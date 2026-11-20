@@ -43,9 +43,15 @@ pub struct MsTransformTaskRequest {
     /// CASA antenna selector.
     #[serde(default)]
     pub antenna: String,
-    /// MJD-seconds range in `start~end` form.
+    /// CASA time selection expression.
     #[serde(default)]
     pub timerange: String,
+    /// CASA observation selection or a numeric observation ID.
+    #[serde(default = "default_observation")]
+    pub observation: serde_json::Value,
+    /// CASA STATE/scan intent selection expression.
+    #[serde(default)]
+    pub intent: String,
     /// `split`: additional TaQL row selection, a casa-rs control.
     #[serde(default)]
     pub msselect: String,
@@ -58,6 +64,10 @@ pub struct MsTransformTaskRequest {
     /// Preserve fully flagged rows.
     #[serde(default = "default_true")]
     pub keepflags: bool,
+}
+
+fn default_observation() -> serde_json::Value {
+    serde_json::Value::String(String::new())
 }
 
 /// JSON request accepted by the native `flagdata` provider.

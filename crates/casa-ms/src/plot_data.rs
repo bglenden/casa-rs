@@ -297,6 +297,7 @@ mod tests {
                 color_group: "field-0".into(),
                 y_axis: MsAxis::Amplitude,
                 points: vec![(1.0, 3.0), (2.0, 4.0)],
+                plotms_metadata: Vec::new(),
                 provenance: vec![
                     MsScatterPointRef {
                         row: 4,

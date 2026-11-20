@@ -21,14 +21,14 @@
 //! A removed axis is dropped from a linear coordinate whose other axes do
 //! not depend on it, which leaves the system's conversions as casacore's.
 //! `impv` writes its position-velocity images so: a two-axis linear
-//! coordinate with the second axis removed. Any other removed axis is
-//! refused.
+//! coordinate with the second axis removed. A direction slice retains its
+//! projection and uses the record's replacement values for the removed axis.
 
 use casa_types::RecordValue;
 
 use crate::coordinate::CoordinateModel;
 use crate::error::CoordinateError;
-use crate::record_utils::get_required_vec_i32;
+use crate::record_utils::{get_required_vec_f64, get_required_vec_i32};
 
 /// What casa-rs reads, and the issue for the rest, for every refusal.
 const SUPPORTED: &str = "casa-rs reads a coordinate system only when each coordinate's axes are \
@@ -179,20 +179,44 @@ fn axis_maps(
         .collect::<Vec<_>>();
     let removed_alike =
         pixel.len() == world.len() && pixel.iter().zip(&world).all(|(&p, &w)| (p < 0) == (w < 0));
-    let reduced = match coordinate {
-        CoordinateModel::Linear(linear) if removed_alike => linear.kept_axes(&kept),
-        _ => None,
+    let supported = match coordinate {
+        CoordinateModel::Linear(linear) if removed_alike => {
+            if let Some(reduced) = linear.kept_axes(&kept) {
+                *linear = reduced;
+                true
+            } else {
+                false
+            }
+        }
+        CoordinateModel::Direction(direction) if removed_alike && kept.len() == 1 => {
+            let removed = 1 - kept[0];
+            let replacement = |kind| {
+                let field = format!("{kind}replace{index}");
+                let values = get_required_vec_f64(rec, &field)?;
+                values
+                    .get(removed)
+                    .copied()
+                    .filter(|value| value.is_finite())
+                    .ok_or_else(|| {
+                        CoordinateError::InvalidRecord(format!(
+                            "{field} has no finite replacement for axis {removed}"
+                        ))
+                    })
+            };
+            direction.remove_record_axis(removed, replacement("pixel")?, replacement("world")?)?;
+            true
+        }
+        _ => false,
     };
-    let Some(reduced) = reduced else {
+    if !supported {
         return Err(CoordinateError::UnsupportedAxisLayout(format!(
             "{name} has removed axes (pixel axes {pixel:?}, world axes {world:?}; casacore \
              keeps a removed axis as -(axis + 1)); {SUPPORTED}, and drops a removed axis \
-             only from a linear coordinate whose other axes do not depend on it. In CASA, \
+             from a direction slice or a linear coordinate whose other axes do not depend on it. In CASA, \
              make the image again from the one it was cut from without dropping an axis of a \
              coordinate it keeps (imsubimage with dropdeg=False)"
         )));
-    };
-    *coordinate = CoordinateModel::Linear(reduced);
+    }
     let keep = |map: &[i32]| kept.iter().map(|&j| map[j]).collect();
     Ok(Some(AxisMaps {
         pixel: keep(&pixel),
@@ -440,18 +464,24 @@ mod tests {
     }
 
     #[test]
-    fn removed_axes_are_refused() {
+    fn a_direction_slice_round_trips_its_replacement_values() {
         // `imsubimage(dropdeg=True)` of an image with one RA pixel: casacore
         // keeps the removed RA axis as -1 with its replacement value.
         let mut rec = record_with_maps([&[-1, 0], &[1], &[2]]);
         rec.upsert(
             "pixelreplace0",
-            Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])),
+            Value::Array(ArrayValue::from_f64_vec(vec![13.0, 0.0])),
         );
-        let message = refusal(&rec);
-        assert!(
-            message.contains("direction0 has removed axes") && message.contains("dropdeg"),
-            "{message}"
+        let system = CoordinateSystem::from_record(&rec).unwrap();
+        let direction = system.coordinate(0);
+        assert_eq!(direction.n_pixel_axes(), 1);
+        assert_eq!(direction.axis_names(), ["Declination"]);
+        let world = system.to_world(&[3.0, 0.0, 0.0]).unwrap();
+        let restored = CoordinateSystem::from_record(&system.to_record()).unwrap();
+        assert_eq!(restored.to_world(&[3.0, 0.0, 0.0]).unwrap(), world);
+        assert_eq!(
+            restored.to_pixel(&world).unwrap(),
+            system.to_pixel(&world).unwrap()
         );
     }
 

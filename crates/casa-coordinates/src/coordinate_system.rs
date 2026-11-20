@@ -16,6 +16,7 @@ mod edit;
 mod record_axes;
 
 use casa_types::{ArrayValue, RecordValue, Value};
+use ndarray::{Array2, ArrayView2, Axis, ShapeBuilder};
 
 use crate::coordinate::{CoordinateModel, CoordinateType};
 use crate::direction::DirectionCoordinate;
@@ -181,6 +182,55 @@ impl CoordinateSystem {
         Ok(pixel)
     }
 
+    /// Converts a matrix of world vectors, with one point per column.
+    ///
+    /// The rows follow the system's world axes. The result has one row per
+    /// pixel axis and holds its columns contiguously.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the number of rows differs from the world axis
+    /// count or a coordinate cannot be converted.
+    pub fn to_pixel_columns(
+        &self,
+        world: ArrayView2<'_, f64>,
+    ) -> Result<Array2<f64>, CoordinateError> {
+        let n_world = self.n_world_axes();
+        if world.nrows() != n_world {
+            return Err(CoordinateError::DimensionMismatch {
+                expected: n_world,
+                got: world.nrows(),
+            });
+        }
+
+        let mut pixels = Array2::zeros((self.n_pixel_axes(), world.ncols()).f());
+        let mut input = Vec::new();
+        let mut world_offset = 0;
+        let mut pixel_offset = 0;
+        for coord in &self.coordinates {
+            let next_world = world_offset + coord.n_world_axes();
+            let next_pixel = pixel_offset + coord.n_pixel_axes();
+            let world = world.slice_axis(Axis(0), (world_offset..next_world).into());
+            let mut pixel = pixels.slice_axis_mut(Axis(0), (pixel_offset..next_pixel).into());
+            if let CoordinateModel::Linear(linear) = coord {
+                linear.to_pixel_columns(world, pixel.view_mut())?;
+            } else {
+                for (column, mut output) in
+                    world.axis_iter(Axis(1)).zip(pixel.axis_iter_mut(Axis(1)))
+                {
+                    input.clear();
+                    input.extend(column.iter().copied());
+                    for (output, value) in output.iter_mut().zip(coord.to_pixel(&input)?) {
+                        *output = value;
+                    }
+                }
+            }
+            world_offset = next_world;
+            pixel_offset = next_pixel;
+        }
+        Ok(pixels)
+    }
+
     /// Serializes the coordinate system using casacore's canonical
     /// `CoordinateSystem::save()` layout.
     pub fn to_record(&self) -> RecordValue {
@@ -203,6 +253,32 @@ impl CoordinateSystem {
 
             let n_world = coord.n_world_axes() as i32;
             let n_pixel = coord.n_pixel_axes() as i32;
+            if let CoordinateModel::Direction(direction) = coord
+                && let Some(removed) = direction.removed_axis()
+            {
+                for (kind, axis) in [("pixel", next_pixel_axis), ("world", next_world_axis)] {
+                    let mut map = vec![axis; 2];
+                    map[removed.index] = -(axis + removed.index as i32 + 1);
+                    rec.upsert(
+                        format!("{kind}map{index}"),
+                        Value::Array(ArrayValue::from_i32_vec(map)),
+                    );
+                }
+                let mut pixel = [0.0; 2];
+                pixel[removed.index] = removed.pixel;
+                let mut world = direction.pixel_to_world(pixel).unwrap_or([0.0; 2]);
+                world[removed.index] = removed.world_rad;
+                for (kind, values) in [("pixel", pixel), ("world", direction.in_world_units(world))]
+                {
+                    rec.upsert(
+                        format!("{kind}replace{index}"),
+                        Value::Array(ArrayValue::from_f64_vec(values.to_vec())),
+                    );
+                }
+                next_pixel_axis += 1;
+                next_world_axis += 1;
+                continue;
+            }
             rec.upsert(
                 format!("worldmap{index}"),
                 Value::Array(ArrayValue::from_i32_vec(
@@ -264,8 +340,7 @@ impl CoordinateSystem {
     /// that no coordinate order represents: a coordinate whose axes are out
     /// of its own order (`imtrans order='1023'`) or not adjacent
     /// (`order='0213'`), world axes ordered unlike the pixel axes, or any
-    /// other removed axis (`imsubimage(dropdeg=True)` of a single-pixel
-    /// direction axis).
+    /// removed axis other than a direction slice or an independent linear axis.
     /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
     /// the system's axes, as for any other malformed record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
@@ -364,6 +439,23 @@ pub struct RecordCoordinate {
     /// For each of the record coordinate's own axes, in its order, the
     /// system pixel axis it lies on; `None` for an axis the record removed.
     pub pixel_axes: Vec<Option<usize>>,
+}
+
+impl RecordCoordinate {
+    /// Read this coordinate before applying the system's pixel and world maps.
+    /// This retains descriptors for axes that the maps remove.
+    ///
+    /// # Errors
+    /// Returns an error if the field is missing or its coordinate is malformed.
+    pub fn model(&self, record: &RecordValue) -> Result<CoordinateModel, CoordinateError> {
+        let Some(Value::Record(coordinate)) = record.get(&self.field) else {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "coordinate field {:?} is not a record",
+                self.field
+            )));
+        };
+        parse_coordinate_record(&self.field, coordinate)
+    }
 }
 
 /// `rec`'s coordinates with where they come from, in the order of their

@@ -126,7 +126,8 @@ fn combination(
         format!("{stem}.image.flat"),
         format!("{}.feather.image.flat", plan.project),
     ];
-    let mut payload = crate::simobserve::graphics::payload::Payload::append(path)?;
+    let mut payload =
+        crate::simobserve::graphics::payload::Payload::append(path).map_err(failure)?;
     let mut panels = Vec::new();
     for (index, (path, title)) in paths.iter().zip(titles).enumerate() {
         let mut panel = statim(path, true, &mut payload, resources)?;
@@ -134,7 +135,7 @@ fn combination(
         identify(&mut panel, index);
         panels.push(panel);
     }
-    payload.finish()?;
+    payload.finish().map_err(failure)?;
     Ok(PlotFigure {
         output_file: Some(plan.directory.join(format!("{}.combine.png", plan.project))),
         show: false,

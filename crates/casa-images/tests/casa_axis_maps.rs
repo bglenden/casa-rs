@@ -14,8 +14,8 @@
 //! coordinates and the pixel value. casa-rs reads the images whose
 //! coordinates each own adjacent axes in order, and those whose linear
 //! coordinate has independent removed axes (`impv`'s position-velocity
-//! image, and a linear image dropped on its first or second axis). It
-//! refuses the three it cannot represent (#1002). The record also holds
+//! image, and a linear image dropped on its first or second axis), and a
+//! direction slice. It refuses the layouts it cannot represent (#1002). The record also holds
 //! CASA's world coordinates and values for boxes cut from three of them,
 //! which casa-rs's `imsubimage` cuts alike.
 
@@ -27,7 +27,7 @@ use casa_coordinates::{
 };
 use casa_images::{
     FeatherRequest, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType, ImpvRequest,
-    ImsubimageRequest, PagedImage, feather, impv, imsubimage,
+    ImsubimageRequest, PagedImage, PvPosition, feather, impv, imsubimage,
 };
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::DirectionRef;
@@ -151,6 +151,7 @@ fn transposed_casa_images_read_as_casa_reads_them() {
         "pv.image",
         "dropdeg_linear.image",
         "dropdeg_linear_between.image",
+        "dropdeg_ra.image",
         "tabular_spectral_first.image",
     ] {
         let casa = casa(name);
@@ -186,7 +187,6 @@ fn casa_images_whose_axes_casa_rs_cannot_represent_are_refused() {
             "Declination, Right Ascension",
         ),
         ("interleaved.image", "direction0", "which are not adjacent"),
-        ("dropdeg_ra.image", "direction0", "has removed axes"),
     ] {
         let maps = &casa(name)["maps"][coordinate];
         let error = PagedImage::<f32>::open(copy_image(name, scratch.path()))
@@ -396,23 +396,18 @@ fn regions_take_the_direction_wherever_its_axes_are() {
 }
 
 #[test]
-fn impv_refuses_a_direction_off_the_first_two_axes() {
-    // impv's output keeps its input's coordinates rather than a PV image's
-    // (#1024), so a direction elsewhere stays refused (#1022 review).
+fn impv_checks_edge_distances_on_the_actual_direction_axes() {
     let scratch = tempfile::tempdir().expect("scratch");
     for name in ["transposed.image", "spectral_first.image"] {
         let error = impv(&ImpvRequest {
             imagename: copy_image(name, scratch.path()),
             outfile: scratch.path().join("pv.image"),
-            mode: "coords".into(),
-            start: "0,1".into(),
-            end: "3,1".into(),
-            width: 1,
-            chans: None,
-            overwrite: false,
+            start: Some(PvPosition::Pixel([0.0, 1.0])),
+            end: Some(PvPosition::Pixel([3.0, 1.0])),
+            ..ImpvRequest::default()
         })
         .unwrap_err();
-        assert!(error.to_string().contains("#1024"), "{name}: {error}");
+        assert!(error.to_string().contains("two pixels"), "{name}: {error}");
     }
 }
 
@@ -425,8 +420,7 @@ fn a_box_subimage_of_a_transposed_image_cuts_the_direction_plane() {
         imagename: input.clone(),
         outfile: outfile.clone(),
         box_pixels: Some("1,0,2,1".into()),
-        chans: None,
-        overwrite: false,
+        ..ImsubimageRequest::default()
     })
     .unwrap();
     let cut = PagedImage::<f32>::open(&outfile).unwrap();
@@ -557,6 +551,8 @@ fn feather_takes_the_direction_wherever_its_axes_are() {
             highres,
             lowres,
             sdfactor: 1.0,
+            effdishdiam: -1.0,
+            lowpassfiltersd: false,
             overwrite: false,
         })
         .unwrap();
@@ -594,9 +590,8 @@ fn a_subimage_of_a_transposed_image_moves_each_coordinates_reference_pixel() {
     imsubimage(&ImsubimageRequest {
         imagename: input.clone(),
         outfile: outfile.clone(),
-        box_pixels: None,
         chans: Some("1~3".into()),
-        overwrite: false,
+        ..ImsubimageRequest::default()
     })
     .unwrap();
 
@@ -655,7 +650,7 @@ fn subimages_read_as_casa_reads_the_pixels_they_cut() {
             outfile: outfile.clone(),
             box_pixels,
             chans,
-            overwrite: false,
+            ..ImsubimageRequest::default()
         })
         .unwrap_or_else(|error| panic!("{name}: {error}"));
         let output = PagedImage::<f32>::open(&outfile).unwrap();

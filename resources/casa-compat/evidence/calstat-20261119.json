@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "oracle": "CASA calstat and table.statistics",
+  "casa_version": "6.7.6.14",
+  "revision": "567b979d3f9780a690d1aa8afcdc5a7c9dedabb9",
+  "execution_date": "2026-11-19",
+  "command": "PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calstat_oracle.py --work <empty-directory> --native-bin <calibrate>",
+  "result": "passed",
+  "public_records": 25,
+  "refusal_cases": 17,
+  "public_table_view_comparisons": 4,
+  "retained_payloads": "Flagged entries contribute to the unmasked moments and order statistics.",
+  "sample_precision": "Single-precision samples and squared products. Double-precision accumulators and sample variance.",
+  "relative_tolerance": 3e-07,
+  "absolute_tolerance": 2e-08
+}

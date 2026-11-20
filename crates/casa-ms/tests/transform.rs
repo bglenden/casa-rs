@@ -22,7 +22,7 @@ fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {
     let report = mstransform(&MsTransformRequest {
         input_ms: input_ms.clone(),
         output_ms: output_ms.clone(),
-        spw: "0:2~5".to_string(),
+        spw: "SPW0:2~5".to_string(),
         width: 1,
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
@@ -95,6 +95,50 @@ fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {
             .and_then(|cell| cell.scalar())
             .expect("TOTAL_BANDWIDTH"),
         &ScalarValue::Float64(4.0e6)
+    );
+}
+
+#[test]
+fn rust_transform_preserves_subset_export_uv_and_array_semantics() {
+    let dir = tempfile::tempdir().unwrap();
+    let input_ms = common::create_msexplore_spectrum_fixture_ms(dir.path(), false, &[]);
+    let output_ms = dir.path().join("subset.ms");
+    let mut input = MeasurementSet::open(&input_ms).unwrap();
+    for row in 0..input.row_count() {
+        input
+            .main_table_mut()
+            .column_accessor_mut("ARRAY_ID")
+            .unwrap()
+            .set(row, casa_types::Value::Scalar(ScalarValue::Int32(5)))
+            .unwrap();
+    }
+    input.save_main_table_only().unwrap();
+    drop(input);
+
+    let report = mstransform(&MsTransformRequest {
+        input_ms,
+        output_ms: output_ms.clone(),
+        spw: String::new(),
+        width: 1,
+        data_column: TransformDataColumn::Data,
+        selection: MsSelection {
+            array: Some("5".into()),
+            uvrange: Some("<=50m".into()),
+            ..MsSelection::default()
+        },
+        keep_flags: true,
+    })
+    .unwrap();
+    assert_eq!(report.row_count, 1);
+    let output = MeasurementSet::open(output_ms).unwrap();
+    assert_eq!(
+        output
+            .main_table()
+            .cell_accessor(0, "ARRAY_ID")
+            .unwrap()
+            .scalar()
+            .unwrap(),
+        &ScalarValue::Int32(5)
     );
 }
 
@@ -183,7 +227,10 @@ fn mstransform_compacts_selected_field_table_and_remaps_main_field_ids() {
         spw: "0".to_string(),
         width: 1,
         data_column: TransformDataColumn::Data,
-        selection: MsSelection::new().field(&[1]),
+        selection: MsSelection {
+            field: Some("FIELD1".into()),
+            ..MsSelection::new()
+        },
         keep_flags: true,
     })
     .expect("mstransform field 1");
@@ -336,7 +383,16 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
         keep_flags: true,
     })
     .unwrap_err();
-    assert!(invalid_spw.to_string().contains("outside SPECTRAL_WINDOW"));
+    // The CASA grammar resolves against SPECTRAL_WINDOW and reports an
+    // unmatched ID, including when the expression is syntactically valid.
+    assert!(matches!(
+        invalid_spw,
+        casa_ms::MsTransformError::InvalidSpw { .. }
+    ));
+    assert!(
+        invalid_spw.to_string().contains("No match found"),
+        "{invalid_spw}"
+    );
     assert!(!output_ms.exists());
 
     let missing_column = mstransform(&MsTransformRequest {

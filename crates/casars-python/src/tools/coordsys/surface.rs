@@ -33,25 +33,25 @@ const METHODS: &[Method] = &[
             param("tabular", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "axesmap",
         &[param("toworld", K::Bool, Bool(true))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "axiscoordinatetypes",
         &[param("world", K::Bool, Bool(true))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "conversiontype",
         &[param("type", K::Text, Text("direction"))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "convert",
@@ -93,11 +93,11 @@ const METHODS: &[Method] = &[
         "coordinatetype",
         &[param("which", K::Int, Int(-1))],
         R::Any,
-        No,
+        Yes,
     ),
-    method("copy", &[], R::Any, No),
+    method("copy", &[], R::Any, Yes),
     method("done", &[], R::Any, Yes),
-    method("epoch", &[], R::Any, No),
+    method("epoch", &[], R::Any, Yes),
     method(
         "findaxis",
         &[
@@ -105,7 +105,7 @@ const METHODS: &[Method] = &[
             param("axis", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "findaxisbyname",
@@ -114,7 +114,7 @@ const METHODS: &[Method] = &[
             param("allowfriendlyname", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "findcoordinate",
@@ -123,7 +123,7 @@ const METHODS: &[Method] = &[
             param("which", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "frequencytofrequency",
@@ -150,7 +150,7 @@ const METHODS: &[Method] = &[
         "fromrecord",
         &[param("record", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getconversiontype",
@@ -159,7 +159,7 @@ const METHODS: &[Method] = &[
             param("showconversion", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "increment",
@@ -168,17 +168,17 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "lineartransform",
         &[param("type", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
-    method("names", &[param("type", K::Text, Text(""))], R::Any, No),
-    method("naxes", &[param("world", K::Bool, Bool(true))], R::Any, No),
-    method("ncoordinates", &[], R::Any, No),
+    method("names", &[param("type", K::Text, Text(""))], R::Any, Yes),
+    method("naxes", &[param("world", K::Bool, Bool(true))], R::Any, Yes),
+    method("ncoordinates", &[], R::Any, Yes),
     method(
         "newcoordsys",
         &[
@@ -189,15 +189,15 @@ const METHODS: &[Method] = &[
             param("tabular", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("observer", &[], R::Any, No),
-    method("parentname", &[], R::Any, No),
+    method("observer", &[], R::Any, Yes),
+    method("parentname", &[], R::Any, Yes),
     method(
         "projection",
         &[param("type", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "referencecode",
@@ -206,7 +206,7 @@ const METHODS: &[Method] = &[
             param("list", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "referencepixel",
@@ -221,7 +221,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("reorder", &[param("order", K::Any, Required)], R::Any, No),
     method(
@@ -234,7 +234,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("restfrequency", &[], R::Any, No),
+    method("restfrequency", &[], R::Any, Yes),
     method(
         "setconversiontype",
         &[
@@ -259,7 +259,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("setepoch", &[param("value", K::Any, Required)], R::Any, No),
+    method("setepoch", &[param("value", K::Any, Required)], R::Any, Yes),
     method(
         "setincrement",
         &[
@@ -285,19 +285,19 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setobserver",
         &[param("value", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setparentname",
         &[param("imagename", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setprojection",
@@ -372,7 +372,7 @@ const METHODS: &[Method] = &[
         "setstokes",
         &[param("stokes", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "settabular",
@@ -388,7 +388,7 @@ const METHODS: &[Method] = &[
         "settelescope",
         &[param("value", K::Any, Required)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setunits",
@@ -401,7 +401,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("stokes", &[], R::Any, No),
+    method("stokes", &[], R::Any, Yes),
     method(
         "subimage",
         &[
@@ -420,7 +420,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("telescope", &[], R::Any, No),
+    method("telescope", &[], R::Any, Yes),
     method(
         "toabs",
         &[
@@ -440,7 +440,7 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
-    method("topixelmany", &[param("value", K::Any, Empty)], R::Any, No),
+    method("topixelmany", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("torecord", &[], R::Any, Yes),
     method(
         "torel",
@@ -469,10 +469,10 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("toworldmany", &[param("value", K::Any, Empty)], R::Any, No),
+    method("toworldmany", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("transpose", &[param("order", K::Any, Required)], R::Any, No),
     method("type", &[], R::Any, Yes),
-    method("units", &[param("type", K::Text, Text(""))], R::Any, No),
+    method("units", &[param("type", K::Text, Text(""))], R::Any, Yes),
     method(
         "velocitytofrequency",
         &[

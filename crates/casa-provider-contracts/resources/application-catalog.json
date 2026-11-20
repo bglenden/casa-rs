@@ -264,7 +264,8 @@
         "override_env": "CASARS_MSEXPLORE_BIN"
       },
       "dataset_kinds": [
-        "measurement_set"
+        "measurement_set",
+        "calibration_table"
       ],
       "include_in_suite": true
     },
@@ -450,6 +451,42 @@
       "include_in_suite": true
     },
     {
+      "id": "smoothcal",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "rerefant",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "plotweather",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
       "id": "initweights",
       "launch": {
         "executable": "calibrate",
@@ -470,6 +507,44 @@
       },
       "dataset_kinds": [
         "measurement_set"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "calstat",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "calibration_table"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "listcal",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set",
+        "calibration_table"
+      ],
+      "include_in_suite": true
+    },
+    {
+      "id": "plotbandpass",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [
+        "measurement_set",
+        "calibration_table"
       ],
       "include_in_suite": true
     }

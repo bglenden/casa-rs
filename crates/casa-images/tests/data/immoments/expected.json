@@ -1,0 +1,4059 @@
+{
+  "casa_version": "6.7.6.14",
+  "cases": {
+    "compound": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "mask": "\"cube.im\" > 4 && \"cube.im\" < 30"
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            0.0,
+            0.0,
+            0.0,
+            22.0,
+            0.0,
+            0.0,
+            7.0,
+            0.0,
+            0.0,
+            27.0,
+            0.0,
+            0.0,
+            12.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            17.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mask": [
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "math_mask": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "mask": "sqrt(\"cube.im\") >= 4 && \"cube.im\" < 36"
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            0.0,
+            0.0,
+            0.0,
+            22.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            27.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            32.0,
+            0.0,
+            0.0,
+            17.5,
+            0.0,
+            0.0,
+            35.0,
+            0.0,
+            0.0
+          ],
+          "mask": [
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "stretch": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "mask": "\"plane.im\" > 0.5",
+        "stretch": true
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.0,
+            0.0,
+            82.0,
+            0.0,
+            62.0,
+            0.0,
+            7.0,
+            0.0,
+            87.0,
+            0.0,
+            67.0,
+            0.0,
+            12.0,
+            0.0,
+            92.0,
+            0.0,
+            72.0,
+            0.0,
+            17.0,
+            0.0,
+            97.0,
+            0.0,
+            77.0,
+            0.0
+          ],
+          "mask": [
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "mixed_masks": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "mask": "\"cube.im\" > 4 && \"plane.im\" > 0.5",
+        "stretch": true
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            0.0,
+            0.0,
+            82.0,
+            0.0,
+            62.0,
+            0.0,
+            7.0,
+            0.0,
+            87.0,
+            0.0,
+            67.0,
+            0.0,
+            12.0,
+            0.0,
+            92.0,
+            0.0,
+            72.0,
+            0.0,
+            17.0,
+            0.0,
+            97.0,
+            0.0,
+            77.0,
+            0.0
+          ],
+          "mask": [
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "stretch_off": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "mask": "\"plane.im\" > 0.5"
+      },
+      "error": "RuntimeError",
+      "message": "The input image shape ([3, 2, 4, 5]) and mask shape ([3, 2]) are different, and it was specified that the mask should not be extended, so the mask cannot be applied to the (sub)image. Specifying that the mask should be extended may resolve the issue at File: /Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casainstall/include/casacpp/imageanalysis/ImageAnalysis/SubImageFactory.tcc, line: 306"
+    },
+    "subset": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "box": "1,0,2,1",
+        "chans": "1~4",
+        "stokes": "Q"
+      },
+      "products": {
+        "": {
+          "shape": [
+            2,
+            2,
+            1,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            0.0,
+            1.0,
+            0.0,
+            1.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            2.0,
+            1415000000.0
+          ],
+          "first_world": [
+            0.0,
+            -1.0000000141027954,
+            2.0,
+            1414999000.0
+          ],
+          "pixels": [
+            40.10161590576172,
+            73.87139892578125,
+            56.986507415771484,
+            90.75628662109375
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "crtf": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "region": "circle[[1pix,1pix],1pix]"
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            0.0,
+            42.0,
+            0.0,
+            22.0,
+            62.0,
+            102.0,
+            0.0,
+            47.0,
+            0.0,
+            27.0,
+            67.0,
+            107.0,
+            0.0,
+            52.0,
+            0.0,
+            32.0,
+            72.0,
+            112.0,
+            0.0,
+            57.0,
+            0.0,
+            37.0,
+            77.0,
+            117.0
+          ],
+          "mask": [
+            false,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "region_file": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "region": "circle.crtf"
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            0.0,
+            42.0,
+            0.0,
+            22.0,
+            62.0,
+            102.0,
+            0.0,
+            47.0,
+            0.0,
+            27.0,
+            67.0,
+            107.0,
+            0.0,
+            52.0,
+            0.0,
+            32.0,
+            72.0,
+            112.0,
+            0.0,
+            57.0,
+            0.0,
+            37.0,
+            77.0,
+            117.0
+          ],
+          "mask": [
+            false,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "gaps": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "chans": "0,2,4",
+        "stokes": "IV"
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            1.2663668394088745,
+            26.593704223632812,
+            51.92103958129883,
+            13.930035591125488,
+            39.25737380981445,
+            64.58470916748047,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            10.764118194580078,
+            36.091453552246094,
+            61.418792724609375,
+            23.427785873413086,
+            48.755123138427734,
+            74.08245849609375
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "spatial": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": "Right Ascension"
+      },
+      "products": {
+        "": {
+          "shape": [
+            1,
+            2,
+            4,
+            5
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.'",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            120.0,
+            180.0,
+            135.0,
+            195.0,
+            150.0,
+            210.0,
+            165.0,
+            225.0,
+            123.0,
+            183.0,
+            138.0,
+            198.0,
+            153.0,
+            213.0,
+            168.0,
+            228.0,
+            126.0,
+            186.0,
+            141.0,
+            201.0,
+            156.0,
+            216.0,
+            171.0,
+            231.0,
+            129.0,
+            189.0,
+            144.0,
+            204.0,
+            159.0,
+            219.0,
+            174.0,
+            234.0,
+            132.0,
+            192.0,
+            147.0,
+            207.0,
+            162.0,
+            222.0,
+            177.0,
+            237.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "spatial_maxcoord": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          9
+        ],
+        "axis": 0
+      },
+      "products": {
+        "": {
+          "shape": [
+            1,
+            2,
+            4,
+            5
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "'",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0,
+            21599.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "stokes_axis": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": "Stokes"
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            1,
+            5
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            30.0,
+            190.0,
+            350.0,
+            110.0,
+            270.0,
+            430.0,
+            34.0,
+            194.0,
+            354.0,
+            114.0,
+            274.0,
+            434.0,
+            38.0,
+            198.0,
+            358.0,
+            118.0,
+            278.0,
+            438.0,
+            42.0,
+            202.0,
+            362.0,
+            122.0,
+            282.0,
+            442.0,
+            46.0,
+            206.0,
+            366.0,
+            126.0,
+            286.0,
+            446.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "one_channel": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "chans": "1"
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            1.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414999000.0
+          ],
+          "pixels": [
+            0.21106113493442535,
+            8.653507232666016,
+            17.0959529876709,
+            4.432283878326416,
+            12.87472915649414,
+            21.317174911499023,
+            1.2663668394088745,
+            9.708812713623047,
+            18.15125846862793,
+            5.4875898361206055,
+            13.930035591125488,
+            22.372480392456055,
+            2.3216724395751953,
+            10.764118194580078,
+            19.20656394958496,
+            6.542895317077637,
+            14.98534107208252,
+            23.427785873413086,
+            3.3769781589508057,
+            11.81942367553711,
+            20.261869430541992,
+            7.598201274871826,
+            16.040647506713867,
+            24.483091354370117
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "spectral_axis_minus_one": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": -1
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.1106114387512207,
+            44.322837829589844,
+            86.53506469726562,
+            23.216726303100586,
+            65.428955078125,
+            107.64118194580078,
+            7.387139797210693,
+            49.599369049072266,
+            91.81159973144531,
+            28.493253707885742,
+            70.70548248291016,
+            112.91770935058594,
+            12.663668632507324,
+            54.87589645385742,
+            97.08812713623047,
+            33.76978302001953,
+            75.98200988769531,
+            118.1942367553711,
+            17.940196990966797,
+            60.15242385864258,
+            102.36465454101562,
+            39.04631042480469,
+            81.25853729248047,
+            123.47076416015625
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "spectral_axis_minus_two": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": -2
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.1106114387512207,
+            44.322837829589844,
+            86.53506469726562,
+            23.216726303100586,
+            65.428955078125,
+            107.64118194580078,
+            7.387139797210693,
+            49.599369049072266,
+            91.81159973144531,
+            28.493253707885742,
+            70.70548248291016,
+            112.91770935058594,
+            12.663668632507324,
+            54.87589645385742,
+            97.08812713623047,
+            33.76978302001953,
+            75.98200988769531,
+            118.1942367553711,
+            17.940196990966797,
+            60.15242385864258,
+            102.36465454101562,
+            39.04631042480469,
+            81.25853729248047,
+            123.47076416015625
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "auto_axis_one_channel": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": -1,
+        "chans": "1"
+      },
+      "error": "RuntimeError",
+      "message": "Illegal moment axis; it has only 1 pixel"
+    },
+    "convolved_spectral": {
+      "imagename": "beams.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": "spectral"
+      },
+      "products": {
+        "": {
+          "shape": [
+            13,
+            13,
+            1,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/beam.km/s",
+          "reference_pixel": [
+            6.0,
+            6.0,
+            0.0,
+            1.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            6.000012184735919,
+            -6.000003046178528,
+            1.0,
+            1414999000.0
+          ],
+          "pixels": [
+            2.9235797116555773e-10,
+            1.7926989059890985e-10,
+            6.106470329392266e-10,
+            1.4364664124855153e-08,
+            1.7504402194390423e-07,
+            7.791045959493204e-07,
+            1.2809675808966858e-06,
+            7.791045959493204e-07,
+            1.7504402194390423e-07,
+            1.4364666789390412e-08,
+            6.106470329392266e-10,
+            1.792871823225184e-10,
+            2.9235797116555773e-10,
+            3.944894133578458e-10,
+            2.853992320250853e-10,
+            1.3441919577417138e-08,
+            4.462301603780361e-07,
+            5.37092455488164e-06,
+            2.393905378994532e-05,
+            3.9416554500348866e-05,
+            2.3939051970955916e-05,
+            5.37092455488164e-06,
+            4.4623041617342096e-07,
+            1.3441919577417138e-08,
+            2.861960668454344e-10,
+            3.944894133578458e-10,
+            -2.1123172655457267e-10,
+            2.2180661751747266e-09,
+            2.2531685317517258e-07,
+            7.415219442918897e-06,
+            9.073175897356123e-05,
+            0.0004105541156604886,
+            0.0006801077979616821,
+            0.0004105541156604886,
+            9.073175897356123e-05,
+            7.415245818265248e-06,
+            2.2531685317517258e-07,
+            2.236550278311711e-09,
+            -2.1123172655457267e-10,
+            7.727052331318873e-10,
+            2.407177923657855e-08,
+            2.0274178496038076e-06,
+            6.835614476585761e-05,
+            0.0008659174782224,
+            0.004035232588648796,
+            0.006761947181075811,
+            0.004035232588648796,
+            0.0008659174782224,
+            6.835613748989999e-05,
+            2.0274178496038076e-06,
+            2.4144531707293027e-08,
+            7.727052331318873e-10,
+            3.941182449840319e-11,
+            1.0648279413771888e-07,
+            9.924997357302345e-06,
+            0.0003486406058073044,
+            0.004628005437552929,
+            0.022372402250766754,
+            0.03800680488348007,
+            0.022372400388121605,
+            0.004628005437552929,
+            0.00034864197368733585,
+            9.924997357302345e-06,
+            1.074155022706691e-07,
+            3.941182449840319e-11,
+            1.1875838090702473e-09,
+            2.7941302960243775e-07,
+            2.6163419533986598e-05,
+            0.0009536393918097019,
+            0.01316574402153492,
+            0.06548698246479034,
+            0.11239001154899597,
+            0.06548698246479034,
+            0.01316574402153492,
+            0.0009536399156786501,
+            2.6163419533986598e-05,
+            2.7908032507184544e-07,
+            1.1875838090702473e-09,
+            -4.135527031934316e-09,
+            3.8060724705246685e-07,
+            3.6277444451116025e-05,
+            0.001342004630714655,
+            0.01880592480301857,
+            0.09451551735401154,
+            0.5849170088768005,
+            0.09451551735401154,
+            0.01880592480301857,
+            0.001342002535238862,
+            3.6277444451116025e-05,
+            3.7946770703456423e-07,
+            -4.135527031934316e-09,
+            1.1875838090702473e-09,
+            2.7941302960243775e-07,
+            2.6163419533986598e-05,
+            0.0009536393918097019,
+            0.01316574402153492,
+            0.06548698246479034,
+            0.11239001154899597,
+            0.06548698246479034,
+            0.01316574402153492,
+            0.0009536399156786501,
+            2.6163419533986598e-05,
+            2.7908032507184544e-07,
+            1.1875838090702473e-09,
+            3.941182449840319e-11,
+            1.0648279413771888e-07,
+            9.924997357302345e-06,
+            0.0003486406058073044,
+            0.004628005437552929,
+            0.022372402250766754,
+            0.03800680488348007,
+            0.022372400388121605,
+            0.004628005437552929,
+            0.00034864197368733585,
+            9.924997357302345e-06,
+            1.074155022706691e-07,
+            3.941182449840319e-11,
+            7.727052331318873e-10,
+            2.407177923657855e-08,
+            2.0274178496038076e-06,
+            6.835614476585761e-05,
+            0.0008659174782224,
+            0.004035232588648796,
+            0.006761947181075811,
+            0.004035232588648796,
+            0.0008659174782224,
+            6.835613748989999e-05,
+            2.0274178496038076e-06,
+            2.4144531707293027e-08,
+            7.727052331318873e-10,
+            -2.1123172655457267e-10,
+            2.2180661751747266e-09,
+            2.2531685317517258e-07,
+            7.415219442918897e-06,
+            9.073175897356123e-05,
+            0.0004105541156604886,
+            0.0006801077979616821,
+            0.0004105541156604886,
+            9.073175897356123e-05,
+            7.415245818265248e-06,
+            2.2531685317517258e-07,
+            2.236550278311711e-09,
+            -2.1123172655457267e-10,
+            3.944894133578458e-10,
+            2.853992320250853e-10,
+            1.3441919577417138e-08,
+            4.462301603780361e-07,
+            5.37092455488164e-06,
+            2.393905378994532e-05,
+            3.9416554500348866e-05,
+            2.3939051970955916e-05,
+            5.37092455488164e-06,
+            4.4623041617342096e-07,
+            1.3441919577417138e-08,
+            2.861960668454344e-10,
+            3.944894133578458e-10,
+            2.9235797116555773e-10,
+            1.7926989059890985e-10,
+            6.106470329392266e-10,
+            1.4364664124855153e-08,
+            1.7504402194390423e-07,
+            7.791045959493204e-07,
+            1.2809675808966858e-06,
+            7.791045959493204e-07,
+            1.7504402194390423e-07,
+            1.4364666789390412e-08,
+            6.106470329392266e-10,
+            1.792871823225184e-10,
+            2.9235797116555773e-10
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {
+            "major": {
+              "unit": "arcmin",
+              "value": 3.6
+            },
+            "minor": {
+              "unit": "arcmin",
+              "value": 2.8
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 0.0
+            }
+          },
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "beams_direction": {
+      "imagename": "beams.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": 0
+      },
+      "products": {
+        "": {
+          "shape": [
+            1,
+            13,
+            1,
+            3
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/beam.'",
+          "reference_pixel": [
+            6.0,
+            6.0,
+            0.0,
+            1.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            6.000012184735919,
+            -6.000003046178528,
+            1.0,
+            1414999000.0
+          ],
+          "pixels": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            2.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {
+            "beams": {
+              "*0": {
+                "*0": {
+                  "major": {
+                    "unit": "arcmin",
+                    "value": 2.0
+                  },
+                  "minor": {
+                    "unit": "arcmin",
+                    "value": 1.5
+                  },
+                  "positionangle": {
+                    "unit": "deg",
+                    "value": 0.0
+                  }
+                }
+              },
+              "*1": {
+                "*0": {
+                  "major": {
+                    "unit": "arcmin",
+                    "value": 3.6
+                  },
+                  "minor": {
+                    "unit": "arcmin",
+                    "value": 2.8
+                  },
+                  "positionangle": {
+                    "unit": "deg",
+                    "value": 0.0
+                  }
+                }
+              },
+              "*2": {
+                "*0": {
+                  "major": {
+                    "unit": "arcmin",
+                    "value": 2.6
+                  },
+                  "minor": {
+                    "unit": "arcmin",
+                    "value": 1.8
+                  },
+                  "positionangle": {
+                    "unit": "deg",
+                    "value": 0.0
+                  }
+                }
+              }
+            },
+            "nChannels": 3,
+            "nStokes": 1
+          },
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "beams_stokes": {
+      "imagename": "polbeams.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": "stokes"
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Number of polarizations is not consistent."
+    },
+    "beams_rectangular_pixels": {
+      "imagename": "polbeams.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": "spectral"
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Pixels must be square, please regrid your image so that they are."
+    },
+    "pixel_beams_target_last": {
+      "imagename": "pixelbeams.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "chans": "0~1"
+      },
+      "products": {
+        "": {
+          "shape": [
+            5,
+            5,
+            1,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            2.0,
+            2.0,
+            0.0,
+            3.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            2.0000004512859832,
+            -2.0000001128220406,
+            1.0,
+            1414997000.0
+          ],
+          "pixels": [
+            0.008418415673077106,
+            0.03727765381336212,
+            0.06121455505490303,
+            0.03727765381336212,
+            0.008418415673077106,
+            0.0213007852435112,
+            0.09432217478752136,
+            0.15488874912261963,
+            0.09432217478752136,
+            0.0213007852435112,
+            0.029025781899690628,
+            0.12852931022644043,
+            0.4221222698688507,
+            0.12852931022644043,
+            0.029025781899690628,
+            0.0213007852435112,
+            0.09432217478752136,
+            0.15488874912261963,
+            0.09432217478752136,
+            0.0213007852435112,
+            0.008418415673077106,
+            0.03727765381336212,
+            0.06121455505490303,
+            0.03727765381336212,
+            0.008418415673077106
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {
+            "major": {
+              "unit": "arcmin",
+              "value": 3.6
+            },
+            "minor": {
+              "unit": "arcmin",
+              "value": 2.8
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 0.0
+            }
+          },
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "pixel_beams_target_first": {
+      "imagename": "pixelbeams.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "chans": "2~3"
+      },
+      "products": {
+        "": {
+          "shape": [
+            5,
+            5,
+            1,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/beam.km/s",
+          "reference_pixel": [
+            2.0,
+            2.0,
+            0.0,
+            1.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            2.0000004512859832,
+            -2.0000001128220406,
+            1.0,
+            1414999000.0
+          ],
+          "pixels": [
+            0.008418415673077106,
+            0.03727765381336212,
+            0.06121455505490303,
+            0.03727765381336212,
+            0.008418415673077106,
+            0.0213007852435112,
+            0.09432217478752136,
+            0.15488874912261963,
+            0.09432217478752136,
+            0.0213007852435112,
+            0.029025781899690628,
+            0.12852931022644043,
+            0.4221222698688507,
+            0.12852931022644043,
+            0.029025781899690628,
+            0.0213007852435112,
+            0.09432217478752136,
+            0.15488874912261963,
+            0.09432217478752136,
+            0.0213007852435112,
+            0.008418415673077106,
+            0.03727765381336212,
+            0.06121455505490303,
+            0.03727765381336212,
+            0.008418415673077106
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {
+            "major": {
+              "unit": "arcmin",
+              "value": 3.6
+            },
+            "minor": {
+              "unit": "arcmin",
+              "value": 2.8
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 0.0
+            }
+          },
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "pixel_beams_singular": {
+      "imagename": "pixelbeams.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "chans": "4~5"
+      },
+      "error": "RuntimeError",
+      "message": "Gaussian2DParam<T>::setAxialRatio(const T &axialRatio) - axialRatio must be between (0,1]"
+    },
+    "tabular_subset": {
+      "imagename": "tabular.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "chans": "2~4"
+      },
+      "products": {
+        "": {
+          "shape": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1403000000.0
+          ],
+          "first_world": [
+            0.0,
+            0.0,
+            1.0,
+            1403000000.0
+          ],
+          "pixels": [
+            5698.65087890625
+          ],
+          "mask": [
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "median_100": {
+      "imagename": "tabular.im",
+      "params": {
+        "moments": [
+          3
+        ],
+        "includepix": [
+          0,
+          99
+        ]
+      },
+      "products": {
+        "": {
+          "shape": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1400000000.0
+          ],
+          "first_world": [
+            0.0,
+            0.0,
+            1.0,
+            1400000000.0
+          ],
+          "pixels": [
+            49.5
+          ],
+          "mask": [
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "median_101": {
+      "imagename": "tabular.im",
+      "params": {
+        "moments": [
+          3
+        ],
+        "includepix": [
+          0,
+          100
+        ]
+      },
+      "products": {
+        "": {
+          "shape": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1400000000.0
+          ],
+          "first_world": [
+            0.0,
+            0.0,
+            1.0,
+            1400000000.0
+          ],
+          "pixels": [
+            50.0
+          ],
+          "mask": [
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "median_102": {
+      "imagename": "tabular.im",
+      "params": {
+        "moments": [
+          3
+        ]
+      },
+      "products": {
+        "": {
+          "shape": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1400000000.0
+          ],
+          "first_world": [
+            0.0,
+            0.0,
+            1.0,
+            1400000000.0
+          ],
+          "pixels": [
+            50.0
+          ],
+          "mask": [
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "spectral_alias": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": "spec"
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.1106114387512207,
+            44.322837829589844,
+            86.53506469726562,
+            23.216726303100586,
+            65.428955078125,
+            107.64118194580078,
+            7.387139797210693,
+            49.599369049072266,
+            91.81159973144531,
+            28.493253707885742,
+            70.70548248291016,
+            112.91770935058594,
+            12.663668632507324,
+            54.87589645385742,
+            97.08812713623047,
+            33.76978302001953,
+            75.98200988769531,
+            118.1942367553711,
+            17.940196990966797,
+            60.15242385864258,
+            102.36465454101562,
+            39.04631042480469,
+            81.25853729248047,
+            123.47076416015625
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "median_needs_range": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          4
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Request for the median coordinate moment, but it is only available with the basic (no smooth, no window, no fit) method and a pixel range that is either all positive or all negative."
+    },
+    "all_positive": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        "includepix": [
+          1,
+          120
+        ]
+      },
+      "products": {
+        ".abs_mean_dev": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            1.0,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158,
+            1.2000000476837158
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".average": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.5,
+            42.0,
+            82.0,
+            22.0,
+            62.0,
+            102.0,
+            7.0,
+            47.0,
+            87.0,
+            27.0,
+            67.0,
+            107.0,
+            12.0,
+            52.0,
+            92.0,
+            32.0,
+            72.0,
+            112.0,
+            17.0,
+            57.0,
+            97.0,
+            37.0,
+            77.0,
+            117.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".integrated": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel.km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.1106114387512207,
+            44.322837829589844,
+            86.53506469726562,
+            23.216726303100586,
+            65.428955078125,
+            107.64118194580078,
+            7.387139797210693,
+            49.599369049072266,
+            91.81159973144531,
+            28.493253707885742,
+            70.70548248291016,
+            112.91770935058594,
+            12.663668632507324,
+            54.87589645385742,
+            97.08812713623047,
+            33.76978302001953,
+            75.98200988769531,
+            118.1942367553711,
+            17.940196990966797,
+            60.15242385864258,
+            102.36465454101562,
+            39.04631042480469,
+            81.25853729248047,
+            123.47076416015625
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".maximum": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            4.0,
+            44.0,
+            84.0,
+            24.0,
+            64.0,
+            104.0,
+            9.0,
+            49.0,
+            89.0,
+            29.0,
+            69.0,
+            109.0,
+            14.0,
+            54.0,
+            94.0,
+            34.0,
+            74.0,
+            114.0,
+            19.0,
+            59.0,
+            99.0,
+            39.0,
+            79.0,
+            119.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".maximum_coord": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625,
+            1140.52197265625
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".median": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.5,
+            42.0,
+            82.0,
+            22.0,
+            62.0,
+            102.0,
+            7.0,
+            47.0,
+            87.0,
+            27.0,
+            67.0,
+            107.0,
+            12.0,
+            52.0,
+            92.0,
+            32.0,
+            72.0,
+            112.0,
+            17.0,
+            57.0,
+            97.0,
+            37.0,
+            77.0,
+            117.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".median_coord": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            1140.7330322265625,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875,
+            1140.944091796875
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".minimum": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            1.0,
+            40.0,
+            80.0,
+            20.0,
+            60.0,
+            100.0,
+            5.0,
+            45.0,
+            85.0,
+            25.0,
+            65.0,
+            105.0,
+            10.0,
+            50.0,
+            90.0,
+            30.0,
+            70.0,
+            110.0,
+            15.0,
+            55.0,
+            95.0,
+            35.0,
+            75.0,
+            115.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".minimum_coord": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            1141.1551513671875,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375,
+            1141.3662109375
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".rms": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.7386128902435303,
+            42.0238037109375,
+            82.01219177246094,
+            22.045408248901367,
+            62.01612854003906,
+            102.00980377197266,
+            7.141428470611572,
+            47.021270751953125,
+            87.01148986816406,
+            27.037012100219727,
+            67.01492309570312,
+            107.00934600830078,
+            12.083045959472656,
+            52.01922607421875,
+            92.01087188720703,
+            32.03123474121094,
+            72.01388549804688,
+            112.00892639160156,
+            17.0587215423584,
+            57.017539978027344,
+            97.01030731201172,
+            37.027015686035156,
+            77.01298522949219,
+            117.008544921875
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".standard_deviation": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            1.29099440574646,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229,
+            1.5811388492584229
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".weighted_coord": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            1140.7330322265625,
+            1140.93408203125,
+            1140.93896484375,
+            1140.9249267578125,
+            1140.9373779296875,
+            1140.93994140625,
+            1140.8837890625,
+            1140.9351806640625,
+            1140.9393310546875,
+            1140.928466796875,
+            1140.9378662109375,
+            1140.940185546875,
+            1140.908935546875,
+            1140.93603515625,
+            1140.9395751953125,
+            1140.930908203125,
+            1140.938232421875,
+            1140.9403076171875,
+            1140.9193115234375,
+            1140.936767578125,
+            1140.9398193359375,
+            1140.9327392578125,
+            1140.9385986328125,
+            1140.9405517578125
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        },
+        ".weighted_dispersion_coord": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "km/s",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            0.3476676940917969,
+            0.2337242215871811,
+            0.3421047329902649,
+            0.283488005399704,
+            0.21736586093902588,
+            0.41270530223846436,
+            0.36563432216644287,
+            0.07460418343544006,
+            0.20527517795562744,
+            0.4340640902519226,
+            0.11331486701965332,
+            0.33408114314079285,
+            0.306851327419281,
+            0.3000795245170593,
+            0.13732977211475372,
+            0.3710705637931824,
+            0.4853231608867645,
+            0.5133169889450073,
+            0.27907055616378784,
+            0.18724431097507477,
+            0.24196669459342957,
+            0.28357088565826416,
+            0.478808730840683,
+            0.07764915376901627
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "excluded_endpoints": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "excludepix": [
+          1,
+          3
+        ]
+      },
+      "products": {
+        "": {
+          "shape": [
+            3,
+            2,
+            4,
+            1
+          ],
+          "names": [
+            "Right Ascension",
+            "Declination",
+            "Stokes",
+            "Frequency"
+          ],
+          "units": "Jy/pixel",
+          "reference_pixel": [
+            1.0,
+            1.0,
+            0.0,
+            2.0
+          ],
+          "reference_value": [
+            0.0,
+            0.0,
+            1.0,
+            1415000000.0
+          ],
+          "first_world": [
+            1.0000000564102864,
+            -1.000000014102307,
+            1.0,
+            1414998000.0
+          ],
+          "pixels": [
+            2.0,
+            42.0,
+            82.0,
+            22.0,
+            62.0,
+            102.0,
+            7.0,
+            47.0,
+            87.0,
+            27.0,
+            67.0,
+            107.0,
+            12.0,
+            52.0,
+            92.0,
+            32.0,
+            72.0,
+            112.0,
+            17.0,
+            57.0,
+            97.0,
+            37.0,
+            77.0,
+            117.0
+          ],
+          "mask": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "default_mask": [
+            "mask0"
+          ],
+          "beam": {},
+          "input_history": true,
+          "task_history": true
+        }
+      }
+    },
+    "both_limits": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          -1
+        ],
+        "includepix": [
+          0,
+          20
+        ],
+        "excludepix": [
+          1,
+          3
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Only one of includepix or excludepix may be specified, not both."
+    },
+    "repeat_moment": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0,
+          0
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "File repeat_moment.out.integrated exists, and the user does not want to remove it."
+    },
+    "invalid_axis": {
+      "imagename": "cube.im",
+      "params": {
+        "moments": [
+          0
+        ],
+        "axis": 9
+      },
+      "error": "RuntimeError",
+      "message": "Exception: Axis 9 doesn't exist.Image has only 4 dimensions."
+    },
+    "no_spectral": {
+      "imagename": "plane.im",
+      "params": {
+        "moments": [
+          0
+        ]
+      },
+      "error": "RuntimeError",
+      "message": "No axis matches requested axis spectral. Image axis names are [right ascension, declination]"
+    }
+  }
+}

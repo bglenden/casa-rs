@@ -71,6 +71,8 @@ pub(crate) enum CasaDefault {
     Empty,
     /// `{}`, the default of record parameters.
     EmptyRecord,
+    /// A scalar quantity record with value and unit fields.
+    Quantity(f64, &'static str),
     /// `None` (casa-rs constructor controls).
     None,
 }
@@ -91,6 +93,7 @@ impl CasaDefault {
             Self::Bools(values) => json!(values),
             Self::Empty => json!([]),
             Self::EmptyRecord => json!({}),
+            Self::Quantity(value, unit) => json!({"value": value, "unit": unit}),
             Self::None => JsonValue::Null,
         })
     }
@@ -150,6 +153,8 @@ impl Returns {
 pub(crate) enum Status {
     /// Implemented.
     Implemented,
+    /// Available with documented gaps in supported values or workflows.
+    Partial,
     /// Raises `NotImplementedError`, naming the issue that records it.
     NotYetImplemented,
     /// Disabled in CASA itself: logs CASA's error and returns `False`.
@@ -162,6 +167,7 @@ impl Status {
     fn name(self) -> &'static str {
         match self {
             Self::Implemented => "implemented",
+            Self::Partial => "partial",
             Self::NotYetImplemented => "not_yet_implemented",
             Self::DisabledInCasa => "disabled_in_casa",
             Self::DeprecatedInCasa => "deprecated_in_casa",

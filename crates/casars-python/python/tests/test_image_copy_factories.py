@@ -233,3 +233,168 @@ def test_copy_crops_tabular_spectral_lookup_starting_at_zero(tmp_path, oracle):
         records.append(lookup)
         assert image.done()
     _assert_value(*records)
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("case", ["strided", "one plane", "remove singleton axes"])
+def test_copy_selects_tabular_frequencies_and_original_beam_planes(tmp_path, oracle, method, case):
+    source = str(tmp_path / "per-plane.im")
+    shape = (3, 4, 4, 6)
+    pixels = np.arange(np.prod(shape), dtype=np.float64).reshape(shape)
+    frequencies = np.array([1.4e9, 1.401e9, 1.4025e9, 1.4043e9, 1.407e9, 1.412e9])
+    coordinates = oracle.coordsys().newcoordsys(direction=True, stokes="I Q U V", spectral=True)
+    assert coordinates.setspectral(frequencies={"unit": "Hz", "value": frequencies})
+    writer = oracle.image()
+    assert writer.fromshape(source, list(shape), csys=coordinates.torecord())
+    assert coordinates.done()
+    assert writer.putchunk(pixels)
+    for channel in range(shape[3]):
+        for polarization in range(shape[2]):
+            assert writer.setrestoringbeam(
+                f"{(10 + channel) * 60 + polarization}arcsec",
+                "2arcsec", "12deg", channel=channel, polarization=polarization, log=False,
+            )
+    assert writer.done()
+
+    region_tool = oracle.regionmanager()
+    if case == "strided":
+        region = region_tool.box([0, 0, 1, 1], [2, 3, 3, 5], inc=[1, 1, 2, 2])
+        expected = pixels[:, :, 1:4:2, 1:6:2]
+        expected_frequencies = frequencies[1:6:2]
+    else:
+        region = region_tool.box([0, 0, 2, 3], [2, 3, 2, 3])
+        expected = pixels[:, :, 2:3, 3:4]
+        expected_frequencies = frequencies[3:4]
+    assert region_tool.done()
+    drop_axes = case == "remove singleton axes"
+    if drop_axes:
+        expected = expected[:, :, 0, 0]
+
+    beam_records, coordinate_records = [], []
+    for writer_module in (oracle, tools):
+        parent = writer_module.image()
+        assert parent.fromshape(shape=[1])
+        path = str(tmp_path / f"{writer_module.__name__}.im")
+        result = _attach_copy(parent, method, infile=source, outfile=path, region=region, dropdeg=drop_axes)
+        assert result.done()
+        for reader_module in (oracle, tools):
+            reader = reader_module.image()
+            assert reader.open(path)
+            _assert_value(reader.getchunk(), expected)
+            coords = reader.coordsys()
+            record = coords.torecord()
+            coordinate_records.append(record)
+            spectral = next((value for key, value in record.items() if key.startswith("spectral")), None)
+            if drop_axes:
+                assert spectral is None
+            else:
+                lookup = spectral["tabular"]
+                _assert_value(lookup["worldvalues"], expected_frequencies)
+                _assert_value(lookup["pixelvalues"], np.arange(len(expected_frequencies), dtype=np.float64))
+                increment = (expected_frequencies[-1] - expected_frequencies[0]) / max(1, len(expected_frequencies) - 1)
+                _assert_value(lookup["cdelt"], np.array([increment]))
+            assert coords.done()
+            beam = reader.restoringbeam()
+            if case == "strided":
+                assert (beam["nChannels"], beam["nStokes"]) == (3, 2)
+                assert beam["beams"]["*2"]["*1"]["major"] == {"value": 903.0, "unit": "arcsec"}
+            else:
+                assert beam["major"] == {"value": 782.0, "unit": "arcsec"}
+            beam_records.append(beam)
+            assert reader.done()
+    for beam in beam_records[1:]:
+        _assert_value(beam, beam_records[0])
+    for record in coordinate_records[1:]:
+        _assert_value(record, coordinate_records[0])
+
+
+@pytest.mark.parametrize("method", ["fromimage", "newimagefromimage"])
+@pytest.mark.parametrize("axis", ["channels", "polarizations"])
+def test_copy_rejects_a_beam_grid_that_does_not_cover_the_source(tmp_path, oracle, method, axis):
+    source = str(tmp_path / "malformed-beams.im")
+    shape = [3, 4, 1, 6] if axis == "channels" else [3, 4, 4, 1]
+    writer = oracle.image()
+    assert writer.fromshape(source, shape)
+    assert writer.setrestoringbeam("4arcsec", "2arcsec", "12deg", channel=0, polarization=0)
+    assert writer.done()
+    table = oracle.table()
+    assert table.open(source, nomodify=False)
+    info = table.getkeyword("imageinfo")
+    beams = info["perplanebeams"]
+    info["perplanebeams"] = {
+        "nChannels": 2 if axis == "channels" else 1,
+        "nStokes": 1 if axis == "channels" else 2,
+        "*0": beams["*0"],
+        "*1": beams["*1"],
+    }
+    assert table.putkeyword("imageinfo", info)
+    assert table.done()
+    region_tool = oracle.regionmanager()
+    start = [0, 0, 0, 1] if axis == "channels" else [0, 0, 1, 0]
+    region = region_tool.box(start, [length - 1 for length in shape])
+    assert region_tool.done()
+    outfile = tmp_path / "copy.im"
+    for backend in (oracle, tools):
+        with pytest.raises(RuntimeError, match=f"Number of {axis} is not consistent"):
+            getattr(backend.image(), method)(outfile=str(outfile), infile=source, region=region)
+        assert not outfile.exists()
+
+
+def test_copy_uses_the_first_stored_spectral_coordinate_for_restoring_beams(tmp_path, oracle):
+    source = str(tmp_path / "transposed.im")
+    coords = oracle.coordsys().newcoordsys(direction=True, spectral=True)
+    assert coords.addcoordinate(spectral=True)
+    writer = oracle.image()
+    assert writer.fromshape(str(tmp_path / "original.im"), [3, 4, 6, 6], csys=coords.torecord())
+    assert coords.done()
+    for channel in range(6):
+        unit = "arcmin" if channel == 1 else "arcsec"
+        assert writer.setrestoringbeam(f"{20 + channel}{unit}", "2arcsec", "12deg", channel=channel)
+    transposed = writer.transpose(outfile=source, order="0132")
+    assert transposed.done()
+    assert writer.done()
+    region_tool = oracle.regionmanager()
+    region = region_tool.box([0, 0, 0, 1], [2, 3, 5, 5], inc=[1, 1, 1, 2])
+    assert region_tool.done()
+
+    for backend in (oracle, tools):
+        path = str(tmp_path / f"{backend.__name__}.im")
+        result = backend.image().newimagefromimage(infile=source, outfile=path, region=region)
+        assert result.done()
+        reader = oracle.image()
+        assert reader.open(path)
+        assert reader.shape().tolist() == [3, 4, 6, 3]
+        assert reader.restoringbeam()["nChannels"] == 3
+        for channel, major in enumerate((21.0, 23.0, 25.0)):
+            unit = "arcmin" if channel == 0 else "arcsec"
+            assert reader.restoringbeam(channel=channel)["major"] == {"value": major, "unit": unit}
+        assert reader.done()
+
+
+def test_copy_preserves_units_from_a_legacy_native_beam_grid(tmp_path, oracle):
+    source = str(tmp_path / "legacy.im")
+    writer = tools.image()
+    assert writer.fromshape(source, [3, 4, 1, 2])
+    assert writer.setrestoringbeam("21arcmin", "2arcmin", "0.2rad", channel=1, polarization=0)
+    assert writer.done()
+    table = oracle.table()
+    assert table.open(source, nomodify=False)
+    info = table.getkeyword("imageinfo")
+    beams = info["perplanebeams"]
+    beams["*0_0"] = beams.pop("*0")
+    beams["*1_0"] = beams.pop("*1")
+    expected = beams["*1_0"]
+    assert table.putkeyword("imageinfo", info)
+    assert table.done()
+
+    region_tool = oracle.regionmanager()
+    region = region_tool.box([0, 0, 0, 1], [2, 3, 0, 1])
+    assert region_tool.done()
+    path = str(tmp_path / "copy.im")
+    image = tools.image().newimagefromimage(infile=source, outfile=path, region=region)
+    assert image.done()
+    for backend in (tools, oracle):
+        reader = backend.image()
+        assert reader.open(path)
+        _assert_value(reader.restoringbeam(), expected)
+        assert reader.done()

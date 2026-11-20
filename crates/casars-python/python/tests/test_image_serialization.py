@@ -90,6 +90,30 @@ def test_invalid_record_detaches_and_preserves_native_output(tmp_path, oracle, m
         assert image.done()
 
 
+@pytest.mark.parametrize("problem", ["missing nested coordinates", "incompatible native rank"])
+def test_failed_native_record_restore_preserves_existing_image(tmp_path, problem):
+    target = str(tmp_path / "saved.im")
+    image = tools.image()
+    assert image.fromshape(target, [2, 3])
+    assert image.putchunk(np.full((2, 3), 7.0))
+    assert image.sethistory("input", ["original image"])
+    history = image.history()
+    record = image.torecord()
+    if problem == "missing nested coordinates":
+        record["coordsys"] = {}
+        diagnostic = "invalid coordinate system"
+    else:
+        record["shape"] = [2, 3, 2]
+        diagnostic = "Failed AlwaysAssert setCoordinateInfo"
+    with pytest.raises(RuntimeError, match=diagnostic):
+        image.fromrecord(record, target)
+    assert not image.isopen()
+    assert image.open(target)
+    np.testing.assert_array_equal(image.getchunk(), np.full((2, 3), 7.0))
+    assert image.history() == history
+    assert image.done()
+
+
 def test_record_restoration_with_short_input_and_mismatched_coordinates(tmp_path, oracle):
     payload = np.array([[2, 4], [3, 5]], dtype=np.int32)
     matrices = []

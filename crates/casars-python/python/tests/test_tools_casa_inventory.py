@@ -1,5 +1,4 @@
-"""The CASA tools #1025 adds to `casars.tools`: `image`, `coordsys`, `table`,
-`msmetadata` and `ms` (ADR-0017).
+"""CASA tool signatures and implementation status for `casars.tools` (ADR-0017).
 
 Each class has every method of CASA 6.7.6.14's installed binding, with its
 signature (`data/casa_<tool>_signatures.json`, written by
@@ -27,17 +26,45 @@ from _casa_tools import (
 )
 
 #: Each tool, and the issue its refused methods name.
-ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030}
+ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030,
+          "calibrater": 1528}
+CALIBRATER_OWNERS = {
+    "initweights": 1524,
+    "accumulate": 1525, "createcaltable": 1525, "updatecaltable": 1525,
+    "rerefant": 1525, "smooth": 1525,
+    "listcal": 1526, "plotcal": 1526,
+}
 
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
-IMPLEMENTED["coordsys"] = {"done", "referencepixel", "setreferencepixel", "torecord", "type"}
+IMPLEMENTED["calibrater"] = {
+    "open", "close", "done", "setvi", "selectvis", "reset",
+    "initcalset", "delmod", "setptmodel", "modelfit",
+}
+PARTIAL = {
+    "calibrater": {"setmodel", "setsolve"},
+    "image": {"fromimage", "imageconcat", "newimagefromimage"},
+}
+
+IMPLEMENTED["coordsys"] = {
+    "increment", "referencevalue",
+    "addcoordinate", "axesmap", "axiscoordinatetypes", "conversiontype", "coordinatetype", "copy", "done", "epoch",
+    "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "getconversiontype", "lineartransform",
+    "names", "naxes", "ncoordinates", "newcoordsys",
+    "observer", "parentname", "projection", "referencecode", "referencepixel", "restfrequency",
+    "setepoch",
+    "setnames", "setobserver", "setparentname", "setstokes",
+    "setreferencepixel", "settelescope",
+    "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
+}
 IMPLEMENTED["image"] = {
-    "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fromarray", "fromfits", "fromshape",
-    "getchunk", "getregion", "haslock", "history", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
+    "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
+    "getchunk", "getregion", "haslock", "history", "isconform", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
-    "fromimage", "newimagefromimage", "fromrecord", "torecord", "makearray", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "type",
+    "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",
+    "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "rotatebeam", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
+    "summary",
 }
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",
@@ -80,12 +107,14 @@ def test_signatures_match_a_live_casa(tool: str) -> None:
 @pytest.mark.parametrize("tool", sorted(ISSUES))
 def test_the_bundle_describes_each_method_and_what_casa_rs_does_with_it(tool: str) -> None:
     methods = set(casa_signatures(tool)["methods"])
+    partial = PARTIAL.get(tool, set())
     assert_bundle_describes(
         getattr(tools, tool),
         tool,
         {
             "implemented": IMPLEMENTED[tool],
-            "not_yet_implemented": methods - IMPLEMENTED[tool],
+            "partial": partial,
+            "not_yet_implemented": methods - IMPLEMENTED[tool] - partial,
         },
     )
 
@@ -94,11 +123,46 @@ def test_the_bundle_describes_each_method_and_what_casa_rs_does_with_it(tool: st
 def test_a_method_casa_rs_lacks_names_its_issue(tool: str) -> None:
     cls = getattr(tools, tool)
     instance = cls()
-    for name in sorted(set(casa_signatures(tool)["methods"]) - IMPLEMENTED[tool]):
+    missing = set(casa_signatures(tool)["methods"]) - IMPLEMENTED[tool] - PARTIAL.get(tool, set())
+    for name in sorted(missing):
         required = [
             parameter.name
             for parameter in inspect.signature(getattr(cls, name)).parameters.values()
             if parameter.name != "self" and parameter.default is inspect.Parameter.empty
         ]
-        with pytest.raises(NotImplementedError, match=rf"^{tool}\.{name} .*\(#{ISSUES[tool]}\)$"):
+        issue = CALIBRATER_OWNERS.get(name, ISSUES[tool]) if tool == "calibrater" else ISSUES[tool]
+        with pytest.raises(NotImplementedError, match=rf"^{tool}\.{name} .*\(#{issue}\)$"):
             getattr(instance, name)(**{parameter: None for parameter in required})
+
+
+def test_calibrater_method_returns_before_open() -> None:
+    instance = tools.calibrater()
+    assert instance.close() is True
+    assert instance.done() is True
+    assert instance.setvi(old=True, quiet=True) is True
+    assert instance.selectvis() is False
+    assert instance.reset() is False
+    assert instance.initcalset() is False
+    assert instance.delmod() is False
+    with pytest.raises(RuntimeError, match=r"Error in Calibrater::setModel: no VisEquation\."):
+        instance.setptmodel()
+
+
+IMAGER_CALIBRATION = {"open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft"}
+IMAGER_SETTINGS = {"defineimage", "setoptions", "setsdoptions", "setvp"}
+
+
+def test_imager_calibration_signatures() -> None:
+    recorded = casa_signatures("imager")
+    assert_casa_signatures(tools.imager, {
+        **recorded,
+        "methods": {name: recorded["methods"][name] for name in IMAGER_CALIBRATION | IMAGER_SETTINGS},
+    })
+    assert_bundle_describes(tools.imager, "imager", {
+        "implemented": IMAGER_CALIBRATION, "partial": IMAGER_SETTINGS,
+    })
+
+
+def test_imager_calibration_signatures_match_live_casa() -> None:
+    casatools = pytest.importorskip("casatools")
+    assert_live_signatures(tools.imager, casatools.imager, methods=IMAGER_CALIBRATION | IMAGER_SETTINGS)

@@ -95,7 +95,12 @@ pub fn image_task_returning(
     value: CasaValue,
     result: Result<ImageAnalysisTaskResult, ImageError>,
 ) -> Result<TaskSuccess, TaskFailure> {
-    let result = result.map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let result = result.map_err(|error| match error {
+        ImageError::TaskArgumentType { parameter, message } => {
+            TaskFailure::validation(message).at(parameter)
+        }
+        error => TaskFailure::execution(error.to_string()),
+    })?;
     let text = serde_json::to_string_pretty(&result)
         .map_err(|error| TaskFailure::execution(format!("serialize the result: {error}")))?;
     Ok(TaskSuccess::new(value, &result)?.with_text(text + "\n"))

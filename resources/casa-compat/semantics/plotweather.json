@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "task": "plotweather",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "3b459173040b1758f761ba68e95d59e2d5d60214",
+  "parameters": {
+    "vis": {
+      "status": "Implemented",
+      "scope": "Existing MeasurementSet path. The literal SPECTRAL_WINDOW and WEATHER tables supply the frequency and station samples. The earliest main TIME supplies the season when WEATHER cannot be used.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "opacity"
+      ]
+    },
+    "seasonal_weight": {
+      "status": "Implemented",
+      "scope": "Linear seasonal weighting, including extrapolation. Unavailable station data use the seasonal model alone. Nonfinite weights return nonfinite opacity when plotting is off.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "opacity"
+      ]
+    },
+    "doPlot": {
+      "status": "Implemented",
+      "scope": "Prepare the five-panel weather summary when station data are available. False returns just the spectral-window opacity.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "weather-summary"
+      ]
+    },
+    "plotName": {
+      "status": "Implemented",
+      "scope": "Optional Matplotlib output name. The default appends .plotweather.png to the MeasurementSet name.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "weather-summary"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "opacity",
+      "title": "VLA zenith opacity",
+      "status": "Implemented",
+      "scope": "Apply the station temperature and dew point and the seasonal EVLA Memo 143 model to the installed CASA VLA reference fit. This yields one NumPy float64 in a list for each spectral window in table order.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    },
+    {
+      "id": "weather-summary",
+      "title": "Weather summary figure",
+      "status": "Implemented",
+      "scope": "Plot solar elevation at the VLA, wind, temperature and dew point, precipitable water and opacity. The Python host renders and saves the 150 dpi figure through the shared plot document.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    }
+  ],
+  "decisions": [],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input CASA Python results and Matplotlib artists",
+      "state": "passed",
+      "scope": "Zenith opacity per spectral window and the five-panel weather figure. Includes weather and seasonal weighting, fallback for absent, empty or unreadable WEATHER tables, fractional UTC times, named and default PNGs, and typed validation.",
+      "result": "10 paired opacity cases, 15 panels, 13 exact errors and five numerical laws passed.",
+      "casa_version": "6.7.6.14",
+      "revision": "3b459173040b1758f761ba68e95d59e2d5d60214",
+      "command": "MPLBACKEND=Agg PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotweather_oracle.py --work <empty-directory> --native-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotweather-20261119.json",
+      "links": [
+        "tools/casa-compat/plotweather_oracle.py",
+        "tools/casa-compat/generate_plotweather_opacity.py"
+      ]
+    }
+  }
+}

@@ -15,7 +15,7 @@
 //! This corresponds to C++ `LinearCoordinate`.
 
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::{Array2, ShapeBuilder};
+use ndarray::{Array2, ArrayView2, ArrayViewMut2, Axis, ShapeBuilder};
 
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
@@ -44,6 +44,54 @@ pub struct LinearCoordinate {
 }
 
 impl LinearCoordinate {
+    pub(crate) fn to_pixel_columns(
+        &self,
+        world: ArrayView2<'_, f64>,
+        mut pixels: ArrayViewMut2<'_, f64>,
+    ) -> Result<(), CoordinateError> {
+        if world.ncols() == 0 {
+            return Ok(());
+        }
+        self.validate_increments()?;
+        let inverse = invert_matrix(&self.pc)?;
+        let mut scaled = vec![0.0; self.n_axes()];
+        for (input, mut output) in world.axis_iter(Axis(1)).zip(pixels.axis_iter_mut(Axis(1))) {
+            self.scale_world(input.iter().copied(), &mut scaled);
+            self.project_to_pixel(&inverse, &scaled, output.iter_mut());
+        }
+        Ok(())
+    }
+
+    fn validate_increments(&self) -> Result<(), CoordinateError> {
+        if let Some(axis) = self.cdelt.iter().position(|value| value.abs() < 1e-300) {
+            return Err(CoordinateError::ConversionFailed(format!(
+                "zero increment on axis {axis}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn scale_world(&self, world: impl IntoIterator<Item = f64>, scaled: &mut [f64]) {
+        for (axis, (world, output)) in world.into_iter().zip(scaled).enumerate() {
+            *output = (world - self.crval[axis]) / self.cdelt[axis];
+        }
+    }
+
+    fn project_to_pixel<'a>(
+        &self,
+        inverse: &Array2<f64>,
+        scaled: &[f64],
+        output: impl IntoIterator<Item = &'a mut f64>,
+    ) {
+        for (axis, pixel) in output.into_iter().enumerate() {
+            let mut sum = 0.0;
+            for (index, scaled) in scaled.iter().enumerate() {
+                sum += inverse[[axis, index]] * scaled;
+            }
+            *pixel = sum + self.crpix[axis];
+        }
+    }
+
     /// Creates a new linear coordinate with `naxes` axes and default values.
     ///
     /// The reference value, reference pixel, and all increments default to 0.0
@@ -137,7 +185,7 @@ impl LinearCoordinate {
     /// with a dropped one, so that the dropped axis's value would move the
     /// kept axes' world values or theirs move it. Without coupling, the kept
     /// axes convert exactly as before, whatever the dropped axes hold.
-    pub(crate) fn kept_axes(&self, kept: &[usize]) -> Option<Self> {
+    pub fn kept_axes(&self, kept: &[usize]) -> Option<Self> {
         let dropped = (0..self.n_axes()).filter(|axis| !kept.contains(axis));
         let coupled = dropped
             .flat_map(|axis| kept.iter().map(move |&k| (axis, k)))
@@ -251,28 +299,16 @@ impl Coordinate for LinearCoordinate {
         }
 
         // Compute (world - crval) / cdelt
+        self.validate_increments()?;
         let mut scaled = vec![0.0; n];
-        for i in 0..n {
-            if self.cdelt[i].abs() < 1e-300 {
-                return Err(CoordinateError::ConversionFailed(format!(
-                    "zero increment on axis {i}"
-                )));
-            }
-            scaled[i] = (world[i] - self.crval[i]) / self.cdelt[i];
-        }
+        self.scale_world(world.iter().copied(), &mut scaled);
 
         // Invert PC matrix: pixel = crpix + PC^-1 * scaled
         // For small N, use direct inversion via cofactor / Gauss elimination.
         let inv_pc = invert_matrix(&self.pc)?;
 
         let mut pixel = vec![0.0; n];
-        for i in 0..n {
-            let mut sum = 0.0;
-            for j in 0..n {
-                sum += inv_pc[[i, j]] * scaled[j];
-            }
-            pixel[i] = sum + self.crpix[i];
-        }
+        self.project_to_pixel(&inv_pc, &scaled, &mut pixel);
 
         Ok(pixel)
     }

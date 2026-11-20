@@ -19,9 +19,9 @@ pub(super) fn prepare(
     append: bool,
 ) -> Result<Vec<PlotFigure>, SimobserveError> {
     let mut payload = if append {
-        Payload::append(output)?
+        Payload::append(output).map_err(failure)?
     } else {
-        Payload::open(output)?
+        Payload::open(output).map_err(failure)?
     };
     let mut plots = Vec::new();
     if p.flag("image") && !plan.inputs.synthesis.is_empty() {
@@ -32,7 +32,7 @@ pub(super) fn prepare(
     {
         plots.push(figure);
     }
-    let bytes = payload.finish()?;
+    let bytes = payload.finish().map_err(failure)?;
     for figure in &plots {
         figure.document.validate_payload(bytes).map_err(failure)?;
     }

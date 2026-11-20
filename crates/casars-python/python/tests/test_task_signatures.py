@@ -29,11 +29,8 @@ SURFACES = REPO / "crates" / "casa-provider-contracts" / "resources" / "paramete
 
 # casa-rs tasks with no CASA counterpart, outside the mimic rule.
 CASA_RS_ONLY = {"calibrate", "msconvert", "msexplore"}
-# CASA-named tasks not yet CASA-exact: each family's PR in #931 empties its
-# entries, and plotms waits for its own decision. This list only shrinks.
-PENDING = {
-    "plotms": "its own decision (#931)",
-}
+# CASA-named tasks whose Python signatures still need migration under #931.
+PENDING: dict[str, str] = {}
 
 
 def surfaces() -> dict[str, dict]:

@@ -2,6 +2,7 @@
 
 mod common;
 
+use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataMode, FlagDataRequest, FlagMerge, MeasurementSet, QuackMode,
     delete_flag_version, flagdata, flagdata_path, list_flag_versions, rename_flag_version,
@@ -12,7 +13,9 @@ use ndarray::{ArrayD, IxDyn};
 use std::process::Command;
 use tempfile::tempdir;
 
-use common::{NUM_CHAN, NUM_CORR, create_msexplore_fixture_ms};
+use common::{
+    NUM_CHAN, NUM_CORR, create_msexplore_averaging_fixture_ms, create_msexplore_fixture_ms,
+};
 
 #[test]
 fn clipzeros_matches_casa_float_epsilon_behavior() {
@@ -662,6 +665,37 @@ fn renaming_onto_an_existing_flag_version_is_refused() {
         comments(&ms)[0],
         ("first".to_string(), "recommented".to_string())
     );
+}
+
+#[test]
+fn flagdata_keeps_both_baseline_pairs_from_the_rust_builder() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_averaging_fixture_ms(temp.path());
+    let mut ms = MeasurementSet::open(&ms_path).expect("open MS");
+    // The fixture has (0, 2) on rows 4 and 7. Give row 7 a second baseline.
+    ms.main_table_mut()
+        .cell_accessor_mut(7, "ANTENNA1")
+        .expect("open ANTENNA1")
+        .set(Value::Scalar(ScalarValue::Int32(1)))
+        .expect("set ANTENNA1");
+    ms.save().expect("save fixture");
+    let report = flagdata(
+        &mut ms,
+        &FlagDataRequest {
+            selection: MsSelection::new().baseline(&[(0, 2), (1, 2)]),
+            flagbackup: false,
+            ..FlagDataRequest::default()
+        },
+    )
+    .expect("flag the two Rust baseline pairs");
+    assert_eq!(report.selected_rows, 2);
+    for row in 0..ms.row_count() {
+        if [4, 7].contains(&row) {
+            assert_flag(&ms, row, 0, 0);
+        } else {
+            assert_not_flag(&ms, row, 0, 0);
+        }
+    }
 }
 
 #[test]
