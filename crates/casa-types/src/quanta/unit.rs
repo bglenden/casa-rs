@@ -9,7 +9,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::quanta::error::UnitError;
-use crate::quanta::parser::parse_unit;
+use crate::quanta::parser::{parse_unit, parse_unit_with_definitions};
 use crate::quanta::unit_val::UnitVal;
 
 /// A validated unit: a name string paired with its resolved [`UnitVal`].
@@ -46,6 +46,23 @@ impl Unit {
         };
         Ok(Self {
             name: s.to_owned(),
+            val,
+        })
+    }
+
+    /// Parse a unit using local definitions before looking up global units.
+    /// The local meanings apply only to this parse and are not cached.
+    /// # Errors
+    /// Returns an error if the unit expression cannot be parsed.
+    pub fn with_local_definitions(
+        name: &str,
+        definitions: &[(&str, UnitVal)],
+    ) -> Result<Self, UnitError> {
+        let val = parse_unit_with_definitions(name, definitions).or_else(|_| {
+            parse_unit_with_definitions(&normalize_casa_unit_name(name), definitions)
+        })?;
+        Ok(Self {
+            name: name.to_owned(),
             val,
         })
     }
@@ -149,6 +166,37 @@ impl Eq for Unit {}
 mod tests {
     use super::*;
     use crate::quanta::dim::Dimension;
+
+    #[test]
+    fn local_brightness_area_definitions_do_not_change_global_units() {
+        let ordinary = Unit::new("Jy/beam").unwrap();
+        let angle = UnitVal::ANGLE.pow(2);
+        let contextual =
+            Unit::with_local_definitions("Jy/beam", &[("beam", UnitVal::new(2e-10, angle.dim))])
+                .unwrap();
+        let jy = Unit::new("Jy").unwrap();
+        assert_eq!(contextual.val().dim * angle.dim, jy.val().dim);
+        assert!((contextual.val().factor / jy.val().factor - 5e9).abs() < 1e-6);
+        let afterward = Unit::new("Jy/beam").unwrap();
+        assert_eq!(ordinary.val().dim, afterward.val().dim);
+        assert_eq!(ordinary.val().factor, afterward.val().factor);
+    }
+
+    #[test]
+    fn contextual_prefixes_and_powers_ignore_cached_ordinary_units() {
+        let angular_area = UnitVal::new(2e-10, UnitVal::ANGLE.pow(2).dim);
+        let definitions = [("pixel", angular_area)];
+        let before = Unit::with_local_definitions("Jy/mpixel2", &definitions).unwrap();
+        Unit::new("mpixel").unwrap();
+        Unit::new("mpixel2").unwrap();
+        let after = Unit::with_local_definitions("Jy/mpixel2", &definitions).unwrap();
+        let jy = Unit::new("Jy").unwrap();
+        let expected = *jy.val() / UnitVal::new(2e-13, angular_area.dim).pow(2);
+        assert_eq!(before.val().dim, expected.dim);
+        assert_eq!(before.val().factor, expected.factor);
+        assert_eq!(after.val().dim, before.val().dim);
+        assert_eq!(after.val().factor, before.val().factor);
+    }
 
     #[test]
     fn casacore_unit_spelling_is_available_to_all_consumers() {

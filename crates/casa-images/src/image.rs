@@ -98,6 +98,9 @@ impl ImageHistoryEntry {
     }
 }
 
+#[cfg(unix)]
+mod locking;
+
 /// Read the image log including CASA priority, timestamp, and location.
 pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
     Ok(image_history_rows(path)?
@@ -636,6 +639,23 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
     /// Replaces a named mask.
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError>;
 
+    /// Write a unit-stride section of a named mask. New masks start false.
+    fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        validate_mask_slice_write(self.shape(), data.shape(), start)?;
+        let mut mask = match self.get_named_mask(name) {
+            Ok(mask) => mask,
+            Err(ImageError::MaskNotFound(_)) => ArrayD::from_elem(IxDyn(self.shape()), false),
+            Err(error) => return Err(error),
+        };
+        assign_mask_slice(&mut mask, data, start)?;
+        self.put_mask(name, &mask)
+    }
+
     /// Removes a named mask.
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError>;
 
@@ -738,6 +758,10 @@ pub struct PagedImage<T: ImagePixel> {
     /// needs mutation even through `&self` trait methods.
     tiled_io: Option<RefCell<TiledArrayStorage>>,
     max_cache_bytes: Cell<usize>,
+    #[cfg(unix)]
+    cached_modify_counter: Option<u32>,
+    #[cfg(unix)]
+    pending_tile_writes: bool,
     _pixel: PhantomData<T>,
 }
 
@@ -998,6 +1022,10 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
             max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
+            #[cfg(unix)]
+            cached_modify_counter: None,
+            #[cfg(unix)]
+            pending_tile_writes: false,
             _pixel: PhantomData,
         })
     }
@@ -1075,6 +1103,10 @@ impl<T: ImagePixel> PagedImage<T> {
             temp_history: Vec::new(),
             tiled_io: Some(RefCell::new(tiled_io)),
             max_cache_bytes: Cell::new(cache_bytes),
+            #[cfg(unix)]
+            cached_modify_counter: None,
+            #[cfg(unix)]
+            pending_tile_writes: false,
             _pixel: PhantomData,
         })
     }
@@ -1093,19 +1125,16 @@ impl<T: ImagePixel> PagedImage<T> {
         } else {
             Table::open(TableOptions::new(&path))?
         };
-        let coords = match table.keywords().get("coords") {
-            Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
-                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
-            _ => CoordinateSystem::new(),
-        };
-        let units = match table.keywords().get("units") {
-            Some(Value::Scalar(ScalarValue::String(s))) => s.clone(),
-            _ => String::new(),
-        };
-        let misc_info = match table.keywords().get("miscinfo") {
-            Some(Value::Record(rec)) => rec.clone(),
-            _ => RecordValue::default(),
-        };
+        Self::from_disk(path, table, tiled_io, max_cache_bytes)
+    }
+
+    fn from_disk(
+        path: PathBuf,
+        table: Table,
+        tiled_io: Option<RefCell<TiledArrayStorage>>,
+        max_cache_bytes: usize,
+    ) -> Result<Self, ImageError> {
+        let (coords, units, misc_info) = Self::read_table_metadata(&table)?;
         let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
         if map_primitive != T::PRIMITIVE_TYPE {
             return Err(ImageError::InvalidMetadata(format!(
@@ -1125,8 +1154,12 @@ impl<T: ImagePixel> PagedImage<T> {
             (shape, ts)
         };
         Ok(Self {
+            #[cfg(unix)]
+            cached_modify_counter: table.locked_modify_counter().ok(),
+            #[cfg(unix)]
+            pending_tile_writes: false,
             table,
-            shape: shape.clone(),
+            shape,
             tile_shape,
             coords,
             path: Some(path),
@@ -1145,15 +1178,9 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
-    /// Opens an existing image from disk as the requested typed image.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
-        let path = path.as_ref().to_path_buf();
-        let tiled_io = Self::open_tiled_io(&path, 0).ok().map(RefCell::new);
-        let table = if tiled_io.is_some() {
-            Table::open_metadata_only(TableOptions::new(&path))?
-        } else {
-            Table::open(TableOptions::new(&path))?
-        };
+    fn read_table_metadata(
+        table: &Table,
+    ) -> Result<(CoordinateSystem, String, RecordValue), ImageError> {
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
@@ -1167,47 +1194,12 @@ impl<T: ImagePixel> PagedImage<T> {
             Some(Value::Record(rec)) => rec.clone(),
             _ => RecordValue::default(),
         };
+        Ok((coords, units, misc_info))
+    }
 
-        // Enable tile-aware I/O whenever the on-disk image has a compatible
-        // tiled payload. Rust-created `_tiled_io` images are the fast-path,
-        // but standard casacore images created by C++ may also be compatible.
-        let map_primitive = Self::map_column_primitive_type(&table, tiled_io.as_ref())?;
-        if map_primitive != T::PRIMITIVE_TYPE {
-            return Err(ImageError::InvalidMetadata(format!(
-                "image pixel type mismatch: requested {:?}, found {:?}",
-                T::PRIMITIVE_TYPE,
-                map_primitive
-            )));
-        }
-
-        // When tile-aware I/O is active, the real shape comes from the TSM header
-        // (the table cell may hold only a placeholder array).
-        let (shape, tile_shape) = if let Some(ref tio) = tiled_io {
-            let tio_ref = tio.borrow();
-            (tio_ref.cube_shape().to_vec(), tio_ref.tile_shape().to_vec())
-        } else {
-            let shape = Self::map_column_shape(&table)?;
-            let ts = TiledShape::new(shape.clone(), T::ELEM_SIZE)?
-                .tile_shape()
-                .to_vec();
-            (shape, ts)
-        };
-
-        Ok(Self {
-            table,
-            shape: shape.clone(),
-            tile_shape,
-            coords,
-            path: Some(path),
-            units,
-            misc_info,
-            temp_masks: BTreeMap::new(),
-            persistent_masks: RefCell::new(BTreeMap::new()),
-            temp_history: Vec::new(),
-            tiled_io,
-            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
-            _pixel: PhantomData,
-        })
+    /// Opens an existing image from disk as the requested typed image.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
+        Self::open_with_cache(path, 0)
     }
 
     /// Detects the pixel type of an image on disk without opening it as a
@@ -2001,6 +1993,57 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Saves image metadata with history while holding the native log write lock.
+    /// With `info == None` the operation appends history only.
+    ///
+    /// # Errors
+    /// Returns an error if the record is invalid or if the image or its log
+    /// cannot be read, locked or written.
+    pub fn save_image_info_with_history(
+        &mut self,
+        info: Option<&RecordValue>,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        let path = Self::logtable_path(self.path.as_ref().ok_or(ImageError::NotPersistent)?);
+        self.ensure_logtable()?;
+        let mut lock = TableWriteLock::acquire_to_reread(&path, 0)?;
+        let mut log = Table::open(TableOptions::new(&path))?;
+        let time = ImageHistoryEntry::current_time()?;
+        Self::add_logtable_entries(
+            &mut log,
+            messages
+                .iter()
+                .map(|message| (time, location, message.as_str(), "INFO", "")),
+        )?;
+        let previous = self.table.keywords().get("imageinfo").cloned();
+        if let Some(info) = info {
+            self.set_image_info_record(info.clone())?;
+        }
+        let publish = self
+            .save()
+            .and_then(|()| log.save(TableOptions::new(&path)).map_err(ImageError::from));
+        if let Err(error) = publish {
+            if info.is_some() {
+                let keywords = self.table.keywords_mut();
+                if let Some(previous) = previous {
+                    keywords.upsert("imageinfo", previous);
+                } else {
+                    keywords.remove("imageinfo");
+                }
+                if let Err(restore) = self.save() {
+                    return Err(ImageError::Io(format!(
+                        "{error}; restoring the previous image metadata also failed: {restore}"
+                    )));
+                }
+            }
+            return Err(error);
+        }
+        lock.record_write();
+        lock.release()?;
+        Ok(())
+    }
+
     /// Append imported history with its original location and MJD time.
     ///
     /// # Errors
@@ -2340,32 +2383,45 @@ impl<T: ImagePixel> PagedImage<T> {
         start: &[usize],
     ) -> Result<(), ImageError> {
         validate_mask_slice_write(&self.shape, data.shape(), start)?;
-        let record = make_paged_mask_record(&subtable_reference(name), &self.shape);
-        let mut masks = match self.table.keywords().get(MASKS_KEYWORD) {
-            Some(Value::Record(rec)) => rec.clone(),
-            _ => RecordValue::default(),
+        let entry = match self.table.keywords_mut().get_mut(MASKS_KEYWORD) {
+            Some(Value::Record(masks)) => masks.get_mut(name),
+            _ => None,
         };
-        masks.upsert(name, Value::Record(record));
-        self.table
-            .keywords_mut()
-            .upsert(MASKS_KEYWORD, Value::Record(masks));
+        let relative_path = match entry {
+            Some(Value::Array(ArrayValue::Bool(mask))) => {
+                if mask.shape() != self.shape.as_slice() {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: self.shape.clone(),
+                        got: mask.shape().to_vec(),
+                    });
+                }
+                return assign_mask_slice(mask, data, start);
+            }
+            Some(Value::Record(record)) => Some(Self::persistent_mask_relative_path(record)?),
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "mask keyword is neither a bool array nor a paged-mask record".to_string(),
+                ));
+            }
+            None => None,
+        };
 
         if let Some(path) = &self.path {
-            let mask_path = path.join(name);
-            if !mask_path.exists() {
-                let mut mask = PagedArray::<bool>::create_with_cache(
-                    TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
-                    &mask_path,
-                    self.cache_bytes(),
-                )
-                .map_err(ImageError::from)?;
-                mask.put_slice(data, start)?;
-                mask.flush().map_err(ImageError::from)?;
+            let mask_path = relative_path.as_ref().map_or_else(
+                || path.join(name),
+                |reference| casa_tables::add_directory(reference, path),
+            );
+            let mut mask = if relative_path.is_some() || mask_path.exists() {
+                PagedArray::<bool>::open_with_cache(mask_path, self.cache_bytes())?
             } else {
-                let mut mask = PagedArray::<bool>::open_with_cache(&mask_path, self.cache_bytes())?;
-                mask.put_slice(data, start)?;
-                mask.flush().map_err(ImageError::from)?;
-            }
+                PagedArray::<bool>::create_with_cache(
+                    TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
+                    mask_path,
+                    self.cache_bytes(),
+                )?
+            };
+            mask.put_slice(data, start)?;
+            mask.flush()?;
         } else {
             let mask = self
                 .temp_masks
@@ -2373,7 +2429,12 @@ impl<T: ImagePixel> PagedImage<T> {
                 .or_insert_with(|| ArrayD::from_elem(IxDyn(&self.shape), false));
             assign_mask_slice(mask, data, start)?;
         }
-        self.persistent_masks.borrow_mut().remove(name);
+        if relative_path.is_none() {
+            self.register_paged_mask(name);
+        } else {
+            // Multiple region names can reference the same on-disk table.
+            self.persistent_masks.borrow_mut().clear();
+        }
         Ok(())
     }
 
@@ -2474,6 +2535,10 @@ impl<T: ImagePixel> PagedImage<T> {
             // table.info. This preserves the existing tiled storage-manager
             // layout instead of rewriting the placeholder map cell.
             self.save_metadata_only(&path)?;
+            #[cfg(unix)]
+            {
+                self.pending_tile_writes = false;
+            }
         } else {
             if !self.temp_masks.is_empty() {
                 // Flush first so the image directory exists for mask sub-tables.
@@ -2674,6 +2739,17 @@ impl<T: ImagePixel> PagedImage<T> {
         // `logtable` CASA wrote unreadable to it.
         let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
+        Self::add_logtable_entries(&mut table, entries)?;
+        table.save(TableOptions::new(path))?;
+        lock.record_write();
+        lock.release()?;
+        Ok(())
+    }
+
+    fn add_logtable_entries<'a>(
+        table: &mut Table,
+        entries: impl IntoIterator<Item = (f64, &'a str, &'a str, &'a str, &'a str)>,
+    ) -> Result<(), ImageError> {
         for (time, location, message, priority, object_id) in entries {
             table.add_row(RecordValue::new(vec![
                 RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
@@ -2695,9 +2771,6 @@ impl<T: ImagePixel> PagedImage<T> {
                 ),
             ]))?;
         }
-        table.save(TableOptions::new(path))?;
-        lock.record_write();
-        lock.release()?;
         Ok(())
     }
 
@@ -2874,6 +2947,15 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
 
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
         PagedImage::put_mask(self, name, data)
+    }
+
+    fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        PagedImage::put_mask_slice(self, name, data, start)
     }
 
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
@@ -3075,6 +3157,10 @@ fn paged_image_put_slice_view<T: ImagePixel>(
         }
     }
     if let Some(ref tio) = image.tiled_io {
+        #[cfg(unix)]
+        {
+            image.pending_tile_writes = true;
+        }
         if view_is_fortran_contiguous(&data)
             && let Some(slice) = data.as_slice_memory_order()
             && tio
@@ -3318,7 +3404,7 @@ fn slice_mask_array(
     Ok(view.to_owned())
 }
 
-fn validate_mask_slice_write(
+pub(crate) fn validate_mask_slice_write(
     full_shape: &[usize],
     data_shape: &[usize],
     start: &[usize],
@@ -3346,7 +3432,7 @@ fn validate_mask_slice_write(
     Ok(())
 }
 
-fn assign_mask_slice(
+pub(crate) fn assign_mask_slice(
     mask: &mut ArrayD<bool>,
     data: &ArrayD<bool>,
     start: &[usize],
@@ -4360,6 +4446,52 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(untouched.iter().all(|value| !*value));
+    }
+
+    #[test]
+    fn paged_image_mask_slice_preserves_existing_storage_and_pixels() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing_masks.image");
+        let shape = vec![4, 3];
+        let mut image = PagedImage::<f32>::create(shape.clone(), make_coords(), &path).unwrap();
+        let initial = ArrayD::from_shape_fn(IxDyn(&shape), |index| index[0] != 0);
+        image.put_mask("backing", &initial).unwrap();
+        let mut masks = RecordValue::default();
+        masks.upsert("inline", Value::Array(ArrayValue::Bool(initial.clone())));
+        for name in ["aliased", "same_backing"] {
+            masks.upsert(
+                name,
+                Value::Record(make_paged_mask_record(
+                    &subtable_reference("backing"),
+                    &shape,
+                )),
+            );
+        }
+        image
+            .table
+            .keywords_mut()
+            .upsert(MASKS_KEYWORD, Value::Record(masks));
+        image.set_default_mask("inline").unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let mut image = PagedImage::<f32>::open(&path).unwrap();
+        let patch = ArrayD::from_elem(IxDyn(&[1, 1]), false);
+        assert!(image.get_named_mask("same_backing").unwrap()[[2, 1]]);
+        for name in ["inline", "aliased"] {
+            MutableImageInterface::put_mask_slice(&mut image, name, &patch, &[2, 1]).unwrap();
+        }
+        assert!(!image.get_named_mask("same_backing").unwrap()[[2, 1]]);
+        image.save().unwrap();
+        drop(image);
+
+        let mut expected = initial;
+        expected[[2, 1]] = false;
+        let image = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(image.get_mask().unwrap(), Some(expected.clone()));
+        assert_eq!(image.get_named_mask("aliased").unwrap(), expected);
+        assert!(!path.join("inline").exists());
+        assert!(!path.join("aliased").exists());
     }
 
     #[test]

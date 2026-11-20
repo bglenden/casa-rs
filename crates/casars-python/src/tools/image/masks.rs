@@ -99,6 +99,11 @@ fn apply_mask_operation(
             return Ok(vec![default.unwrap_or_default()]);
         }
         MaskOperation::Set => {
+            if image.fits().is_some() {
+                return Err(raised(
+                    "RegionHandler::setDefaultMask cannot be used for this image type",
+                ));
+            }
             let name = names.first().map_or("", String::as_str);
             if name.is_empty() {
                 with_pixels!(image, storage => with_storage!(storage, image => image.unset_default_mask())).map_err(raised)?;
@@ -133,6 +138,11 @@ fn apply_mask_operation(
                     names.len()
                 )));
             };
+            if image.fits().is_some() {
+                return Err(raised(
+                    "RegionHandler::renameRegion cannot be used for this image type",
+                ));
+            }
             if current.contains(from) {
                 validate_name(to)?;
                 if has_region(image, to) {
@@ -145,6 +155,11 @@ fn apply_mask_operation(
             let [from, to, ..] = names else {
                 return Err(raised("Exception: Supply the original and new mask names."));
             };
+            if image.fits().is_some() {
+                return Err(raised(
+                    "RegionHandler::makeMask - cannot create mask for virtual image",
+                ));
+            }
             copy_mask(image, from, to)?;
         }
     }
@@ -163,19 +178,26 @@ impl PyImageTool {
         let names = string_vector(name, "name")?;
         py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(Vec::new());
             };
             let operation = MaskOperation::parse(op)?;
-            let mut image = image.lock();
-            let result = apply_mask_operation(&mut image, operation, &names)?;
-            if matches!(
+            let mut image = attachment.lock();
+            let writes = matches!(
                 operation,
                 MaskOperation::Set
                     | MaskOperation::Rename
                     | MaskOperation::Delete
                     | MaskOperation::Copy
-            ) {
+            );
+            let kind = if writes {
+                casa_tables::LockType::Write
+            } else {
+                casa_tables::LockType::Read
+            };
+            attachment.require_lock(&mut image, kind)?;
+            let result = apply_mask_operation(&mut image, operation, &names)?;
+            if writes {
                 if state.history
                     && (!matches!(operation, MaskOperation::Copy)
                         || op.to_ascii_uppercase().starts_with("COPY"))

@@ -349,6 +349,29 @@ fn transform_refusals_are_validation_at_the_parameter_at_fault() {
     }
 }
 
+#[test]
+fn transform_cli_distinguishes_empty_selectors_from_missing_typed_values() {
+    let binary = env!("CARGO_BIN_EXE_mstransform");
+    for surface in ["split", "mstransform"] {
+        for flag in ["--field", "--spw", "--scan", "--antenna", "--timerange"] {
+            let initial = [surface, "--no-save-last", "--show", flag];
+            let empty = Command::new(binary).args(initial).arg("").output().unwrap();
+            assert!(
+                empty.status.success(),
+                "{surface} {flag}: {}",
+                String::from_utf8_lossy(&empty.stderr)
+            );
+            let whitespace = Command::new(binary)
+                .args(initial)
+                .arg("   ")
+                .output()
+                .unwrap();
+            assert_eq!(whitespace.status.code(), Some(2), "{surface} {flag}");
+            assert!(String::from_utf8_lossy(&whitespace.stderr).contains("has no typed value"));
+        }
+    }
+}
+
 fn run_json(binary: &str, request: &Path) -> Output {
     run(binary, &["--json-run", request.to_str().unwrap()])
 }

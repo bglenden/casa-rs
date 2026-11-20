@@ -6,7 +6,7 @@ import os
 import subprocess
 import pytest
 
-from casars import data as casars_data
+from casars._native_image import NativeImageView
 from casars import imexplore
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -62,7 +62,7 @@ def fixtures(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def test_image_plane_data_includes_wcs_mask_beam_and_overlays(monkeypatch) -> None:
-    monkeypatch.setattr(imexplore, "Image", _FakeImage)
+    monkeypatch.setattr(imexplore, "NativeImageView", _FakeImage)
     overlay = {"kind": "point", "x": 1.0, "y": 0.5, "label": "peak"}
 
     result = imexplore.data(
@@ -120,7 +120,7 @@ def test_a_plane_through_one_direction_axis_has_no_wcs(fixtures: Path) -> None:
 
 def test_coordinates_that_miss_an_axis_give_no_direction_wcs(fixtures: Path) -> None:
     # A direction over two of three pixel axes cannot be written as FITS.
-    image = casars_data.Image.open(fixtures / "short_coordinates.image")
+    image = NativeImageView.open(fixtures / "short_coordinates.image")
     assert image._direction_wcs() is None
 
     plane = imexplore.data(fixtures / "short_coordinates.image", axis=2, index=0)
@@ -134,7 +134,7 @@ def test_the_direction_plane_wcs_gives_casa_rs_world_coordinates(fixtures: Path)
     wcs = imexplore._astropy_wcs(plane)
 
     assert wcs is not None and wcs.naxis == 2
-    expected_at = casars_data.Image.open(fixtures / "direction_fixture.image").misc_info
+    expected_at = NativeImageView.open(fixtures / "direction_fixture.image").misc_info
     pixels = np.asarray(expected_at["expected_pixels"])
     world = np.asarray(expected_at["expected_world"])
     assert pixels.shape == world.shape == (5, 4)

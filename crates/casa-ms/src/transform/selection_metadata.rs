@@ -17,6 +17,12 @@ use super::{
     MsTransformError, MsTransformRequest, rewrite_selected_table_rows, scalar_f64, scalar_i32,
 };
 
+pub(super) struct OrderedMainRows {
+    pub(super) rows: Vec<usize>,
+    pub(super) descriptions: Vec<i32>,
+    pub(super) starts_visibility_buffer: Vec<bool>,
+}
+
 /// CASA's visibility iterator groups ordinary MS rows by the original IDs
 /// before ordering each group by TIME (MSTransformManager::setIterationApproach).
 pub(super) fn sort_selected_rows(
@@ -24,7 +30,7 @@ pub(super) fn sort_selected_rows(
     request: &MsTransformRequest,
     rows: Vec<usize>,
     descriptions: Vec<i32>,
-) -> Result<(Vec<usize>, Vec<i32>), MsTransformError> {
+) -> Result<OrderedMainRows, MsTransformError> {
     const GROUPS: [&str; 5] = [
         "OBSERVATION_ID",
         "ARRAY_ID",
@@ -64,10 +70,23 @@ pub(super) fn sort_selected_rows(
             .then_with(|| left.2.total_cmp(&right.2))
             .then_with(|| left.3.cmp(&right.3))
     });
-    Ok(ordering
+    let mut starts_visibility_buffer = Vec::with_capacity(ordering.len());
+    for (index, &(keys, description, time, _)) in ordering.iter().enumerate() {
+        let start = index == 0 || {
+            let (previous_keys, previous_description, previous_time, _) = ordering[index - 1];
+            (keys, description, time) != (previous_keys, previous_description, previous_time)
+        };
+        starts_visibility_buffer.push(start);
+    }
+    let (rows, descriptions) = ordering
         .into_iter()
         .map(|(_, ddid, _, row)| (row, ddid))
-        .unzip())
+        .unzip();
+    Ok(OrderedMainRows {
+        rows,
+        descriptions,
+        starts_visibility_buffer,
+    })
 }
 
 pub(super) struct RowIdMaps {

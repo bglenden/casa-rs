@@ -426,6 +426,22 @@ impl KernelTable {
         });
         sum
     }
+
+    /// Apply the same `dgridsd` taps to a CASA complex model plane, in
+    /// `[y][x]` order. The visibility is the sum's conjugate.
+    #[must_use]
+    pub fn degrid_complex(
+        &self,
+        plane: ArrayView2<'_, num_complex::Complex32>,
+        pixel: [f64; 2],
+    ) -> num_complex::Complex32 {
+        let mut sum = num_complex::Complex32::default();
+        let (ny, nx) = plane.dim();
+        self.for_each_tap(pixel, (nx, ny), |tap| {
+            sum += plane[[tap.y, tap.x]] * tap.weight;
+        });
+        sum
+    }
 }
 
 /// `grdgauss`: `exp(−ln 2 (r/hwhm)²)`.

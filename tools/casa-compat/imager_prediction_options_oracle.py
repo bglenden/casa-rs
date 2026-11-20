@@ -18,7 +18,7 @@ from calibration_ft_oracle import coordinates
 from gaincal_oracle import relative_rms
 
 
-BEAM_CASES = {"vp", "all-vp", "no-vp", "pointing-vp", "dish-vp", "vpvirtual"}
+BEAM_CASES = {"vp", "all-vp", "no-vp", "pointing-vp", "dish-vp", "vpvirtual", "custom-vp"}
 CLOSE_MODEL_CASES = BEAM_CASES | {"image-distance", "definition-distance"}
 VIRTUAL_CASES = ["wvirtual", "vpvirtual"]
 
@@ -53,6 +53,10 @@ def configure_data(path, case=""):
         uvw = np.array([
             np.linspace(-2., 2., rows), np.full(rows, .8), np.linspace(.05, 1.8, rows)
         ])
+        if case == "automatic-w":
+            # Exercise several automatic planes. Pinned CASA can return a
+            # nonpositive convolution integral on the short-baseline grid.
+            uvw[2] *= 10.
         tb.putcol("UVW", uvw)
         fields = tb.getcol("FIELD_ID")
         times = tb.getcol("TIME")
@@ -84,7 +88,7 @@ def configure_data(path, case=""):
             tb.close()
 
 
-def prediction(path, images, reference, case):
+def prediction(path, images, reference, case, factory=imager, custom_vp=None):
     cell = 2 if case in CLOSE_MODEL_CASES else 70
     phase_time = -1.
     if case == "phase-time":
@@ -94,16 +98,24 @@ def prediction(path, images, reference, case):
             phase_time = float(tb.getcell("TIME", tb.nrows() - 1))
         finally:
             tb.close()
-    tool = imager()
+    tool = factory()
     assert tool.open(str(path), usescratch=case not in VIRTUAL_CASES)
     assert tool.selectvis(field="0,1" if case in {"all-vp", "vpvirtual"} else "0")
     assert tool.defineimage(nx=32, ny=32, cellx=f"{cell}arcsec", celly=f"{cell}arcsec",
                             phasecenter=0, outframe="TOPO",
                             distance="10m" if case == "definition-distance" else "0m")
     telescope = "THIS_IS_NOT_AN_OBSERVATORY" if case == "vp" else ""
-    assert tool.setvp(dovp=case in BEAM_CASES - {"no-vp"}, telescope=telescope)
-    if case in {"wproject", "wvirtual"}:
-        assert tool.setoptions(ftmachine="wproject", padding=1.4, wprojplanes=16, numthreads=1)
+    if case == "custom-vp":
+        assert tool.setvp(dovp=True, usedefaultvp=False, vptable=str(custom_vp), verbose=False)
+    else:
+        assert tool.setvp(dovp=case in BEAM_CASES - {"no-vp"}, telescope=telescope)
+    if case in {"wproject", "wvirtual", "automatic-w"}:
+        planes = -1 if case == "automatic-w" else 16
+        assert tool.setoptions(ftmachine="wproject", padding=1.4, wprojplanes=planes, numthreads=1)
+        assert tool.ft(model=images[:1]), (case, path)
+    elif case == "boxcar":
+        assert tool.setoptions(gridfunction="BOX", singleprecisiononly=True, cache=131072,
+                               tile=8, freqinterp="linear-interpolation")
         assert tool.ft(model=images[:1])
     elif case in {"taylor", "changed"}:
         assert tool.settaylorterms(2, reffreq=reference * (.99 if case == "taylor" else .98))
@@ -148,6 +160,301 @@ def empty_image(path):
     return metadata
 
 
+def definition_cases(root, reference_ms, factories):
+    definitions = {
+        "defaults": {},
+        "rectangular": dict(nx=40, ny=32, cellx="3arcsec", celly="2arcsec",
+                            stokes="IQ", phasecenter=1, projection="TAN", distance="10m"),
+        "selected-spw": dict(nx=32, spw=[-1], restfreq="100GHz", outframe="TOPO"),
+        "channel": dict(nx=32, mode="channel", nchan=4, start=2, step=2, outframe="TOPO"),
+        "frequency": dict(nx=32, mode="frequency", nchan=3, start="100GHz", step="20MHz"),
+        "restless-mfs": dict(nx=32),
+        "restless-frequency": dict(nx=32, mode="frequency", nchan=3, start="100.003GHz",
+                                   step="2MHz"),
+        "native-frame": dict(nx=32, mode="channel", nchan=3, start=2, step=2, outframe=""),
+        "velocity-default": dict(nx=32, mode="opticalvelocity", nchan=4, start="3km/s",
+                                 step="5km/s", restfreq="100.006GHz", outframe="TOPO"),
+        "velocity-optical": dict(nx=32, mode="velocity", nchan=4, start="3km/s", step="5km/s",
+                                 veltype="optical", restfreq="100.006GHz", outframe="TOPO"),
+        "north-pole": dict(nx=32, phasecenter=-1),
+    }
+    reports = {}
+    for name, arguments in definitions.items():
+        records = []
+        predictions = []
+        for engine, factory in factories.items():
+            path = root / f"definition-{name}-{engine}.ms"
+            shutil.copytree(reference_ms, path)
+            if name.startswith("restless-") or name == "native-frame":
+                with_table = table()
+                subtable = "SPECTRAL_WINDOW" if name == "native-frame" else "SOURCE"
+                assert with_table.open(str(path / subtable), nomodify=False)
+                try:
+                    if name == "native-frame":
+                        with_table.putcell("MEAS_FREQ_REF", 0, 1)  # LSRK
+                    else:
+                        with_table.removecols(["REST_FREQUENCY"])
+                finally:
+                    with_table.close()
+            model = root / f"definition-{name}-{engine}.im"
+            tool = factory()
+            assert tool.open(str(path), usescratch=True)
+            assert tool.selectvis(field=0)
+            assert tool.defineimage(**arguments), (name, engine)
+            if name == "defaults":
+                for convolution in ("gauss", "gjinc"):
+                    try:
+                        tool.setoptions(ftmachine="wproject", gridfunction=convolution)
+                    except RuntimeError as error:
+                        assert "only for single dish imaging" in str(error)
+                    else:
+                        raise AssertionError((engine, convolution))
+                assert tool.setoptions()
+            if name == "channel":
+                assert tool.setoptions(freqinterp="spline")
+            assert tool.ft(str(model)), (name, engine)
+            assert tool.done()
+            observed = empty_image(model)
+            reader = image()
+            assert reader.open(str(model))
+            try:
+                coordinate = reader.coordsys()
+                observed.update(stokes=coordinate.stokes(), frames=coordinate.referencecode(),
+                                reference_pixel=coordinate.referencepixel()["numeric"],
+                                reference_value=coordinate.referencevalue()["numeric"],
+                                increment=coordinate.increment()["numeric"],
+                                rest=coordinate.restfrequency()["value"])
+                assert coordinate.done()
+                if name == "channel":
+                    pixels = reader.getchunk()
+                    pixels[21, 12, 0, :] = [2., .5, 1.5, .75]
+                    assert reader.putchunk(pixels)
+            finally:
+                assert reader.done()
+            records.append(observed)
+            if name == "channel":
+                tool = factory()
+                assert tool.open(str(path), usescratch=True)
+                assert tool.selectvis(field=0)
+                assert tool.ft(str(model))
+                assert tool.done()
+                predictions.append(samples(path))
+        expected, actual = records
+        for name_of_axis in ("reference_value", "increment"):
+            reference = expected.pop(name_of_axis)
+            result = actual.pop(name_of_axis)
+            np.testing.assert_allclose(result[:-1], reference[:-1], rtol=0, atol=1e-14)
+            np.testing.assert_allclose(result[-1], reference[-1], rtol=0, atol=0.002)
+            reports[f"{name}-{name_of_axis}-hz"] = float(abs(result[-1] - reference[-1]))
+        # The absent MFS rest frequency uses the synthesized center, which
+        # has the same sub-millihertz measures precision as the frequency axis.
+        if name == "restless-mfs":
+            np.testing.assert_allclose(actual.pop("rest"), expected.pop("rest"), rtol=0, atol=0.002)
+        np.testing.assert_equal(actual, expected)
+        if predictions:
+            assert np.max(np.abs(predictions[0])) > 1.
+            error = relative_rms(predictions[1], predictions[0])
+            assert error < 1e-3, (name, error)
+            reports["channel_cube_nrms"] = error
+    reports.update(reopened_channel_cube(root, reference_ms, factories))
+    reports.update(legacy_cube_interpolation(root, reference_ms, factories))
+    reports["legacy_incremental_zero_assignment"] = legacy_incremental_assignment(root, reference_ms, factories)
+    reports["short_cubic"] = short_cubic_cases(root, reference_ms, factories)
+    reports["spline_planes"] = spline_plane_counts(root, reference_ms, factories)
+    return reports
+
+
+def reopened_channel_cube(root, reference_ms, factories):
+    """The fresh tool uses the stored frequency axis for a different MS selection."""
+    model = root / "definition-channel-casa.im"
+    reports = {}
+    for label, shift, field in (("other_field", 0., 1), ("other_epoch", 180. * 86400., 0)):
+        predictions = []
+        for engine, factory in factories.items():
+            path = root / f"cube-{label}-{engine}.ms"
+            shutil.copytree(reference_ms, path)
+            if shift:
+                stored = table()
+                assert stored.open(str(path), nomodify=False)
+                try:
+                    for column in ("TIME", "TIME_CENTROID"):
+                        stored.putcol(column, stored.getcol(column) + shift)
+                finally:
+                    stored.close()
+            tool = factory()
+            assert tool.open(str(path), usescratch=True)
+            assert tool.selectvis(field=field)
+            assert tool.ft(str(model)) and tool.done()
+            predictions.append(samples(path, field=field))
+        expected, actual = predictions
+        assert np.max(np.abs(expected)) > 1.
+        error = relative_rms(actual, expected)
+        assert error < 1e-3, (label, error)
+        reports[f"channel_cube_{label}_nrms"] = error
+    return reports
+
+
+def legacy_cube_interpolation(root, reference_ms, factories):
+    model = root / "definition-channel-casa.im"
+    cases = {"whole": ("0", np.arange(12)), "stepped": ("0:2~10^2", np.arange(2, 11, 2)),
+             "single": ("0:4", np.array([4])), "created": ("0", np.arange(12))}
+    reports = {}
+    for method in ("linear", "cubic", "spline"):
+        for case, (selector, channels) in cases.items():
+            predictions = []
+            for engine, factory in factories.items():
+                path = root / f"interpolation-{method}-{case}-{engine}.ms"
+                shutil.copytree(reference_ms, path)
+                tool = factory()
+                assert tool.open(str(path), usescratch=True)
+                assert tool.selectvis(field=0, spw=selector)
+                assert tool.defineimage(nx=32, mode="channel", nchan=4, start=2, step=2,
+                                        outframe="TOPO")
+                image_path = model
+                if case == "created":
+                    image_path = root / f"interpolation-{method}-{engine}.im"
+                    assert tool.ft(str(image_path))
+                    with_image = image()
+                    assert with_image.open(str(image_path))
+                    pixels = with_image.getchunk()
+                    pixels[21, 12, 0, :] = [2., .5, 1.5, .75]
+                    assert with_image.putchunk(pixels) and with_image.done()
+                    assert tool.selectvis(field=0, spw=selector)
+                before = samples(path)
+                assert tool.setoptions(freqinterp=method)
+                assert tool.ft(str(image_path)) and tool.done(), (method, case, engine)
+                result = samples(path)
+                unselected = np.setdiff1d(np.arange(12), channels)
+                np.testing.assert_array_equal(result[:, unselected], before[:, unselected])
+                assert np.any(result[:, channels] != before[:, channels])
+                predictions.append(result[:, channels])
+            expected, actual = predictions
+            error = relative_rms(actual, expected)
+            assert error < 1e-3, (method, case, error)
+            reports[f"{method}-{case}-nrms"] = error
+    for engine in factories:
+        cubic = samples(root / f"interpolation-cubic-whole-{engine}.ms")
+        spline = samples(root / f"interpolation-spline-whole-{engine}.ms")
+        assert relative_rms(spline, cubic) > 1e-3, engine
+    return reports
+
+
+def legacy_incremental_assignment(root, reference_ms, factories):
+    model = root / "definition-channel-casa.im"
+    sentinel = np.complex64(11. + 23.j)
+    reports = {}
+    for interpolation in ("nearest", "linear", "cubic", "spline"):
+        for engine, factory in factories.items():
+            path = root / f"interpolation-incremental-{interpolation}-{engine}.ms"
+            shutil.copytree(reference_ms, path)
+            stored = table()
+            assert stored.open(str(path), nomodify=False)
+            try:
+                fields = stored.getcol("FIELD_ID")
+                antenna1, antenna2 = (stored.getcol(col) for col in ("ANTENNA1", "ANTENNA2"))
+                rows = np.flatnonzero((fields == 0) & (antenna1 != antenna2))[:3]
+                assert len(rows) == 3
+                for row in rows:
+                    stored.putcell("MODEL_DATA", int(row), np.full_like(stored.getcell("MODEL_DATA", int(row)), sentinel))
+                    stored.putcell("FLAG", int(row), np.zeros_like(stored.getcell("FLAG", int(row))))
+                stored.putcell("FLAG_ROW", int(rows[0]), True)
+                stored.putcell("UVW", int(rows[1]), np.full(3, 800_000.))
+                stored.putcell("ANTENNA2", int(rows[2]), int(antenna1[rows[2]]))
+            finally:
+                stored.close()
+            tool = factory()
+            assert tool.open(str(path), usescratch=True)
+            assert tool.selectvis(field=0)
+            assert tool.defineimage(nx=32, mode="channel", nchan=4, start=2, step=2, outframe="TOPO")
+            assert tool.setoptions(freqinterp=interpolation)
+            assert tool.ft(str(model), incremental=True) and tool.done()
+            assert stored.open(str(path))
+            try:
+                measured = [stored.getcell("MODEL_DATA", int(row))[0, 2] for row in rows]
+            finally:
+                stored.close()
+            expected = 2. * sentinel if interpolation == "nearest" else sentinel
+            np.testing.assert_array_equal(measured, np.full(len(rows), expected))
+            reports[f"{interpolation}-{engine}"] = len(rows)
+    return reports
+
+
+def short_cubic_cases(root, reference_ms, factories):
+    reports = {}
+    for planes in (1, 2, 3):
+        fixture = root / f"short-cubic-{planes}.ms"
+        shutil.copytree(reference_ms, fixture)
+        model = root / f"short-cubic-{planes}.im"
+        arguments = dict(nx=32, mode="channel", nchan=planes, start=2, step=2, outframe="TOPO")
+        maker = imager()
+        assert maker.open(str(fixture), usescratch=True) and maker.selectvis(field=0)
+        assert maker.defineimage(**arguments) and maker.ft(str(model)) and maker.done()
+        with_image = image()
+        assert with_image.open(str(model))
+        pixels = with_image.getchunk()
+        pixels[21, 12, 0, :] = np.arange(1., planes + 1.)
+        assert with_image.putchunk(pixels) and with_image.done()
+        for name, selector in (("whole", "0"), ("mapped", "0:2~3"), ("single", "0:2"),
+                               ("high", "0:10~11"), ("low", "0:0~1")):
+            expected_success = planes == 1 or name in {"single", "high", "low"}
+            for engine, factory in factories.items():
+                path = root / f"short-cubic-{planes}-{name}-{engine}.ms"
+                shutil.copytree(reference_ms, path)
+                before = samples(path)
+                tool = factory()
+                assert tool.open(str(path), usescratch=True)
+                assert tool.selectvis(field=0, spw=selector) and tool.defineimage(**arguments)
+                assert tool.setoptions(freqinterp="cubic")
+                assert tool.ft(str(model)) is expected_success, (engine, planes, name)
+                assert tool.done()
+                if not expected_success:
+                    np.testing.assert_array_equal(samples(path), before)
+            reports[f"{planes}-{name}"] = expected_success
+    return reports
+
+
+def spline_plane_counts(root, reference_ms, factories):
+    reports = {}
+    cases = [(f"{planes}-planes", planes,
+              dict(mode="channel", start=2, step=2), "ft") for planes in (2, 3, 6)]
+    cases.extend((f"descending-{machine}", 6,
+                  dict(mode="frequency", start="100.020GHz", step="-4MHz"), machine)
+                 for machine in ("ft", "wproject"))
+    for label, planes, spectral, machine in cases:
+        fixture = root / f"spline-{label}-fixture.ms"
+        shutil.copytree(reference_ms, fixture)
+        model = root / f"spline-{label}.im"
+        arguments = dict(nx=32, nchan=planes, outframe="TOPO", **spectral)
+        maker = imager()
+        assert maker.open(str(fixture), usescratch=True) and maker.selectvis(field=0)
+        assert maker.defineimage(**arguments) and maker.ft(str(model)) and maker.done()
+        with_image = image()
+        assert with_image.open(str(model))
+        if label.startswith("descending"):
+            coords = with_image.coordsys()
+            assert coords.increment()["numeric"][-1] < 0.
+            assert coords.done()
+        pixels = with_image.getchunk()
+        pixels[21, 12, 0, :] = [2., .5, 1.5, .75, 3., .25][:planes]
+        assert with_image.putchunk(pixels) and with_image.done()
+        predictions = []
+        for engine, factory in factories.items():
+            path = root / f"spline-{label}-{engine}.ms"
+            shutil.copytree(reference_ms, path)
+            tool = factory()
+            assert tool.open(str(path), usescratch=True) and tool.selectvis(field=0)
+            assert tool.defineimage(**arguments)
+            assert tool.setoptions(ftmachine=machine, wprojplanes=16, freqinterp="spline")
+            assert tool.ft(str(model)) and tool.done()
+            predictions.append(samples(path))
+        expected, actual = predictions
+        assert np.max(np.abs(expected)) > 0.5
+        error = relative_rms(actual, expected)
+        assert error < 1e-3, (label, error)
+        reports[f"{label}-nrms"] = error
+    return reports
+
+
 def virtual_interchange(root, native_bin, case):
     expected = None
     evidence = {}
@@ -160,6 +467,12 @@ def virtual_interchange(root, native_bin, case):
             before = [samples(destination, "CORRECTED_DATA", field) for field in fields]
             if reader == "casa":
                 assert casatasks.uvsub(str(destination)) is None
+            elif native_bin is None:
+                from casars.tools import ms
+
+                native = ms()
+                assert native.open(str(destination), nomodify=False)
+                assert native.uvsub() and native.done()
             else:
                 subprocess.run(
                     [str(native_bin), "uvsub", "--vis", str(destination),
@@ -184,12 +497,21 @@ def virtual_interchange(root, native_bin, case):
     return evidence
 
 
-def run(root, native_test, native_bin):
+def run(root, native_test=None, native_bin=None):
     assert casatasks.version_string() == "6.7.6.14"
     root.mkdir(parents=True)
     cases = ["wproject", "grid", "taylor", "changed", "vp", "all-vp", "pointing-vp",
              "dish-vp", "no-vp", "phase-default", "phase-time", "image-distance",
              "definition-distance"]
+    custom_vp = None
+    if native_test is None:
+        from casatools import vpmanager
+
+        custom_vp = root / "gaussian-vp.table"
+        tool = vpmanager()
+        tool.setpbgauss(telescope="ALMA", halfwidth="40arcsec", maxrad="120arcsec", reffreq="100GHz")
+        assert tool.saveastable(str(custom_vp))
+        cases.extend(["automatic-w", "boxcar", "custom-vp"])
     for case in [*cases, *VIRTUAL_CASES]:
         for engine in ["casa", "native"]:
             configure_data(root / f"{engine}-{case}.ms", case)
@@ -212,6 +534,11 @@ def run(root, native_test, native_bin):
     assert tool.setmiscinfo({"distance": 10.})
     assert tool.done()
     images = [str(path) for path in paths]
+    factories = {"casa": imager}
+    if native_test is None:
+        from casars.tools import imager as native
+
+        factories["native"] = native
     for case in [*cases, *VIRTUAL_CASES]:
         if case == "image-distance":
             models = [str(focused_image)]
@@ -219,14 +546,17 @@ def run(root, native_test, native_bin):
             models = [str(beam_target)]
         else:
             models = images
-        prediction(root / f"casa-{case}.ms", models, reference, case)
-    prediction(root / "casa-defineimage.ms", [str(root / "new-casa.im")], reference,
-               "defineimage")
-    subprocess.run(
-        [str(native_test), "--ignored", "--exact", "installed_casa_prediction_settings"],
-        env=dict(os.environ, CASARS_IMAGER_PREDICTION_WORK=str(root)),
-        check=True,
-    )
+        for engine, factory in factories.items():
+            prediction(root / f"{engine}-{case}.ms", models, reference, case, factory, custom_vp)
+    for engine, factory in factories.items():
+        prediction(root / f"{engine}-defineimage.ms", [str(root / f"new-{engine}.im")], reference,
+                   "defineimage", factory)
+    if native_test is not None:
+        subprocess.run(
+            [str(native_test), "--ignored", "--exact", "installed_casa_prediction_settings"],
+            env=dict(os.environ, CASARS_IMAGER_PREDICTION_WORK=str(root)),
+            check=True,
+        )
     native_image = empty_image(root / "new-native.im")
     casa_image = empty_image(root / "new-casa.im")
     assert native_image == casa_image, (native_image, casa_image)
@@ -261,17 +591,27 @@ def run(root, native_test, native_bin):
         assert error < 1e-3, (case, error)
     for case in VIRTUAL_CASES:
         evidence[case] = virtual_interchange(root, native_bin, case)
+    if native_test is None:
+        evidence["image_definitions"] = definition_cases(root, reference_ms, factories)
     return evidence
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
-    parser.add_argument("--native-test", type=Path, required=True)
-    parser.add_argument("--native-bin", type=Path, required=True)
+    parser.add_argument("--native-test", type=Path)
+    parser.add_argument("--native-bin", type=Path)
+    parser.add_argument("--public-python", action="store_true")
     args = parser.parse_args()
     root = args.work.resolve()
-    evidence = run(root, args.native_test.resolve(), args.native_bin.resolve())
+    if args.public_python:
+        if args.native_test is not None or args.native_bin is not None:
+            parser.error("--public-python uses the installed public package")
+        evidence = run(root)
+    else:
+        if args.native_test is None or args.native_bin is None:
+            parser.error("supply --public-python or both --native-test and --native-bin")
+        evidence = run(root, args.native_test.resolve(), args.native_bin.resolve())
     (root / "results.json").write_text(json.dumps(evidence, indent=2) + "\n")
 
 

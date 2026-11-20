@@ -9,7 +9,7 @@ use casa_provider_contracts::{ParameterValue, python_repr};
 
 use super::axes::{legacy_subimage_coordinates_with_stokes, subimage_coordinates_with_stokes};
 use super::imsubimage::{SubimageRegion, coords::subset_beam_set, region::SubimageSelection};
-use super::{combined_moment_mask, patch_saved_coords_keyword};
+use super::{combined_selection_mask, patch_saved_coords_keyword};
 use crate::{
     ImageBeamSet, ImageError, ImagePixel, ImmomentsRequest, MomentImageSummary, MomentMapSummary,
     PagedImage, TempImage,
@@ -38,7 +38,7 @@ where
     let axis = axis::resolve(image, request.axis.as_ref(), &selection.shape)?;
     let mut input = image.get_slice(&selection.start, &selection.shape)?;
     let mut mask =
-        combined_moment_mask(image, &selection, request.mask.as_deref(), request.stretch)?;
+        combined_selection_mask(image, &selection, request.mask.as_deref(), request.stretch)?;
     selection.apply_selection_masks(&mut mask);
     let mut shape = selection.shape.clone();
     shape[axis] = 1;

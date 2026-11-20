@@ -411,19 +411,13 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
             json!({"mode": "rflag", "action": "calculate"}),
             "action",
         ),
-        (
-            FLAGDATA,
-            "flagdata",
-            json!({"quackmode": "tail"}),
-            "quackmode",
-        ),
         // An unimplemented CASA parameter, refused at any value but its
-        // default where CASA reads it: clipminmax in clip mode.
+        // default where CASA reads it: channel averaging in clip mode.
         (
             FLAGDATA,
             "flagdata",
-            json!({"mode": "clip", "clipminmax": [0.0, 1.0]}),
-            "clipminmax",
+            json!({"mode": "clip", "channelavg": true}),
+            "channelavg",
         ),
         // CASA parses ntime before it runs any mode, and refuses
         // 'nonsense' without flagging (Astra's #997 F6).

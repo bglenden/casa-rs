@@ -72,6 +72,21 @@ def make_inputs():
             ia.calcmask('"double.im" > 150', name="selected", asdefault=False)
         ia.done()
 
+    cs = casatools.coordsys()
+    cs.addcoordinate(direction=True)
+    assert cs.setunits(["deg", "deg"])
+    assert cs.setreferencepixel([2.2, 3.4])
+    assert cs.setreferencevalue([60, 70])
+    assert cs.setincrement([-0.75, 0.67])
+    assert ia.fromarray("relative_sky.im", plane, csys=cs.torecord(), overwrite=True)
+    ia.done()
+    assert cs.setreferencepixel([0, 0])
+    assert cs.setreferencevalue([0, 0])
+    assert cs.setincrement([-30, 30])
+    assert ia.fromarray("relative_wide.im", plane, csys=cs.torecord(), overwrite=True)
+    ia.done()
+    cs.done()
+
     casatasks.exportfits(imagename="plane.im", fitsimage="plane.fits", overwrite=True)
     fits = Path("plane.fits").read_bytes()
     data_offset = next(i for i in range(0, len(fits), 80) if fits[i:i+8] == b"END     ")
@@ -90,6 +105,30 @@ def make_inputs():
     rg.done()
     cs.done()
     ia.done()
+    for name, image, axes, mode, blc, trc in [
+        ("relative_ref", "cube.im", [0, 1], "relref",
+         ["1.7arcmin", "-1.6arcmin"], ["-1.2arcmin", "1.5arcmin"]),
+        ("relative_center", "cube.im", [0, 1], "relcen",
+         ["1.2arcmin", "-1.2arcmin"], ["-0.9arcmin", "0.9arcmin"]),
+        ("relative_reordered", "transposed.im", [1, 2], "relcen",
+         ["1.2arcmin", "-1.2arcmin"], ["-0.9arcmin", "0.9arcmin"]),
+        ("relative_sky", "relative_sky.im", [0, 1], "relref",
+         ["1.5deg", "-1.1deg"], ["-1.05deg", "0.75deg"]),
+        ("relative_disjoint", "cube.im", [0, 1], "relref",
+         ["-10arcmin", "0arcmin"], ["-12arcmin", "1arcmin"]),
+        ("relative_pixels_world", "relative_sky.im", [1, 0], "relref",
+         ["0pix", "0.5deg"], ["1pix", "-0.5deg"]),
+        ("relative_wide", "relative_wide.im", [0, 1], "relref",
+         ["0deg", "0deg"], ["-30deg", "30deg"]),
+    ]:
+        assert ia.open(image)
+        cs = ia.coordsys()
+        rg = casatools.regionmanager()
+        region = rg.wbox(blc=blc, trc=trc, pixelaxes=axes, csys=cs.torecord(), absrel=mode)
+        assert rg.tofile(name + ".rgn", region)
+        rg.done()
+        cs.done()
+        ia.done()
     ia.open("cube.im")
     cs = ia.coordsys()
     rg = casatools.regionmanager()
@@ -199,6 +238,13 @@ def capture_cases(output):
         "box[[3pix, 3pix], [4pix, 4pix]], corr=[Q], range=[2pix, 3pix]"
     ))
     capture("saved_box", region="box.rgn")
+    capture("saved_relative_ref", region="relative_ref.rgn")
+    capture("saved_relative_center", region="relative_center.rgn")
+    capture("saved_relative_reordered", "transposed.im", region="relative_reordered.rgn")
+    capture("saved_relative_sky", "relative_sky.im", region="relative_sky.rgn")
+    capture("saved_relative_disjoint", region="relative_disjoint.rgn", error=True)
+    capture("saved_relative_pixels_world", "relative_sky.im", region="relative_pixels_world.rgn")
+    capture("saved_relative_wide", "relative_wide.im", region="relative_wide.rgn", error=True)
     capture("saved_box_conflict", "plane.im", region="saved.rgn", box="0,0,4,4", error=True)
     capture("saved_chans_conflict", region="box.rgn", chans="1", error=True)
     capture("saved_stokes_conflict", region="box.rgn", stokes="Q", error=True)

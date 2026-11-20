@@ -11,15 +11,17 @@ use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableError, TableOptions, TableUseLock, TableWriteLock};
 use pyo3::prelude::*;
 
+use super::beam_view::BeamView;
 use super::handle::{ImageHandle, raised};
 use super::stub;
 
 pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
     use_lock: Option<Arc<TableUseLock>>,
+    shareable: bool,
 }
 
-type OpenImages = BTreeMap<PathBuf, Weak<SharedImage>>;
+type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
 
 static ATTACHED: Mutex<OpenImages> = Mutex::new(BTreeMap::new());
 
@@ -30,47 +32,144 @@ pub(super) fn registry() -> MutexGuard<'static, OpenImages> {
 pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,
+    beam_view: Mutex<BeamView>,
 }
 
 impl AttachedImage {
     pub(super) fn temporary(image: ImageHandle) -> Self {
+        let beam_view = BeamView::from_image(&image);
         Self {
             image: Arc::new(SharedImage {
                 handle: Mutex::new(image),
                 use_lock: None,
+                shareable: false,
             }),
             key: None,
+            beam_view: Mutex::new(beam_view),
         }
     }
 
-    pub(super) fn open(registry: &mut OpenImages, path: &Path) -> PyResult<Self> {
-        let key = key(path)?;
-        if let Some(image) = registry.get(&key).and_then(Weak::upgrade)
-            && image
-                .use_lock
-                .as_ref()
-                .is_none_or(|lease| lease.matches_directory(&key))
-        {
-            return Ok(Self {
-                image,
-                key: Some(key),
-            });
+    pub(super) fn open(path: &Path) -> PyResult<Self> {
+        if path.is_file() {
+            return ImageHandle::open(path).map(Self::temporary).map_err(raised);
         }
+        let key = key(path)?;
+        let shared = Self::shared(&registry(), &key);
+        if let Some(shared) = shared {
+            shared.read_current_beams()?;
+            return Ok(shared);
+        }
+
+        // The data lock may wait for a different process. Keep the registry
+        // available to other image names while this open is in progress.
+        let opened = Self::open_native(path, &key, Some(0), TableUseLock::acquire_waiting)?;
+        let shared = {
+            let mut registry = registry();
+            if let Some(shared) = Self::shared(&registry, &key) {
+                shared
+            } else {
+                opened.register(&mut registry);
+                return Ok(opened);
+            }
+        };
+        drop(opened);
+        shared.read_current_beams()?;
+        Ok(shared)
+    }
+
+    fn read_current_beams(&self) -> PyResult<()> {
+        let mut handle = self.lock();
+        self.require_lock(&mut handle, casa_tables::LockType::Read)?;
+        *self.beam_view() = BeamView::from_image(&handle);
+        Ok(())
+    }
+
+    pub(super) fn open_created(registry: &mut OpenImages, path: &Path) -> PyResult<Self> {
+        let key = key(path)?;
+        let opened = Self::open_native(path, &key, Some(1), TableUseLock::acquire)?;
+        if !opened
+            .lock()
+            .lock_storage(casa_tables::LockType::Write, 1)?
+        {
+            return Err(raised("Could not acquire the new image write lock"));
+        }
+        opened.register(registry);
+        Ok(opened)
+    }
+
+    fn shared(registry: &OpenImages, key: &Path) -> Option<Self> {
+        registry
+            .get(key)
+            .into_iter()
+            .flatten()
+            .filter_map(Weak::upgrade)
+            .find(|image| {
+                image.shareable
+                    && image
+                        .use_lock
+                        .as_ref()
+                        .is_none_or(|lease| lease.matches_directory(key))
+            })
+            .map(|image| Self {
+                image,
+                key: Some(key.to_path_buf()),
+                beam_view: Mutex::default(),
+            })
+    }
+
+    /// V1 Data callers get a fresh view on every open. The compatibility
+    /// view is registered for safe replacement and reads the resolved path.
+    pub(super) fn open_data(
+        registry: &mut OpenImages,
+        path: &Path,
+        writable: bool,
+    ) -> PyResult<Self> {
+        let key = key(path)?;
+        let acquire = if writable {
+            TableUseLock::acquire
+        } else {
+            TableUseLock::acquire_readonly
+        };
+        let opened = Self::open_native(&key, &key, None, acquire)?;
+        opened.register(registry);
+        Ok(opened)
+    }
+
+    fn open_native(
+        path: &Path,
+        key: &Path,
+        lock_attempts: Option<u32>,
+        acquire: fn(&Path) -> Result<TableUseLock, TableError>,
+    ) -> PyResult<Self> {
         let use_lock = key
             .join("table.dat")
             .is_file()
-            .then(|| TableUseLock::acquire(&key).map(Arc::new))
+            .then(|| acquire(key).map(Arc::new))
             .transpose()
             .map_err(raised)?;
+        let handle = ImageHandle::open_native(path, lock_attempts).map_err(raised)?;
+        let beam_view = BeamView::from_image(&handle);
         let image = Arc::new(SharedImage {
-            handle: Mutex::new(ImageHandle::open(path).map_err(raised)?),
+            handle: Mutex::new(handle),
             use_lock,
+            shareable: lock_attempts.is_some(),
         });
-        registry.insert(key.clone(), Arc::downgrade(&image));
-        Ok(Self {
+        let opened = Self {
             image,
-            key: Some(key),
-        })
+            key: Some(key.to_path_buf()),
+            beam_view: Mutex::new(beam_view),
+        };
+        opened.check_bound_name(&opened.lock())?;
+        Ok(opened)
+    }
+
+    fn register(&self, registry: &mut OpenImages) {
+        if let Some(key) = &self.key {
+            registry
+                .entry(key.clone())
+                .or_default()
+                .push(Arc::downgrade(&self.image));
+        }
     }
 
     pub(super) fn lock(&self) -> MutexGuard<'_, ImageHandle> {
@@ -80,8 +179,40 @@ impl AttachedImage {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    pub(super) fn beam_view(&self) -> MutexGuard<'_, BeamView> {
+        self.beam_view
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub(super) fn is_persistent(&self) -> bool {
-        self.key.is_some()
+        self.key.is_some() || self.lock().fits().is_some()
+    }
+
+    pub(super) fn check_directory(&self) -> PyResult<()> {
+        if let (Some(key), Some(lease)) = (&self.key, &self.image.use_lock)
+            && !lease.matches_directory(key)
+        {
+            return Err(raised(format!(
+                "The image at {} has changed",
+                key.display()
+            )));
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_bound_name(&self, handle: &ImageHandle) -> PyResult<()> {
+        self.check_directory()?;
+        if let (Some(key), Some(path)) = (&self.key, handle.path())
+            && path != key
+            && !path.canonicalize().is_ok_and(|actual| &actual == key)
+        {
+            return Err(raised(format!(
+                "The image at {} has changed",
+                path.display()
+            )));
+        }
+        Ok(())
     }
 
     pub(super) fn rename(&self, name: &str, overwrite: bool, history: bool) -> PyResult<Self> {
@@ -89,11 +220,30 @@ impl AttachedImage {
             return Err(raised("Exception: new file name must be specified."));
         }
         let Some(source) = &self.key else {
+            let fits_path = {
+                let image = self.lock();
+                image
+                    .fits()
+                    .and_then(|_| image.path())
+                    .map(Path::to_path_buf)
+            };
+            if let Some(old_name) = fits_path {
+                return super::fits_rename::rename(&old_name, name, overwrite, history);
+            }
             return Err(raised(
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
             ));
         };
-        let old_name = self.lock().path().unwrap_or(source).to_path_buf();
+        let old_name = {
+            let image = self.lock();
+            self.check_bound_name(&image).map_err(|_| {
+                raised(format!(
+                    "Cannot rename image {} because the image at that path has changed",
+                    source.display()
+                ))
+            })?;
+            image.path().unwrap_or(source).to_path_buf()
+        };
         let absolute = std::path::absolute(name).map_err(raised)?;
         let parent = absolute
             .parent()
@@ -155,6 +305,7 @@ impl AttachedImage {
             return Ok(Self {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
+                beam_view: Mutex::new(self.beam_view().clone()),
             });
         }
         if old_name
@@ -179,6 +330,16 @@ impl AttachedImage {
             }
         }
         let mut locks = BTreeMap::new();
+        {
+            let mut image = self.lock();
+            self.check_bound_name(&image).map_err(|_| {
+                raised(format!(
+                    "Cannot rename image {} because the image at that path has changed",
+                    source.display()
+                ))
+            })?;
+            image.unlock_storage()?;
+        }
         lock_table_tree(source, &mut locks)?;
         if target_metadata.as_ref().is_some_and(|entry| entry.is_dir()) {
             lock_table_tree(&target, &mut locks)?;
@@ -199,27 +360,38 @@ impl AttachedImage {
         // locks so the log-table writer can append the rename history.
         locks.retain(|path, _| path == source || path == &target);
         let reopen = || {
-            let mut image = ImageHandle::open(&target).map_err(raised)?;
+            let mut image = ImageHandle::open_native(&target, self.image.shareable.then_some(1))
+                .map_err(raised)?;
             log_rename(&mut image)?;
             Ok::<_, PyErr>(image)
         };
-        let image = match reopen() {
-            Ok(image) => Arc::new(SharedImage {
-                handle: Mutex::new(image),
-                use_lock: self.image.use_lock.clone(),
-            }),
+        let handle = match reopen() {
+            Ok(image) => image,
             Err(error) => return restore_native_move(source, &target, backup, error),
         };
+        let beam_view = BeamView::from_image(&handle);
+        let image = Arc::new(SharedImage {
+            handle: Mutex::new(handle),
+            use_lock: self.image.use_lock.clone(),
+            shareable: self.image.shareable,
+        });
         registry.remove(source);
-        registry.insert(target.clone(), Arc::downgrade(&image));
+        registry.insert(target.clone(), vec![Arc::downgrade(&image)]);
         Ok(Self {
             image,
             key: Some(target),
+            beam_view: Mutex::new(beam_view),
         })
     }
 
     pub(super) fn remove(&self) -> PyResult<String> {
         let Some(key) = &self.key else {
+            if let Some(path) = self.lock().path() {
+                return Err(raised(format!(
+                    "Cannot delete file {} because table is not writable",
+                    path.display()
+                )));
+            }
             return Err(raised(
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be deleted.",
             ));
@@ -228,6 +400,16 @@ impl AttachedImage {
         let mut registry = registry();
         if conflicting_images(&registry, key, 1) {
             return Err(in_use(key, "this"));
+        }
+        {
+            let mut image = self.lock();
+            self.check_bound_name(&image).map_err(|_| {
+                raised(format!(
+                    "Cannot delete file {} because the image at that path has changed",
+                    key.display()
+                ))
+            })?;
+            image.unlock_storage()?;
         }
         remove_native_table(&name, key, self.image.use_lock.as_deref())?;
         registry.remove(key);
@@ -251,12 +433,17 @@ pub(super) fn remove_file(path: &Path) -> PyResult<bool> {
     Ok(true)
 }
 
-fn conflicting_images(registry: &OpenImages, path: &Path, expected_at_path: usize) -> bool {
-    registry.iter().any(|(open_path, image)| {
+pub(super) fn conflicting_images(
+    registry: &OpenImages,
+    path: &Path,
+    expected_at_path: usize,
+) -> bool {
+    registry.iter().any(|(open_path, images)| {
         if open_path == path {
-            image.strong_count() > expected_at_path
+            images.iter().map(Weak::strong_count).sum::<usize>() > expected_at_path
         } else {
-            (open_path.starts_with(path) || path.starts_with(open_path)) && image.strong_count() > 0
+            (open_path.starts_with(path) || path.starts_with(open_path))
+                && images.iter().any(|image| image.strong_count() > 0)
         }
     })
 }
@@ -305,7 +492,10 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     Ok(())
 }
 
-fn lock_table_tree(path: &Path, leases: &mut BTreeMap<PathBuf, TableWriteLock>) -> PyResult<()> {
+pub(super) fn lock_table_tree(
+    path: &Path,
+    leases: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> PyResult<()> {
     let not_writable = |name: &Path| {
         raised(format!(
             "Cannot delete file {} because table is not writable",
@@ -438,11 +628,13 @@ impl Drop for AttachedImage {
         if let Some(key) = &self.key {
             let mut registry = registry();
             if Arc::strong_count(&self.image) == 1
-                && registry
-                    .get(key)
-                    .is_some_and(|registered| registered.ptr_eq(&Arc::downgrade(&self.image)))
+                && let Some(images) = registry.get_mut(key)
             {
-                registry.remove(key);
+                let current = Arc::downgrade(&self.image);
+                images.retain(|image| !image.ptr_eq(&current) && image.strong_count() > 0);
+                if images.is_empty() {
+                    registry.remove(key);
+                }
             }
         }
     }

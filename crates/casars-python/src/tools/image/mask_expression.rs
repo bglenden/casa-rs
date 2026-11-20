@@ -41,7 +41,7 @@ fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
     compiled.get().map_err(raised)
 }
 
-fn evaluate(expression: &str, shape: &[usize]) -> PyResult<ArrayD<bool>> {
+pub(super) fn evaluate(expression: &str, shape: &[usize]) -> PyResult<ArrayD<bool>> {
     if expression.is_empty() {
         return Err(raised("Exception: You must specify an expression."));
     }
@@ -93,8 +93,12 @@ impl PyImageTool {
     fn calcmask(&self, py: Python<'_>, mask: &str, name: &str, asdefault: bool) -> PyResult<bool> {
         py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else { return Ok(false) };
-            let mut image = image.lock();
+            let Some(attachment) = state.image.as_ref() else { return Ok(false) };
+            let mut image = attachment.lock();
+            if !mask.is_empty() && image.fits().is_some() {
+                return Err(raised("Exception: Cannot make requested mask for this image type which is FITSImage."));
+            }
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             let values = evaluate(mask, image.shape())?;
             let generated;
             let mask_name = if name.is_empty() {

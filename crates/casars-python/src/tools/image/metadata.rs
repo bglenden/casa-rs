@@ -26,14 +26,15 @@ impl PyImageTool {
         py.detach(|| {
             let state = self.state();
             let history = state.history;
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let mut image = image.lock();
+            let mut image = attachment.lock();
             image.check_single_precision("setbrightnessunit")?;
             let normalized = normalize_casa_unit_name(unit.trim());
             Unit::new(&normalized)
                 .map_err(|_| raised(format!("Unit::check Illegal unit string '{unit}'")))?;
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_units(normalized)))
                 .map_err(raised)?;
             if history {
@@ -89,16 +90,20 @@ impl PyImageTool {
         py.detach(|| {
             let state = self.state();
             let history = state.history;
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let mut image = image.lock();
+            let mut image = attachment.lock();
+            if record.is_empty() {
+                return Err(raised("Exception: Record is empty."));
+            }
             let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
             if coordinates.n_pixel_axes() != image.shape().len() {
                 return Err(raised(
                     "Exception: Supplied CoordinateSystem and image shape are inconsistent",
                 ));
             }
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             image.set_coordinate_record(record)?;
             if history {
                 image.record_history("setcoordsys", "ia.setcoordsys(csys={...})".into())?;

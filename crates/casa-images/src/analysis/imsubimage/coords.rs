@@ -109,7 +109,7 @@ fn strip_index_suffix(field: &str) -> (&str, Option<usize>) {
     (prefix, suffix)
 }
 
-fn drop_axes_from_legacy_record(
+pub(in crate::analysis) fn drop_axes_from_legacy_record(
     record: &RecordValue,
     ndim: usize,
     kept_axes: &[usize],

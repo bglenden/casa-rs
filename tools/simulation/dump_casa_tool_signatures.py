@@ -38,6 +38,7 @@ TOOLS = (
     "msmetadata",
     "ms",
     "calibrater",
+    "imager",
 )
 
 

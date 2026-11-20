@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::path::Path;
+use std::cell::OnceCell;
+use std::fs::Metadata;
+use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{
     AnyPagedImage, ImageError, ImagePixel, ImagePixelType, PagedImage, ScratchSpace, TempImage,
     TempStoragePolicy,
+    fits_read::{FitsSectionReader, FitsToolImport, fits_section_image},
 };
 use casa_types::{RecordValue, Value};
 use ndarray::ArrayD;
@@ -18,7 +21,54 @@ pub(super) enum Storage<T: ImagePixel> {
     Temp {
         image: Box<TempImage<T>>,
         record: RecordValue,
+        fits: Option<FitsAttachment>,
     },
+}
+
+pub(super) struct FitsAttachment {
+    path: PathBuf,
+    hdu: usize,
+    pub(super) shape: Vec<usize>,
+    pub(super) tile_shape: Vec<usize>,
+    pub(super) has_mask: bool,
+    pixels: OnceCell<FitsSectionReader>,
+}
+
+impl FitsAttachment {
+    pub(super) fn image_view<'a>(
+        &'a self,
+        metadata: &'a TempImage<f32>,
+    ) -> impl casa_images::ImageInterface<f32> + 'a {
+        fits_section_image(&self.shape, metadata, &self.path, |start, count, stride| {
+            self.read_pixels(start, count, stride)
+        })
+    }
+
+    pub(super) fn read(
+        &self,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> PyResult<ArrayD<f32>> {
+        self.read_pixels(start, count, stride).map_err(raised)
+    }
+
+    fn read_pixels(
+        &self,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<f32>, ImageError> {
+        // CASA opens the pixel stream on the first read and retains it
+        // across subsequent reads even if the filename is moved or removed.
+        if let Some(reader) = self.pixels.get() {
+            return reader.read(start, count, stride);
+        }
+        let reader = FitsSectionReader::open(&self.path, self.hdu, &self.shape)?;
+        let section = reader.read(start, count, stride)?;
+        let _ = self.pixels.set(reader);
+        Ok(section)
+    }
 }
 
 pub(super) enum ImageHandle {
@@ -55,14 +105,97 @@ pub(super) fn raised(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
+pub(super) fn same_file_snapshot(expected: &Metadata, actual: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
+            return false;
+        }
+    }
+    expected.len() == actual.len() && expected.modified().ok() == actual.modified().ok()
+}
+
 impl ImageHandle {
     pub(super) fn open(path: &Path) -> Result<Self, ImageError> {
-        Ok(match AnyPagedImage::open(path)? {
+        if path.is_file() {
+            return Self::open_fits(path, FitsToolImport::open(path, 0, -1)?);
+        }
+        AnyPagedImage::open(path).map(Self::from_paged)
+    }
+
+    pub(super) fn open_read(path: &Path) -> Result<Self, ImageError> {
+        if path.is_file() {
+            return Self::open(path);
+        }
+        Self::open_native(path, Some(0))
+    }
+
+    pub(super) fn open_native(path: &Path, lock_attempts: Option<u32>) -> Result<Self, ImageError> {
+        #[cfg(unix)]
+        if let Some(attempts) = lock_attempts {
+            return AnyPagedImage::open_with_lock(path, attempts).map(Self::from_paged);
+        }
+        #[cfg(not(unix))]
+        let _ = lock_attempts;
+        Self::open(path)
+    }
+
+    fn from_paged(image: AnyPagedImage) -> Self {
+        match image {
             AnyPagedImage::Float32(image) => Self::Float(Storage::Paged(Box::new(image))),
             AnyPagedImage::Float64(image) => Self::Double(Storage::Paged(Box::new(image))),
             AnyPagedImage::Complex32(image) => Self::Complex(Storage::Paged(Box::new(image))),
             AnyPagedImage::Complex64(image) => Self::DComplex(Storage::Paged(Box::new(image))),
-        })
+        }
+    }
+
+    pub(super) fn open_for_concatenation(path: &Path) -> Result<Self, ImageError> {
+        if path.is_file() {
+            return Self::open_fits(path, FitsToolImport::open_for_concatenation(path)?);
+        }
+        Self::open_native(path, Some(0))
+    }
+
+    fn open_fits(path: &Path, mut source: FitsToolImport) -> Result<Self, ImageError> {
+        if source.is_tile_compressed() {
+            return Err(ImageError::CasaSelection(format!(
+                "No data in the zeroth or first extension of {}",
+                path.display()
+            )));
+        }
+        // Reuse temporary-image metadata operations. The attachment owns the
+        // actual shape and pixel stream, so this needs only one storage cell.
+        let mut image = TempImage::new(
+            vec![1; source.shape().len()],
+            source.coordinates().clone(),
+            TempStoragePolicy::Memory,
+        )?;
+        let fits = FitsAttachment {
+            path: path.to_path_buf(),
+            hdu: source.hdu_index(),
+            shape: source.shape().to_vec(),
+            tile_shape: source.tile_shape(),
+            has_mask: source.has_implicit_mask(),
+            pixels: OnceCell::new(),
+        };
+        source.misc_info.remove("object");
+        image.set_units(source.units)?;
+        image.set_image_info_record(source.image_info)?;
+        image.set_misc_info(source.misc_info)?;
+        image.append_history_entries(&source.history)?;
+        Ok(Self::Float(Storage::Temp {
+            image: Box::new(image),
+            record: source.coordinate_record,
+            fits: Some(fits),
+        }))
+    }
+
+    pub(super) fn fits(&self) -> Option<&FitsAttachment> {
+        match self {
+            Self::Float(Storage::Temp { fits, .. }) => fits.as_ref(),
+            _ => None,
+        }
     }
 
     pub(super) fn kind(&self) -> ImagePixelType {
@@ -75,10 +208,20 @@ impl ImageHandle {
     }
 
     pub(super) fn shape(&self) -> &[usize] {
+        if let Some(fits) = self.fits() {
+            return &fits.shape;
+        }
         with_pixels!(self, storage => with_storage!(storage, image => image.shape()))
     }
 
+    pub(super) fn coordinates(&self) -> &CoordinateSystem {
+        with_pixels!(self, storage => with_storage!(storage, image => image.coordinates()))
+    }
+
     pub(super) fn path(&self) -> Option<&Path> {
+        if let Some(fits) = self.fits() {
+            return Some(&fits.path);
+        }
         with_pixels!(self, storage => with_storage!(storage, image => image.name()))
     }
 
@@ -115,7 +258,7 @@ impl ImageHandle {
     pub(super) fn set_coordinate_record(&mut self, record: RecordValue) -> PyResult<()> {
         with_pixels!(self, storage => match storage {
             Storage::Paged(image) => image.set_coordinate_record(record).map_err(raised),
-            Storage::Temp { image, record: current } => {
+            Storage::Temp { image, record: current, .. } => {
                 let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
                 image.set_coordinates(coordinates).map_err(raised)?;
                 *current = record;
@@ -146,6 +289,7 @@ impl<T: ImagePixel> Storage<T> {
         let mut storage = match path {
             Some(path) => Self::Paged(Box::new(PagedImage::create(shape, coordinates, path)?)),
             None => Self::Temp {
+                fits: None,
                 record: coordinates.to_record(),
                 image: Box::new(TempImage::new(
                     shape,
@@ -168,6 +312,23 @@ impl<T: ImagePixel> Storage<T> {
         match self {
             Self::Paged(image) => image.save(),
             Self::Temp { .. } => Ok(()),
+        }
+    }
+}
+
+impl Storage<f32> {
+    pub(super) fn with_float_view<R>(
+        &self,
+        use_image: impl FnOnce(&dyn casa_images::ImageInterface<f32>) -> R,
+    ) -> R {
+        match self {
+            Self::Paged(image) => use_image(image.as_ref()),
+            Self::Temp {
+                image,
+                fits: Some(fits),
+                ..
+            } => use_image(&fits.image_view(image)),
+            Self::Temp { image, .. } => use_image(image.as_ref()),
         }
     }
 }

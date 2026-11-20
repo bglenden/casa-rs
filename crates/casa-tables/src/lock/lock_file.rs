@@ -732,7 +732,6 @@ impl LockFile {
     /// Returns `true` if the request list has any entries, meaning another
     /// process is waiting. Throttled to check at most every 25 calls and
     /// only after the inspection interval has elapsed.
-    #[allow(dead_code)] // used by AutoLocking (not yet wired up)
     pub fn inspect(&mut self, always: bool) -> io::Result<bool> {
         if !always {
             if self.interval > 0.0 && self.inspect_count < 25 {

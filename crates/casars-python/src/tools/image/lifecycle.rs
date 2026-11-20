@@ -12,7 +12,7 @@ use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
 use super::handle::raised;
 
-fn open_native(infile: &str) -> PyResult<AttachedImage> {
+pub(super) fn open_image(infile: &str) -> PyResult<AttachedImage> {
     if infile.is_empty() {
         return Err(raised("Exception: File name is empty."));
     }
@@ -21,7 +21,7 @@ fn open_native(infile: &str) -> PyResult<AttachedImage> {
         return Err(raised(format!("Exception: File {infile} does not exist..")));
     }
     let path = std::path::absolute(path).map_err(raised)?;
-    AttachedImage::open(&mut attachment::registry(), &path)
+    AttachedImage::open(&path)
 }
 
 #[pymethods]
@@ -33,7 +33,7 @@ impl PyImageTool {
             state.image = None;
             // ImageFactory's cache flag applies to component-list images.
             let _ = cache;
-            state.image = Some(open_native(&infile)?);
+            state.image = Some(open_image(&infile)?);
             Ok(true)
         })
     }
@@ -43,7 +43,7 @@ impl PyImageTool {
     }
 
     fn newimagefromfile(&self, py: Python<'_>, infile: &str) -> PyResult<Py<Self>> {
-        let image = py.detach(|| open_native(infile))?;
+        let image = py.detach(|| open_image(infile))?;
         Py::new(py, Self::attached(image))
     }
 
