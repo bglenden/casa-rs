@@ -5,6 +5,9 @@ use super::array_expr::ArraySelection;
 use super::feed_expr::FeedSelection;
 use super::syntax::{ChannelSelection, ChannelSelectionSegment, parse_numeric_row_id_ranges};
 use super::uv_expr::UvDistanceSelection;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::spw_expr::SpwSelection;
 use super::{
     BaselineSelection, CompiledMsSelection, TimeCondition, TimeDefaults, TimeSelectorDefaults,
     int_list, resolve_time_selector,
@@ -18,39 +21,23 @@ pub(super) fn apply(
     options: &ListObsOptions,
     flagdata: bool,
 ) -> MsResult<CompiledMsSelection> {
-    if !flagdata && let Some(text) = options.spw.as_deref() {
-        let spw = ms.resolve_spw_selector(text)?;
+    if let Some(text) = options.spw.as_deref().filter(|text| !text.is_empty()) {
+        let spw = if flagdata {
+            ms.resolve_flagdata_spw_selector(text)?
+        } else {
+            ms.resolve_spw_selector(text)?
+        };
         compiled.spw_data_desc_ids = spw
             .row_data_descriptions()
             .map(|ids| ids.iter().map(|&id| id as i32).collect());
-        let windows = ms.spectral_window()?;
-        let mut full_windows = std::collections::BTreeSet::new();
-        for range in spw.channel_list() {
-            if range.start == 0
-                && range.step <= 1
-                && range.stop == windows.num_chan(range.spw_id)? - 1
-            {
-                full_windows.insert(range.spw_id);
-                compiled
-                    .spw_channel_selections
-                    .remove(&(range.spw_id as i32));
+        compiled.spw_channel_selections = if flagdata {
+            for warning in spw.warnings() {
+                tracing::warn!(%warning, "SPW selection");
             }
-            if full_windows.contains(&range.spw_id) {
-                continue;
-            }
-            compiled
-                .spw_channel_selections
-                .entry(range.spw_id as i32)
-                .or_insert_with(|| ChannelSelection {
-                    segments: Vec::new(),
-                })
-                .segments
-                .push(ChannelSelectionSegment {
-                    start: range.start,
-                    end: range.stop,
-                    stride: range.step.max(1) as usize,
-                });
-        }
+            flagdata_channel_ranges(ms, &spw)?
+        } else {
+            selected_channel_ranges(ms, &spw)?
+        };
     }
     if let Some(text) = options.antenna.as_deref().filter(|text| !text.is_empty()) {
         let baseline = if flagdata {
@@ -94,6 +81,61 @@ pub(super) fn apply(
         }
     }
     Ok(compiled)
+}
+
+pub(crate) fn selected_channel_ranges(
+    ms: &MeasurementSet,
+    spw: &SpwSelection,
+) -> MsResult<BTreeMap<i32, ChannelSelection>> {
+    let windows = ms.spectral_window()?;
+    let mut full_windows = BTreeSet::new();
+    let mut selected = BTreeMap::<_, ChannelSelection>::new();
+    for range in spw.channel_list() {
+        let id = range.spw_id as i32;
+        if range.start == 0 && range.step <= 1 && range.stop == windows.num_chan(range.spw_id)? - 1
+        {
+            full_windows.insert(id);
+            selected.remove(&id);
+        } else if !full_windows.contains(&id) {
+            selected
+                .entry(id)
+                .or_insert_with(|| ChannelSelection {
+                    segments: Vec::new(),
+                })
+                .segments
+                .push(ChannelSelectionSegment {
+                    start: range.start,
+                    end: range.stop,
+                    stride: range.step.max(1) as usize,
+                });
+        }
+    }
+    Ok(selected)
+}
+
+pub(crate) fn flagdata_channel_ranges(
+    ms: &MeasurementSet,
+    spw: &SpwSelection,
+) -> MsResult<BTreeMap<i32, ChannelSelection>> {
+    let mut ranges = selected_channel_ranges(ms, spw)?;
+    let named = spw
+        .channel_list()
+        .iter()
+        .map(|range| range.spw_id)
+        .collect::<BTreeSet<_>>();
+    // Keep windows with no matching channels distinct from named windows
+    // whose full channel axes were selected.
+    for window in 0..ms.spectral_window()?.row_count() {
+        if !named.contains(&window) {
+            ranges.insert(
+                window as i32,
+                ChannelSelection {
+                    segments: Vec::new(),
+                },
+            );
+        }
+    }
+    Ok(ranges)
 }
 
 pub(super) fn flagdata_c_string(text: &str) -> &str {
