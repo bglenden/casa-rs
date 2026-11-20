@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Public calibrater signatures whose implementations are assigned to open issues.
 
+use std::path::Path;
+
 use pyo3::prelude::*;
 
-use super::PyCalibrater;
+use super::{PyCalibrater, runtime_error};
 use crate::tools::not_yet_implemented_in;
 
 #[pymethods]
@@ -187,16 +189,22 @@ impl PyCalibrater {
     }
 
     #[pyo3(signature = (modelimage), text_signature = "($self, modelimage)")]
-    fn setmodel(&self, modelimage: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "setmodel", 1520)
+    fn setmodel(&self, py: Python<'_>, modelimage: &str) -> PyResult<bool> {
+        self.with_lifecycle(py, |state| {
+            state
+                .set_image_model(Path::new(modelimage))
+                .map_err(runtime_error)?;
+            Ok(true)
+        })
     }
 
     #[pyo3(signature = (r#type = None, t = None, table = None, append = None, preavg = None, phaseonly = None, apmode = None, refant = None, refantmode = None, minblperant = None, solnorm = None, normtype = None, minsnr = None, combine = None, fillgaps = None, cfcache = None, painc = None, fitorder = None, fraction = None, numedge = None, radius = None, smooth = None, zerorates = None, globalsolve = None, niter = None, corrcomb = None, delaywindow = None, ratewindow = None, paramactive = None, concatspws = None, solmode = None, rmsthresh = None), text_signature = "($self, type='MF', t=[], table='', append=False, preavg=-1.0, phaseonly=False, apmode='AP', refant=[], refantmode='flex', minblperant=4, solnorm=False, normtype='mean', minsnr=0.0, combine='', fillgaps=0, cfcache='', painc=360.0, fitorder=0, fraction=0.1, numedge=-1, radius='', smooth=True, zerorates=False, globalsolve=True, niter=100, corrcomb='none', delaywindow=[], ratewindow=[], paramactive=[], concatspws=True, solmode='', rmsthresh=[])")]
     fn setsolve(
         &self,
-        r#type: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        r#type: Option<&str>,
         t: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
+        table: Option<&str>,
         append: Option<&Bound<'_, PyAny>>,
         preavg: Option<&Bound<'_, PyAny>>,
         phaseonly: Option<&Bound<'_, PyAny>>,
@@ -209,8 +217,8 @@ impl PyCalibrater {
         minsnr: Option<&Bound<'_, PyAny>>,
         combine: Option<&Bound<'_, PyAny>>,
         fillgaps: Option<&Bound<'_, PyAny>>,
-        cfcache: Option<&Bound<'_, PyAny>>,
-        painc: Option<&Bound<'_, PyAny>>,
+        cfcache: Option<&str>,
+        painc: Option<f64>,
         fitorder: Option<&Bound<'_, PyAny>>,
         fraction: Option<&Bound<'_, PyAny>>,
         numedge: Option<&Bound<'_, PyAny>>,
@@ -226,7 +234,16 @@ impl PyCalibrater {
         concatspws: Option<&Bound<'_, PyAny>>,
         solmode: Option<&Bound<'_, PyAny>>,
         rmsthresh: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
+    ) -> PyResult<bool> {
+        if r#type.is_some_and(|kind| kind.eq_ignore_ascii_case("EP")) {
+            return self.attached(py, |state| {
+                state.set_ep_solve(
+                    Path::new(table.unwrap_or("")),
+                    Path::new(cfcache.unwrap_or("")),
+                    painc.unwrap_or(360.),
+                )
+            });
+        }
         not_yet_implemented_in("calibrater", "setsolve", 1528)
     }
 

@@ -33,7 +33,6 @@ CALIBRATER_OWNERS = {
     "accumulate": 1525, "createcaltable": 1525, "updatecaltable": 1525,
     "rerefant": 1525, "smooth": 1525,
     "listcal": 1526, "plotcal": 1526,
-    "setmodel": 1520,
 }
 
 #: The methods each tool implements.
@@ -43,6 +42,8 @@ IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit",
 }
+PARTIAL = {"calibrater": {"setmodel", "setsolve"}}
+
 IMPLEMENTED["coordsys"] = {
     "addcoordinate", "axesmap", "axiscoordinatetypes", "conversiontype", "coordinatetype", "copy", "done", "epoch",
     "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "getconversiontype", "lineartransform",
@@ -100,12 +101,14 @@ def test_signatures_match_a_live_casa(tool: str) -> None:
 @pytest.mark.parametrize("tool", sorted(ISSUES))
 def test_the_bundle_describes_each_method_and_what_casa_rs_does_with_it(tool: str) -> None:
     methods = set(casa_signatures(tool)["methods"])
+    partial = PARTIAL.get(tool, set())
     assert_bundle_describes(
         getattr(tools, tool),
         tool,
         {
             "implemented": IMPLEMENTED[tool],
-            "not_yet_implemented": methods - IMPLEMENTED[tool],
+            "partial": partial,
+            "not_yet_implemented": methods - IMPLEMENTED[tool] - partial,
         },
     )
 
@@ -114,7 +117,8 @@ def test_the_bundle_describes_each_method_and_what_casa_rs_does_with_it(tool: st
 def test_a_method_casa_rs_lacks_names_its_issue(tool: str) -> None:
     cls = getattr(tools, tool)
     instance = cls()
-    for name in sorted(set(casa_signatures(tool)["methods"]) - IMPLEMENTED[tool]):
+    missing = set(casa_signatures(tool)["methods"]) - IMPLEMENTED[tool] - PARTIAL.get(tool, set())
+    for name in sorted(missing):
         required = [
             parameter.name
             for parameter in inspect.signature(getattr(cls, name)).parameters.values()
