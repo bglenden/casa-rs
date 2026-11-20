@@ -2,6 +2,7 @@
 //! Publish CASA's virtual source recipes or their sampled scratch visibilities.
 
 pub(crate) mod image;
+pub(crate) mod virtual_publication;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;

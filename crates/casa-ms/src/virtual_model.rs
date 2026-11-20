@@ -44,6 +44,10 @@
 #[doc(hidden)]
 pub mod ft_record;
 
+mod publication;
+pub use publication::VirtualModelPublication;
+use publication::with_model_locks;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -299,12 +303,20 @@ fn put_model(
     incremental: bool,
     lock: Option<&mut TableWriteLock>,
 ) -> MsResult<()> {
+    VirtualModelPublication::default().publish(ms, [(entry, incremental)], lock)
+}
+
+fn add_model(
+    ms: &MeasurementSet,
+    state: &mut ModelState,
+    entry: &VirtualModelEntry,
+    incremental: bool,
+) -> MsResult<Vec<PathBuf>> {
     let fields = entry.fields();
     let Some(&first) = fields.first() else {
         return Err(invalid("a virtual model entry names no field"));
     };
     let key = model_key(&fields);
-    let mut state = ModelState::read(ms)?;
     let mut record = RecordValue::default();
     let mut adds = false;
     let mut images = Vec::new();
@@ -342,9 +354,7 @@ fn put_model(
         images.retain(|path| !retained.contains(path));
     }
     state.put_model_record(ms, &fields, &key, record)?;
-    state.write_holding(ms, lock)?;
-    delete_images(ms, &images);
-    Ok(())
+    Ok(images)
 }
 
 /// Clear the virtual models of `fields`, or only their entries'
@@ -394,35 +404,37 @@ fn clear(
             None => prepare_write(ms, VisibilityDataColumn::ModelData, false),
         };
     }
-    let mut state = ModelState::read(ms)?;
-    let mut images = Vec::new();
-    for &field in fields {
-        let Some((key, source_row)) = state.defined_for_field(field) else {
-            tracing::info!(field, "no virtual model to clear");
-            continue;
-        };
-        let pointer = pointer(field);
-        if spws.is_empty() {
-            images.extend(record_images(&state.record(ms, &key)?));
-            state.remove_record_by_key(&key);
-            if source_row.is_some() {
+    with_model_locks(ms, lock, |ms, main, source| {
+        let mut state = ModelState::read(ms)?;
+        let mut images = Vec::new();
+        for &field in fields {
+            let Some((key, source_row)) = state.defined_for_field(field) else {
+                tracing::info!(field, "no virtual model to clear");
+                continue;
+            };
+            let pointer = pointer(field);
+            if spws.is_empty() {
+                images.extend(record_images(&state.record(ms, &key)?));
+                state.remove_record_by_key(&key);
+                if source_row.is_some() {
+                    state.remove_source_keyword(&pointer);
+                }
+                state.remove_main_keyword(&pointer);
+                continue;
+            }
+            let mut record = state.record(ms, &key)?;
+            if remove_spw(&mut record, spws, fields) {
+                state.put_record_by_key(&key, record, source_row);
+            } else {
+                images.extend(record_images(&state.record(ms, &key)?));
+                state.remove_record_by_key(&key);
                 state.remove_source_keyword(&pointer);
             }
-            state.remove_main_keyword(&pointer);
-            continue;
         }
-        let mut record = state.record(ms, &key)?;
-        if remove_spw(&mut record, spws, fields) {
-            state.put_record_by_key(&key, record, source_row);
-        } else {
-            images.extend(record_images(&state.record(ms, &key)?));
-            state.remove_record_by_key(&key);
-            state.remove_source_keyword(&pointer);
-        }
-    }
-    state.write_holding(ms, lock)?;
-    delete_images(ms, &images);
-    Ok(())
+        state.write_holding(ms, main, source)?;
+        delete_images(ms, &images);
+        Ok(())
+    })
 }
 
 /// The fields and spectral windows CASA's `MSSelection` finds for a
@@ -935,6 +947,7 @@ fn remove_entry(record: &mut RecordValue, kind: VirtualModelKind, name: &str, re
 struct ModelState {
     main: RecordValue,
     main_changed: bool,
+    main_upserted: bool,
     /// SOURCE, when the MeasurementSet has one.
     source: Option<SourceModels>,
 }
@@ -966,6 +979,7 @@ impl ModelState {
         Ok(Self {
             main: ms.main_table().keywords().clone(),
             main_changed: false,
+            main_upserted: false,
             source,
         })
     }
@@ -1158,6 +1172,7 @@ impl ModelState {
         }
         self.main.upsert(key, Value::Record(record));
         self.main_changed = true;
+        self.main_upserted = true;
     }
 
     /// `removeRecordByKey`: empty the SOURCE cell the key names and remove
@@ -1200,13 +1215,23 @@ impl ModelState {
     fn write_holding(
         self,
         ms: &mut MeasurementSet,
-        lock: Option<&mut TableWriteLock>,
+        main_lock: Option<&mut TableWriteLock>,
+        source_lock: Option<&mut TableWriteLock>,
     ) -> MsResult<()> {
-        if let Some(models) = self.source.filter(|source| source.changed)
+        let mut state = self;
+        state.write_source(ms, source_lock)?;
+        state.write_main(ms, main_lock)
+    }
+
+    fn write_source(
+        &mut self,
+        ms: &mut MeasurementSet,
+        source_lock: Option<&mut TableWriteLock>,
+    ) -> MsResult<()> {
+        if let Some(models) = self.source.take().filter(|source| source.changed)
             && let Some(table) = ms.subtable_mut(SubtableId::Source)
         {
-            let attempts = if lock.is_some() { 1 } else { 0 };
-            change_in_place(table, attempts, Write::Full, None, |table| {
+            change_in_place(table, 1, Write::Full, source_lock, |table| {
                 if models.adds_column {
                     table.add_column(ColumnSchema::record(SOURCE_MODEL), None)?;
                 }
@@ -1220,9 +1245,17 @@ impl ModelState {
                 Ok(())
             })?;
         }
+        Ok(())
+    }
+
+    fn write_main(
+        self,
+        ms: &mut MeasurementSet,
+        main_lock: Option<&mut TableWriteLock>,
+    ) -> MsResult<()> {
         if self.main_changed {
             let keywords = self.main;
-            change_in_place(ms.main_table_mut(), 0, Write::Metadata, lock, |main| {
+            change_in_place(ms.main_table_mut(), 0, Write::Metadata, main_lock, |main| {
                 *main.keywords_mut() = keywords;
                 Ok(())
             })?;
