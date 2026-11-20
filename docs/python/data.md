@@ -90,6 +90,10 @@ Use `ia.deconvolvecomponentlist(cl.torecord())` to remove the restoring beam
 from Gaussian components on an attached float or complex image. Point
 components are returned intact. For a per-plane beam grid, select the
 channel and polarization on each nondegenerate axis.
+Use `ia.imageconcat(infiles=["a.im", "b.im"], axis=0)` for a temporary
+concatenation, or give `outfile` for a native image. The default
+concatenation axis is spectral. `reorder=True` sorts inputs along the
+selected coordinate. Virtual modes are tracked in #1625.
 Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
 float or complex image. Use `update=True` to validate the selected native
 pixel mask after replacement.

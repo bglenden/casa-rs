@@ -6,6 +6,7 @@
 mod attachment;
 mod beam_edit;
 mod beams;
+mod concatenate;
 mod conformance;
 mod convertflux;
 mod create;

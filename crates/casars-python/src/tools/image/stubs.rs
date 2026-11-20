@@ -511,22 +511,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, infiles = None, axis = None, relax = None, tempclose = None, overwrite = None, reorder = None, mode = None), text_signature = "($self, outfile='', infiles=[], axis=-1, relax=False, tempclose=True, overwrite=False, reorder=False, mode='paged')")]
-    fn imageconcat(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        infiles: Option<&Bound<'_, PyAny>>,
-        axis: Option<&Bound<'_, PyAny>>,
-        relax: Option<&Bound<'_, PyAny>>,
-        tempclose: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        reorder: Option<&Bound<'_, PyAny>>,
-        mode: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("imageconcat")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (infile = None, region = None, locate = None, verbose = None), text_signature = "($self, infile='', region={}, locate=[-1.0], verbose=False)")]
     fn insert(
         &self,
