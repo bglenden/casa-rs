@@ -174,6 +174,7 @@ struct PreparedFourierModel {
     flags: Vec<bool>,
     frequencies: Vec<f64>,
     legacy_pbw_angle: Option<legacy_pbw::FeedAngle>,
+    legacy_ep_offsets: Option<crate::ft::legacy_pbw::pointing::LegacyEpOffsets>,
     legacy_aw: bool,
     _legacy_kernel_memory: Option<Reservation>,
 }
@@ -231,9 +232,24 @@ impl PreparedFourierModel {
         let machine = record_text(terms[0], "name")?;
         let legacy_pbw = matches!(machine, "nPBWProjectFT" | "PBMosaicFT");
         let legacy_aw = machine == legacy_aw::MACHINE;
+        let legacy_ep_offsets = if legacy_pbw {
+            crate::ft::legacy_pbw::pointing::LegacyEpOffsets::from_record(
+                terms[0],
+                row.ms.antenna().map_err(model_error)?.row_count(),
+            )
+            .map_err(model_error)?
+        } else {
+            None
+        };
         let (kernels, mosaic, legacy_kernel_memory): (Box<dyn ConvolutionFunctionSet>, _, _) =
             if legacy_pbw {
-                let (kernels, memory) = legacy_pbw::load(terms[0], row, &geometry, &polarization)?;
+                let (kernels, memory) = legacy_pbw::load(
+                    terms[0],
+                    row,
+                    &geometry,
+                    &polarization,
+                    legacy_ep_offsets.is_some(),
+                )?;
                 (Box::new(kernels), None, Some(memory))
             } else if legacy_aw {
                 let path = complex_model_image_path(terms[0], row.ms)?.join(legacy_aw::CACHE);
@@ -351,6 +367,7 @@ impl PreparedFourierModel {
             flags: Vec::new(),
             frequencies: Vec::new(),
             legacy_pbw_angle: legacy_pbw.then(legacy_pbw::FeedAngle::default),
+            legacy_ep_offsets,
             legacy_aw,
         })
     }
@@ -527,6 +544,13 @@ impl PreparedFourierModel {
             .legacy_pbw_angle
             .as_mut()
             .map_or(Ok(0.), |angles| angles.for_row(&row))?;
+        let pointing_offset_rad = if let Some(offsets) = &self.legacy_ep_offsets {
+            offsets
+                .baseline_offset([row.row.antenna1, row.row.antenna2])
+                .map_err(model_error)?
+        } else {
+            pointing_offset_rad
+        };
         let native = NativeRow {
             uvw_m: uvw_m.map(|coordinate| coordinate * wavelength_scale),
             phase_shift_m: phase_shift_m * wavelength_scale,

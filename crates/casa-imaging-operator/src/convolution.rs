@@ -715,6 +715,12 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
     fn pointing_ramp(&self) -> bool;
 
+    /// Sine and cosine of the fine-tap rotation when the prediction phase
+    /// and its kernel sum both use rotated pointing coordinates.
+    fn prediction_pointing_rotation(&self, _key: CfKey) -> Option<(f64, f64)> {
+        None
+    }
+
     /// Whether this pointing supplies a convolution function on the image.
     /// Called for sets that apply a pointing ramp. A rejected pointing
     /// contributes neither a gridded sample nor a model prediction.

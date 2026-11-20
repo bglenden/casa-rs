@@ -216,7 +216,7 @@ impl PyImager {
     ) -> PyResult<bool> {
         // The A/W controls are consumed by their Fourier machines. Ordinary
         // GridFT and WProjectFT do not use them.
-        let _ = (epjtablename, imagetilevol, psterm, aterm, mterm, wbawp);
+        let _ = (imagetilevol, psterm, aterm, mterm, wbawp);
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -236,7 +236,7 @@ impl PyImager {
             .options(state.prediction.transform_options())?;
             let mosaic = ftmachine.eq_ignore_ascii_case("pbmosaic");
             if mosaic || ftmachine.eq_ignore_ascii_case("pbwproject") {
-                state.prediction.configure_legacy_pbw(
+                state.prediction.configure_legacy_pbw_with_pointing(
                     settings,
                     ImagerLegacyPbWOptions {
                         mosaic,
@@ -246,6 +246,8 @@ impl PyImager {
                         correct_primary_beam: dopbgriddingcorrections,
                         primary_beam_limit: pblimit,
                     },
+                    (applypointingoffsets && !epjtablename.is_empty())
+                        .then(|| PathBuf::from(epjtablename)),
                 )
             } else if matches!(
                 ftmachine.to_ascii_lowercase().as_str(),

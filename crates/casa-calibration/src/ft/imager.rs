@@ -62,7 +62,7 @@ pub struct ImagerPrediction {
     frequency_frame_valid: bool,
     ft_location: Option<MPosition>,
     options: ImagerTransformOptions,
-    legacy_pbw: Option<ImagerLegacyPbWOptions>,
+    legacy_pbw: Option<(ImagerLegacyPbWOptions, Option<PathBuf>)>,
     legacy_aw: Option<ImagerLegacyAwOptions>,
     single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
@@ -205,8 +205,21 @@ impl ImagerPrediction {
         options: ImagerTransformOptions,
         legacy_pbw: ImagerLegacyPbWOptions,
     ) -> MsResult<()> {
+        self.configure_legacy_pbw_with_pointing(options, legacy_pbw, None)
+    }
+
+    /// Select legacy primary-beam and W projection with an optional EP Jones table.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_legacy_pbw_with_pointing(
+        &mut self,
+        options: ImagerTransformOptions,
+        legacy_pbw: ImagerLegacyPbWOptions,
+        pointing_table: Option<PathBuf>,
+    ) -> MsResult<()> {
         self.configure_transform(options)?;
-        self.legacy_pbw = Some(legacy_pbw);
+        self.legacy_pbw = Some((legacy_pbw, pointing_table));
         Ok(())
     }
 
@@ -892,9 +905,15 @@ impl ImagerPrediction {
             });
             let keep_zero = facets > 1
                 || (scratch && !model.incremental && model.components.is_none() && index == 0);
-            if let Some(legacy_pbw) = legacy_pbw {
+            if let Some((legacy_pbw, pointing_table)) = legacy_pbw {
                 images.extend(super::legacy_pbw::prepare_model(
-                    ms, selected, path, &geometry, legacy_pbw, keep_zero, scratch,
+                    ms,
+                    selected,
+                    path,
+                    &geometry,
+                    (legacy_pbw, pointing_table.as_deref()),
+                    keep_zero,
+                    scratch,
                 )?);
             } else if let Some(legacy_aw) = legacy_aw {
                 images.extend(super::legacy_aw::prepare_model(

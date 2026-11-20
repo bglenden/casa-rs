@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Publish the Fourier image and its matching legacy nPBWProjectFT taps.
 
+pub(crate) mod pointing;
+
 use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, DirectionCoordinate, StokesType};
@@ -22,6 +24,7 @@ use super::image::{ImageModel, match_channels, selection_mask};
 use super::moving_source::first_imager_row;
 use super::settings::{ImagerLegacyPbWOptions, PredictionGeometry};
 use super::{invalid, spectral_with_runtime};
+use pointing::LegacyEpOffsets;
 
 pub(crate) const KERNEL_IMAGE: &str = "CASARS_LEGACY_PBW_KERNEL";
 
@@ -30,11 +33,12 @@ pub(super) fn prepare_model(
     selected: &ResolvedMsSelection,
     path: &Path,
     geometry: &PredictionGeometry,
-    options: &ImagerLegacyPbWOptions,
+    options: (&ImagerLegacyPbWOptions, Option<&Path>),
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
-    if options.w_planes > 1 || options.apply_pointing_offsets {
+    let (options, pointing_table) = options;
+    if options.w_planes > 1 {
         return Err(invalid(
             "this legacy pbwproject configuration is pending #1520",
         ));
@@ -50,6 +54,13 @@ pub(super) fn prepare_model(
             "legacy pbmosaic prediction with several fields is pending #1520",
         ));
     }
+    let pointing = if options.apply_pointing_offsets {
+        let path = pointing_table
+            .ok_or_else(|| invalid("epjtablename is required to apply legacy pointing offsets"))?;
+        Some(LegacyEpOffsets::for_selection(path, ms, selected)?)
+    } else {
+        None
+    };
     let model = PagedImage::<f32>::open(path).map_err(invalid)?;
     let (shape, increment, coordinates) = model_geometry(&model)?;
     let [side, _, _, _] = shape;
@@ -128,6 +139,9 @@ pub(super) fn prepare_model(
                 "casars_legacy_pbw_angle",
                 Value::Scalar(ScalarValue::Float64(angle_rad)),
             );
+            if let Some(pointing) = pointing {
+                pointing.save(record);
+            }
             Ok(())
         },
     )
