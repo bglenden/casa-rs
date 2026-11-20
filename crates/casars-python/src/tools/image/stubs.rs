@@ -15,22 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, direction = None, spectral = None, stokes = None, linear = None, tabular = None, overwrite = None, silent = None), text_signature = "($self, outfile='', direction=False, spectral=False, stokes='', linear=False, tabular=False, overwrite=False, silent=False)")]
-    fn adddegaxes(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        tabular: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        silent: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("adddegaxes")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (r#type = None, pars = None, region = None, zero = None, seeds = None), text_signature = "($self, type='normal', pars=[0.0, 1.0], region={}, zero=False, seeds=[])")]
     fn addnoise(
         &self,
@@ -41,16 +25,6 @@ impl PyImageTool {
         seeds: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("addnoise")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (source = None, convolved = None), text_signature = "($self, source=[], convolved=[])")]
-    fn beamforconvolvedsize(
-        &self,
-        source: Option<&Bound<'_, PyAny>>,
-        convolved: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("beamforconvolvedsize")
     }
 
     /// Not yet implemented in casa-rs.
@@ -209,16 +183,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("decompose")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (source = None, beam = None), text_signature = "($self, source=[], beam=[])")]
-    fn deconvolvefrombeam(
-        &self,
-        source: Option<&Bound<'_, PyAny>>,
-        beam: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("deconvolvefrombeam")
     }
 
     /// Not yet implemented in casa-rs.
@@ -655,35 +619,6 @@ impl PyImageTool {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("set")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (axes = None, region = None, mask = None, includepix = None, excludepix = None, list = None, force = None, disk = None, robust = None, verbose = None, stretch = None, logfile = None, append = None, algorithm = None, fence = None, center = None, lside = None, zscore = None, maxiter = None, clmethod = None, niter = None), text_signature = "($self, axes=[-1], region='', mask='', includepix=[-1.0], excludepix=[-1.0], list=False, force=False, disk=False, robust=False, verbose=False, stretch=False, logfile='', append=True, algorithm='classic', fence=-1.0, center='mean', lside=True, zscore=-1.0, maxiter=-1, clmethod='auto', niter=3)")]
-    fn statistics(
-        &self,
-        axes: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        includepix: Option<&Bound<'_, PyAny>>,
-        excludepix: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        force: Option<&Bound<'_, PyAny>>,
-        disk: Option<&Bound<'_, PyAny>>,
-        robust: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        logfile: Option<&Bound<'_, PyAny>>,
-        append: Option<&Bound<'_, PyAny>>,
-        algorithm: Option<&Bound<'_, PyAny>>,
-        fence: Option<&Bound<'_, PyAny>>,
-        center: Option<&Bound<'_, PyAny>>,
-        lside: Option<&Bound<'_, PyAny>>,
-        zscore: Option<&Bound<'_, PyAny>>,
-        maxiter: Option<&Bound<'_, PyAny>>,
-        clmethod: Option<&Bound<'_, PyAny>>,
-        niter: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("statistics")
     }
 
     /// Not yet implemented in casa-rs.
