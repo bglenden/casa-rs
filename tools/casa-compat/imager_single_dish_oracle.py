@@ -43,9 +43,9 @@ def prepare_ms(source, target, mode, *, scratch=True):
     assert tool.done()
 
 
-def setup(factory, target, mode, kernel, *, pinned, scratch=True, spw=''):
+def setup(factory, target, mode, kernel, *, pinned, scratch=True, spw='', field='0,1'):
     tool = factory()
-    assert tool.open(str(target), usescratch=scratch) and tool.selectvis(field='0,1', spw=spw)
+    assert tool.open(str(target), usescratch=scratch) and tool.selectvis(field=field, spw=spw)
     cell = '1.2arcsec' if kernel == 'PB' else '.3arcsec'
     assert tool.defineimage(nx=320, ny=320, cellx=cell, celly=cell,
                             phasecenter=0, outframe='TOPO')
@@ -66,7 +66,7 @@ def predict(factory, target, model, mode, kernel, *, pinned, scratch=True, spw='
     assert tool.done()
 
 
-def read_virtual(path, mode, kernel):
+def read_virtual(path, mode, kernel, *, selection=None):
     from casars.tools import ms
 
     table_tool = table()
@@ -88,7 +88,10 @@ def read_virtual(path, mode, kernel):
     corrected = table_tool.getcol('CORRECTED_DATA')
     assert table_tool.done()
     tool = ms()
-    assert tool.open(str(path), nomodify=False) and tool.uvsub() and tool.done()
+    assert tool.open(str(path), nomodify=False)
+    if selection is not None:
+        assert tool.msselect(selection)
+    assert tool.uvsub() and tool.done()
     assert table_tool.open(str(path))
     delta = corrected - table_tool.getcol('CORRECTED_DATA')
     assert table_tool.done()

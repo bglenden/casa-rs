@@ -19,7 +19,7 @@ use ndarray::{ArrayD, Axis, Ix2};
 
 use crate::ft::image::{coordinate_index, match_channel, polarization_coordinate};
 use crate::ft::single_dish::{
-    default_beam, kernel_function, read_kernel_parameters, validate_support,
+    default_beam, has_saved_setup, kernel_function, read_kernel_parameters, validate_support,
 };
 
 use super::fourier::{
@@ -38,19 +38,7 @@ pub(super) struct SingleDishModel {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct PointingQuery {
     pub(super) column: String,
-    convert_first: Option<(DirectionRef, bool)>,
-}
-
-impl PointingQuery {
-    pub(super) fn target_reference(
-        &self,
-        data_rows: usize,
-        pointing_rows: usize,
-    ) -> Option<DirectionRef> {
-        self.convert_first.and_then(|(reference, automatic)| {
-            (!automatic || data_rows > pointing_rows).then_some(reference)
-        })
-    }
+    pub(super) convert_first: Option<DirectionRef>,
 }
 
 struct PreparedModel {
@@ -77,27 +65,41 @@ struct PointingFrame {
 
 impl SingleDishModel {
     pub(super) fn new(record: RecordValue) -> Result<Self, GainSolveError> {
+        let explicit = has_saved_setup(&record);
         let name = |field, default| match record.get(field) {
-            Some(Value::Scalar(ScalarValue::String(name))) => name.as_str(),
-            _ => default,
+            Some(Value::Scalar(ScalarValue::String(name))) => Ok(name.as_str()),
+            None if !explicit => Ok(default),
+            _ => Err(model_error(format!(
+                "invalid single-dish recipe field {field}"
+            ))),
         };
-        let convert_first = match name("casars_sd_convert_first", "NEVER") {
+        let convert_first = match name("casars_sd_convert_first", "NEVER")? {
             "NEVER" => None,
-            mode @ ("ALWAYS" | "AUTO") => {
+            "ALWAYS" => {
                 let Some(Value::Record(direction)) = record.get("mimage_rec") else {
                     return Err(model_error("SDGrid recipe has no image direction"));
                 };
-                Some((
+                Some(
                     direction_from_record(direction)
                         .map_err(model_error)?
                         .refer(),
-                    mode == "AUTO",
-                ))
+                )
             }
             mode => return Err(model_error(format!("illegal ConvertFirst name {mode}"))),
         };
+        let column = name("pointingdircol", "DIRECTION")?;
+        if !matches!(
+            column,
+            "DIRECTION" | "TARGET" | "ENCODER" | "POINTING_OFFSET" | "SOURCE_OFFSET"
+        ) {
+            return Err(model_error(format!(
+                "unknown single-dish POINTING column {column}"
+            )));
+        }
+        read_kernel_parameters(&record).map_err(model_error)?;
+        recipe_cache(&record)?;
         let pointing = PointingQuery {
-            column: name("pointingdircol", "DIRECTION").to_owned(),
+            column: column.to_owned(),
             convert_first,
         };
         Ok(Self {
@@ -253,10 +255,7 @@ impl PreparedModel {
             pixel: None,
             sampled: vec![None; sample_count],
             convert_frequencies,
-            cache_pointings: matches!(
-                record.get("casars_sd_cache_pointings"),
-                Some(Value::Scalar(ScalarValue::Bool(true)))
-            ),
+            cache_pointings: recipe_cache(record)?,
             cached_pointing: None,
             _memory: memory,
         })
@@ -365,6 +364,16 @@ impl PreparedModel {
             }
         }
         Ok(())
+    }
+}
+
+fn recipe_cache(record: &RecordValue) -> Result<bool, GainSolveError> {
+    match record.get("casars_sd_cache_pointings") {
+        Some(Value::Scalar(ScalarValue::Bool(cache))) => Ok(*cache),
+        None if !has_saved_setup(record) => Ok(false),
+        _ => Err(model_error(
+            "invalid single-dish recipe field casars_sd_cache_pointings",
+        )),
     }
 }
 

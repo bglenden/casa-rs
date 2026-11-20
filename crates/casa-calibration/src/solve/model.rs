@@ -209,55 +209,6 @@ impl ModelInputs {
             }
             self.geometry = Some(engine);
         }
-        let queries: HashSet<_> = self
-            .virtual_models
-            .values()
-            .flat_map(|entries| entries.iter())
-            .filter_map(|entry| match &entry.prediction {
-                Prediction::SingleDish(dish) => Some(dish.pointing()),
-                _ => None,
-            })
-            .collect();
-        if !queries.is_empty() {
-            let pointing = ms
-                .subtable(SubtableId::Pointing)
-                .is_some()
-                .then(|| ms.pointing())
-                .transpose()
-                .map_err(|error| read_error(ms, error))?;
-            if let Some(pointing) = pointing.filter(|pointing| pointing.row_count() > 0) {
-                let selected: Vec<_> = rows
-                    .iter()
-                    .filter(|row| row.antenna1 == row.antenna2 && !row.flag_row)
-                    .collect();
-                let requests: Vec<_> = selected
-                    .iter()
-                    .map(|row| (row.antenna1, row.time_seconds, row.interval_seconds))
-                    .collect();
-                let engine = self.geometry.as_ref().expect("single-dish geometry");
-                for query in queries {
-                    let target = query
-                        .target_reference(rows.len(), pointing.row_count())
-                        .map(|reference| (engine, reference));
-                    let directions = pointing
-                        .single_dish_directions(&requests, &query.column, target)
-                        .map_err(|error| read_error(ms, error))?;
-                    self.single_dish_pointings.insert(
-                        query.clone(),
-                        selected
-                            .iter()
-                            .zip(directions)
-                            .filter_map(|(row, direction)| {
-                                direction.map(|direction| (row.row_index, direction))
-                            })
-                            .collect(),
-                    );
-                }
-            } else {
-                self.single_dish_feeds =
-                    FeedOffsets::load(ms).map_err(|error| read_error(ms, error))?;
-            }
-        }
         Ok(())
     }
 
@@ -369,6 +320,68 @@ impl ModelInputs {
                 self.model_buffers
                     .insert(row.row_index, Arc::clone(&buffer));
             }
+        }
+        self.load_single_dish_pointings(ms, rows)
+    }
+
+    fn load_single_dish_pointings(
+        &mut self,
+        ms: &MeasurementSet,
+        rows: &[BucketedRow<'_>],
+    ) -> Result<(), GainSolveError> {
+        let queries: HashSet<_> = self
+            .virtual_models
+            .values()
+            .flat_map(|entries| entries.iter())
+            .filter_map(|entry| match &entry.prediction {
+                Prediction::SingleDish(dish) => Some(dish.pointing()),
+                _ => None,
+            })
+            .collect();
+        if queries.is_empty() {
+            return Ok(());
+        }
+        let pointing = ms
+            .subtable(SubtableId::Pointing)
+            .is_some()
+            .then(|| ms.pointing())
+            .transpose()
+            .map_err(|error| read_error(ms, error))?;
+        let Some(pointing) = pointing.filter(|pointing| pointing.row_count() > 0) else {
+            self.single_dish_feeds =
+                FeedOffsets::load(ms).map_err(|error| read_error(ms, error))?;
+            return Ok(());
+        };
+        let engine = self.geometry.as_ref().expect("single-dish geometry");
+        for query in queries {
+            let selected: Vec<_> = rows.iter().map(|(row, _, _)| *row).filter(|row| {
+                if row.antenna1 != row.antenna2 || row.flag_row {
+                    return false;
+                }
+                let Some(buffer) = self.model_buffers.get(&row.row_index) else { return false };
+                self.virtual_models[&row.field_id].iter().any(|entry| {
+                    entry.selection.matches(buffer.selection)
+                        && matches!(&entry.prediction, Prediction::SingleDish(dish) if dish.pointing() == query)
+                })
+            }).collect();
+            let requests: Vec<_> = selected
+                .iter()
+                .map(|row| (row.antenna1, row.time_seconds, row.interval_seconds))
+                .collect();
+            let target = query.convert_first.map(|reference| (engine, reference));
+            let directions = pointing
+                .single_dish_directions(&requests, &query.column, target)
+                .map_err(|error| read_error(ms, error))?;
+            self.single_dish_pointings.insert(
+                query.clone(),
+                selected
+                    .into_iter()
+                    .zip(directions)
+                    .filter_map(|(row, direction)| {
+                        direction.map(|direction| (row.row_index, direction))
+                    })
+                    .collect(),
+            );
         }
         Ok(())
     }

@@ -10,8 +10,7 @@ use std::sync::Mutex;
 
 use casa_calibration::{
     AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerKernelWidth, ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup,
-    ImagerVoltagePattern,
+    ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup, ImagerVoltagePattern,
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -21,7 +20,7 @@ use pyo3::{
     types::{PyFloat, PyInt, PyList, PyString},
 };
 
-use crate::convert::{Variant, quantity, quantity_value, value_in};
+use crate::convert::{Variant, quantity, quantity_value};
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 const LOGGER: &str = "casars.tools.imager";
@@ -276,18 +275,11 @@ impl PyImager {
         // GridBoth and SDGrid consume these when accumulating data and
         // weights into an image. A forward model prediction samples pixels.
         let _ = (scale, weight, minweight, clipminmax);
-        let width = |value| -> PyResult<_> {
-            let value = quantity(value)?;
-            Ok(match value.unit().name() {
-                "" | "pixel" => ImagerKernelWidth::Pixels(value.value()),
-                _ => ImagerKernelWidth::Radians(value_in(&value, "rad")?),
-            })
-        };
         let setup = ImagerSingleDishSetup {
             support: convsupport,
-            truncate: width(&truncate)?,
-            gaussian_width: width(&gwidth)?,
-            jinc_width: width(&jwidth)?,
+            truncate: quantity(&truncate)?,
+            gaussian_width: quantity(&gwidth)?,
+            jinc_width: quantity(&jwidth)?,
             pointing_column: pointingcolumntouse.into(),
             cache_pointings: enablecache,
             convert_first: convertfirst.into(),

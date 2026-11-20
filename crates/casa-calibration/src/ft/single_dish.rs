@@ -54,7 +54,20 @@ pub(super) fn prepare_model(
     let cell = geometry
         .single_dish_cell_rad
         .unwrap_or(direction.increment()[1]);
-    let parameters = context.kernel_parameters(cell);
+    let parameters = context.kernel_parameters(kernel, cell)?;
+    let convert_first = match context.convert_first.as_str() {
+        "AUTO" => {
+            let pointing_rows = ms
+                .subtable(SubtableId::Pointing)
+                .map_or(0, |table| table.row_count());
+            if selected.selected_rows.len() > pointing_rows {
+                "ALWAYS"
+            } else {
+                "NEVER"
+            }
+        }
+        mode => mode,
+    };
     validate_model(
         ms,
         selected,
@@ -124,7 +137,7 @@ pub(super) fn prepare_model(
         );
         record.upsert(
             "casars_sd_convert_first",
-            Value::Scalar(ScalarValue::String(context.convert_first.clone())),
+            Value::Scalar(ScalarValue::String(convert_first.into())),
         );
         record.upsert(
             "casars_sd_cache_pointings",
@@ -215,24 +228,39 @@ pub(crate) fn kernel_function(name: &str, parameters: KernelParameters) -> MsRes
 
 pub(crate) fn read_kernel_parameters(record: &RecordValue) -> MsResult<KernelParameters> {
     let Some(value) = record.get("casars_sd_parameters") else {
+        if has_saved_setup(record) {
+            return Err(invalid("single-dish recipe has no kernel parameters"));
+        }
         return Ok(KernelParameters::DEFAULT);
     };
     let Value::Record(saved) = value else {
         return Err(invalid("invalid single-dish kernel parameters"));
     };
     let numeric = |name| match saved.get(name) {
-        Some(Value::Scalar(ScalarValue::Float64(value))) => Ok(*value),
+        Some(Value::Scalar(ScalarValue::Float64(value))) if value.is_finite() => Ok(*value),
         _ => Err(invalid(format!("invalid single-dish kernel {name}"))),
     };
-    let Some(Value::Scalar(ScalarValue::Int64(convsupport))) = saved.get("convsupport") else {
-        return Err(invalid("invalid single-dish kernel convsupport"));
+    let convsupport = match saved.get("convsupport") {
+        Some(Value::Scalar(ScalarValue::Int64(value))) => *value,
+        Some(Value::Scalar(ScalarValue::Int32(value))) => i64::from(*value),
+        _ => return Err(invalid("invalid single-dish kernel convsupport")),
     };
     Ok(KernelParameters {
-        convsupport: *convsupport,
+        convsupport,
         truncate: numeric("truncate")?,
         gwidth: numeric("gwidth")?,
         jwidth: numeric("jwidth")?,
     })
+}
+
+pub(crate) fn has_saved_setup(record: &RecordValue) -> bool {
+    [
+        "casars_sd_parameters",
+        "casars_sd_convert_first",
+        "casars_sd_cache_pointings",
+    ]
+    .iter()
+    .any(|name| record.get(name).is_some())
 }
 
 pub(crate) fn validate_support([nx, ny]: [usize; 2], radius: usize) -> MsResult<()> {

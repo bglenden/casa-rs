@@ -3,6 +3,7 @@
 """Pair legacy imager.setsdoptions prediction with CASA and analytic kernels."""
 
 import argparse
+from copy import deepcopy
 import inspect
 import json
 from pathlib import Path
@@ -21,8 +22,8 @@ from imager_single_dish_oracle import (
 )
 
 
-def predict(factory, path, model, mode, kernel, settings, *, scratch=True):
-    tool = setup(factory, path, mode, kernel, pinned=False, scratch=scratch)
+def predict(factory, path, model, mode, kernel, settings, *, scratch=True, field='0,1'):
+    tool = setup(factory, path, mode, kernel, pinned=False, scratch=scratch, field=field)
     if isinstance(settings, list):
         assert tool.setsdoptions(*settings)
     else:
@@ -153,6 +154,13 @@ def convert_pointing_modes(root, source, model):
                           {'convertfirst': 'ALWAYS'}, reference_source=equatorial)
     comparison(root, horizontal, gradient, 'convert-auto', 'BOX',
                {'convertfirst': 'AUTO', 'enablecache': True}, expected=expected)
+    virtual_path = root / 'convert-auto-virtual.ms'
+    assert tb.open(str(virtual_path))
+    first_field = tb.getcol('FIELD_ID') == 0
+    assert tb.done()
+    selected = read_virtual(virtual_path, 'sd', 'BOX', selection={'field': '0'})
+    assert relative_rms(selected[..., first_field], expected[..., first_field]) < 1.e-3
+    assert not selected[..., ~first_field].any()
     never_path = root / 'convert-never.ms'
     prepare_ms(horizontal, never_path, 'sd')
     predict(native, never_path, gradient, 'sd', 'BOX', {'convertfirst': 'NEVER'})
@@ -160,6 +168,83 @@ def convert_pointing_modes(root, source, model):
     difference = relative_rms(never, expected)
     print('NEVER against convert-first control', difference, flush=True)
     assert difference > 1.e-3
+
+
+def separate_field_models(root, source, model):
+    from casars.tools import imager as native
+
+    target = root / 'field-recipes.ms'
+    prepare_ms(source, target, 'sd', scratch=False)
+    tb = table()
+    assert tb.open(str(target))
+    times, fields = tb.getcol('TIME'), tb.getcol('FIELD_ID')
+    assert tb.done()
+    assert tb.open(str(target / 'POINTING'), nomodify=False)
+    dates, directions = tb.getcol('TIME'), tb.getcol('TARGET')
+    template = tb.getcoldesc('TARGET')
+    assert tb.addcols({'ENCODER': template | {'ndim': 1, 'option': 0}})
+    for row in np.flatnonzero(np.isin(dates, times[fields == 0])):
+        assert tb.putcell('ENCODER', int(row), directions[:, 0, row])
+    assert any(not tb.iscelldefined('ENCODER', row) for row in range(tb.nrows()))
+    assert tb.done()
+    predict(native, target, model, 'sd', 'SF', {'pointingcolumntouse': 'ENCODER'},
+            scratch=False, field='0')
+    predict(native, target, model, 'sd', 'SF', {'pointingcolumntouse': 'DIRECTION'},
+            scratch=False, field='1')
+    first = read_virtual(target, 'sd', 'SF', selection={'field': '0'})
+    second = read_virtual(target, 'sd', 'SF', selection={'field': '1'})
+    complete = read_virtual(target, 'sd', 'SF')
+    assert np.abs(first[..., fields == 0]).max() > 1.e-3 and not first[..., fields == 1].any()
+    assert np.abs(second[..., fields == 1]).max() > 1.e-3 and not second[..., fields == 0].any()
+    assert relative_rms(complete, first + second) < 1.e-3
+    print('independent pointing columns reopened across both fields', flush=True)
+
+
+def invalid_saved_settings(root, source, model):
+    from casars.tools import imager as native, ms
+
+    target = root / 'malformed-recipes.ms'
+    prepare_ms(source, target, 'sd', scratch=False)
+    predict(native, target, model, 'sd', 'SF', {}, scratch=False)
+    tb = table()
+    assert tb.open(str(target / 'SOURCE'))
+    row = tb.getkeyword(tb.getkeyword('definedmodel_field_0'))
+    original = tb.getcell('SOURCE_MODEL', row)
+    assert tb.done()
+    assert tb.open(str(target))
+    corrected = tb.getcol('CORRECTED_DATA')
+    assert tb.done()
+    for name, value, reason in (
+        ('pointingdircol', 'PHASE_DIR', 'POINTING column PHASE_DIR'),
+        ('casars_sd_convert_first', 1, 'casars_sd_convert_first'),
+        ('casars_sd_cache_pointings', 'yes', 'casars_sd_cache_pointings'),
+        ('casars_sd_parameters', None, 'no kernel parameters'),
+    ):
+        recipe = deepcopy(original)
+        options = recipe['ft_0']['container']
+        if value is None:
+            del options[name]
+        else:
+            options[name] = value
+        assert tb.open(str(target / 'SOURCE'), nomodify=False)
+        assert tb.putcell('SOURCE_MODEL', row, recipe) and tb.done()
+        tool = ms()
+        assert tool.open(str(target), nomodify=False)
+        try:
+            tool.uvsub()
+        except RuntimeError as exception:
+            assert reason in str(exception)
+        else:
+            raise AssertionError(f'{name} corruption took effect')
+        assert tool.done()
+        assert tb.open(str(target))
+        assert np.array_equal(tb.getcol('CORRECTED_DATA'), corrected) and tb.done()
+    for name in ('casars_sd_parameters', 'casars_sd_convert_first', 'casars_sd_cache_pointings'):
+        del original['ft_0']['container'][name]
+    assert tb.open(str(target / 'SOURCE'), nomodify=False)
+    assert tb.putcell('SOURCE_MODEL', row, original) and tb.done()
+    assert np.abs(read_virtual(target, 'sd', 'SF')).max() > 1.e-3
+    print('malformed recipes refused and previous default recipe reopened', flush=True)
 
 
 def run(root):
@@ -175,6 +260,8 @@ def run(root):
     optional_columns(with_columns)
     baseline = comparison(root, offset, model, 'default', 'SF', {})
     assert np.abs(baseline).max() > 1.e-3
+    ignored_width = comparison(root, offset, model, 'unused-width', 'SF', {'gwidth': '1m'})
+    assert np.array_equal(ignored_width, baseline)
     for name, support in [('support1', 1), ('support4', 4)]:
         result = comparison(root, offset, model, name, 'SF', {'convsupport': support})
         assert relative_rms(result, baseline) > .25
@@ -195,6 +282,8 @@ def run(root):
     gaussian_parameters(root, offset, model, baseline.shape)
     validation(root, offset, model)
     convert_pointing_modes(root, offset, model)
+    separate_field_models(root, offset, model)
+    invalid_saved_settings(root, offset, model)
 
 
 def main():
