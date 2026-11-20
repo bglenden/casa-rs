@@ -199,7 +199,7 @@ const METHODS: &[Method] = &[
             param("sframe", K::Text, Text("cl")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "coordsys",
@@ -1179,7 +1179,7 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
+    method("topixel", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("torecord", &[], R::Any, Yes),
     method(
         "toworld",
@@ -1189,7 +1189,7 @@ const METHODS: &[Method] = &[
             param("dovelocity", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "transpose",

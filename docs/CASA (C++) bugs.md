@@ -3946,6 +3946,21 @@ casa-rs compares the magnitude to the zero tolerance and uses the
 signed value for any explicit range. The clip operator oracle checks
 both cases against independent expected flags. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Derived Stokes clip expressions can flag the wrong channels
+
+In CASA 6.7.6.14, the clipping visibility mapper computes linear Stokes U
+as `(XY - YX) / 2` and circular Stokes Q as `(RL - LR) / 2`. Equal
+cross-hands with a value of 3 therefore produce zero and are flagged by
+an inside range of −0.5 to 0.5. The corresponding Stokes values are 3.
+Circular Stokes V is divided by `2i`, which gives `REAL_V` zero for
+RR = 4 and LL = 0. The corresponding Stokes V is 2.
+
+casa-rs uses `(XY + YX) / 2`, `(RL + LR) / 2`, and `(RR - LL) / 2`
+for these three products and flags their contributing planes when the
+result meets the clipping criterion. The paired Stokes clip oracle
+reproduces the CASA flags and compares the native flags with independently
+calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## An overflowing observation selector flags a different observation
 
 In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.
@@ -5555,6 +5570,24 @@ Passing a cyclic `optionalparms` list terminates CASA with SIGSEGV; casa-rs
 rejects the cycle before changing the component.
 CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
 casa-rs rejects a non-finite shape or error before mutation.
+
+## `image.toworld` and `image.topixel` abort on a multidimensional numeric record
+
+Attach a 4 by 4 float image, then call either method with
+`{"numeric": np.array([[1., 2.], [3., 4.]])}`. CASA 6.7.6.14 terminates
+with SIGABRT and `Vector<T>: ndim of other array > 1`. The casa-rs tool
+raises `RuntimeError` because the numeric field must be one-dimensional.
+The direct array form of a pixel position still accepts CASA's flattened
+input.
+
+## `image.topixel` can write outside the world vector for a sliced direction measure
+
+Create a CASA image with shape `[1, 8, 6]`, call `child = ia.subimage(dropdeg=True)`,
+then call `child.topixel(child.toworld([2, 1], "m"))`. CASA 6.7.6.14 aborts with
+`free(): invalid pointer` after assigning the removed longitude through a
+negative world-axis index. casa-rs uses the surviving declination and spectral
+measure and returns `[2, 1]`, consistent with the numeric, quantity, and
+string encodings of the same position.
 
 ## Measures spectral conversions reject or truncate valid vectors
 

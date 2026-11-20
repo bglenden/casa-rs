@@ -59,6 +59,7 @@ IMPLEMENTED["coordsys"] = {
     "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
+    "coordmeasures", "topixel", "toworld",
     "adddegaxes",
     "statistics",
     "beamarea", "beamforconvolvedsize", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "deconvolvefrombeam", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",

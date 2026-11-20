@@ -144,23 +144,13 @@ def compare_preview_and_backup(vis):
             assert_same_visibilities(path, flags_before)
             assert Path(f"{path}.flagversions/flags.flagdata_1").is_dir()
 
-    for expression in ("ABS_I", "NORM_Q", "XX,QQ", "ARG_V"):
-        try:
-            tasks.flagdata(vis=vis, mode="clip", correlation=expression, clipminmax=[1, 2])
-        except RuntimeError as error:
-            assert "#978" in str(error), expression
-        else:
-            raise AssertionError(f"unsupported visibility expression {expression!r}")
-        assert_preserved(vis, before, auxiliary)
-
 
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="flagdata-clip-correlation-") as directory, chdir(directory):
         products = compare_products(make_inputs())
         compare_preview_and_backup("mixed.ms")
-    print(f"{products} clip products, one preview and two backups matched CASA 6.7.6.14, "
-          "plus four guarded visibility expressions")
+    print(f"{products} clip products, one preview and two backups matched CASA 6.7.6.14")
 
 
 if __name__ == "__main__":
