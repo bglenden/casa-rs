@@ -23172,7 +23172,7 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 2},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 4},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},

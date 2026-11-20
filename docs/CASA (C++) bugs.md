@@ -3919,6 +3919,16 @@ range on FLOAT_DATA uses the signed values, as CASA does. The
 `tools/casa-compat/flagdata_clip_range_oracle.py` comparison verifies both
 choices with independent expected flags.
 
+## An overflowing observation selector flags a different observation
+
+In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.
+Passing the same decimal value as text also selects observation 0. The
+selector converts an ID to a signed 32-bit value without a range check.
+
+casa-rs refuses out-of-range observation IDs before writing flags. The
+paired oracle applies both selectors in CASA to verify which rows change
+and checks that casa-rs preserves the input flags. [Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## `flagdata`'s summary aborts on a correlation it cannot name
 
 - Date noted: 2026-10-29
