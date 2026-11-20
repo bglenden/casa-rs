@@ -45,11 +45,11 @@ struct FourierCache {
     layouts: BTreeMap<Option<i32>, BTreeMap<Vec<i32>, PreparedFourierModel>>,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum FourierMerge {
+pub(super) enum FourierMerge<'a> {
     VirtualSum,
     ScratchSum,
     ScratchReplaceComponents,
+    ScratchAccumulate(&'a mut [Complex32]),
 }
 
 pub(super) struct FourierRow<'a> {
@@ -99,7 +99,7 @@ impl FourierModel {
         &self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
-        merge: FourierMerge,
+        merge: FourierMerge<'_>,
     ) -> Result<(), GainSolveError> {
         let mut prepared = self
             .prepared
@@ -279,7 +279,7 @@ impl PreparedFourierModel {
         &mut self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
-        merge: FourierMerge,
+        merge: FourierMerge<'_>,
     ) -> Result<(), GainSolveError> {
         let shift = self
             .tracking
@@ -325,12 +325,12 @@ impl PreparedFourierModel {
                     phase_centre,
                     row.frame,
                 ),
-                [0.0; 2],
+                Some([0.0; 2]),
                 [0; 2],
             ),
             None => (
                 GridFtProjection::between_directions_with_frame(field, phase_centre, row.frame),
-                [0.0; 2],
+                Some([0.0; 2]),
                 [0; 2],
             ),
         };
@@ -345,6 +345,16 @@ impl PreparedFourierModel {
             ));
         }
         let cells = row.frequencies.len() * row.correlations.len();
+        let is_scratch = self.legacy_flags && !matches!(merge, FourierMerge::VirtualSum);
+        let Some(pointing_offset_rad) = pointing_offset_rad else {
+            // MosaicFT::get returns with the visibility buffer untouched.
+            self.output.resize(cells, Complex32::default());
+            self.output.fill(Complex32::default());
+            self.covered.resize(cells, false);
+            self.covered.fill(false);
+            self.accumulate(row, output, 1.0, is_scratch.then_some(merge));
+            return Ok(());
+        };
         self.data.resize(cells, Complex32::new(0.0, 0.0));
         self.output.resize(cells, Complex32::new(0.0, 0.0));
         self.weights.resize(cells, 1.0);
@@ -423,7 +433,6 @@ impl PreparedFourierModel {
                 spectral_window: row.row.data_spw_id as u32,
             },
         };
-        let is_scratch = self.legacy_flags && !matches!(merge, FourierMerge::VirtualSum);
         let coverage = is_scratch.then(|| {
             self.covered.resize(cells, false);
             &mut self.covered[..]
@@ -451,7 +460,7 @@ impl PreparedFourierModel {
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
         lsrk_ratio: f64,
-        scratch: Option<FourierMerge>,
+        mut scratch: Option<FourierMerge<'_>>,
     ) {
         let correlations = row.correlations.len();
         let destination = output
@@ -476,7 +485,13 @@ impl PreparedFourierModel {
             for correlation in 0..correlations {
                 let index = channel * correlations + correlation;
                 let assigned = scratch.is_none() || self.covered[index];
-                if matches!(scratch, Some(FourierMerge::ScratchReplaceComponents)) {
+                if let Some(FourierMerge::ScratchAccumulate(buffer)) = &mut scratch {
+                    if assigned {
+                        buffer[index] = self.output[index];
+                    }
+                    buffer[index] *= factor * taylor;
+                    destination[index] += buffer[index];
+                } else if matches!(scratch, Some(FourierMerge::ScratchReplaceComponents)) {
                     if assigned {
                         destination[index] = self.output[index] * (factor * taylor);
                     }

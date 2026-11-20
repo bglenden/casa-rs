@@ -28,6 +28,7 @@ pub(super) fn is_legacy_mosaic(record: &RecordValue) -> bool {
 pub(super) struct MosaicLayout {
     direction: DirectionCoordinate,
     centre: [f64; 2],
+    shape: [usize; 2],
     increment: [f64; 2],
     antenna_classes: Vec<u8>,
     legacy: bool,
@@ -120,6 +121,7 @@ impl MosaicLayout {
             Self {
                 direction: direction.clone(),
                 centre: grid.reference_pixel.map(|pixel| pixel as f64),
+                shape: grid.shape,
                 increment: grid.increment_rad,
                 antenna_classes,
                 legacy: rules == MosaicRules::Simulator,
@@ -138,7 +140,7 @@ impl MosaicLayout {
         &mut self,
         row: &FourierRow<'_>,
         shift: [f64; 2],
-    ) -> Result<[f64; 2], GainSolveError> {
+    ) -> Result<Option<[f64; 2]>, GainSolveError> {
         // Legacy MosaicFT takes the first antenna direction from the
         // buffer. The newer saved grids reopen without their POINTING
         // selector and use the field direction.
@@ -173,13 +175,27 @@ impl MosaicLayout {
                 .map_err(model_error)?
         };
         let (longitude, latitude) = pointing.as_angles();
+        if self.legacy {
+            // HetArrayConvFunc truncates to integer image pixels and returns
+            // empty convolution support for pointings outside the grid.
+            let Ok(pixel) = self.direction.world_to_pixel([longitude, latitude]) else {
+                return Ok(None);
+            };
+            if pixel
+                .into_iter()
+                .zip(self.shape)
+                .any(|(pixel, length)| !(0. ..length as f64).contains(&pixel.trunc()))
+            {
+                return Ok(None);
+            }
+        }
         let pixel = self
             .direction
             .world_to_pixel([longitude - shift[0], latitude - shift[1]])
             .map_err(model_error)?;
-        Ok(std::array::from_fn(|axis| {
+        Ok(Some(std::array::from_fn(|axis| {
             (pixel[axis] - self.centre[axis]) * self.increment[axis]
-        }))
+        })))
     }
 
     pub(super) fn antenna_types(&self, row: &FourierRow<'_>) -> Result<[u8; 2], GainSolveError> {

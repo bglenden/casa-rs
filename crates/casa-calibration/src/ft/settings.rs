@@ -2,6 +2,7 @@
 //! The effective Fourier transform options for legacy imager prediction.
 
 use casa_imaging_operator::{GridPrecision, WPlaneCount};
+use casa_types::measures::direction::MDirection;
 
 use super::voltage_pattern::PreparedVoltagePattern;
 
@@ -83,7 +84,21 @@ impl ImagerTransformOptions {
 #[derive(Clone, Default)]
 pub(super) struct PredictionGeometry {
     pub(super) settings: ImagerTransformOptions,
+    pub(super) facets: usize,
+    pub(super) tangent: Option<MDirection>,
     pub(super) phase_centre_time: Option<f64>,
     pub(super) frequency_frame_valid: bool,
     pub(super) voltage_pattern: Option<PreparedVoltagePattern>,
+}
+
+impl PredictionGeometry {
+    pub(super) fn use_mosaic_outlier_grid(&mut self) {
+        self.settings = ImagerTransformOptions {
+            precision: GridPrecision::F32,
+            cache_size: 1_000_000,
+            observatory: self.settings.observatory,
+            ..ImagerTransformOptions::default()
+        };
+        self.frequency_frame_valid = false;
+    }
 }

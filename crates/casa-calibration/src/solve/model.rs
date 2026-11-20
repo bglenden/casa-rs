@@ -405,6 +405,15 @@ impl ModelInputs {
             Some(model) => ArrayD::from_shape_fn(IxDyn(&shape).f(), |index| model[index]),
             None => ArrayD::<Complex32>::zeros(IxDyn(&shape).f()),
         };
+        // The cube sky equation adds each result from a working VisBuffer.
+        // Unassigned cells retain their last value in that buffer.
+        let multiple_grids = scratch_model
+            && matching
+                .clone()
+                .filter(|entry| matches!(entry.prediction, Prediction::FourierGrid(_)))
+                .nth(1)
+                .is_some();
+        let mut scratch_buffer = None;
         let mut components_written = false;
         for entry in matching {
             let components = match &entry.prediction {
@@ -416,6 +425,20 @@ impl ModelInputs {
                     components
                 }
                 Prediction::FourierGrid(grid) => {
+                    let merge = if !scratch_model {
+                        FourierMerge::VirtualSum
+                    } else if multiple_grids {
+                        FourierMerge::ScratchAccumulate(
+                            scratch_buffer
+                                .get_or_insert_with(|| model.clone())
+                                .as_slice_memory_order_mut()
+                                .expect("contiguous scratch buffer"),
+                        )
+                    } else if components_written {
+                        FourierMerge::ScratchReplaceComponents
+                    } else {
+                        FourierMerge::ScratchSum
+                    };
                     grid.predict(
                         FourierRow {
                             ms,
@@ -438,13 +461,7 @@ impl ModelInputs {
                                 .copied(),
                         },
                         &mut model,
-                        if !scratch_model {
-                            FourierMerge::VirtualSum
-                        } else if components_written {
-                            FourierMerge::ScratchReplaceComponents
-                        } else {
-                            FourierMerge::ScratchSum
-                        },
+                        merge,
                     )?;
                     components_written = false;
                     continue;

@@ -16,6 +16,7 @@
 
 use std::path::Path;
 
+use casa_types::measures::direction::MDirection;
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
@@ -169,6 +170,16 @@ impl GridFt<'_> {
         define("nopadding", boolean(false));
         record
     }
+}
+
+/// Set the common tangent point used to project every facet of a model.
+pub fn set_grid_tangent(record: &mut RecordValue, tangent: &MDirection) {
+    let (lon, lat) = tangent.as_angles();
+    record.upsert("tangentspecified", boolean(true));
+    record.upsert(
+        "mtangent_rec",
+        direction([lon, lat], tangent.refer().as_str()),
+    );
 }
 
 /// Turn the common Fourier record into the legacy `MosaicFT` state.
