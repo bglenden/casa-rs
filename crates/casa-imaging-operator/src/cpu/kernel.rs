@@ -287,6 +287,63 @@ pub(crate) fn norm(
     }
 }
 
+/// Gather and normalize the legacy `dpbwproj` prediction using the same
+/// phase on the rounded, rotated fine coordinates for both sums.
+pub(super) fn gather_rotated_pointing<T: GridScalar>(
+    grid: &[Complex<T>],
+    tile: Tile,
+    location: CellLocation,
+    taps: &TapLayout<'_>,
+    mueller: u8,
+    conjugate: bool,
+    pointing: ([f32; 2], (f64, f64)),
+) -> (Complex64, Complex64) {
+    let TapLayout::Dense {
+        data,
+        support,
+        oversampling,
+        mueller_planes,
+        ..
+    } = *taps
+    else {
+        unreachable!("a rotated pointing uses dense taps");
+    };
+    let (gradient, (sin, cos)) = pointing;
+    let [sx, sy] = support.map(usize::from);
+    let (x0, y0) = block_origin(tile, location, [sx / 2, sy / 2]);
+    let weights = dense_tile(
+        data,
+        support,
+        oversampling,
+        mueller_planes,
+        location,
+        mueller,
+    );
+    let [fraction_x, fraction_y] = fine_fraction(location, oversampling, 0);
+    let sampling = f64::from(oversampling);
+    let [gx, gy] = gradient.map(|gradient| -f64::from(gradient) / sampling);
+    let mut sum = Complex64::default();
+    let mut norm = Complex64::default();
+    for (iy, weights) in weights.chunks_exact(sx).enumerate() {
+        let y = (iy as f64 - (sy / 2) as f64 + fraction_y) * sampling;
+        let row = &grid[(y0 + iy) * tile.shape[0] + x0..][..sx];
+        for (ix, (&cell, &tap)) in row.iter().zip(weights).enumerate() {
+            let x = (ix as f64 - (sx / 2) as f64 + fraction_x) * sampling;
+            // Fortran's reindex adds one before the phase coordinates are
+            // measured from the convolution origin.
+            let fx = (cos * x + sin * y).round() + 1.;
+            let fy = (-sin * x + cos * y).round() + 1.;
+            let angle = (gx * fx + gy * fy) as f32;
+            let (sin, cos) = f64::from(angle).sin_cos();
+            let phase = Complex64::new(f64::from(cos as f32), f64::from(sin as f32));
+            let weight = oriented(tap, conjugate).conj() * phase;
+            sum += weight * Complex64::new(cell.re.into_f64(), cell.im.into_f64());
+            norm += weight;
+        }
+    }
+    (sum, norm)
+}
+
 /// [`norm`] over the taps landing on `cells` alone (grid coordinates): the
 /// kernel sum `WProjectFT`'s sectioned gridder weighs a support it clips
 /// by ([`GridEdge::Sectioned`](crate::GridEdge::Sectioned)).
