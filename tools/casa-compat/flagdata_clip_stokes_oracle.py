@@ -100,6 +100,8 @@ def compare_products():
         ("linear", "IMAG_I", "DATA", np.imag, (-0.5, 0.5), {0: ("linear", ("I",))}, slice(None)),
         ("linear", "ARG_I", "DATA", np.angle, (-0.5, 0.5), {0: ("linear", ("I",))}, slice(None)),
         ("linear", "NORM_Q", "DATA", squared_magnitude, (3, 5), {0: ("linear", ("Q",))}, slice(None)),
+        ("linear", "ARG_V", "DATA", np.angle, (-2, -1), {0: ("linear", ("V",))}, slice(None)),
+        ("linear", "XX,QQ", "DATA", np.abs, (0, 2), {0: ("linear", ("XX", "Q"))}, slice(None)),
         ("float", "ABS_I", "FLOAT_DATA", np.real, (1, 2), {0: ("linear", ("I",))}, slice(None)),
         ("mixed", "REAL_I", "DATA", np.real, (1, 2),
          {0: ("linear", ("I",)), 1: ("circular", ("I",))}, slice(None)),
