@@ -13,7 +13,7 @@ from casatools import table as tabletool
 import numpy as np
 
 from calibration_rerefant_oracle import reference_fixture
-from calibration_smoothcal_oracle import fixture, opened
+from calibration_smoothcal_oracle import copy_ms, fixture, opened
 from plotms_calibration_oracle import compare_text, plotms_launcher
 
 
@@ -63,43 +63,50 @@ def atmosphere_inputs(ms):
     ], [("SpectralWindow_0", "science", np.array([9.9e10]))])
 
 
-def export(root, native, base, name, changes, *, measured=False):
+def export(root, native, base, name, changes, *, physical_overlay=False):
     expected = root / f"{name}.casa.txt"
     actual = root / f"{name}.native.txt"
     request = base | changes
     assert reference(**request, plotfile=str(expected), expformat="txt") is None
     assert native(**request, plotfile=str(actual), expformat="txt") is None
-    # The measured-weather cases use a pointwise bound tighter than the
-    # diagnostic ticket's 1e-3 normalized RMS acceptance.
-    count = compare_text(actual, expected, value_rtol=2e-4 if measured else 1.2e-5)
-    assert count > 0
-    if measured:
-        curves = lambda path: np.array([
-            float(line.split()[1]) for line in path.read_text().splitlines()
-            if not line.startswith("#")
-        ])[32:]
+    # Keep the reference bound for visibility axes. The ATM line-band and
+    # measured-weather cases retain a 2e-4 pointwise bound on overlays.
+    if physical_overlay:
+        lines = expected.read_text().splitlines()
+        separator = next(index for index, line in enumerate(lines) if line.startswith("# ")
+                         and (" Atm Transmission " in line or " Tsky " in line))
+        start = sum(not line.startswith("#") for line in lines[:separator])
+        count = compare_text(actual, expected, overlay_rtol=2e-4, overlay_start=start)
+
+        def curves(path):
+            return np.array([float(line.split()[1]) for line in path.read_text().splitlines()
+                             if not line.startswith("#")])[start:]
+
         a, b = curves(actual), curves(expected)
         residual = np.linalg.norm(a - b) / np.linalg.norm(b)
+        assert residual <= 2e-4
         print(f"{name}: {count} points, overlay normalized RMS {residual:.6g}", flush=True)
     else:
+        count = compare_text(actual, expected)
         print(f"{name}: {count} points", flush=True)
+    assert count > 0
     return count
 
 
-def figure(root, request):
+def figure(root, request, name, label, count):
     from PIL import Image
     from casars import _plot_document, tasks
 
-    destination = root / "atmosphere.png"
-    expected = root / "sky.casa.txt"
-    values = np.array([row.split()[:2] for row in expected.read_text().splitlines()[-16:]],
+    destination = root / f"{name}.png"
+    expected = root / f"{name}.casa.txt"
+    values = np.array([row.split()[:2] for row in expected.read_text().splitlines()[-count:]],
                       dtype=float)
     captured = []
     render = _plot_document.render_document
 
     def record(*args, **kwargs):
         figure, x_axis = render(*args, **kwargs)
-        [atmosphere] = [axis for axis in figure.axes if axis.get_ylabel() == "Tsky (K)"]
+        [atmosphere] = [axis for axis in figure.axes if axis.get_ylabel() == label]
         captured.extend(line.get_xydata() for line in atmosphere.lines)
         return figure, x_axis
 
@@ -108,7 +115,7 @@ def figure(root, request):
     np.testing.assert_allclose(np.concatenate(captured), values, rtol=1.2e-5, atol=1e-7)
     with Image.open(destination) as image:
         assert image.size == (500, 360)
-    print(f"Rendered {len(values)} matching atmospheric points.", flush=True)
+    print(f"{name}: rendered {len(values)} matching atmospheric points.", flush=True)
 
 
 def main():
@@ -129,21 +136,50 @@ def main():
     fixture(vis, root / "solved.cal")
     reference_fixture(vis, gain, "G Jones")
     casa.bandpass(str(vis), str(bandpass), refant="A0", solint="inf", minsnr=0.0)
+    flagged = root / "partially-flagged.cal"
+    copy_ms(bandpass, flagged)
+    with opened(flagged, True) as table:
+        antennas = table.getcol("ANTENNA1") == 0
+        flags = table.getcol("FLAG")
+        flags[1, 0, antennas] = True
+        flags[0, 1, antennas] = True
+        table.putcol("FLAG", flags)
+    wide = root / "wide.cal"
+    copy_ms(bandpass, wide)
+    with opened(wide / "SPECTRAL_WINDOW", True) as table:
+        table.putcell("CHAN_FREQ", 0, np.linspace(179e9, 186e9, 8))
+        table.putcell("CHAN_WIDTH", 0, np.full(8, 1e9))
+        table.putcell("REF_FREQUENCY", 0, 182.5e9)
+    odd = root / "odd-band.cal"
+    copy_ms(wide, odd)
+    with opened(odd, True) as table:
+        for row in range(table.nrows()):
+            for column in ("CPARAM", "PARAMERR", "FLAG", "SNR"):
+                table.putcell(column, row, table.getcell(column, row)[:, :7])
+    with opened(odd / "SPECTRAL_WINDOW", True) as table:
+        for column in ("CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+            table.putcell(column, 0, table.getcell(column, 0)[:7])
+        table.putcell("NUM_CHAN", 0, 7)
     base = dict(caltable=str(bandpass), yaxis="amp", spw="0", antenna="A0",
                 showgui=False, overwrite=True)
     frequency = dict(xaxis="frequency", showatm=True)
     initial = [
         ("default", dict(showatm=True)),
-        ("channel", dict(xaxis="channel", showatm=True)),
-        ("frequency", frequency),
+        ("channel", dict(xaxis="Channel", showatm=True)),
+        ("frequency", dict(xaxis="Frequency", showatm=True)),
         ("sky", dict(xaxis="frequency", showtsky=True)),
         ("both", frequency | dict(showtsky=True)),
         ("image-only", dict(xaxis="frequency", showimage=True)),
         ("missing-receiver", frequency | dict(showimage=True)),
         ("singleton", frequency | dict(showimage=True, spw="0:2")),
         ("stride", dict(xaxis="frequency", showtsky=True, spw="0:1~7^2")),
+        ("wide-selection", dict(caltable=str(wide), xaxis="frequency", showtsky=True,
+                                spw="0:0;3;6")),
+        ("wide-time-average", dict(caltable=str(wide), xaxis="frequency", showtsky=True,
+                                   spw="0:0;3;6", avgtime="120")),
         ("average", frequency | dict(avgchannel="2")),
         ("all-antennas", frequency | dict(antenna="")),
+        ("partially-flagged-channels", frequency | dict(caltable=str(flagged))),
         ("scan-panels", frequency | dict(iteraxis="scan", gridrows=2)),
         ("gain-default", dict(caltable=str(gain), showatm=True)),
     ]
@@ -157,8 +193,12 @@ def main():
     os.chdir(root)
     try:
         with plotms_launcher(args.app_run):
-            points = sum(export(root, native, base, name, settings) for name, settings in initial)
-            figure(root, base | dict(xaxis="frequency", showtsky=True))
+            points = sum(export(root, native, base, name, settings,
+                                physical_overlay=name.startswith("wide-"))
+                         for name, settings in initial)
+            figure(root, base | dict(xaxis="frequency", showtsky=True), "sky", "Tsky (K)", 16)
+            figure(root, base | dict(caltable=str(gain), showatm=True),
+                   "gain-default", "Atm Transmission (%)", 3)
             for api in (reference, native):
                 destination = root / "non-spectral-axis.txt"
                 try:
@@ -169,11 +209,16 @@ def main():
                     raise AssertionError("Atmospheric overlay accepted an explicit time axis")
                 assert not destination.exists()
             atmosphere_inputs(vis)
-            points += sum(export(root, native, base, name, settings, measured=True)
+            points += sum(export(root, native, base, name, settings, physical_overlay=True)
                           for name, settings in measured)
+            with opened(vis / "ASDM_RECEIVER", True) as table:
+                table.putcell("freqLO", 0, np.array([182e9]))
+            points += export(root, native, base, "odd-image",
+                             dict(caltable=str(odd), xaxis="frequency", showtsky=True, showimage=True),
+                             physical_overlay=True)
     finally:
         os.chdir(previous)
-    print(f"{len(initial) + len(measured)} exports, {points} points and one error matched.")
+    print(f"{len(initial) + len(measured) + 1} exports, {points} points and one error matched.")
 
 
 if __name__ == "__main__":
