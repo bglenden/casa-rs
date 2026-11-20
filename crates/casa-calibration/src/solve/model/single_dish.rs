@@ -21,7 +21,7 @@ use ndarray::{ArrayD, Axis, Ix2};
 
 use crate::ft::image::{coordinate_index, match_channel, polarization_coordinate};
 use crate::ft::single_dish::{
-    default_beam, has_saved_setup, kernel_function, read_kernel_parameters, validate_support,
+    has_saved_setup, kernel_function, primary_beam, read_kernel_parameters, validate_support,
 };
 
 use super::fourier::{
@@ -200,7 +200,12 @@ impl PreparedModel {
         let first_frequency = spectral.world_frequency_hz(0.).map_err(model_error)?;
         let increment = direction.increment()[0];
         let beam = if matches!(function, GridFunction::PrimaryBeam) {
-            Some(default_beam(ms, first_frequency).map_err(model_error)?)
+            let custom = match record.get("casars_sd_primary_beam") {
+                None => None,
+                Some(Value::Record(beam)) => Some(beam),
+                _ => return Err(model_error("invalid saved single-dish primary beam")),
+            };
+            Some(primary_beam(ms, first_frequency, custom).map_err(model_error)?)
         } else {
             None
         };

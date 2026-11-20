@@ -184,6 +184,17 @@ impl ImagerVoltagePattern {
 }
 
 impl PreparedVoltagePattern {
+    #[cfg(test)]
+    pub(super) fn test_pattern() -> Self {
+        use casa_types::measures::direction::DirectionRef;
+
+        Self {
+            pattern: BeamPattern::for_dish_diameter(12.).unwrap(),
+            centre: MDirection::from_angles(1., 0.4, DirectionRef::J2000),
+            frame: MeasFrame::new(),
+        }
+    }
+
     pub(super) fn separations(
         &self,
         direction: &DirectionCoordinate,

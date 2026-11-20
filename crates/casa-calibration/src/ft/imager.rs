@@ -708,22 +708,6 @@ impl ImagerPrediction {
                 ));
             }
         }
-        if dish.is_some() && voltage_pattern.is_some() {
-            return Err(invalid(
-                "single-dish image prediction with an applied voltage pattern is pending #1520",
-            ));
-        }
-        if dish
-            .is_some_and(|dish| dish.kernel == super::settings::ImagerSingleDishKernel::PrimaryBeam)
-            && self
-                .voltage_pattern
-                .as_ref()
-                .is_some_and(|pattern| pattern.table.is_some())
-        {
-            return Err(invalid(
-                "custom single-dish primary beams are pending #1520",
-            ));
-        }
         let tangent = match &self.definition {
             Some(ImageDefinition::Requested(definition))
                 if !matches!(self.options.gridder, ImagerGridder::Mosaic) =>
@@ -749,6 +733,11 @@ impl ImagerPrediction {
             } else {
                 ImagerSingleDishSetup::default()
             },
+            single_dish_voltage_table: self
+                .voltage_pattern
+                .as_ref()
+                .filter(|_| dish.is_some_and(|choice| !choice.combined))
+                .and_then(|pattern| pattern.table.clone()),
             single_dish_cell_rad: match &self.definition {
                 Some(ImageDefinition::Requested(request)) => Some(request.cell_rad[1]),
                 _ => None,
