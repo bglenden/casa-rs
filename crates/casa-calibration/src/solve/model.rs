@@ -11,7 +11,8 @@ use casa_components::{ComponentList, Polarisation};
 use casa_ms::columns::direction_columns::DirectionColumn;
 use casa_ms::derived::engine::{MsCalEngine, raw_field_phase_direction};
 use casa_ms::{
-    MeasurementSet, MsError, SubTable, VirtualModelEntry, VirtualModelKind, virtual_model,
+    MeasurementSet, MsError, SubTable, SubtableId, VirtualModelEntry, VirtualModelKind,
+    virtual_model,
 };
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::FrequencyRef;
@@ -38,6 +39,7 @@ pub(super) struct ModelInputs {
 struct ModelBuffer {
     selection: [i32; 4],
     focus_rows: Vec<FocusSample>,
+    legacy_mosaic_pointing: Option<MDirection>,
 }
 
 struct FocusSample {
@@ -240,6 +242,35 @@ impl ModelInputs {
                 .or_default()
                 .push(row.0);
         }
+        let mosaic_fields: BTreeSet<_> = self
+            .virtual_models
+            .iter()
+            .filter_map(|(&field, entries)| {
+                entries
+                    .iter()
+                    .any(|entry| {
+                        matches!(&entry.prediction,
+                            Prediction::FourierGrid(grid) if grid.uses_legacy_mosaic_pointing()
+                        )
+                    })
+                    .then_some(field)
+            })
+            .collect();
+        let mut pointings =
+            if !mosaic_fields.is_empty() && ms.subtable(SubtableId::Pointing).is_some() {
+                let queries: Vec<_> = buffers
+                    .values()
+                    .map(|rows| rows[0])
+                    .filter(|row| mosaic_fields.contains(&row.field_id))
+                    .map(|row| (row.antenna1, row.time_seconds))
+                    .collect();
+                ms.pointing()
+                    .and_then(|pointing| pointing.legacy_directions(&queries))
+                    .map_err(|source| read_error(ms, source))?
+            } else {
+                Vec::new()
+            }
+            .into_iter();
         for rows in buffers.into_values() {
             let first = rows[0];
             let state = get_i32(ms.main_table(), first.row_index, "STATE_ID")?;
@@ -257,6 +288,11 @@ impl ModelInputs {
             let buffer = Arc::new(ModelBuffer {
                 selection,
                 focus_rows,
+                legacy_mosaic_pointing: if mosaic_fields.contains(&first.field_id) {
+                    pointings.next().flatten()
+                } else {
+                    None
+                },
             });
             for row in rows {
                 self.model_buffers
@@ -382,6 +418,7 @@ impl ModelInputs {
                             frame: &frame,
                             uvw,
                             focus_rows: &buffer.focus_rows,
+                            legacy_mosaic_pointing: buffer.legacy_mosaic_pointing.as_ref(),
                             scratch_channels: entry
                                 .scratch_channels
                                 .iter()

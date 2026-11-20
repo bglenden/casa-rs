@@ -217,9 +217,13 @@ pub struct MosaicWindow {
 impl MosaicWindow {
     /// Whether CASA would generate the same beam planes for both selected
     /// bands. The channel-to-plane mappings can still differ.
-    pub fn shares_beam_frequencies(&self, other: &Self) -> Result<bool, OperatorError> {
-        let current = FrequencyCells::new(MosaicRules::Tclean, self, 0)?;
-        let previous = FrequencyCells::new(MosaicRules::Tclean, other, 0)?;
+    pub fn shares_beam_frequencies(
+        &self,
+        other: &Self,
+        rules: MosaicRules,
+    ) -> Result<bool, OperatorError> {
+        let current = FrequencyCells::new(rules, self, 0)?;
+        let previous = FrequencyCells::new(rules, other, 0)?;
         Ok(current.frequencies_hz == previous.frequencies_hz)
     }
 }
@@ -373,12 +377,13 @@ impl MosaicPb {
     /// by `HetArrayConvFunc`. `None` means CASA needs at least one new cell
     /// for the selected band, so the stored cache cannot supply it.
     pub fn from_saved_planes(
+        rules: MosaicRules,
         geometry: &GridGeometry,
         polarization: &PolarizationRouting,
         window: &MosaicWindow,
         saved: SavedMosaicPlanes<'_>,
     ) -> Result<Option<Self>, OperatorError> {
-        let cells = FrequencyCells::new(MosaicRules::Tclean, window, 0)?;
+        let cells = FrequencyCells::new(rules, window, 0)?;
         let used = cells.frequencies_hz.len();
         if saved.cells < used {
             return Ok(None);
@@ -684,6 +689,7 @@ impl MosaicPb {
             ratios,
             lattice,
             conv_size,
+            legacy_lanczos: rules == MosaicRules::Simulator,
             grid: geometry.grid_shape(),
             mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
         })
@@ -735,6 +741,7 @@ pub struct MosaicScreens {
     ratios: Vec<f64>,
     lattice: usize,
     conv_size: usize,
+    legacy_lanczos: bool,
     grid: [usize; 2],
     mueller: MuellerRouting,
 }
@@ -846,9 +853,9 @@ impl MosaicScreens {
         for (window_index, support, lattices) in &self.screened {
             let taps = self.window_support[*window_index];
             let crop = self.crop(taps);
-            // `interpLanczos` zeroes within three input pixels of the edge, so
-            // a crop under seven pixels resamples to nothing.
-            if crop < 2 * LANCZOS_A as usize + 1 {
+            // The older machine permits a six-pixel crop. Its Lanczos
+            // resampler yields a zero convolution on that crop.
+            if !self.legacy_lanczos && crop < 2 * LANCZOS_A as usize + 1 {
                 return Err(OperatorError::ConvolutionFunction {
                     reason: "the mosaic beam spans too few screen pixels; use a larger image or finer cells",
                 });

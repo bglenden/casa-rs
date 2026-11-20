@@ -20,11 +20,17 @@ pub(super) fn is_mosaic(record: &RecordValue) -> bool {
     matches!(record_text(record, "name"), Ok("MosaicFT" | "MosaicFTNew"))
 }
 
+pub(super) fn is_legacy_mosaic(record: &RecordValue) -> bool {
+    matches!(record.get("pbconvfunc"), Some(Value::Record(beam)) if saved::rules(record, beam) == MosaicRules::Simulator)
+}
+
 pub(super) struct MosaicLayout {
     direction: DirectionCoordinate,
     centre: [f64; 2],
     increment: [f64; 2],
     antenna_classes: Vec<u8>,
+    legacy: bool,
+    pub(super) autocorrelations: bool,
 }
 
 impl MosaicLayout {
@@ -51,46 +57,49 @@ impl MosaicLayout {
             .map_err(model_error)?
             .string(row.row.observation_id as usize, "TELESCOPE_NAME")
             .map_err(model_error)?;
+        let rules = saved::rules(record, beam);
         let (window, complete_window) = beam_window(row, convert_frequencies)?;
-        let mut loaded = saved::planes(record, beam, &window)?;
+        let mut loaded = saved::planes(record, beam, &window, rules)?;
         if loaded.is_none()
             && let Some(complete) = complete_window
             && window
-                .shares_beam_frequencies(&complete)
+                .shares_beam_frequencies(&complete, rules)
                 .map_err(model_error)?
         {
-            loaded = saved::planes(record, beam, &complete)?;
+            loaded = saved::planes(record, beam, &complete, rules)?;
         }
         let class = saved::integer(beam, "pbclass")?;
         let (kernels, antenna_classes) = if class == 8 {
             let path = std::path::Path::new(record_text(beam, "vptable")?);
             let beams = image_beam::ImageBeams::load(path, row)?;
-            let kernels = match restore(geometry, polarization, &window, loaded, beams.len())? {
-                Some(kernels) => kernels,
-                None => image_kernels(
-                    geometry,
-                    direction,
-                    polarization,
-                    reference_hz,
-                    window,
-                    &beams,
-                )?,
-            };
+            let kernels =
+                match restore(rules, geometry, polarization, &window, loaded, beams.len())? {
+                    Some(kernels) => kernels,
+                    None => image_kernels(
+                        geometry,
+                        direction,
+                        polarization,
+                        reference_hz,
+                        window,
+                        &beams,
+                    )?,
+                };
             (kernels, beams.classes)
         } else {
-            let (dishes, classes) = antenna_beams(row, geometry, &telescope, class, beam)?;
-            let kernels = match restore(geometry, polarization, &window, loaded, dishes.len())? {
-                Some(kernels) => kernels,
-                None => MosaicPb::new(
-                    MosaicRules::Tclean,
-                    geometry,
-                    polarization,
-                    reference_hz,
-                    &dishes,
-                    &[window],
-                )
-                .map_err(model_error)?,
-            };
+            let (dishes, classes) = antenna_beams(row, geometry, &telescope, class, beam, rules)?;
+            let kernels =
+                match restore(rules, geometry, polarization, &window, loaded, dishes.len())? {
+                    Some(kernels) => kernels,
+                    None => MosaicPb::new(
+                        rules,
+                        geometry,
+                        polarization,
+                        reference_hz,
+                        &dishes,
+                        &[window],
+                    )
+                    .map_err(model_error)?,
+                };
             (kernels, classes)
         };
         let grid = geometry.image();
@@ -101,6 +110,12 @@ impl MosaicLayout {
                 centre: grid.reference_pixel.map(|pixel| pixel as f64),
                 increment: grid.increment_rad,
                 antenna_classes,
+                legacy: rules == MosaicRules::Simulator,
+                autocorrelations: rules == MosaicRules::Simulator
+                    && matches!(
+                        record.get("usezero"),
+                        Some(Value::Scalar(casa_types::ScalarValue::Bool(true)))
+                    ),
             },
         ))
     }
@@ -110,11 +125,13 @@ impl MosaicLayout {
         row: &FourierRow<'_>,
         shift: [f64; 2],
     ) -> Result<[f64; 2], GainSolveError> {
-        // HetArrayConvFunc does not save its inherited POINTING selector.
-        // Reopened MosaicFT calls get without initializing a new predictor,
-        // so its convolution phases use the field direction.
+        // Legacy MosaicFT takes the first antenna direction from the
+        // buffer. The newer saved grids reopen without their POINTING
+        // selector and use the field direction.
         let pointing = row
-            .field
+            .legacy_mosaic_pointing
+            .filter(|_| self.legacy)
+            .unwrap_or(row.field)
             .convert_to(self.direction.conversion_direction_ref(), row.frame)
             .map_err(model_error)?;
         let (longitude, latitude) = pointing.as_angles();
@@ -140,6 +157,7 @@ impl MosaicLayout {
 }
 
 fn restore(
+    rules: MosaicRules,
     geometry: &GridGeometry,
     polarization: &PolarizationRouting,
     window: &MosaicWindow,
@@ -154,7 +172,7 @@ fn restore(
             "virtual mosaic beam classes do not match the saved convolution",
         ));
     }
-    MosaicPb::from_saved_planes(geometry, polarization, window, planes).map_err(model_error)
+    MosaicPb::from_saved_planes(rules, geometry, polarization, window, planes).map_err(model_error)
 }
 
 fn image_kernels(
@@ -256,6 +274,7 @@ fn antenna_beams(
     telescope: &str,
     class: i32,
     beam: &RecordValue,
+    rules: MosaicRules,
 ) -> Result<(Vec<PrimaryBeam>, Vec<u8>), GainSolveError> {
     let antennas = row.ms.antenna().map_err(model_error)?;
     if !matches!(class, 1 | 2) {
@@ -281,22 +300,28 @@ fn antenna_beams(
     }
     let alma = matches!(telescope, "ALMA" | "ACA");
     let mut dishes = Vec::new();
+    let mut diameters = Vec::new();
     let mut antenna_classes = Vec::with_capacity(antennas.row_count());
     for antenna in 0..antennas.row_count() {
         let diameter = antennas.dish_diameter(antenna).map_err(model_error)?;
-        let dish = if alma {
+        let dish = if alma && rules == MosaicRules::Simulator {
+            AiryDish::casa_alma_simulator(diameter)
+        } else if alma {
             AiryDish::casa_alma(diameter, geometry)
         } else {
             AiryDish::casa_airy(diameter)
         };
         let beam = PrimaryBeam::from(dish);
-        let class = dishes
-            .iter()
-            .position(|known| *known == beam)
-            .unwrap_or_else(|| {
-                dishes.push(beam);
-                dishes.len() - 1
-            });
+        let class = if rules == MosaicRules::Simulator {
+            diameters.iter().position(|known| *known == diameter)
+        } else {
+            dishes.iter().position(|known| *known == beam)
+        }
+        .unwrap_or_else(|| {
+            dishes.push(beam);
+            diameters.push(diameter);
+            dishes.len() - 1
+        });
         antenna_classes.push(u8::try_from(class).map_err(model_error)?);
     }
     Ok((dishes, antenna_classes))

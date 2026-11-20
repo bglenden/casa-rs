@@ -3,21 +3,58 @@
 
 use std::borrow::Cow;
 
-use casa_imaging_operator::{MosaicWindow, SavedMosaicPlanes};
+use casa_imaging_operator::{MosaicRules, MosaicWindow, SavedMosaicPlanes};
 use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 
 use super::super::{GainSolveError, model_error, record_text};
+
+pub(super) fn rules(machine: &RecordValue, beam: &RecordValue) -> MosaicRules {
+    // The older HetArrayConvFunc keys its cache by MS and SPW. The newer
+    // Fourier machines include the selected native channel count as well.
+    // Some tclean records carry the older machine name as an alias.
+    if record_text(machine, "name").is_ok_and(|name| name == "MosaicFT")
+        && record_text(beam, "key0").map_or_else(
+            |_| machine.get("usepointingtable").is_none(),
+            |key| key.split('_').count() == 2,
+        )
+    {
+        MosaicRules::Simulator
+    } else {
+        MosaicRules::Tclean
+    }
+}
 
 pub(super) fn planes<'a>(
     machine: &RecordValue,
     beam: &'a RecordValue,
     window: &MosaicWindow,
+    rules: MosaicRules,
 ) -> Result<Option<SavedMosaicPlanes<'a>>, GainSolveError> {
-    let key = format!(
-        "0_{}_{}",
-        window.spectral_window,
-        window.selected_frequencies_hz.len()
-    );
+    let key = if rules == MosaicRules::Simulator {
+        // A legacy cache has no bandwidth in its key. The record captures
+        // the frequencies for the first buffer, which can validate its cell
+        // mapping. For another band the convolution must be regenerated.
+        let matches_buffer = match machine.get("interpvisfreq") {
+            Some(Value::Array(ArrayValue::Float64(saved))) => {
+                saved.len() == window.selected_frequencies_hz.len()
+                    && saved
+                        .iter()
+                        .zip(&window.selected_frequencies_hz)
+                        .all(|(a, b)| (a - b).abs() <= 0.001)
+            }
+            _ => false,
+        };
+        if !matches_buffer {
+            return Ok(None);
+        }
+        format!("0_{}", window.spectral_window)
+    } else {
+        format!(
+            "0_{}_{}",
+            window.spectral_window,
+            window.selected_frequencies_hz.len()
+        )
+    };
     let count = integer(beam, "ndefined")?;
     if count < 0 || count as usize > beam.fields().len() {
         return Err(model_error("invalid virtual mosaic cache count"));

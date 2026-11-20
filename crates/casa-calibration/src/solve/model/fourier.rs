@@ -34,6 +34,7 @@ use mosaic::MosaicLayout;
 pub(super) struct FourierModel {
     record: RecordValue,
     mosaic: bool,
+    legacy_mosaic: bool,
     refocus: bool,
     prepared: Mutex<FourierCache>,
 }
@@ -64,6 +65,7 @@ pub(super) struct FourierRow<'a> {
     pub(super) frame: &'a MeasFrame,
     pub(super) uvw: [f64; 3],
     pub(super) focus_rows: &'a [FocusSample],
+    pub(super) legacy_mosaic_pointing: Option<&'a MDirection>,
     pub(super) scratch_channels: Option<[i32; 4]>,
 }
 
@@ -74,10 +76,12 @@ impl FourierModel {
             _ => &record,
         };
         let mosaic = mosaic::is_mosaic(first_term);
+        let legacy_mosaic = mosaic && mosaic::is_legacy_mosaic(first_term);
         let refocus = record_number(first_term, "distance").is_some_and(|distance| distance != 0.0);
         Self {
             record,
             mosaic,
+            legacy_mosaic,
             refocus,
             prepared: Mutex::default(),
         }
@@ -85,6 +89,10 @@ impl FourierModel {
 
     pub(super) fn needs_refocus(&self) -> bool {
         self.refocus
+    }
+
+    pub(super) fn uses_legacy_mosaic_pointing(&self) -> bool {
+        self.legacy_mosaic
     }
 
     pub(super) fn predict(
@@ -206,6 +214,14 @@ impl PreparedFourierModel {
             (kernels, Some(layout))
         } else {
             (grid_kernel(terms[0], &geometry, &polarization)?, None)
+        };
+        let resampler = if mosaic
+            .as_ref()
+            .is_some_and(|layout| layout.autocorrelations)
+        {
+            resampler.predicting_autocorrelations()
+        } else {
+            resampler
         };
         let operator =
             MeasurementOperator::new(geometry, basis, polarization, kernels, GridPrecision::F32);

@@ -19,7 +19,7 @@ use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
 use super::image::{ImageModel, TaylorTerm, prepare_configured_image, reference_frequency};
 use super::imager_definition::ImagerDefinitionRequest;
-use super::settings::{ImagerTransformOptions, PredictionGeometry};
+use super::settings::{ImagerGridder, ImagerTransformOptions, PredictionGeometry};
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::ImagerVoltagePattern;
 use super::{invalid, model_entry, write_model_scratch};
@@ -381,7 +381,20 @@ impl ImagerPrediction {
         {
             return Ok(None);
         }
-        if self.voltage_pattern.is_some() && model.components.is_some() {
+        let mosaic = matches!(self.options.gridder, ImagerGridder::Mosaic);
+        if mosaic
+            && self
+                .voltage_pattern
+                .as_ref()
+                .is_some_and(|pattern| pattern.table.is_some())
+        {
+            return Err(invalid(
+                "legacy mosaic custom voltage-pattern prediction is pending in #1520",
+            ));
+        }
+        // MosaicFT uses its convolution beam directly.
+        let pattern = self.voltage_pattern.as_ref().filter(|_| !mosaic);
+        if pattern.is_some() && model.components.is_some() {
             return Err(invalid(
                 "a radial imager voltage pattern currently needs image models",
             ));
@@ -477,7 +490,7 @@ impl ImagerPrediction {
             }
         }
         let mut images = Vec::new();
-        match (self.voltage_pattern.as_ref(), scratch) {
+        match (pattern, scratch) {
             (Some(pattern), true) => {
                 let mut fields = BTreeMap::<_, Vec<_>>::new();
                 for row in &selected.selected_rows {

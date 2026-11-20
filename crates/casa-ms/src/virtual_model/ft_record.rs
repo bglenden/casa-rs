@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
 /// What CASA's machine knew of the first visibility buffer it degridded:
@@ -169,6 +169,41 @@ impl GridFt<'_> {
         define("nopadding", boolean(false));
         record
     }
+}
+
+/// Turn the common Fourier record into the legacy `MosaicFT` state.
+/// CASA's reader constructs the convolution from the next buffer when
+/// the `HetArrayConvFunc` cache is empty.
+pub fn legacy_mosaic(record: &mut RecordValue, stokes: &str, beam_class: i32, sampling: u16) {
+    let beam = RecordValue::new(vec![
+        RecordField::new("name", text("HetArrayConvFunc")),
+        RecordField::new("ndefined", int(0)),
+        RecordField::new("actualconvindex", int(0)),
+        RecordField::new(
+            "donemainconv",
+            Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[0]), false))),
+        ),
+        RecordField::new("vptable", text("")),
+        RecordField::new("pbclass", int(beam_class)),
+    ]);
+    record.upsert("name", text("MosaicFT"));
+    record.upsert("stokes", text(stokes));
+    record.upsert("usezero", boolean(true));
+    record.upsert("convsampling", int(i32::from(sampling)));
+    record.upsert("convsize", int(0));
+    record.upsert("convsupport", int(0));
+    for name in ["convfunc", "weightconvfunc"] {
+        record.upsert(
+            name,
+            Value::Array(ArrayValue::Complex32(ArrayD::<Complex32>::zeros(IxDyn(
+                &[0; 5],
+            )))),
+        );
+    }
+    for name in ["convsupportplanes", "convsizeplanes", "convRowMap"] {
+        record.upsert(name, ints(&[0], &[]));
+    }
+    record.upsert("pbconvfunc", Value::Record(beam));
 }
 
 /// `MultiTermFTNew::toRecord` of a prediction machine: its Taylor terms'
