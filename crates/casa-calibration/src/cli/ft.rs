@@ -6,7 +6,7 @@ use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::{
     MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
-use casa_provider_contracts::CasaValue;
+use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::Quantity;
 
@@ -83,6 +83,7 @@ struct ModelRequest {
     scratch: bool,
     incremental: bool,
     terms: i64,
+    reference_hz: f64,
 }
 
 impl ModelRequest {
@@ -103,25 +104,36 @@ impl ModelRequest {
 }
 
 fn read_model(task: &TaskInvocation<'_>, scratch: bool) -> Result<ModelRequest, TaskFailure> {
-    let models = task.texts("model").map_err(|_| {
-        TaskFailure::validation(
-            "The model image must be a string or a list of strings (or '' or [])",
-        )
-        .at("model")
-    })?;
+    let names = match task.value("model") {
+        Some(model @ ParameterValue::String(_)) => std::slice::from_ref(model),
+        Some(ParameterValue::Array(models)) => models,
+        _ => {
+            return Err(TaskFailure::validation(
+                "The model image must be a string or a list of strings (or '' or [])",
+            )
+            .at("model"));
+        }
+    };
     let component = task.text("complist")?.unwrap_or_default();
-    if (models.is_empty() || models == [""]) && component.is_empty() {
+    let empty_names =
+        names.is_empty() || matches!(names, [ParameterValue::String(name)] if name.is_empty());
+    if empty_names && component.is_empty() {
         return Err(TaskFailure::validation(
             "Please specify a model image or component list to ft",
         )
         .at("model"));
     }
-    for model in &models {
+    let mut models = Vec::with_capacity(names.len());
+    for name in names {
+        let ParameterValue::String(model) = name else {
+            return Err(TaskFailure::validation("Model image names must be strings").at("model"));
+        };
         if !model.is_empty() && !task.workspace().join(model).exists() {
             return Err(
                 TaskFailure::validation(format!("Model image {model} cannot be found")).at("model"),
             );
         }
+        models.push(model.clone());
     }
     if !component.is_empty() && !task.workspace().join(&component).exists() {
         return Err(
@@ -131,12 +143,49 @@ fn read_model(task: &TaskInvocation<'_>, scratch: bool) -> Result<ModelRequest, 
     }
     let terms = task.integer("nterms")?;
     validate_terms(terms, models.len())?;
+    let mut reference_hz = 0.0;
+    if terms > 1
+        && let Some(quantity) = task.text("reffreq")?.filter(|text| !text.is_empty())
+    {
+        reference_hz = quantity
+            .parse::<Quantity>()
+            .map_err(|_| {
+                TaskFailure::execution(format!(
+                    "In conversion of reffreq={quantity:?} to a numerical value"
+                ))
+                .at("reffreq")
+            })?
+            .get_si_value();
+    }
+    if terms > 1 && reference_hz == 0.0 {
+        if models[0].is_empty() {
+            return Err(TaskFailure::execution("File name is empty").at("model"));
+        }
+        let path = task.workspace().join(&models[0]);
+        reference_hz = reference_frequency(&path).map_err(|error| {
+            tracing::error!(image = %path.display(), %error, "could not read Taylor reference frequency");
+            TaskFailure::execution(format!("Unable to open image {}", models[0])).at("model")
+        })?;
+    }
+    if matches!(
+        task.session().given("incremental"),
+        Some(ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Bool,
+            ..
+        })
+    ) {
+        return Err(
+            TaskFailure::execution("in method 'imager_ft', argument 4 of type 'bool'")
+                .at("incremental"),
+        );
+    }
     Ok(ModelRequest {
         images: models,
         component,
         scratch,
         incremental: task.flag("incremental")?,
         terms,
+        reference_hz,
     })
 }
 
@@ -250,29 +299,7 @@ fn image_models(
     let models = &request.images;
     let terms = request.terms;
     let zero = request.scratch && !request.incremental && no_components;
-    let reference = if terms > 1 {
-        let quantity = task.text("reffreq")?.unwrap_or_default();
-        let explicit = if quantity.is_empty() {
-            0.0
-        } else {
-            quantity
-                .parse::<Quantity>()
-                .map_err(|_| {
-                    TaskFailure::execution(format!(
-                        "In conversion of reffreq={quantity:?} to a numerical value"
-                    ))
-                    .at("reffreq")
-                })?
-                .get_si_value()
-        };
-        Some(if explicit == 0.0 {
-            reference_frequency(&task.workspace().join(&models[0])).map_err(execution)?
-        } else {
-            explicit
-        })
-    } else {
-        None
-    };
+    let reference = (terms > 1).then_some(request.reference_hz);
     let mut images = Vec::new();
     for (index, path) in models
         .iter()

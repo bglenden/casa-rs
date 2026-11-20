@@ -154,13 +154,21 @@ pub(crate) struct TaylorTerm {
 
 /// The image spectral coordinate determines the default Taylor frequency.
 pub(crate) fn reference_frequency(path: &Path) -> MsResult<f64> {
+    if path.is_file() {
+        let fits = casa_images::fits_read::FitsToolImport::open(path, 0, -1).map_err(invalid)?;
+        return spectral_reference_frequency(fits.coordinates());
+    }
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
     image_reference_frequency(&image)
 }
 
 pub(super) fn image_reference_frequency(image: &PagedImage<f32>) -> MsResult<f64> {
-    let index = coordinate_index(image.coordinates(), CoordinateType::Spectral)?;
-    let CoordinateModel::Spectral(spectral) = image.coordinates().coordinate(index) else {
+    spectral_reference_frequency(image.coordinates())
+}
+
+fn spectral_reference_frequency(coordinates: &CoordinateSystem) -> MsResult<f64> {
+    let index = coordinate_index(coordinates, CoordinateType::Spectral)?;
+    let CoordinateModel::Spectral(spectral) = coordinates.coordinate(index) else {
         unreachable!("a spectral coordinate index names a spectral coordinate")
     };
     let pixel = spectral.reference_pixel()[0];

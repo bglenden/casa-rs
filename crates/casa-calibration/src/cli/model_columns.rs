@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use casa_ms::{MeasurementSet, MsSelection};
-use casa_provider_contracts::{CasaValue, ParameterValue};
+use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue};
 use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
@@ -29,21 +29,47 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
                 )
                 .map_err(|error| TaskFailure::execution(error.to_string()))?;
             let partition = TaskInvocation::new(&session, task.workspace());
-            if let Err(error) = run_one(&partition, &part) {
+            if let Err(error) = run_one(&partition, &part, true) {
                 tracing::warn!(task = task.surface(), partition = %part.display(), error = %error.message, "Multi-MS partition failed");
             }
         }
     } else {
-        run_one(task, &path)?;
+        run_one(task, &path, false)?;
     }
     TaskSuccess::new(CasaValue::None, &())
 }
 
-fn run_one(task: &TaskInvocation<'_>, path: &Path) -> Result<(), TaskFailure> {
+fn run_one(task: &TaskInvocation<'_>, path: &Path, partition: bool) -> Result<(), TaskFailure> {
     let mut lock = TableWriteLock::acquire_to_reread(path, 0)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     let mut ms = MeasurementSet::open(path)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
+    if !partition {
+        // MMS sends native booleans to its workers. The direct tool call
+        // rejects a NumPy Boolean before changing its MeasurementSet.
+        let flags: &[(&str, &str, u8)] = if task.surface() == "clearcal" {
+            &[("addmodel", "calibrater_open", 5)]
+        } else {
+            &[
+                ("otf", "calibrater_delmod", 2),
+                ("scr", "calibrater_delmod", 5),
+            ]
+        };
+        for &(name, method, index) in flags {
+            if matches!(
+                task.session().given(name),
+                Some(ParameterValue::NumpyScalar {
+                    dtype: NumpyScalarType::Bool,
+                    ..
+                })
+            ) {
+                return Err(TaskFailure::execution(format!(
+                    "in method '{method}', argument {index} of type 'bool'"
+                ))
+                .at(name));
+            }
+        }
+    }
     let field = task.text("field")?;
     if task.surface() == "clearcal" {
         let selection = MsSelection {

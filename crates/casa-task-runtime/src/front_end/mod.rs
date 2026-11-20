@@ -1087,15 +1087,16 @@ fn apply_typed_values(
             .iter()
             .find(|binding| binding.name == *name)
             .ok_or_else(|| error(format!("unknown {} parameter {name:?}", request.surface)))?;
-        if !bundle
-            .catalog
-            .concept(&binding.concept)
-            .is_some_and(|concept| {
-                matches!(
-                    concept.value_domain,
-                    casa_provider_contracts::ParameterType::Variant
-                )
-            })
+        if !crate::invocation::preserves_model_task_boolean(&request.surface, name, value)
+            && !bundle
+                .catalog
+                .concept(&binding.concept)
+                .is_some_and(|concept| {
+                    matches!(
+                        concept.value_domain,
+                        casa_provider_contracts::ParameterType::Variant
+                    )
+                })
         {
             return Err(error(format!(
                 "typed parameter {name:?} must use a variant domain"
