@@ -12641,7 +12641,7 @@
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "selection",
-      "documentation": {"summary": "Applycal timerange selector text.", "details": null, "examples": [""]},
+      "documentation": {"summary": "CASA time selection passed to the MeasurementSet parser as literal text.", "details": null, "examples": [""]},
       "persistence_class": "profile"
     },
     {

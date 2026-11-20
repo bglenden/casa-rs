@@ -320,7 +320,12 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
             values["observation"] = str(value)
         elif isinstance(value, (np.int32, np.int64)):
             values["observation"] = int(value)
-        elif not isinstance(value, int):
+        elif isinstance(value, int):
+            if not -(2**63) <= value < 2**63:
+                # Preserve the selector for native range validation even
+                # when the transport cannot represent it as an integer.
+                values["observation"] = str(value)
+        else:
             errors["observation"] = ["must be of cStr type", "must be of cInt type"]
     for parameter, default in (("clipoutside", True), ("quackincrement", False)):
         if parameter not in values:

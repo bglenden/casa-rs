@@ -63,6 +63,7 @@ def compare_apply(slot):
         ({"timerange": np.str_("12:00:30")}, {3}),
         ({"timerange": "\x00"}, {0, 1, 2, 3}),
         ({"timerange": "12:00:00\x00,12:00:30"}, {0}),
+        ({"timerange": "12:00:00\x00$unused"}, {0}),
         ({"observation": 0}, {0, 1}),
         ({"observation": 1}, {2, 3}),
         ({"observation": np.int32(1)}, {2, 3}),
@@ -138,6 +139,8 @@ def compare_summary_and_preview(slot):
 
     for module in (casatasks, tasks):
         assert module.flagdata(vis=vis, action="none", timerange=["12:00:00"], observation=1) == {}
+        assert module.flagdata(vis=vis, action="none", timerange="$unused") == {}
+        assert module.flagdata(vis=vis, action="none", observation=2**63) == {}
     assert_preserved(vis, before, auxiliary)
     return len(summaries)
 
@@ -153,6 +156,7 @@ def compare_refusals():
         ({"timerange": "auto"}, RuntimeError, False),
         ({"timerange": "   "}, RuntimeError, False),
         ({"timerange": "abc"}, RuntimeError, False),
+        ({"timerange": "$invalid"}, RuntimeError, False),
         ({"timerange": ["12:00:00"]}, TypeError, False),
         ({"timerange": []}, TypeError, False),
         ({"timerange": np.array("12:00:00")}, TypeError, False),
@@ -173,6 +177,8 @@ def compare_refusals():
         ({"observation": ["1"]}, AssertionError, False),
         ({"observation": np.array(1)}, AssertionError, False),
         ({"observation": None}, AssertionError, False),
+        ({"observation": np.int64(2**31)}, RuntimeError, False),
+        ({"observation": 2**63}, RuntimeError, False),
     )
     for options, kind, empty in cases:
         errors = []
@@ -189,6 +195,24 @@ def compare_refusals():
         elif empty:
             assert all("The selected table has zero rows" in message for message in errors), errors
     return len(cases)
+
+
+def compare_overflow(slot):
+    vis = "data.ms"
+    before, auxiliary = snapshot(vis), auxiliary_content(vis)
+    for index, observation in enumerate((2**32, str(2**32))):
+        reference = f"overflow-{index}.ms"
+        copytree(vis, reference)
+        assert casatasks.flagdata(vis=reference, observation=observation, flagbackup=False) == {}
+        differences = changed_samples(before, snapshot(reference))
+        assert {slot[row] for row, count in enumerate(differences) if count} == {0, 1}
+        try:
+            tasks.flagdata(vis=vis, observation=observation, flagbackup=False)
+        except RuntimeError as error:
+            assert str(observation) in str(error), error
+        else:
+            raise AssertionError(f"flagdata accepted overflowing observation {observation!r}")
+        assert_preserved(vis, before, auxiliary)
 
 
 def compare_logical_date():
@@ -218,8 +242,9 @@ def main():
         summaries = compare_summary_and_preview(slot)
         summaries += compare_logical_date()
         refusals = compare_refusals()
-    print(f"{applied} flag products, {summaries} summaries, one preview, one inactive call, "
-          f"and {refusals} refusals compared with CASA")
+        compare_overflow(slot)
+    print(f"{applied} flag products, {summaries} summaries, one preview, three inactive calls, "
+          f"and {refusals} refusals compared with CASA, plus two verified overflow protections")
 
 
 if __name__ == "__main__":
