@@ -430,6 +430,14 @@ impl SpectralResampler {
             .take(count)
     }
 
+    fn prediction_width(&self, native: &[f64]) -> f64 {
+        let mut selected = self.prediction_channels(native);
+        selected
+            .next()
+            .zip(selected.next())
+            .map_or(0., |(first, next)| next - first)
+    }
+
     fn prediction_channel(
         &self,
         axis: &SpectralAxis,
@@ -448,6 +456,38 @@ impl SpectralResampler {
         } else {
             -1
         }
+    }
+
+    fn interpolated_planes(
+        &self,
+        axis: &SpectralAxis,
+        order: Order,
+        native: &[f64],
+    ) -> Option<std::ops::RangeInclusive<u32>> {
+        let width = self.prediction_width(native);
+        let map = |frequency| self.prediction_channel(axis, order, frequency, width);
+        degridded_channels(axis.channels, self.prediction_channels(native), map)
+    }
+
+    /// Validate CASA's four-image-plane minimum for live cubic prediction
+    /// before a caller opens the scratch writer. Single-channel and entirely
+    /// unmapped buffers bypass interpolation.
+    /// # Errors
+    /// This is an active legacy cubic buffer with fewer than four image planes.
+    pub fn validate_legacy_prediction(&self, native: &[f64]) -> Result<(), OperatorError> {
+        if let Sampling::Interpolated(axis, Order::Cubic) = &self.sampling
+            && self.legacy_prediction_map.is_some()
+            && (2..4).contains(&axis.channels)
+            && self.prediction_channels(native).nth(1).is_some()
+            && self
+                .interpolated_planes(axis, Order::Cubic, native)
+                .is_some()
+        {
+            return Err(OperatorError::SpectralAxis {
+                reason: "legacy cubic scratch prediction requires at least four image channels",
+            });
+        }
+        Ok(())
     }
 
     fn matching_axis<'a>(&'a self, axis: &'a SpectralAxis) -> &'a SpectralAxis {
@@ -590,15 +630,7 @@ impl SpectralResampler {
                 }
             }
             Some((axis, order)) => {
-                let mut selected = self.prediction_channels(native);
-                let width = selected
-                    .next()
-                    .zip(selected.next())
-                    .map_or(0., |(first, next)| next - first);
-                let map = |frequency| self.prediction_channel(axis, order, frequency, width);
-                if let Some(channels) =
-                    degridded_channels(axis.channels, self.prediction_channels(native), map)
-                {
+                if let Some(channels) = self.interpolated_planes(axis, order, native) {
                     for channel in channels {
                         place(channel, axis.centre_hz(channel), channel as usize);
                     }
@@ -778,11 +810,7 @@ impl SpectralResampler {
         // −2; −1 stays zero); the end points extrapolate (casacore
         // `InterpolateArray1D`, linear or cubic).
         index_slots(axis.channels as usize);
-        let mut selected = self.prediction_channels(native);
-        let native_width_hz = selected
-            .next()
-            .zip(selected.next())
-            .map_or(0., |(first, next)| next - first);
+        let native_width_hz = self.prediction_width(native);
         let width = (axis.increment_hz / native_width_hz).abs();
         let legacy = self.legacy_prediction_map.is_some();
         let per_channel = if legacy {
@@ -887,15 +915,36 @@ impl SpectralResampler {
                 });
             }
             let polarization = operator.polarization().pol_map();
-            for (term, covered) in scratch.terms[first..]
+            let legacy = self
+                .legacy_prediction_map
+                .as_ref()
+                .and(self.interpolated_prediction(row))
+                .map(|(axis, order)| {
+                    (
+                        axis,
+                        order,
+                        self.prediction_width(row.frequencies_hz),
+                        self.interpolated_planes(axis, order, row.frequencies_hz)
+                            .is_some(),
+                    )
+                });
+            for (channel, (term, covered)) in scratch.terms[first..]
                 .iter()
                 .zip(coverage.chunks_exact_mut(npol))
+                .enumerate()
             {
                 let has_sample = term.points.iter().any(|&point| point != NO_CELL);
+                // Legacy swapyz copies its values even if the degrid skipped
+                // a row or correlation. In that case the updated model is zero.
+                let legacy_assignment = legacy.map(|(axis, order, width, reaches_grid)| {
+                    reaches_grid
+                        && self.prediction_channel(axis, order, row.frequencies_hz[channel], width)
+                            != -1
+                });
                 for (index, value) in covered.iter_mut().enumerate() {
-                    *value = has_sample
-                        && polarization[index].is_some()
-                        && term.flags & (1 << index) == 0;
+                    let assigned =
+                        legacy_assignment.unwrap_or(has_sample && polarization[index].is_some());
+                    *value = assigned && term.flags & (1 << index) == 0;
                 }
             }
         }
