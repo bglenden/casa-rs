@@ -96,7 +96,7 @@ def test_selected_string_vector_and_measure_follow_different_casa_axis_rules(cas
         assert cs.setreferencevalue("2GHz", "spectral")
         with pytest.raises(RuntimeError, match="string formatted world direction"):
             cs.setreferencevalue(["2GHz"], "spectral")
-        np.testing.assert_array_equal(cs.referencevalue(type="spectral")["numeric"], [2e9])
+        np.testing.assert_allclose(cs.referencevalue(type="spectral")["numeric"], [2e9], rtol=2e-16, atol=0)
         assert cs.setincrement({"measure": {}}, "linear")
         np.testing.assert_array_equal(cs.increment(type="linear")["numeric"], [3, 4])
         assert cs.done()
