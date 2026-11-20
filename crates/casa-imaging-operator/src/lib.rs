@@ -61,8 +61,9 @@ pub use accumulator::{
 pub use aw::{
     AwCatalog, AwCatalogError, AwIndexing, AwPaRotation, Awp2, Awp2Sampling, Awp2Screens,
     CacheBound, CacheCharge, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,
-    LegacyEpConvolution, NativeAwGenerationError, NativeAwPair, NativeAwPlane, NativeCacheLock,
-    NativeCacheState, NativeManifest, first_covered_pa, stored_pa_rad,
+    LegacyEpConvolution, LegacyPbWConvolution, NativeAwGenerationError, NativeAwPair,
+    NativeAwPlane, NativeCacheLock, NativeCacheState, NativeManifest, first_covered_pa,
+    stored_pa_rad,
 };
 pub use backend::{GridBackend, ModelPlaneGrids, PreparedModelGrids, Work};
 /// A mosaic dish class's voltage pattern ([`MosaicPb::screens`]).

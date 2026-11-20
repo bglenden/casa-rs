@@ -22,7 +22,8 @@ use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_
 use super::imager_definition::ImagerDefinitionRequest;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
 use super::settings::{
-    ImagerGridder, ImagerSingleDishSetup, ImagerTransformOptions, PredictionGeometry,
+    ImagerGridder, ImagerLegacyPbWOptions, ImagerSingleDishSetup, ImagerTransformOptions,
+    PredictionGeometry,
 };
 use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
@@ -58,6 +59,7 @@ pub struct ImagerPrediction {
     frequency_frame_valid: bool,
     ft_location: Option<MPosition>,
     options: ImagerTransformOptions,
+    legacy_pbw: Option<ImagerLegacyPbWOptions>,
     single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
@@ -120,6 +122,7 @@ impl Default for ImagerPrediction {
             frequency_frame_valid: false,
             ft_location: None,
             options: ImagerTransformOptions::default(),
+            legacy_pbw: None,
             single_dish_setup: ImagerSingleDishSetup::default(),
             taylor: (1, None),
             voltage_pattern: None,
@@ -169,6 +172,7 @@ impl ImagerPrediction {
     pub fn set_options(&mut self, options: ImagerTransformOptions) {
         self.ft_location = options.observatory_override();
         self.options = options;
+        self.legacy_pbw = None;
         self.reset_fourier_machine();
     }
 
@@ -180,6 +184,20 @@ impl ImagerPrediction {
     /// The current settings, including prior buffer sizes retained by setoptions.
     pub fn transform_options(&self) -> ImagerTransformOptions {
         self.options
+    }
+
+    /// Select the legacy primary-beam and W projection prediction.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_legacy_pbw(
+        &mut self,
+        options: ImagerTransformOptions,
+        legacy_pbw: ImagerLegacyPbWOptions,
+    ) -> MsResult<()> {
+        self.configure_transform(options)?;
+        self.legacy_pbw = Some(legacy_pbw);
+        Ok(())
     }
 
     /// Replace Fourier settings for future predictions.
@@ -693,6 +711,14 @@ impl ImagerPrediction {
         let terms = self.taylor.0;
         let facets = self.facet_count();
         let dish = self.options.single_dish;
+        let legacy_pbw = self.legacy_pbw.as_ref();
+        if legacy_pbw.is_some()
+            && (terms > 1 || facets > 1 || dish.is_some() || voltage_pattern.is_some())
+        {
+            return Err(invalid(
+                "this legacy pbwproject model combination is pending #1520",
+            ));
+        }
         if let Some(choice) = dish {
             if choice.combined && model.images.len() > 1 {
                 return Err(invalid(
@@ -757,7 +783,11 @@ impl ImagerPrediction {
             });
             let keep_zero = facets > 1
                 || (scratch && !model.incremental && model.components.is_none() && index == 0);
-            if dish.is_none_or(|choice| choice.combined) {
+            if let Some(legacy_pbw) = legacy_pbw {
+                images.extend(super::legacy_pbw::prepare_model(
+                    ms, selected, path, &geometry, legacy_pbw, keep_zero, scratch,
+                )?);
+            } else if dish.is_none_or(|choice| choice.combined) {
                 images.extend(prepare_configured_images(
                     ms,
                     selected,

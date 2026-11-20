@@ -16,24 +16,24 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_lattices::{TraversalIter, TraversalSpec};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
-use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
-use ndarray::{Axis, IxDyn, SliceInfoElem, Zip};
+use casa_types::{ArrayD, RecordValue, Value};
+use ndarray::{Axis, IxDyn, Slice, SliceInfoElem, Zip};
 use num_complex::Complex;
 
 use crate::image::{ImageHistoryEntry, append_image_history_entries, image_history_entries};
 use crate::{
-    AnyPagedImage, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
-    ImageSubimageSummary, ImsubimageRequest, MutableImageInterface, PagedImage, TempImage,
-    TempStoragePolicy, read_fits_image,
+    AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, ImageSubimageSummary,
+    ImsubimageRequest, MutableImageInterface, PagedImage, TempImage, TempStoragePolicy,
+    read_fits_image,
 };
 
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
 use self::region::SubimageSelection;
+use super::axes::StridedSection;
 use super::axes::stokes_for_axis;
-use super::lel_mask::evaluate_mask;
+use super::lel_mask::{evaluate_mask, evaluate_strided_mask};
 
 /// A region as CASA text, a region filename, or a casacore region record.
 #[derive(Clone, Copy)]
@@ -76,6 +76,15 @@ impl SubimagePlan {
         native_coordinates: Option<RecordValue>,
         options: SubimageOptions<'_>,
     ) -> Result<Self, ImageError> {
+        Self::new_with_beams(image, native_coordinates, options, None)
+    }
+
+    pub(in crate::analysis) fn new_with_beams<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        native_coordinates: Option<RecordValue>,
+        options: SubimageOptions<'_>,
+        beam_record: Option<&RecordValue>,
+    ) -> Result<Self, ImageError> {
         if matches!(&options.region, Some(SubimageRegion::Text(_)))
             && image
                 .coordinates()
@@ -86,13 +95,15 @@ impl SubimagePlan {
                 "Coordinate system has no direction coordinate".into(),
             ));
         }
-        let selection = SubimageSelection::resolve(image, None, options.region, None, None)?;
+        let selection =
+            SubimageSelection::resolve_section(image, None, options.region, None, None)?;
         Self::from_selection(
             image,
             native_coordinates,
             selection,
             options.dropdeg,
             options.keepaxes,
+            beam_record,
         )
     }
 
@@ -106,116 +117,21 @@ impl SubimagePlan {
         image: &dyn ImageInterface<T>,
         region: Option<SubimageRegion<'_>>,
     ) -> Result<(Self, Vec<usize>), ImageError> {
-        let plan = |region| {
-            Self::new(
-                image,
-                None,
-                SubimageOptions {
-                    region,
-                    dropdeg: false,
-                    keepaxes: &[],
-                },
-            )
-        };
-        let Some(SubimageRegion::Record(record)) = region else {
-            return Ok((plan(region)?, vec![1; image.ndim()]));
-        };
-        if !matches!(record.get("name"),
-            Some(Value::Scalar(ScalarValue::String(name))) if name == "LCSlicer")
-        {
-            return Ok((plan(region)?, vec![1; image.ndim()]));
-        }
-        let section =
-            region::saved::decode_lc_slicer("region", record, image.coordinates(), image.shape())?;
-        if section.stride.iter().all(|&step| step == 1) {
-            return Ok((plan(region)?, section.stride));
-        }
-        let mut dense = record.clone();
-        dense.upsert(
-            "inc",
-            Value::Array(ArrayValue::from_f64_vec(vec![1.0; image.ndim()])),
-        );
-        dense.upsert(
-            "fracinc",
-            Value::Array(ArrayValue::from_bool_vec(vec![false; image.ndim()])),
-        );
-        let mut output = Self::new(
+        let plan = Self::new(
             image,
             None,
             SubimageOptions {
-                region: Some(SubimageRegion::Record(&dense)),
+                region,
                 dropdeg: false,
                 keepaxes: &[],
             },
         )?;
-        output.stride_edit_coordinates(image, &section.stride)?;
-        Ok((output, section.stride))
-    }
-
-    fn stride_edit_coordinates<T: ImagePixel>(
-        &mut self,
-        image: &dyn ImageInterface<T>,
-        stride: &[usize],
-    ) -> Result<(), ImageError> {
-        let mut record = self.coordinates.to_record();
-        let mut axis = 0;
-        for index in 0..self.coordinates.n_coordinates() {
-            let coordinate = self.coordinates.coordinate(index);
-            for local in 0..coordinate.n_pixel_axes() {
-                let step = stride[axis];
-                if step > 1 {
-                    if let CoordinateModel::Stokes(stokes) = coordinate {
-                        let labels = stokes
-                            .stokes()
-                            .iter()
-                            .step_by(step)
-                            .copied()
-                            .collect::<Vec<_>>();
-                        super::axes::replace_stokes_in_record(&mut record, &labels)?;
-                    } else {
-                        let (_, stored) = CoordinateSystem::set_increment_in_record(
-                            &mut record,
-                            axis,
-                            coordinate.increment()[local],
-                        )?;
-                        CoordinateSystem::set_increment_in_record(
-                            &mut record,
-                            axis,
-                            stored * step as f64,
-                        )?;
-                        CoordinateSystem::set_reference_pixel_in_record(
-                            &mut record,
-                            axis,
-                            coordinate.reference_pixel()[local] / step as f64,
-                        )?;
-                    }
-                }
-                axis += 1;
-            }
-        }
-        self.coordinates = CoordinateSystem::from_record(&record)?;
-        self.shape
-            .iter_mut()
-            .zip(stride)
-            .for_each(|(len, step)| *len = len.div_ceil(*step));
-        let beams = &self.image_info.beam_set;
-        if beams.is_multi() {
-            let step = |kind| image.find_axis(kind).map_or(1, |axis| stride[axis]);
-            let channels = step(CoordinateType::Spectral);
-            let stokes = step(CoordinateType::Stokes);
-            self.image_info.beam_set = ImageBeamSet::from_grid(
-                (0..beams.n_channels())
-                    .step_by(channels)
-                    .map(|channel| {
-                        (0..beams.n_stokes())
-                            .step_by(stokes)
-                            .map(|polarization| *beams.beam(channel, polarization))
-                            .collect()
-                    })
-                    .collect(),
-            );
-        }
-        Ok(())
+        let stride = plan
+            .selection
+            .stride
+            .clone()
+            .unwrap_or_else(|| vec![1; image.ndim()]);
+        Ok((plan, stride))
     }
 
     pub(in crate::analysis) fn from_selection<T: ImagePixel>(
@@ -224,11 +140,14 @@ impl SubimagePlan {
         selection: SubimageSelection,
         dropdeg: bool,
         keepaxes: &[i64],
+        beam_record: Option<&RecordValue>,
     ) -> Result<Self, ImageError> {
-        let kept_axes = resolve_kept_axes(&selection.shape, dropdeg, keepaxes)?;
+        let packed_shape = selection.packed_shape();
+        let kept_axes = resolve_kept_axes(&packed_shape, dropdeg, keepaxes)?;
+        let step = |axis| selection.stride.as_ref().map_or(1, |stride| stride[axis]);
         let cropped_stokes = if selection.selected_stokes.is_none()
             && let Some(axis) = image.find_axis(casa_coordinates::CoordinateType::Stokes)
-            && selection.shape[axis] != image.shape()[axis]
+            && packed_shape[axis] != image.shape()[axis]
         {
             let start = selection.start[axis];
             let stokes = stokes_for_axis(image.coordinates(), axis)?;
@@ -238,30 +157,35 @@ impl SubimagePlan {
                     .ok_or_else(|| {
                         ImageError::CasaSelection("Stokes region exceeds coordinate bounds".into())
                     })?
-                    .to_vec(),
+                    .iter()
+                    .step_by(step(axis))
+                    .copied()
+                    .collect::<Vec<_>>(),
             )
         } else {
             None
         };
+        let mut source_info = image.image_info()?;
+        if let Some(record) = beam_record {
+            source_info.beam_set = ImageInfo::from_record(record)?.beam_set;
+        }
         let (coordinates, coordinate_record, image_info) = reduce_coordinates_and_beams(
             image.coordinates(),
             native_coordinates,
             CoordReductionSpec {
                 full_shape: image.shape(),
                 start: &selection.start,
-                shape: &selection.shape,
+                shape: &packed_shape,
+                stride: selection.stride.as_deref(),
                 kept_axes: &kept_axes,
                 selected_stokes: selection
                     .selected_stokes
                     .as_deref()
                     .or(cropped_stokes.as_deref()),
             },
-            image.image_info()?,
+            source_info,
         )?;
-        let shape = kept_axes
-            .iter()
-            .map(|&axis| selection.shape[axis])
-            .collect();
+        let shape = kept_axes.iter().map(|&axis| packed_shape[axis]).collect();
         Ok(Self {
             selection,
             kept_axes,
@@ -278,8 +202,16 @@ impl SubimagePlan {
             .selection
             .start
             .iter()
-            .zip(&self.selection.shape)
-            .map(|(start, count)| start + count - 1)
+            .zip(self.selection.packed_shape())
+            .enumerate()
+            .map(|(axis, (start, count))| {
+                let step = self
+                    .selection
+                    .stride
+                    .as_ref()
+                    .map_or(1, |stride| stride[axis]);
+                start + (count - 1) * step
+            })
             .collect();
         (&self.selection.start, end)
     }
@@ -324,6 +256,9 @@ impl SubimagePlan {
     ) -> Result<(), ImageError> {
         self.copy_metadata(image, output)?;
         let selection = &self.selection;
+        if let Some(stride) = selection.stride.as_deref() {
+            return self.copy_strided_to(image, output, mask_expression, stretch, stride);
+        }
         let mut mask =
             image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
         selection.apply_selection_masks(&mut mask);
@@ -350,6 +285,53 @@ impl SubimagePlan {
         Ok(())
     }
 
+    fn copy_strided_to<T: ImagePixel + Copy>(
+        &self,
+        image: &dyn ImageInterface<T>,
+        output: &mut dyn MutableImageInterface<T>,
+        mask_expression: Option<&str>,
+        stretch: bool,
+        stride: &[usize],
+    ) -> Result<(), ImageError> {
+        let packed_shape = self.selection.packed_shape();
+        let section = StridedSection {
+            start: &self.selection.start,
+            shape: &packed_shape,
+            stride,
+        };
+        let mut mask = evaluate_strided_mask(
+            mask_expression,
+            image.shape(),
+            image.coordinates(),
+            stretch,
+            &section,
+        )?;
+        for cursor in section.cursors(image.nice_cursor_shape()) {
+            let cursor = cursor?;
+            let source = section.source_start(&cursor.position);
+            if let Some(inherited) = image.get_mask_slice(&source, &cursor.shape, stride)? {
+                let target =
+                    mask.get_or_insert_with(|| ArrayD::from_elem(IxDyn(&packed_shape), true));
+                let mut tile = target.slice_each_axis_mut(|axis| {
+                    let index = axis.axis.index();
+                    let start = cursor.position[index];
+                    Slice::from(start..start + cursor.shape[index])
+                });
+                Zip::from(&mut tile)
+                    .and(&inherited)
+                    .for_each(|out, &valid| *out &= valid);
+            }
+            let values = image.get_slice(&source, &cursor.shape, stride)?;
+            let destination = self
+                .kept_axes
+                .iter()
+                .map(|&axis| cursor.position[axis])
+                .collect::<Vec<_>>();
+            output.put_slice(&self.squeeze(values), &destination)?;
+        }
+        self.write_selection_mask(output, mask)
+    }
+
     /// Copy the selected real and imaginary sections into a complex image.
     /// Coordinates and metadata come from the real image used to plan the section.
     pub fn make_complex_to<T>(
@@ -364,6 +346,11 @@ impl SubimagePlan {
         Complex<T>: ImagePixel + Copy,
     {
         let selection = &self.selection;
+        if selection.stride.is_some() {
+            return Err(ImageError::InvalidMetadata(
+                "makecomplex requires a unit-stride image section".into(),
+            ));
+        }
         let imaginary_selection = SubimageSelection::resolve(imaginary, None, region, None, None)?;
         if selection.shape != imaginary_selection.shape {
             return Err(ImageError::CasaSelection(
@@ -668,7 +655,7 @@ fn run_typed<T: ImagePixel + Copy>(
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .map(SubimageRegion::Text);
-    let selection = SubimageSelection::resolve(
+    let selection = SubimageSelection::resolve_section(
         img,
         request.box_pixels.as_deref(),
         region,
@@ -688,6 +675,7 @@ fn run_typed<T: ImagePixel + Copy>(
         selection,
         request.dropdeg,
         &request.keepaxes,
+        None,
     )?;
 
     let destination = std::path::absolute(&request.outfile).map_err(output_io)?;

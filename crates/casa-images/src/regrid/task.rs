@@ -15,11 +15,11 @@ use casa_types::measures::{
     doppler::{DopplerRef, MDoppler},
     frequency::MFrequency,
 };
-use ndarray::{Axis, IxDyn, NdFloat, ShapeBuilder};
+use ndarray::{Axis, IxDyn, ShapeBuilder};
 
 use super::{
-    DirectionSampling, Plane, RegridMethod, RegridTemplate, Regridded, jy_per_pixel_scale,
-    positions, same_axes, sample_direction_planes, spectral::SpectralPlan,
+    DirectionSampling, Plane, RegridMethod, RegridPixel, RegridTemplate, Regridded,
+    jy_per_pixel_scale, positions, same_axes, sample_direction_planes, spectral::SpectralPlan,
 };
 use crate::{ImageError, ImageInterface, ImagePixel};
 
@@ -32,7 +32,7 @@ pub(crate) struct TaskRegridOptions<'a> {
     pub(crate) method: RegridMethod,
 }
 
-pub(crate) fn regrid_task<T: ImagePixel + NdFloat>(
+pub(crate) fn regrid_task<T: RegridPixel>(
     input: &impl ImageInterface<T>,
     template: &RegridTemplate,
     options: TaskRegridOptions<'_>,
@@ -452,7 +452,7 @@ fn spectral_positions(
         .collect()
 }
 
-fn apply_one_axis<T: ImagePixel + NdFloat>(
+fn apply_one_axis<T: RegridPixel>(
     result: &mut Regridded<T>,
     axis: usize,
     length: usize,
@@ -491,7 +491,7 @@ fn replicated_position(output: usize, input_count: usize, output_count: usize) -
     (output as f64 + 0.5) * (input_count as f64 / output_count as f64) - 0.5
 }
 
-fn apply_direction<T: ImagePixel + NdFloat>(
+fn apply_direction<T: RegridPixel>(
     result: &mut Regridded<T>,
     axis: usize,
     units: &str,
@@ -545,8 +545,9 @@ fn apply_direction<T: ImagePixel + NdFloat>(
         &result.data,
         Some(&result.mask),
         sampling,
-        |value: T| value.to_f64().expect("image pixel converts to double"),
-        |value| T::from(value).unwrap_or_else(T::nan),
+        T::COMPONENTS,
+        T::component,
+        T::with_component,
     );
     result.scale = scale;
     Ok(())
