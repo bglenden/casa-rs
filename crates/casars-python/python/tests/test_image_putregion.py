@@ -110,3 +110,64 @@ def test_putregion_rejects_read_only_fits_without_modifying_the_file(tmp_path):
     assert path.read_bytes() == original
     np.testing.assert_array_equal(image.getchunk(), [[1, 3], [2, 4]])
     assert image.done()
+
+
+def test_putregion_rejects_bad_arrays_without_taking_a_native_write_lock(casa, tmp_path):
+    for index, backend in enumerate((casa, tools)):
+        path = str(tmp_path / f"edit-{index}.im")
+        image = backend.image()
+        assert image.fromshape(path, [2, 2])
+        assert image.unlock()
+        with pytest.raises(RuntimeError, match="must specify at least"):
+            image.putregion()
+        np.testing.assert_array_equal(image.haslock(), [False, False])
+        with pytest.raises(RuntimeError, match="different shapes"):
+            image.putregion(np.ones((2, 2)), np.ones((2, 1), dtype=bool))
+        np.testing.assert_array_equal(image.haslock(), [False, False])
+        np.testing.assert_array_equal(image.getchunk(), np.zeros((2, 2)))
+        assert image.done()
+
+
+def test_putregion_writes_many_strided_mask_blocks_to_one_native_table(casa, tmp_path):
+    shape = [512, 512]
+    region = casa.regionmanager().box([0, 1], [510, 511], [2, 2])
+    x, y = np.indices((256, 256))
+    selected = (x + y) % 3 == 0
+    expected = np.ones(shape, dtype=bool)
+    expected[::2, 1::2] = selected
+    for index, (writer, reader) in enumerate(((casa, tools), (tools, casa))):
+        path = str(tmp_path / f"strided-{index}.im")
+        image = writer.image()
+        assert image.fromshape(path, shape)
+        assert image.putregion(pixelmask=selected, region=region, replicate=True)
+        assert image.done()
+        reopened = reader.image()
+        assert reopened.open(path)
+        np.testing.assert_array_equal(reopened.getchunk(getmask=True), expected)
+        np.testing.assert_array_equal(reopened.getchunk(), np.zeros(shape))
+        assert reopened.done()
+
+
+def test_putregion_uses_the_bounding_box_of_native_compound_regions(casa):
+    shape = [10, 12, 5]
+    rg = casa.regionmanager()
+    oracle = casa.image()
+    assert oracle.fromshape(shape=shape)
+    coordinates = oracle.coordsys().torecord()
+    regions = {
+        "0": rg.fromtext("box [[1pix, 2pix], [4pix, 5pix]]", shape, coordinates),
+        "1": rg.fromtext("box [[3pix, 4pix], [7pix, 9pix]]", shape, coordinates),
+    }
+    assert oracle.done()
+    for region, target in (
+        (rg.intersection(regions), np.s_[3:5, 4:6, :]),
+        (rg.makeunion(regions), np.s_[1:8, 2:10, :]),
+    ):
+        expected = np.zeros(shape, dtype=np.float32)
+        expected[target] = 7
+        for backend in (casa, tools):
+            image = backend.image()
+            assert image.fromshape(shape=shape)
+            assert image.putregion(expected[target], region=region)
+            np.testing.assert_array_equal(image.getchunk(), expected)
+            assert image.done()

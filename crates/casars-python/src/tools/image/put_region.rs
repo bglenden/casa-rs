@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::put_image_region;
+use casa_images::analysis::{put_image_region, validate_put_region_shapes};
 use casa_tables::LockType;
 use ndarray::{Array1, ArrayD};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
@@ -121,7 +121,7 @@ impl PyImageTool {
         } else {
             (None, "[]".into())
         };
-        let region = Region::argument(py, region, "putregion")?;
+        let region = Region::capture(py, region)?;
         let (ok, logs) = py.detach(|| {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else {
@@ -141,6 +141,8 @@ impl PyImageTool {
                     }));
                 }
             }
+            validate_put_region_shapes(pixels.as_ref().map(Pixels::shape), mask.as_ref().map(ArrayD::shape))
+                .map_err(raised)?;
             attachment.require_lock(&mut handle, LockType::Write)?;
             let fresh_mask_name = mask.as_ref().map(|_| {
                 (0..)
@@ -173,6 +175,7 @@ impl PyImageTool {
                 handle.record_history("putregion", command)?;
             }
             handle.save().map_err(raised)?;
+            attachment.release_requested_lock(&mut handle)?;
             let logs = list.then(|| LogLine::info("Wrote the selected image region"));
             Ok((true, logs.into_iter().collect()))
         })?;

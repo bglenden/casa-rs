@@ -24,23 +24,10 @@ pub fn put_image_region<T: ImagePixel>(
     usemask: bool,
     replicate: bool,
 ) -> Result<(), ImageError> {
-    let pixel_shape = pixels.as_ref().map(ArrayD::shape);
-    let mask_shape = mask.as_ref().map(ArrayD::shape);
-    if let Some((pixels, mask)) = pixel_shape.zip(mask_shape)
-        && pixels != mask
-    {
-        return Err(ImageError::CasaSelection(
-            "Pixels and mask arrays have different shapes".into(),
-        ));
-    }
-    let array_shape = pixel_shape.or(mask_shape).ok_or_else(|| {
-        ImageError::CasaSelection("You must specify at least either the pixels or the mask".into())
-    })?;
-    if array_shape.is_empty() || array_shape.contains(&0) {
-        return Err(ImageError::CasaSelection(
-            "The shape of the data array is invalid".into(),
-        ));
-    }
+    let array_shape = validate_put_region_shapes(
+        pixels.as_ref().map(ArrayD::shape),
+        mask.as_ref().map(ArrayD::shape),
+    )?;
     let selection = ImageRegionWrite::new(image, region, array_shape, replicate)?;
     let tile = image.nice_cursor_shape();
     let small_edit =
@@ -60,6 +47,32 @@ pub fn put_image_region<T: ImagePixel>(
     } else {
         selection.apply(image, pixels, mask, fresh_mask_name, usemask)
     }
+}
+
+/// Check buffer geometry before opening the image for a region write.
+///
+/// # Errors
+/// Both buffers are absent, their shapes differ, or the shape has no pixels.
+pub fn validate_put_region_shapes<'a>(
+    pixel_shape: Option<&'a [usize]>,
+    mask_shape: Option<&'a [usize]>,
+) -> Result<&'a [usize], ImageError> {
+    if let Some((pixels, mask)) = pixel_shape.zip(mask_shape)
+        && pixels != mask
+    {
+        return Err(ImageError::CasaSelection(
+            "Pixels and mask arrays have different shapes".into(),
+        ));
+    }
+    let array_shape = pixel_shape.or(mask_shape).ok_or_else(|| {
+        ImageError::CasaSelection("You must specify at least either the pixels or the mask".into())
+    })?;
+    if array_shape.is_empty() || array_shape.contains(&0) {
+        return Err(ImageError::CasaSelection(
+            "The shape of the data array is invalid".into(),
+        ));
+    }
+    Ok(array_shape)
 }
 
 struct ImageRegionWrite {
@@ -118,7 +131,7 @@ impl ImageRegionWrite {
 
     fn apply<T: ImagePixel>(
         &self,
-        image: &mut dyn MutableImageInterface<T>,
+        image: &mut impl MutableImageInterface<T>,
         pixels: Option<ArrayD<T>>,
         mask: Option<ArrayD<bool>>,
         fresh_mask_name: &str,
@@ -136,9 +149,7 @@ impl ImageRegionWrite {
                 fresh_mask_name.to_owned()
             };
             let mask = pad(mask, image.ndim());
-            self.write(&mask, |values, start| {
-                image.put_mask_slice(&name, values, start)
-            })?;
+            image.with_mask_slice_writer(&name, |put| self.write(&mask, put))?;
         }
         if let Some(pixels) = pixels {
             let mut pixels = pad(pixels, image.ndim());

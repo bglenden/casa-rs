@@ -495,3 +495,47 @@ assert ia.unlock() and ia.done()
             child.kill()
         child.communicate(timeout=5)
         ia.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_putregion_yields_automatic_write_lock_to_casa_reader(casa, tmp_path):
+    path = tmp_path / "edit.im"
+    ready = tmp_path / "reader-ready"
+    image = tools.image()
+    values = np.full((2, 2), 7, dtype=np.float32)
+    assert image.fromshape(str(path), [2, 2])
+    assert image.putregion(values)
+    assert_locks(image, True, True)
+    child = subprocess.Popen(
+        [sys.executable, "-c", """
+import sys
+from pathlib import Path
+import numpy as np
+from casatools import table
+reader = table()
+assert reader.open(sys.argv[1], lockoptions={'option': 'user'})
+Path(sys.argv[2]).touch()
+assert reader.lock(write=False, nattempts=14)
+assert reader.haslock(write=False)
+np.testing.assert_array_equal(reader.getcell('map', 0), np.full((2, 2), 7))
+reader.close()
+""", str(path), str(ready)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 12
+        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.03)
+        assert ready.exists()
+        while child.poll() is None and time.monotonic() < deadline:
+            assert image.putregion(values)
+            if not image.haslock()[1]:
+                break
+            time.sleep(0.03)
+        assert_locks(image, False, False)
+        assert child.wait(timeout=5) == 0, child.stderr.read()
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=5)
+        image.done()
