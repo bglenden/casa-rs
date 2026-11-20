@@ -19,6 +19,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [FITS import of an empty primary HDU](#fits-import-can-abort-on-an-empty-primary-hdu),
 [restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
@@ -7299,3 +7300,12 @@ at open and refuses the removal if the pathname was rebound.
 When a symbolic link lies inside a read-only directory, CASA can delete the
 linked image and leave the link dangling. casa-rs checks that directory
 before deleting the image and preserves both entries when it refuses.
+
+## Image rename can move an open table before failing to reattach
+
+In CASA 6.7.6.14, open one native image in two image tools in the same process
+and call `rename()` on the first tool. CASA can move the table, then raise
+`RuntimeError` while reopening it under the new name. The second tool keeps
+the old name and can abort while closing that stale handle. casa-rs refuses
+the move before changing either path while another tool holds the image.
+See [#1625](https://github.com/bglenden/casa-rs/issues/1625).

@@ -980,7 +980,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "replacemaskedpixels",

@@ -796,16 +796,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (name, overwrite = None), text_signature = "($self, name, overwrite=False)")]
-    fn rename(
-        &self,
-        name: &Bound<'_, PyAny>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("rename")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (pixels = None, region = None, mask = None, update = None, list = None, stretch = None), text_signature = "($self, pixels=[], region={}, mask='', update=False, list=False, stretch=False)")]
     fn replacemaskedpixels(
         &self,

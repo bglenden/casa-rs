@@ -7,14 +7,16 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
+use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableError, TableOptions, TableUseLock, TableWriteLock};
 use pyo3::prelude::*;
 
 use super::handle::{ImageHandle, raised};
+use super::stub;
 
 pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
-    use_lock: Option<TableUseLock>,
+    use_lock: Option<Arc<TableUseLock>>,
 }
 
 type OpenImages = BTreeMap<PathBuf, Weak<SharedImage>>;
@@ -57,7 +59,7 @@ impl AttachedImage {
         let use_lock = key
             .join("table.dat")
             .is_file()
-            .then(|| TableUseLock::acquire(&key))
+            .then(|| TableUseLock::acquire(&key).map(Arc::new))
             .transpose()
             .map_err(raised)?;
         let image = Arc::new(SharedImage {
@@ -82,6 +84,140 @@ impl AttachedImage {
         self.key.is_some()
     }
 
+    pub(super) fn rename(&self, name: &str, overwrite: bool, history: bool) -> PyResult<Self> {
+        if name.is_empty() {
+            return Err(raised("Exception: new file name must be specified."));
+        }
+        let Some(source) = &self.key else {
+            return Err(raised(
+                "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
+            ));
+        };
+        let old_name = self.lock().path().unwrap_or(source).to_path_buf();
+        let absolute = std::path::absolute(name).map_err(raised)?;
+        let parent = absolute
+            .parent()
+            .ok_or_else(|| raised("Invalid output image path"))?;
+        let directory = parent.canonicalize().map_err(|_| {
+            let argument = Path::new(name).parent().unwrap_or(Path::new("."));
+            raised(format!(
+                "RegularFile::copy/move: target directory {} is not writable",
+                argument.display()
+            ))
+        })?;
+        let target = directory.join(
+            absolute
+                .file_name()
+                .ok_or_else(|| raised("Invalid output image name"))?,
+        );
+        let mut registry = registry();
+        let target_metadata = match target.symlink_metadata() {
+            Ok(metadata) if overwrite => Some(metadata),
+            Ok(_) => {
+                return Err(raised(format!(
+                    "Exception: File {name} exists, and the user does not want to remove it.."
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(raised(error)),
+        };
+        let log_rename = |image: &mut ImageHandle| {
+            if history {
+                image.append_history_at(
+                    "::image::rename",
+                    &[
+                        "Ran ia.rename".into(),
+                        format!("ia.rename(name={name:?}, overwrite={overwrite})"),
+                        format!("original name was {}", old_name.display()),
+                    ],
+                )?;
+            }
+            Ok::<(), PyErr>(())
+        };
+        if std::ffi::OsStr::new(name) == old_name.as_os_str() {
+            return Err(raised(
+                "Exception: Specified output name is the same as the current image name.",
+            ));
+        }
+        if source == &target {
+            if self
+                .image
+                .use_lock
+                .as_ref()
+                .is_some_and(|lease| !lease.matches_directory(source))
+            {
+                return Err(raised(format!(
+                    "Cannot rename image {} because the image at that path has changed",
+                    source.display()
+                )));
+            }
+            log_rename(&mut self.lock())?;
+            return Ok(Self {
+                image: Arc::clone(&self.image),
+                key: Some(source.clone()),
+            });
+        }
+        if old_name
+            .symlink_metadata()
+            .is_ok_and(|entry| entry.is_symlink())
+            || target_metadata
+                .as_ref()
+                .is_some_and(|entry| entry.is_symlink())
+            || target.starts_with(source)
+            || source.starts_with(&target)
+        {
+            return Err(stub("rename").unwrap_err());
+        }
+        for (path, expected) in [(source.as_path(), 1), (target.as_path(), 0)] {
+            if conflicting_images(&registry, path, expected)
+                || crate::tools::table::path_is_in_use(path)
+            {
+                return Err(raised(format!(
+                    "Cannot rename image because {} is still open in this process",
+                    path.display()
+                )));
+            }
+        }
+        let mut locks = BTreeMap::new();
+        lock_table_tree(source, &mut locks)?;
+        if target_metadata.as_ref().is_some_and(|entry| entry.is_dir()) {
+            lock_table_tree(&target, &mut locks)?;
+        }
+        if self
+            .image
+            .use_lock
+            .as_ref()
+            .is_some_and(|lease| !lease.matches_directory(source))
+        {
+            return Err(raised(format!(
+                "Cannot rename image {} because the image at that path has changed",
+                source.display()
+            )));
+        }
+        let backup = move_native_table(source, &target, target_metadata.is_some())?;
+        // Keep both root locks during reattachment, but release child
+        // locks so the log-table writer can append the rename history.
+        locks.retain(|path, _| path == source || path == &target);
+        let reopen = || {
+            let mut image = ImageHandle::open(&target).map_err(raised)?;
+            log_rename(&mut image)?;
+            Ok::<_, PyErr>(image)
+        };
+        let image = match reopen() {
+            Ok(image) => Arc::new(SharedImage {
+                handle: Mutex::new(image),
+                use_lock: self.image.use_lock.clone(),
+            }),
+            Err(error) => return restore_native_move(source, &target, backup, error),
+        };
+        registry.remove(source);
+        registry.insert(target.clone(), Arc::downgrade(&image));
+        Ok(Self {
+            image,
+            key: Some(target),
+        })
+    }
+
     pub(super) fn remove(&self) -> PyResult<String> {
         let Some(key) = &self.key else {
             return Err(raised(
@@ -93,7 +229,7 @@ impl AttachedImage {
         if conflicting_images(&registry, key, 1) {
             return Err(in_use(key, "this"));
         }
-        remove_native_table(&name, key, self.image.use_lock.as_ref())?;
+        remove_native_table(&name, key, self.image.use_lock.as_deref())?;
         registry.remove(key);
         Ok(name.to_string_lossy().into_owned())
     }
@@ -137,7 +273,8 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     if crate::tools::table::path_is_in_use(path) {
         return Err(in_use(path, "this"));
     }
-    let _leases = deletion_locks(path)?;
+    let mut leases = BTreeMap::new();
+    lock_table_tree(path, &mut leases)?;
     if expected.is_some_and(|guard| !guard.matches_directory(path)) {
         return Err(raised(format!(
             "Cannot delete file {} because the image at that path has changed",
@@ -168,7 +305,7 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     Ok(())
 }
 
-fn deletion_locks(path: &Path) -> PyResult<Vec<TableWriteLock>> {
+fn lock_table_tree(path: &Path, leases: &mut BTreeMap<PathBuf, TableWriteLock>) -> PyResult<()> {
     let not_writable = |name: &Path| {
         raised(format!(
             "Cannot delete file {} because table is not writable",
@@ -183,10 +320,9 @@ fn deletion_locks(path: &Path) -> PyResult<Vec<TableWriteLock>> {
     {
         return Err(not_writable(path));
     }
-    let mut leases = Vec::new();
     for ancestor in parent.ancestors() {
         if ancestor.join("table.dat").is_file() {
-            leases.push(lock_table_for_deletion(ancestor)?);
+            lock_table_for_deletion(ancestor, leases)?;
         }
     }
     let mut pending = vec![path.to_path_buf()];
@@ -204,7 +340,7 @@ fn deletion_locks(path: &Path) -> PyResult<Vec<TableWriteLock>> {
                 .write(true)
                 .open(control)
                 .map_err(|_| not_writable(&directory))?;
-            leases.push(lock_table_for_deletion(&directory)?);
+            lock_table_for_deletion(&directory, leases)?;
         }
         for entry in fs::read_dir(&directory).map_err(raised)? {
             let entry = entry.map_err(raised)?;
@@ -213,10 +349,16 @@ fn deletion_locks(path: &Path) -> PyResult<Vec<TableWriteLock>> {
             }
         }
     }
-    Ok(leases)
+    Ok(())
 }
 
-fn lock_table_for_deletion(directory: &Path) -> PyResult<TableWriteLock> {
+fn lock_table_for_deletion(
+    directory: &Path,
+    leases: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> PyResult<()> {
+    if leases.contains_key(directory) {
+        return Ok(());
+    }
     let lease = TableWriteLock::acquire(directory, 1).map_err(|error| match error {
         TableError::LockFailed { .. } => in_use(directory, "another"),
         _ => raised(error),
@@ -224,7 +366,71 @@ fn lock_table_for_deletion(directory: &Path) -> PyResult<TableWriteLock> {
     if lease.is_multi_used() {
         return Err(in_use(directory, "another"));
     }
-    Ok(lease)
+    leases.insert(directory.to_path_buf(), lease);
+    Ok(())
+}
+
+fn move_error(error: std::io::Error) -> PyErr {
+    if error.kind() == std::io::ErrorKind::CrossesDevices {
+        stub("rename").unwrap_err()
+    } else {
+        raised(error)
+    }
+}
+
+fn move_native_table(
+    source: &Path,
+    target: &Path,
+    replaces: bool,
+) -> PyResult<Option<tempfile::TempDir>> {
+    if !replaces {
+        rename_without_replacing(source, target).map_err(move_error)?;
+        return Ok(None);
+    }
+    let parent = source
+        .parent()
+        .ok_or_else(|| raised("Invalid source image path"))?;
+    let backup = tempfile::tempdir_in(parent).map_err(raised)?;
+    exchange_directories(source, target).map_err(move_error)?;
+    if let Err(error) = rename_without_replacing(source, &backup.path().join("previous")) {
+        if let Err(restore) = exchange_directories(source, target) {
+            return Err(raised(format!(
+                "Could not complete image rename ({error}) or restore by exchanging {} and {} ({restore})",
+                source.display(),
+                target.display()
+            )));
+        }
+        return Err(move_error(error));
+    }
+    Ok(Some(backup))
+}
+
+fn restore_native_move<T>(
+    source: &Path,
+    target: &Path,
+    backup: Option<tempfile::TempDir>,
+    error: PyErr,
+) -> PyResult<T> {
+    let Some(backup) = backup else {
+        rename_without_replacing(target, source).map_err(|restore| {
+            raised(format!(
+                "{error}. Could not restore image {}: {restore}",
+                source.display()
+            ))
+        })?;
+        return Err(error);
+    };
+    let previous = backup.path().join("previous");
+    let restore = exchange_directories(target, &previous)
+        .and_then(|()| rename_without_replacing(&previous, source));
+    if let Err(restore) = restore {
+        let recovery = backup.keep();
+        return Err(raised(format!(
+            "{error}. Could not restore image names: {restore}. Inspect {}",
+            recovery.display()
+        )));
+    }
+    Err(error)
 }
 
 impl Drop for AttachedImage {
