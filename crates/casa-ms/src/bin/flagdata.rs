@@ -9,9 +9,9 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
-    FlagSummaryOptions, MeasurementSet, QuackMode, calculate_flagdata_path, flagdata_empty_record,
-    flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
-    save_next_flag_backup, task_selection_text,
+    FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, calculate_flagdata_path,
+    flagdata_empty_record, flagdata_named_summary_record, flagdata_path,
+    flagdata_task_schema_bundle, ms_task_success, save_next_flag_backup, task_selection_text,
 };
 use casa_provider_contracts::{NumpyScalarType, ParameterValue, python_repr};
 use casa_task_runtime::{
@@ -69,7 +69,12 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     } else {
         flagdata_path(path, &request)
     }
-    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    .map_err(|error| match error {
+        FlaggingError::MissingCorrelationSummary => {
+            TaskFailure::execution(error.to_string()).at("correlation")
+        }
+        error => TaskFailure::execution(error.to_string()),
+    })?;
     let value = match &report.summary {
         Some(summary) => flagdata_named_summary_record(summary, &task.required_text("name")?),
         None => flagdata_empty_record(),

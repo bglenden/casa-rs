@@ -64,6 +64,8 @@
 mod geometry;
 mod record;
 
+pub(crate) use record::{compound_children, map_world_region_axes, native_region_kind};
+
 use casa_coordinates::CoordinateSystem;
 use casa_lattices::StatsElement;
 use casa_types::RecordValue;
