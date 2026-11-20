@@ -47,7 +47,7 @@ impl ImageInsertion {
         };
         let by_ref = locate.is_empty() || matches!(locate, [value] if *value < 0.0);
         let (selection, source_ref) = if by_ref {
-            let plan = SubimagePlan::from_selection(source, None, selection, false, &[])?;
+            let plan = SubimagePlan::from_selection(source, None, selection, false, &[], None)?;
             let pixels = reference_pixels(&plan.coordinates)
                 .into_iter()
                 .zip(&stride)
