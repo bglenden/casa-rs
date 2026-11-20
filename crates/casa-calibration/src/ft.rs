@@ -4,6 +4,7 @@
 pub(crate) mod image;
 mod imager;
 mod imager_definition;
+mod imager_sources;
 pub(crate) mod legacy_aw;
 pub(crate) mod legacy_pbw;
 pub(crate) mod moving_source;

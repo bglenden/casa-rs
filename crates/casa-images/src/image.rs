@@ -1366,6 +1366,14 @@ impl<T: ImagePixel> PagedImage<T> {
             .map(|tiled_io| tiled_io.borrow().owned_resident_bytes())
     }
 
+    /// Reload pixel values on their next read while keeping the tiled file open.
+    /// Pending pixel writes retain their cache until they are flushed.
+    pub fn discard_clean_pixel_cache(&self) {
+        if let Some(tiled_io) = &self.tiled_io {
+            tiled_io.borrow_mut().discard_clean_read_cache();
+        }
+    }
+
     /// Clears tiled-I/O diagnostic counters for this image.
     pub fn reset_tiled_io_stats(&mut self) {
         if let Some(tiled_io) = &self.tiled_io {
