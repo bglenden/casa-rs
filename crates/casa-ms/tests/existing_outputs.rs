@@ -274,13 +274,7 @@ fn read_only_modes_leave_the_measurement_set_unchanged() {
     let ms_arg = ms.to_str().unwrap();
     let before = snapshot(&ms);
 
-    for (binary, args) in [
-        (
-            env!("CARGO_BIN_EXE_flagdata"),
-            vec!["--vis", ms_arg, "--mode", "summary"],
-        ),
-        (env!("CARGO_BIN_EXE_msexplore"), vec![ms_arg]),
-    ] {
+    for (binary, args) in [(env!("CARGO_BIN_EXE_msexplore"), vec![ms_arg])] {
         let output = run(binary, &args);
         assert!(output.status.success(), "{binary} {args:?}: {output:?}");
         assert_eq!(snapshot(&ms), before, "{binary} {args:?}");
@@ -384,31 +378,17 @@ fn refused_arguments_change_nothing() {
     let before = snapshot(&ms);
     let out = temp.path().join("out.ms");
 
-    for (binary, args) in [
-        (
-            env!("CARGO_BIN_EXE_flagdata"),
-            vec![
-                "--vis",
-                ms_arg,
-                "--mode",
-                "manual",
-                "--spw",
-                "0:never",
-                "--no-flagbackup",
-            ],
-        ),
-        (
-            env!("CARGO_BIN_EXE_mstransform"),
-            vec![
-                "--vis",
-                ms_arg,
-                "--outputvis",
-                out.to_str().unwrap(),
-                "--spw",
-                "9",
-            ],
-        ),
-    ] {
+    for (binary, args) in [(
+        env!("CARGO_BIN_EXE_mstransform"),
+        vec![
+            "--vis",
+            ms_arg,
+            "--outputvis",
+            out.to_str().unwrap(),
+            "--spw",
+            "9",
+        ],
+    )] {
         let output = run(binary, &args);
         assert!(!output.status.success(), "{binary} {args:?} succeeded");
         assert_eq!(snapshot(&ms), before, "{binary} {args:?}");

@@ -32,6 +32,7 @@ mod cli;
 pub mod constants;
 mod corrected_export;
 mod execute;
+mod flagdata_model;
 mod fluxscale;
 mod ft;
 mod gencal;
@@ -73,6 +74,7 @@ mod weather;
 mod weight_spectra;
 mod writer;
 
+pub use flagdata_model::flagdata_model;
 pub use ft::settings::{
     ImagerGridder, ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerSingleDish,
     ImagerSingleDishKernel, ImagerSingleDishSetup, ImagerTransformOptions,

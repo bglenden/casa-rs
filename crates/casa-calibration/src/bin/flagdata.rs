@@ -8,13 +8,13 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use casa_ms::flagging::flagdata_path_with_model;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
     FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
-    append_flag_command, append_task_history, calculate_flagdata_path, flagdata_empty_record,
-    flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
-    save_next_casa_flag_backup, task_selection_text,
+    append_flag_command, append_task_history, flagdata_empty_record, flagdata_named_summary_record,
+    flagdata_task_schema_bundle, ms_task_success, save_next_casa_flag_backup, task_selection_text,
 };
 use casa_provider_contracts::{
     DefaultSpec, NumpyScalarType, ParameterValue, TaskFailureKind, python_repr,
@@ -105,17 +105,20 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.path("vis")?;
     // The CASA task derives persistence from action, including when the
     // caller supplied its hidden writeflags argument explicitly.
-    let report = if calculate {
-        if !matches!(
+    if calculate
+        && !matches!(
             request.mode,
             FlagDataMode::Manual | FlagDataMode::Clip | FlagDataMode::Quack | FlagDataMode::Summary
-        ) {
-            return Err(not_yet("action", &action));
-        }
-        calculate_flagdata_path(&path, &request)
-    } else {
-        flagdata_path(&path, &request)
+        )
+    {
+        return Err(not_yet("action", &action));
     }
+    let report = flagdata_path_with_model(
+        &path,
+        &request,
+        !calculate,
+        Some(casa_calibration::flagdata_model),
+    )
     .map_err(|error| match error {
         FlaggingError::MissingCorrelationSummary => {
             TaskFailure::execution(error.to_string()).at("correlation")
