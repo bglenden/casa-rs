@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use super::PyImageTool;
 use super::beam_view::BeamView;
 use super::create::publish_image;
-use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::Region;
 
 fn copy<T>(
@@ -37,8 +37,17 @@ where
         None,
     )
     .map_err(raised)?;
-    with_storage!(&mut product, output => decimation.copy_to(input, output.as_mut()))
+    let mask = with_storage!(&mut product, output => decimation.copy_to(input, output.as_mut()))
         .map_err(raised)?;
+    if let Some(mask) = mask {
+        match &mut product {
+            Storage::Paged(image) => {
+                image.put_mask("mask0", &mask).map_err(raised)?;
+                image.set_default_mask("mask0").map_err(raised)?;
+            }
+            Storage::Temp { image, .. } => image.set_region_mask(mask).map_err(raised)?,
+        }
+    }
     let mut info = section.image_info().to_record();
     beams.apply_to(&mut info);
     with_storage!(&mut product, output => output.set_image_info_record(info)).map_err(raised)?;
@@ -66,25 +75,7 @@ fn decimate_storage<T>(
 where
     T: ImagePixel + AddAssign + Div<f32, Output = T>,
 {
-    let mut product = if let Storage::Temp {
-        image,
-        fits: Some(fits),
-        ..
-    } = source
-    {
-        copy(&fits.image_view(image), coordinates, options, beams, path)?
-    } else {
-        with_storage!(source, image => copy(image.as_ref(), coordinates, options, beams, path))?
-    };
-    let history = match source {
-        Storage::Paged(image) => {
-            image_history_rows(image.name().expect("native image path")).map_err(raised)?
-        }
-        Storage::Temp { image, .. } => image.history_rows().to_vec(),
-    };
-    with_storage!(&mut product, output => output.append_history_entries(&history))
-        .map_err(raised)?;
-    Ok(product)
+    with_storage!(source, image => copy(image.as_ref(), coordinates, options, beams, path))
 }
 
 #[pymethods]
@@ -137,10 +128,18 @@ impl PyImageTool {
                     stretch,
                 };
                 let mut output = match &*handle {
+                    ImageHandle::Float(Storage::Temp { image, fits: Some(fits), .. }) => {
+                        ImageHandle::Float(copy(&fits.image_view(image), coordinates, options, &beams, path)?)
+                    }
                     ImageHandle::Float(source) => ImageHandle::Float(decimate_storage(source, coordinates, options, &beams, path)?),
                     ImageHandle::Complex(source) => ImageHandle::Complex(decimate_storage(source, coordinates, options, &beams, path)?),
                     _ => unreachable!("double precision is checked before decimation"),
                 };
+                let history = with_pixels!(&*handle, source => match source {
+                    Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
+                    Storage::Temp { image, .. } => image.history_rows().to_vec(),
+                });
+                with_pixels!(&mut output, dest => with_storage!(dest, image => image.append_history_entries(&history))).map_err(raised)?;
                 if state.history {
                     let region = region.as_ref().map_or_else(|| "\"\"".into(), Region::history);
                     output.record_history("decimate", format!("ia.decimate(outfile={outfile:?}, axis={axis}, factor={factor}, method={method:?}, region={region}, mask={mask:?}, overwrite={overwrite}, stretch={stretch})"))?;

@@ -2,7 +2,7 @@
 
 use std::ops::{AddAssign, Div};
 
-use casa_coordinates::{Coordinate, CoordinateSystem};
+use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Axis, IxDyn, Slice, Zip};
 
@@ -10,6 +10,7 @@ use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel, MutableImageInter
 
 use super::super::axes::StridedSection;
 use super::super::lel_mask::evaluate_strided_mask;
+use super::region::SubimageSelection;
 use super::{SubimageOptions, SubimagePlan, SubimageRegion, and_opt_mask};
 
 /// How to combine the selected input planes along the decimation axis.
@@ -79,16 +80,41 @@ impl<'a> ImageDecimation<'a> {
                 "This application does not support images with multiple beams. Please convolve your image with a single beam and run this application using that image.".into(),
             ));
         }
-        let mut plan = SubimagePlan::new_with_beams(
-            image,
-            Some(native_coordinates),
-            SubimageOptions {
-                region,
-                dropdeg: false,
-                keepaxes: &[],
-            },
-            Some(beam_record),
-        )?;
+        let mut plan = if region.is_none()
+            && image.ndim() > 2
+            && image.find_axis(CoordinateType::Direction).is_none()
+        {
+            // CASA's implicit region selects a single pixel on two spatial
+            // axes when a multidimensional image has no direction coordinate.
+            let spectral = image.find_axis(CoordinateType::Spectral);
+            let stokes = image.find_axis(CoordinateType::Stokes);
+            let mut selection = SubimageSelection::resolve_section(image, None, None, None, None)?;
+            for axis in (0..image.ndim())
+                .filter(|&axis| Some(axis) != spectral && Some(axis) != stokes)
+                .take(2)
+            {
+                selection.shape[axis] = 1;
+            }
+            SubimagePlan::from_selection(
+                image,
+                Some(native_coordinates),
+                selection,
+                false,
+                &[],
+                Some(beam_record),
+            )?
+        } else {
+            SubimagePlan::new_with_beams(
+                image,
+                Some(native_coordinates),
+                SubimageOptions {
+                    region,
+                    dropdeg: false,
+                    keepaxes: &[],
+                },
+                Some(beam_record),
+            )?
+        };
         if factor > plan.shape[axis] {
             return Err(ImageError::CasaSelection(match method {
                 DecimationMethod::Copy => {
@@ -141,6 +167,7 @@ impl<'a> ImageDecimation<'a> {
     }
 
     /// Copy sampled values or write masked means using bounded pixel tiles.
+    /// Returns invalid output samples as an unnamed mask when decimating.
     ///
     /// # Errors
     /// Invalid product geometry, a fully masked averaging group, or I/O failure.
@@ -148,7 +175,7 @@ impl<'a> ImageDecimation<'a> {
         &self,
         image: &dyn ImageInterface<T>,
         output: &mut dyn MutableImageInterface<T>,
-    ) -> Result<(), ImageError>
+    ) -> Result<Option<ArrayD<bool>>, ImageError>
     where
         T: ImagePixel + AddAssign + Div<f32, Output = T>,
     {
@@ -161,7 +188,8 @@ impl<'a> ImageDecimation<'a> {
             ..
         } = self.options;
         if factor == 1 {
-            return self.plan.copy_to(image, output, mask, stretch);
+            self.plan.copy_to(image, output, mask, stretch)?;
+            return Ok(None);
         }
         self.plan.copy_metadata(image, output)?;
         let selected = &self.plan.selection;
@@ -243,7 +271,7 @@ impl<'a> ImageDecimation<'a> {
                 "All selected pixels are masked".into(),
             ));
         }
-        self.plan.write_selection_mask(output, mask_out)
+        Ok(mask_out)
     }
 }
 

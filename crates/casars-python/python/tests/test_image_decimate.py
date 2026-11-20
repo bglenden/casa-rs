@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from casars import tools
+from test_image_fits import _hdu
 from test_image_workflow import _assert_value
 
 
@@ -35,6 +36,8 @@ def test_decimate_masked_pixels_and_tail_against_independent_reference(casa, met
         output = source.decimate(axis=0, factor=2, method=method)
         np.testing.assert_array_equal(output.getchunk(), expected)
         np.testing.assert_array_equal(output.getchunk(getmask=True), expected_valid)
+        assert output.maskhandler("get") == ["T"]
+        assert output.maskhandler("default") == [""]
         np.testing.assert_allclose(output.coordsys().referencepixel()["numeric"], [1.5, 2])
         np.testing.assert_allclose(output.coordsys().increment()["numeric"], [-2, 1])
         assert "Decimated axis 0" in output.history()[-3]
@@ -110,3 +113,39 @@ def test_decimate_rejects_multiple_beams(casa):
         with pytest.raises(RuntimeError, match="does not support images with multiple beams"):
             source.decimate(factor=2)
         assert source.done()
+
+
+def test_decimate_direct_fits_with_stretched_mask(casa, tmp_path):
+    path = tmp_path / "pixels.fits"
+    path.write_bytes(_hdu(True, [1, -999, 3, 4]))
+    mask_path = tmp_path / "mask.im"
+    mask = casa.image()
+    assert mask.fromarray(str(mask_path), np.array([[0], [1]], dtype=np.float32))
+    assert mask.done()
+    for backend in (casa, tools):
+        source = backend.image()
+        assert source.open(str(path))
+        expression = f'"{mask_path}" > 0'
+        with pytest.raises(RuntimeError, match="mask should not be extended"):
+            source.decimate(axis=1, factor=2, method="mean", mask=expression)
+        output = source.decimate(axis=1, factor=2, method="mean", mask=expression, stretch=True)
+        np.testing.assert_array_equal(output.getchunk(), [[0.0], [4.0]])
+        np.testing.assert_array_equal(output.getchunk(getmask=True), [[False], [True]])
+        assert source.done() and output.done()
+
+
+def test_decimate_non_direction_coordinates_honor_implicit_and_explicit_regions(casa):
+    shape = (4, 5, 6)
+    values = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    region = casa.regionmanager().box([0, 0, 0], [3, 4, 5])
+    for backend in (casa, tools):
+        source = backend.image()
+        cs = backend.coordsys().newcoordsys(linear=3)
+        assert source.fromarray(pixels=values, csys=cs.torecord())
+        implicit = source.decimate(factor=2, axis=2)
+        np.testing.assert_array_equal(implicit.getchunk(), values[:1, :1, ::2])
+        explicit = source.decimate(factor=2, region=region)
+        np.testing.assert_array_equal(explicit.getchunk(), values[::2])
+        with pytest.raises(RuntimeError, match="cursorShape <=0 or > latticeShape"):
+            source.decimate(factor=2)
+        assert implicit.done() and explicit.done() and source.done()

@@ -38,7 +38,7 @@ use casa_lattices::{
     TraversalCacheScope, TraversalCursorIter, TraversalSpec,
 };
 use casa_types::{ArrayD, RecordValue};
-use ndarray::IxDyn;
+use ndarray::{IxDyn, Zip};
 
 use crate::error::ImageError;
 use crate::image::{
@@ -69,6 +69,7 @@ pub struct TempImage<T: ImagePixel> {
     image_info_record: Option<RecordValue>,
     masks: Vec<(String, ArrayD<bool>)>,
     default_mask: Option<String>,
+    region_mask: Option<ArrayD<bool>>,
     history: Vec<ImageHistoryRow>,
 }
 
@@ -97,6 +98,7 @@ impl<T: ImagePixel> TempImage<T> {
             image_info_record: None,
             masks: Vec::new(),
             default_mask: None,
+            region_mask: None,
             history: Vec::new(),
         })
     }
@@ -362,6 +364,22 @@ impl<T: ImagePixel> TempImage<T> {
         <Self as ImageInterface<T>>::get_mask(self)
     }
 
+    /// Attach pixel validity from a processing region independently of named masks.
+    ///
+    /// # Errors
+    /// Returns an error for read-only storage or a mask of the wrong shape.
+    pub fn set_region_mask(&mut self, mask: ArrayD<bool>) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
+        if mask.shape() != self.shape() {
+            return Err(ImageError::ShapeMismatch {
+                expected: self.shape().to_vec(),
+                got: mask.shape().to_vec(),
+            });
+        }
+        self.region_mask = Some(mask);
+        Ok(())
+    }
+
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
         self.find_named_mask(name).cloned()
@@ -605,7 +623,15 @@ impl<T: ImagePixel> TempImage<T> {
         for (name, mask_data) in &self.masks {
             paged.put_mask(name, mask_data)?;
         }
-        if let Some(ref default) = self.default_mask {
+        if self.region_mask.is_some() {
+            let mask = self.get_mask()?.expect("the region provides a mask");
+            let name = (0..)
+                .map(|n| format!("mask{n}"))
+                .find(|name| self.masks.iter().all(|(stored, _)| stored != name))
+                .expect("a free name exists");
+            paged.put_mask(&name, &mask)?;
+            paged.set_default_mask(&name)?;
+        } else if let Some(ref default) = self.default_mask {
             paged.set_default_mask(default)?;
         }
         paged.append_history_entries(&self.history)?;
@@ -837,18 +863,23 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         if let Some(expression) = &self.expression {
             return expression.source.default_mask();
         }
-        match TempImage::default_mask_name(self) {
-            Some(name) => Ok(Some(TempImage::get_named_mask(self, &name)?)),
-            None => Ok(None),
-        }
+        let named = self
+            .default_mask
+            .as_deref()
+            .map(|name| self.get_named_mask(name))
+            .transpose()?;
+        Ok(combine_masks(named, self.region_mask.clone()))
+    }
+
+    fn get_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
+        self.default_mask()
     }
 
     fn has_pixel_mask(&self) -> bool {
-        self.expression
-            .as_ref()
-            .map_or(self.default_mask.is_some(), |expression| {
-                expression.has_mask
-            })
+        self.expression.as_ref().map_or(
+            self.default_mask.is_some() || self.region_mask.is_some(),
+            |expression| expression.has_mask,
+        )
     }
 
     fn get_mask_slice(
@@ -860,10 +891,33 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         if let Some(expression) = &self.expression {
             return expression.source.get_mask_slice(start, shape, stride);
         }
-        self.default_mask
+        let named = self
+            .default_mask
             .as_deref()
             .map(|name| self.get_named_mask_slice(name, start, shape, stride))
-            .transpose()
+            .transpose()?;
+        let region = self
+            .region_mask
+            .as_ref()
+            .map(|mask| slice_mask_array(mask, start, shape, stride))
+            .transpose()?;
+        Ok(combine_masks(named, region))
+    }
+}
+
+fn combine_masks(
+    named: Option<ArrayD<bool>>,
+    region: Option<ArrayD<bool>>,
+) -> Option<ArrayD<bool>> {
+    match (named, region) {
+        (Some(mut named), Some(region)) => {
+            Zip::from(&mut named)
+                .and(&region)
+                .for_each(|named, &region| *named &= region);
+            Some(named)
+        }
+        (None, Some(region)) => Some(region),
+        (named, None) => named,
     }
 }
 
