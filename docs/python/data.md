@@ -185,6 +185,8 @@ forms are tracked in #1625.
 Use `ia.getregion(region=...)` to read that same selection. Pass
 `getmask=True` to read validity, `mask` to apply a lattice expression,
 or `axes` to average the valid pixels along selected axes.
+Use `ia.boundingbox(region=...)` to inspect the inclusive pixel corners,
+stride, sampled shape and world coordinates of the corners.
 
 `ia.statistics()` returns statistics over a real native CASA or
 temporary image. Pass `axes` for per-plane results, `region` or `mask` to

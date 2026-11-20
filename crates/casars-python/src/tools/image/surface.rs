@@ -72,7 +72,7 @@ const METHODS: &[Method] = &[
         "boundingbox",
         &[param("region", K::Record, EmptyRecord)],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "boxcar",

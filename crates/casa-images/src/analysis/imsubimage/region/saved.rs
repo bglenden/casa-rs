@@ -181,7 +181,7 @@ fn polygon_region(
     })
 }
 
-pub(super) fn strided_lc_slicer(
+pub(super) fn lc_slicer_section(
     rec: &RecordValue,
     coords: &CoordinateSystem,
     shape: &[usize],
@@ -193,9 +193,6 @@ pub(super) fn strided_lc_slicer(
         return Ok(None);
     }
     let section = decode_lc_slicer("region", rec, coords, shape)?;
-    if section.stride.iter().all(|&step| step == 1) {
-        return Ok(None);
-    }
     let count = section
         .lower
         .iter()

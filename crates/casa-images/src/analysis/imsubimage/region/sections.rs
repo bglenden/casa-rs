@@ -38,16 +38,16 @@ impl StridedSection {
                 _ => {}
             }
             if let Some(section) =
-                saved::strided_lc_slicer(record, image.coordinates(), image.shape())?
+                saved::lc_slicer_section(record, image.coordinates(), image.shape())?
             {
                 return Ok(section);
             }
         }
-        let selection = SubimageSelection::resolve(image, None, region, None, None)?;
+        let selection = SubimageSelection::resolve_section(image, None, region, None, None)?;
         Ok(Self {
+            count: selection.packed_shape(),
             start: selection.start,
-            count: selection.shape,
-            stride: vec![1; image.ndim()],
+            stride: selection.stride.unwrap_or_else(|| vec![1; image.ndim()]),
         })
     }
 

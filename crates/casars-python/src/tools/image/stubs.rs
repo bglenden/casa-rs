@@ -15,12 +15,6 @@ use super::{PyImageTool, stub};
 )]
 impl PyImageTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (region = None), text_signature = "($self, region={})")]
-    fn boundingbox(&self, region: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("boundingbox")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, region = None, mask = None, axis = None, width = None, drop = None, dmethod = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', region={}, mask=[], axis=-1, width=2, drop=True, dmethod='copy', overwrite=False, stretch=False)")]
     fn boxcar(
         &self,

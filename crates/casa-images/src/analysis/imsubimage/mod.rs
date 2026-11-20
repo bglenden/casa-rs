@@ -3,6 +3,7 @@
 //! types, FITS/CASA inputs, full spatial/spectral/Stokes/mask selection, and
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
+mod bounding_box;
 pub(super) mod coords;
 mod insert;
 mod noise;
@@ -15,6 +16,7 @@ pub use replace_masked::{
     replace_masked_real_pixels,
 };
 
+pub use bounding_box::ImageRegionBounds;
 pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
 pub use pixel_edit::ImagePixelSelection;
