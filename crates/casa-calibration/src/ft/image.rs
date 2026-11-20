@@ -18,16 +18,19 @@ use casa_imaging_operator::{
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{
-    FirstBuffer, GridFt, casa_spectral, legacy_mosaic, legacy_multi_term, set_grid_tangent,
+    FirstBuffer, GridFt, casa_spectral, legacy_mosaic, legacy_multi_term, set_grid_motion,
+    set_grid_tangent,
 };
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     convert_frequency_to_frame_with_frame, virtual_model_image_path,
 };
 use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::record::direction_from_record;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
+use super::moving_source::MovingSourceAnchor;
 use super::settings::{ImagerGridder, PredictionGeometry};
 use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 
@@ -40,6 +43,29 @@ pub(crate) struct ImageModel {
 }
 
 impl ImageModel {
+    pub(super) fn track(&mut self, tracking: &MovingSourceAnchor) -> MsResult<()> {
+        let record = &mut self.entry.container;
+        let Some(Value::Record(image)) = record.get("mimage_rec") else {
+            return Err(invalid("the Fourier grid has no image direction"));
+        };
+        let reference = direction_from_record(image).map_err(invalid)?.refer();
+        let anchor = tracking.source.direction(&tracking.frame, reference)?;
+        let location = tracking
+            .frame
+            .position()
+            .expect("moving-source frame has a location");
+        let set_motion = |record: &mut RecordValue| {
+            set_grid_motion(record, tracking.source.model(), &anchor, location);
+        };
+        if let Some(Value::Record(grid)) = record.get("subftm") {
+            let mut grid = grid.clone();
+            set_motion(&mut grid);
+            record.upsert("subftm", Value::Record(grid));
+        }
+        set_motion(record);
+        Ok(())
+    }
+
     pub(crate) fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
         let backing = GridLifetime {
             path: virtual_model_image_path(target)?,

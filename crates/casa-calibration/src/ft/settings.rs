@@ -3,6 +3,7 @@
 
 use casa_imaging_operator::{GridPrecision, WPlaneCount};
 use casa_types::measures::direction::MDirection;
+use casa_types::measures::position::MPosition;
 
 use super::voltage_pattern::PreparedVoltagePattern;
 
@@ -71,6 +72,17 @@ impl Default for ImagerTransformOptions {
 }
 
 impl ImagerTransformOptions {
+    pub(super) fn observatory_override(&self) -> Option<MPosition> {
+        self.observatory.map(|[longitude, latitude, radius]| {
+            let horizontal = radius * latitude.cos();
+            MPosition::new_itrf(
+                horizontal * longitude.cos(),
+                horizontal * longitude.sin(),
+                radius * latitude.sin(),
+            )
+        })
+    }
+
     /// Use the same gridding precision CASA selects through setoptions.
     pub fn use_single_precision(&mut self, single: bool) {
         self.precision = if single {

@@ -182,6 +182,24 @@ pub fn set_grid_tangent(record: &mut RecordValue, tangent: &MDirection) {
     );
 }
 
+/// Save the legacy moving source and its initially observed direction.
+pub fn set_grid_motion(
+    record: &mut RecordValue,
+    source: &MDirection,
+    anchor: &MDirection,
+    location: &casa_types::measures::position::MPosition,
+) {
+    let measure = |value: &MDirection| {
+        let (longitude, latitude) = value.as_angles();
+        direction([longitude, latitude], value.refer().as_str())
+    };
+    record.upsert("movingdir_rec", measure(source));
+    record.upsert("firstmovingdir_rec", measure(anchor));
+    record.upsert("fixmovingsource", boolean(true));
+    let (lon, lat, radius) = location.as_spherical();
+    record.upsert("mlocation_rec", position([lon, lat, radius]));
+}
+
 /// Turn the common Fourier record into the legacy `MosaicFT` state.
 /// CASA's reader constructs the convolution from the next buffer when
 /// the `HetArrayConvFunc` cache is empty.
