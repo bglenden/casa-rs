@@ -75,6 +75,21 @@ def creation_and_repair(work, vis, source, engines):
             assert tool.done()
             outputs.append(destination)
         compare_tables(outputs[1], outputs[0], empty=True)
+    outputs = []
+    for name, factory in zip(('casa', 'native'), engines, strict=True):
+        dataset = work / f'{name}-container.ms'
+        copy_ms(vis, dataset)
+        before = columns(dataset)
+        tool = attach(factory, dataset)
+        destination = dataset / 'nested.cal'
+        assert tool.createcaltable(str(destination), 'Complex', 'G Jones', False) and tool.done()
+        compare_mapping(columns(dataset), before, False)
+        outputs.append(destination)
+    # Each product legitimately names its own attached MeasurementSet.
+    for output in outputs:
+        with opened(output) as table:
+            assert table.info()['type'] == 'Calibration' and table.nrows() == 0
+            assert table.getkeyword('MSName') == str(output.parent)
     for condition in ('complete', 'column', 'subtable', 'both'):
         outputs = []
         for name, factory in zip(('casa', 'native'), engines, strict=True):
@@ -95,7 +110,7 @@ def creation_and_repair(work, vis, source, engines):
                 assert (destination / 'table.dat').stat().st_ino == inode
             outputs.append(destination)
         compare_tables(outputs[1], outputs[0])
-    return 7
+    return 8
 
 
 def accumulation(work, vis, gains, solved, engines):
@@ -159,6 +174,7 @@ def smoothing_and_reference(work, vis, solved, gains, engines):
     synthetic_table(vis, fringe, 'Fringe Jones', True, 8)
     cases = (
         ('smooth', 'median', solved, (), {}, False),
+        ('smooth', 'global', solved, (), dict(smoothtime=float('inf')), False),
         ('smooth', 'alias', solved, (['FLUX'], 'mean', 30., False), {}, True),
         ('smooth', 'rates', fringe, (), dict(smoothtype='mean', smoothtime=1536., ratesmooth=True), False),
         ('rerefant', 'strict', gains, ('strict', [0, 1, 3]), {}, False),
@@ -180,7 +196,13 @@ def smoothing_and_reference(work, vis, solved, gains, engines):
             assert tool.done()
             outputs.append(columns(output))
         compare_mapping(outputs[1], outputs[0], False)
-    return len(cases)
+    from casars.tasks import smoothcal as native_smoothcal
+
+    for name, task in (('casa', casatasks.smoothcal), ('native', native_smoothcal)):
+        output = work / f'{name}-smoothcal-global.cal'
+        assert task(str(vis), str(solved), str(output), smoothtime=float('inf')) is None
+        compare_mapping(columns(output), columns(work / 'casa-smooth-global.cal'), False)
+    return len(cases) + 1
 
 
 def run(root):
