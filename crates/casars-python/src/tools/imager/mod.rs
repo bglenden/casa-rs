@@ -542,20 +542,24 @@ impl PyImager {
                 incremental,
                 phase_centre_time: (phasecentertime >= 0.).then_some(phasecentertime),
             };
-            match state.prediction.predict_attached_retaining_sources(
+            let prediction = state.prediction.predict_attached_retaining_sources(
                 &state.attachments,
                 model,
                 state.uses_scratch,
-            ) {
-                Ok(true) => {
-                    if !images.is_empty() {
-                        state.sky_model.images = images;
-                    }
-                    if components.is_some() {
-                        state.sky_model.components = components;
-                    }
-                    Ok(true)
+            );
+            if matches!(prediction, Ok(true))
+                || prediction
+                    .as_ref()
+                    .is_err_and(ImagerPrediction::retains_prepared_model)
+            {
+                if !images.is_empty() {
+                    state.sky_model.images = images;
                 }
+                if components.is_some() {
+                    state.sky_model.components = components;
+                }
+            }
+            match prediction {
                 Err(AttachmentError::PredictionPreparation(error)) => {
                     preparation_error = Some(error.to_string());
                     Ok(false)

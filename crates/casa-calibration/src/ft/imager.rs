@@ -10,7 +10,8 @@ use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{ImageInfo, PagedImage};
 use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
 use casa_ms::{
-    MeasurementSet, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+    MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry,
+    VirtualModelKind,
 };
 use casa_types::measures::position::MPosition;
 use casa_types::{RecordValue, ScalarValue, Value};
@@ -33,6 +34,8 @@ use super::voltage_pattern::{
     ImagerVoltagePattern, pointing_may_use_local_frame, scratch_voltage_batches,
 };
 use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
+
+const DISABLED_AW_TERMS: &str = "Both, psterm and aterm cannot be set to NoOp.";
 
 /// Geometry installed by the imager before creating a model image.
 pub struct ImagerImageDefinition {
@@ -270,7 +273,7 @@ impl ImagerPrediction {
             .as_ref()
             .is_some_and(|(_, terms)| *terms == [false; 2])
         {
-            return Err(invalid("Both, psterm and aterm cannot be set to NoOp."));
+            return Err(invalid(DISABLED_AW_TERMS));
         }
         Ok(())
     }
@@ -489,6 +492,7 @@ impl ImagerPrediction {
             .paths();
         let result = self.predict_attached(attachments, model, scratch);
         if !matches!(result, Ok(true))
+            && !result.as_ref().is_err_and(Self::retains_prepared_model)
             && self.partial_batch.is_none()
             && self.pending_publication.is_none()
             && let Some(sources) = &mut self.retained_sources
@@ -496,6 +500,15 @@ impl ImagerPrediction {
             sources.retain(&previous.0, previous.1.as_deref());
         }
         result
+    }
+
+    /// The legacy A/W constructor can fail after the sky model has been filled.
+    pub fn retains_prepared_model(error: &AttachmentError) -> bool {
+        matches!(
+            error,
+            AttachmentError::PredictionPreparation(MsError::InvalidInput(message))
+                if message == DISABLED_AW_TERMS
+        )
     }
 
     /// Drop model inputs when a legacy sky equation is rebuilt.
