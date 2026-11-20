@@ -309,6 +309,23 @@ impl PreparedFourierModel {
             row.field
         };
         let (projection, pointing_offset_rad, antenna_types) = match &mut self.mosaic {
+            Some(layout)
+                if self
+                    .tracking
+                    .as_ref()
+                    .is_some_and(tracking::Tracking::is_legacy) =>
+            {
+                (
+                    GridFtProjection::legacy_tracked_mosaic_with_frame(
+                        field,
+                        &self.phase_centre,
+                        shift.map(|angle| -angle),
+                        row.frame,
+                    ),
+                    layout.pointing_offset(&row, [0.; 2])?,
+                    layout.antenna_types(&row)?,
+                )
+            }
             Some(layout) => (
                 GridFtProjection::tracked_mosaic_with_frame(
                     field,

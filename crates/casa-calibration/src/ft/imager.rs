@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use casa_components::ComponentList;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
@@ -19,6 +20,7 @@ use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
 use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
 use super::imager_definition::ImagerDefinitionRequest;
+use super::moving_source::{ObservedSource, first_tracking_frame};
 use super::settings::{ImagerGridder, ImagerTransformOptions, PredictionGeometry};
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::ImagerVoltagePattern;
@@ -456,17 +458,7 @@ impl ImagerPrediction {
             Some(ImageDefinition::Requested(request))
                 if model.images.iter().any(|path| !path.exists()) =>
             {
-                let location = self
-                    .options
-                    .observatory
-                    .map(|[longitude, latitude, radius]| {
-                        let horizontal = radius * latitude.cos();
-                        MPosition::new_itrf(
-                            horizontal * longitude.cos(),
-                            horizontal * longitude.sin(),
-                            radius * latitude.sin(),
-                        )
-                    });
+                let location = self.options.observatory_override();
                 Some(request.build_for_selection(ms, selected, location)?)
             }
             _ => None,
@@ -596,10 +588,29 @@ impl ImagerPrediction {
             }
             _ => None,
         };
+        let moving_source = match &self.definition {
+            Some(ImageDefinition::Requested(definition)) => definition
+                .moving_source
+                .clone()
+                .map(|source| {
+                    let model = Arc::new(ObservedSource::new(source)?);
+                    // Legacy FT starts at the configured position. Image
+                    // construction can resolve a default observatory, while
+                    // an existing image leaves the empty location geocentric.
+                    let location = self.options.observatory_override().or_else(|| {
+                        (!self.frequency_frame_valid).then(|| MPosition::new_itrf(0., 0., 0.))
+                    });
+                    let frame = first_tracking_frame(ms, selected, location)?;
+                    Ok::<_, casa_ms::MsError>((model, frame))
+                })
+                .transpose()?,
+            _ => None,
+        };
         let mut geometry = PredictionGeometry {
             settings: self.options,
             facets,
             tangent,
+            moving_source,
             phase_centre_time: model.phase_centre_time,
             frequency_frame_valid: self.frequency_frame_valid,
             voltage_pattern,

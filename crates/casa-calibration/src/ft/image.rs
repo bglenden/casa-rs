@@ -18,7 +18,8 @@ use casa_imaging_operator::{
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{
-    FirstBuffer, GridFt, casa_spectral, legacy_mosaic, legacy_multi_term, set_grid_tangent,
+    FirstBuffer, GridFt, casa_spectral, legacy_mosaic, legacy_multi_term, set_grid_motion,
+    set_grid_tangent,
 };
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
@@ -747,7 +748,13 @@ impl ImageTransform {
         scratch: bool,
     ) -> MsResult<RecordValue> {
         let engine = MsCalEngine::new(ms).map_err(invalid)?;
-        let (lon, lat, radius) = engine.observatory_position().as_spherical();
+        let observatory = self
+            .options
+            .moving_source
+            .as_ref()
+            .and_then(|(_, frame)| frame.position())
+            .unwrap_or_else(|| engine.observatory_position());
+        let (lon, lat, radius) = observatory.as_spherical();
         let row = &selected.selected_rows[0];
         let spectral = ms.spectral_window()?;
         let window = row.spectral_window_id as usize;
@@ -805,6 +812,10 @@ impl ImageTransform {
         .record();
         if let Some(tangent) = &self.options.tangent {
             set_grid_tangent(&mut record, tangent);
+        }
+        if let Some((source, frame)) = &self.options.moving_source {
+            let anchor = source.direction(frame, self.frame.parse().map_err(invalid)?)?;
+            set_grid_motion(&mut record, source.model(), &anchor);
         }
         if let Some(frequencies) = &self.interpolation_frequencies {
             // This temporary record never leaves the active scratch writer.

@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Observe a legacy FTMachine moving direction at a visibility epoch.
+
+use casa_measures_data::PlanetaryTable;
+use casa_ms::derived::engine::MsCalEngine;
+use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
+use casa_types::ScalarValue;
+use casa_types::measures::MeasFrame;
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::position::MPosition;
+
+use super::invalid;
+
+pub(crate) struct ObservedSource {
+    model: MDirection,
+    planets: Option<Box<PlanetaryTable>>,
+}
+
+impl ObservedSource {
+    pub(crate) fn new(model: MDirection) -> MsResult<Self> {
+        let reference = model.refer();
+        if reference == DirectionRef::COMET {
+            return Err(invalid(
+                "No MeasFrame comet specified for conversion of Direction",
+            ));
+        }
+        let planets = (reference.casacore_code() >= 32)
+            .then(PlanetaryTable::open_discovered)
+            .transpose()
+            .map_err(invalid)?
+            .map(Box::new);
+        Ok(Self { model, planets })
+    }
+
+    pub(crate) fn model(&self) -> &MDirection {
+        &self.model
+    }
+
+    pub(crate) fn direction(
+        &self,
+        frame: &MeasFrame,
+        target: DirectionRef,
+    ) -> MsResult<MDirection> {
+        // The legacy machine goes through AZEL to apply topocentric
+        // parallax, then interprets that line of sight in the image frame.
+        let azel = match &self.planets {
+            Some(planets) => {
+                let (geocentric, distance) = planets
+                    .geocentric_direction(&self.model, frame)
+                    .map_err(invalid)?;
+                geocentric.convert_with_parallax(DirectionRef::AZEL, frame, distance)?
+            }
+            None => self.model.convert_to(DirectionRef::AZEL, frame)?,
+        };
+        Ok(azel.convert_to(target, frame)?)
+    }
+}
+
+pub(super) fn first_tracking_frame(
+    ms: &MeasurementSet,
+    selection: &ResolvedMsSelection,
+    location: Option<MPosition>,
+) -> MsResult<MeasFrame> {
+    let arrays = ms.main_table().column_accessor("ARRAY_ID")?;
+    let mut first = None;
+    for rows in selection.selected_rows.chunks(1024) {
+        let row_ids: Vec<_> = rows.iter().map(|row| row.row_index).collect();
+        for (row, array) in rows
+            .iter()
+            .zip(arrays.scalar_cells_owned_for_rows(&row_ids)?)
+        {
+            let Some(ScalarValue::Int32(array)) = array else {
+                return Err(invalid("ARRAY_ID must be a defined integer"));
+            };
+            // Imager::makeVisSet sorts the old iterator in this order.
+            let key = (array, row.field_id, row.data_desc_id, row.time_mjd_seconds);
+            if first.is_none_or(|old| key < old) {
+                first = Some(key);
+            }
+        }
+    }
+    let (_, field, _, epoch) = first.ok_or_else(|| invalid("moving source needs selected data"))?;
+    let engine = MsCalEngine::new(ms)?;
+    let frame = engine.spectral_frame_observatory(epoch, field as usize)?;
+    Ok(match location {
+        Some(position) => frame.with_position(position),
+        None => frame,
+    })
+}

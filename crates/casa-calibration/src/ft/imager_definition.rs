@@ -56,6 +56,8 @@ pub struct ImagerDefinitionRequest {
     pub stokes: Vec<StokesType>,
     /// The direction to use at the image centre.
     pub centre: ImagerPhaseCentre,
+    /// A source whose changing observed direction shifts the Fourier phase centre.
+    pub moving_source: Option<MDirection>,
     /// The supported image projection.
     pub projection: ProjectionType,
     /// Spectral windows for the image grid. Empty uses the selected windows.

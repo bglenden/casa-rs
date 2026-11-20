@@ -7,6 +7,8 @@ use casa_types::measures::position::MPosition;
 use casa_types::measures::record::{direction_from_record, position_from_record};
 use casa_types::{RecordValue, ScalarValue, Value};
 
+use crate::ft::moving_source::ObservedSource;
+
 use super::{FourierRow, GainSolveError, model_error, record_number, record_text};
 
 pub(super) struct Tracking {
@@ -21,6 +23,7 @@ pub(super) struct Tracking {
 enum Source {
     Field,
     Ephemeris(PhaseCentreEphemeris),
+    Legacy(ObservedSource),
     Direction(MDirection),
     Named(Box<PlanetaryEphemeris>),
 }
@@ -36,7 +39,6 @@ impl Tracking {
         let moving = measure(record, "movingdir_rec")?;
         let reference = record_text(moving, "refer")?;
         let source = match reference {
-            "APP" => Source::Field,
             "COMET" => Source::Ephemeris(
                 PhaseCentreEphemeris::external(
                     record_text(record, "ephemeristable")?,
@@ -44,6 +46,11 @@ impl Tracking {
                 )
                 .map_err(model_error)?,
             ),
+            _ if record.get("doconversion").is_some() => Source::Legacy(
+                ObservedSource::new(direction_from_record(moving).map_err(model_error)?)
+                    .map_err(model_error)?,
+            ),
+            "APP" => Source::Field,
             _ if reference.parse::<DirectionRef>().is_ok() => {
                 Source::Direction(direction_from_record(moving).map_err(model_error)?)
             }
@@ -99,6 +106,9 @@ impl Tracking {
                 .map_err(model_error)?,
             Source::Direction(direction) => direction.clone(),
             Source::Named(planet) => planet.direction(&frame).map_err(model_error)?,
+            Source::Legacy(source) => source
+                .direction(&frame, self.image_direction.refer())
+                .map_err(model_error)?,
         };
         let (longitude, latitude) = source
             .convert_to(self.image_direction.refer(), &frame)
@@ -112,11 +122,21 @@ impl Tracking {
 
     pub(super) fn centre(&self, shift: [f64; 2]) -> MDirection {
         let (image_lon, image_lat) = self.image_direction.as_angles();
+        let sign = if self.is_legacy() {
+            // The legacy rotateUVW phases on image + first - current.
+            -1.
+        } else {
+            1.
+        };
         MDirection::from_angles(
-            image_lon + shift[0],
-            image_lat + shift[1],
+            image_lon + sign * shift[0],
+            image_lat + sign * shift[1],
             self.image_direction.refer(),
         )
+    }
+
+    pub(super) fn is_legacy(&self) -> bool {
+        matches!(self.source, Source::Legacy(_))
     }
 }
 
