@@ -270,7 +270,11 @@ pub(super) fn remove_file(path: &Path) -> PyResult<bool> {
     Ok(true)
 }
 
-fn conflicting_images(registry: &OpenImages, path: &Path, expected_at_path: usize) -> bool {
+pub(super) fn conflicting_images(
+    registry: &OpenImages,
+    path: &Path,
+    expected_at_path: usize,
+) -> bool {
     registry.iter().any(|(open_path, image)| {
         if open_path == path {
             image.strong_count() > expected_at_path
@@ -324,7 +328,10 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     Ok(())
 }
 
-fn lock_table_tree(path: &Path, leases: &mut BTreeMap<PathBuf, TableWriteLock>) -> PyResult<()> {
+pub(super) fn lock_table_tree(
+    path: &Path,
+    leases: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> PyResult<()> {
     let not_writable = |name: &Path| {
         raised(format!(
             "Cannot delete file {} because table is not writable",

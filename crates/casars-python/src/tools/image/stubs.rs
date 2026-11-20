@@ -575,18 +575,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile, imag, region = None, overwrite = None), text_signature = "($self, outfile, imag, region={}, overwrite=False)")]
-    fn makecomplex(
-        &self,
-        outfile: &Bound<'_, PyAny>,
-        imag: &Bound<'_, PyAny>,
-        region: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("makecomplex")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None, point = None, width = None, negfind = None, list = None), text_signature = "($self, region={}, point=True, width=5, negfind=False, list=True)")]
     fn maxfit(
         &self,

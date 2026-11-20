@@ -7,6 +7,7 @@ use casa_coordinates::{
     CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
     fits::coordinate_util::from_fits_header_with_axis_order,
 };
+use casa_lattices::{Lattice, LatticeError};
 use casa_types::measures::{
     EpochRef, MEpoch, MPosition,
     direction::{DirectionRef, MDirection},
@@ -25,7 +26,9 @@ use super::{
     PrimaryHdu, brightness_unit, history::history_from_cards, image_info_from_fits_header,
     read_fits_axis_shape,
 };
-use crate::{ImageError, MutableImageInterface, image::ImageHistoryRow};
+use crate::{
+    ImageError, ImageInfo, ImageInterface, MutableImageInterface, TempImage, image::ImageHistoryRow,
+};
 
 /// A selected FITS image ready to copy into a CASA image.
 ///
@@ -373,6 +376,103 @@ impl FitsSectionReader {
     ) -> Result<ArrayD<f32>, ImageError> {
         let mut file = self.file.lock().map_err(fits_error)?;
         read_section(&mut file, &self.shape, self.bitpix, start, count, stride)
+    }
+}
+
+/// Borrow FITS metadata and a lazy section reader as a read-only image.
+pub fn fits_section_image<'a>(
+    shape: &'a [usize],
+    metadata: &'a TempImage<f32>,
+    path: &'a Path,
+    read: impl Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError> + 'a,
+) -> impl ImageInterface<f32> + 'a {
+    FitsSectionImage {
+        shape,
+        metadata,
+        path,
+        read,
+    }
+}
+
+struct FitsSectionImage<'a, F> {
+    shape: &'a [usize],
+    metadata: &'a TempImage<f32>,
+    path: &'a Path,
+    read: F,
+}
+
+impl<F> Lattice<f32> for FitsSectionImage<'_, F>
+where
+    F: Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError>,
+{
+    fn shape(&self) -> &[usize] {
+        self.shape
+    }
+
+    fn is_writable(&self) -> bool {
+        false
+    }
+
+    fn get_at(&self, position: &[usize]) -> Result<f32, LatticeError> {
+        let ones = vec![1; self.ndim()];
+        let data = self.get_slice(position, &ones, &ones)?;
+        Ok(*data.first().expect("read one FITS pixel"))
+    }
+
+    fn get_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<f32>, LatticeError> {
+        (self.read)(start, shape, stride).map_err(|error| LatticeError::Table(error.to_string()))
+    }
+}
+
+impl<F> ImageInterface<f32> for FitsSectionImage<'_, F>
+where
+    F: Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError>,
+{
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
+    fn coordinates(&self) -> &CoordinateSystem {
+        self.metadata.coordinates()
+    }
+
+    fn units(&self) -> &str {
+        self.metadata.units()
+    }
+
+    fn misc_info(&self) -> RecordValue {
+        self.metadata.misc_info()
+    }
+
+    fn image_info(&self) -> Result<ImageInfo, ImageError> {
+        self.metadata.image_info()
+    }
+
+    fn name(&self) -> Option<&Path> {
+        Some(self.path)
+    }
+
+    fn has_pixel_mask(&self) -> bool {
+        // FITS blanks are discovered while reading the selected pixel sections.
+        true
+    }
+
+    fn get_mask_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        let pixels = (self.read)(start, shape, stride)?;
+        Ok(pixels
+            .iter()
+            .any(|value| value.is_nan())
+            .then(|| pixels.mapv(|value| !value.is_nan())))
     }
 }
 
@@ -758,6 +858,11 @@ fn miscellaneous(header: &FitsHeader) -> RecordValue {
 
 #[cfg(test)]
 mod section_tests {
+    use std::cell::Cell;
+
+    use crate::TempStoragePolicy;
+    use crate::analysis::{SubimageOptions, SubimagePlan};
+
     use fitsio::images::{ImageDescription, ImageType};
 
     use super::*;
@@ -789,5 +894,50 @@ mod section_tests {
         let region = reader.read(&[1, 0, 1], &[1, 2, 2], &[1, 2, 2]).unwrap();
         assert_eq!(region.shape(), [1, 2, 2]);
         assert_eq!(region.as_slice_memory_order().unwrap(), [7., 11., 19., 23.]);
+    }
+
+    #[test]
+    fn complex_product_reads_fits_masks_in_sections() {
+        let shape = vec![1025, 1025];
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(LinearCoordinate::new(
+            2,
+            vec!["X".into(), "Y".into()],
+            vec!["".into(); 2],
+        ));
+        let metadata =
+            TempImage::new(vec![1, 1], coordinates.clone(), TempStoragePolicy::Memory).unwrap();
+        let largest = Cell::new(0);
+        let image = fits_section_image(
+            &shape,
+            &metadata,
+            Path::new("virtual.fits"),
+            |origin, extent, _| {
+                largest.set(largest.get().max(extent.iter().product()));
+                let mut pixels = ArrayD::from_elem(IxDyn(extent), 1.0);
+                if origin == [0, 0] {
+                    pixels[[0, 0]] = f32::NAN;
+                }
+                Ok(pixels)
+            },
+        );
+        let plan = SubimagePlan::new(
+            &image,
+            None,
+            SubimageOptions {
+                region: None,
+                dropdeg: false,
+                keepaxes: &[],
+            },
+        )
+        .unwrap();
+        let mut product =
+            TempImage::new(shape.clone(), coordinates, TempStoragePolicy::Memory).unwrap();
+        plan.make_complex_to(&image, &image, &mut product, None)
+            .unwrap();
+        assert!(largest.get() > 0 && largest.get() < shape.iter().product());
+        let mask = product.get_named_mask("mask0").unwrap();
+        assert!(!mask[[0, 0]]);
+        assert_eq!(mask.iter().filter(|&&valid| !valid).count(), 1);
     }
 }

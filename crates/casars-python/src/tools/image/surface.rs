@@ -675,13 +675,13 @@ const METHODS: &[Method] = &[
     method(
         "makecomplex",
         &[
-            param("outfile", K::Any, Required),
-            param("imag", K::Any, Required),
+            param("outfile", K::Text, Required),
+            param("imag", K::Text, Required),
             param("region", K::Record, EmptyRecord),
             param("overwrite", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "maketestimage",
