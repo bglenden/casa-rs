@@ -25,8 +25,10 @@
 <a href=#25 id=25 data-nosnippet>25</a>        highres: task.input_path(<span class="string">"highres"</span>)<span class="question-mark">?</span>,
 <a href=#26 id=26 data-nosnippet>26</a>        lowres: task.input_path(<span class="string">"lowres"</span>)<span class="question-mark">?</span>,
 <a href=#27 id=27 data-nosnippet>27</a>        sdfactor: task.number(<span class="string">"sdfactor"</span>)<span class="question-mark">? </span><span class="kw">as </span>f32,
-<a href=#28 id=28 data-nosnippet>28</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
-<a href=#29 id=29 data-nosnippet>29</a>    };
-<a href=#30 id=30 data-nosnippet>30</a>    image_task_success(feather(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Feather))
-<a href=#31 id=31 data-nosnippet>31</a>}
+<a href=#28 id=28 data-nosnippet>28</a>        effdishdiam: task.number(<span class="string">"effdishdiam"</span>)<span class="question-mark">? </span><span class="kw">as </span>f32,
+<a href=#29 id=29 data-nosnippet>29</a>        lowpassfiltersd: task.flag(<span class="string">"lowpassfiltersd"</span>)<span class="question-mark">?</span>,
+<a href=#30 id=30 data-nosnippet>30</a>        overwrite: task.flag(<span class="string">"overwrite"</span>)<span class="question-mark">?</span>,
+<a href=#31 id=31 data-nosnippet>31</a>    };
+<a href=#32 id=32 data-nosnippet>32</a>    image_task_success(feather(<span class="kw-2">&amp;</span>request).map(ImageAnalysisTaskResult::Feather))
+<a href=#33 id=33 data-nosnippet>33</a>}
 </code></pre></div></section></main></body></html>

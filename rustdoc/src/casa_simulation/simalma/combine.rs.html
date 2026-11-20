@@ -64,32 +64,34 @@
 <a href=#64 id=64 data-nosnippet>64</a>        highres: high.to_path_buf(),
 <a href=#65 id=65 data-nosnippet>65</a>        lowres: scaled.clone(),
 <a href=#66 id=66 data-nosnippet>66</a>        sdfactor: <span class="number">1.</span>,
-<a href=#67 id=67 data-nosnippet>67</a>        overwrite: <span class="bool-val">false</span>,
-<a href=#68 id=68 data-nosnippet>68</a>    })
-<a href=#69 id=69 data-nosnippet>69</a>    .map_err(failure)<span class="question-mark">?</span>;
-<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">let </span>output = plan
-<a href=#71 id=71 data-nosnippet>71</a>        .directory
-<a href=#72 id=72 data-nosnippet>72</a>        .join(<span class="macro">format!</span>(<span class="string">"{}.feather.image"</span>, plan.project));
-<a href=#73 id=73 data-nosnippet>73</a>    pbcor(<span class="kw-2">&amp;</span>raw, <span class="kw-2">&amp;</span>pb, <span class="kw-2">&amp;</span>output, <span class="string">"divide"</span>)<span class="question-mark">?</span>;
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[scaled, raw, output])
-<a href=#75 id=75 data-nosnippet>75</a>}
-<a href=#76 id=76 data-nosnippet>76</a>
-<a href=#77 id=77 data-nosnippet>77</a><span class="kw">fn </span>pbcor(image: <span class="kw-2">&amp;</span>Path, pb: <span class="kw-2">&amp;</span>Path, output: <span class="kw-2">&amp;</span>Path, mode: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;(), SimobserveError&gt; {
-<a href=#78 id=78 data-nosnippet>78</a>    impbcor(<span class="kw-2">&amp;</span>ImpbcorRequest {
-<a href=#79 id=79 data-nosnippet>79</a>        imagename: image.to_path_buf(),
-<a href=#80 id=80 data-nosnippet>80</a>        pbimage: pb.to_path_buf().into(),
-<a href=#81 id=81 data-nosnippet>81</a>        outfile: output.to_path_buf(),
-<a href=#82 id=82 data-nosnippet>82</a>        mode: mode.to_owned(),
-<a href=#83 id=83 data-nosnippet>83</a>        cutoff: -<span class="number">1.</span>,
-<a href=#84 id=84 data-nosnippet>84</a>        box_selection: <span class="prelude-val">None</span>,
-<a href=#85 id=85 data-nosnippet>85</a>        region: <span class="prelude-val">None</span>,
-<a href=#86 id=86 data-nosnippet>86</a>        chans: <span class="prelude-val">None</span>,
-<a href=#87 id=87 data-nosnippet>87</a>        stokes: <span class="prelude-val">None</span>,
-<a href=#88 id=88 data-nosnippet>88</a>        mask: <span class="prelude-val">None</span>,
-<a href=#89 id=89 data-nosnippet>89</a>        stretch: <span class="bool-val">false</span>,
-<a href=#90 id=90 data-nosnippet>90</a>        overwrite: <span class="bool-val">false</span>,
-<a href=#91 id=91 data-nosnippet>91</a>    })
-<a href=#92 id=92 data-nosnippet>92</a>    .map_err(failure)<span class="question-mark">?</span>;
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="prelude-val">Ok</span>(())
-<a href=#94 id=94 data-nosnippet>94</a>}
+<a href=#67 id=67 data-nosnippet>67</a>        effdishdiam: -<span class="number">1.0</span>,
+<a href=#68 id=68 data-nosnippet>68</a>        lowpassfiltersd: <span class="bool-val">false</span>,
+<a href=#69 id=69 data-nosnippet>69</a>        overwrite: <span class="bool-val">false</span>,
+<a href=#70 id=70 data-nosnippet>70</a>    })
+<a href=#71 id=71 data-nosnippet>71</a>    .map_err(failure)<span class="question-mark">?</span>;
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span>output = plan
+<a href=#73 id=73 data-nosnippet>73</a>        .directory
+<a href=#74 id=74 data-nosnippet>74</a>        .join(<span class="macro">format!</span>(<span class="string">"{}.feather.image"</span>, plan.project));
+<a href=#75 id=75 data-nosnippet>75</a>    pbcor(<span class="kw-2">&amp;</span>raw, <span class="kw-2">&amp;</span>pb, <span class="kw-2">&amp;</span>output, <span class="string">"divide"</span>)<span class="question-mark">?</span>;
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[scaled, raw, output])
+<a href=#77 id=77 data-nosnippet>77</a>}
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a><span class="kw">fn </span>pbcor(image: <span class="kw-2">&amp;</span>Path, pb: <span class="kw-2">&amp;</span>Path, output: <span class="kw-2">&amp;</span>Path, mode: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;(), SimobserveError&gt; {
+<a href=#80 id=80 data-nosnippet>80</a>    impbcor(<span class="kw-2">&amp;</span>ImpbcorRequest {
+<a href=#81 id=81 data-nosnippet>81</a>        imagename: image.to_path_buf(),
+<a href=#82 id=82 data-nosnippet>82</a>        pbimage: pb.to_path_buf().into(),
+<a href=#83 id=83 data-nosnippet>83</a>        outfile: output.to_path_buf(),
+<a href=#84 id=84 data-nosnippet>84</a>        mode: mode.to_owned(),
+<a href=#85 id=85 data-nosnippet>85</a>        cutoff: -<span class="number">1.</span>,
+<a href=#86 id=86 data-nosnippet>86</a>        box_selection: <span class="prelude-val">None</span>,
+<a href=#87 id=87 data-nosnippet>87</a>        region: <span class="prelude-val">None</span>,
+<a href=#88 id=88 data-nosnippet>88</a>        chans: <span class="prelude-val">None</span>,
+<a href=#89 id=89 data-nosnippet>89</a>        stokes: <span class="prelude-val">None</span>,
+<a href=#90 id=90 data-nosnippet>90</a>        mask: <span class="prelude-val">None</span>,
+<a href=#91 id=91 data-nosnippet>91</a>        stretch: <span class="bool-val">false</span>,
+<a href=#92 id=92 data-nosnippet>92</a>        overwrite: <span class="bool-val">false</span>,
+<a href=#93 id=93 data-nosnippet>93</a>    })
+<a href=#94 id=94 data-nosnippet>94</a>    .map_err(failure)<span class="question-mark">?</span>;
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="prelude-val">Ok</span>(())
+<a href=#96 id=96 data-nosnippet>96</a>}
 </code></pre></div></section></main></body></html>
