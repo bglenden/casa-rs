@@ -42,12 +42,19 @@ impl CorrelationSelection {
         data_column: FlagDataColumn,
         expression: &str,
     ) -> Result<Option<Self>, FlaggingError> {
-        let text = expression
+        let mut text = expression
             .split('\0')
             .next()
             .unwrap_or_default()
             .to_uppercase();
-        if text.is_empty() {
+        let default_clip = mode == FlagDataMode::Clip && text.is_empty();
+        if default_clip {
+            text.push_str(if data_column == FlagDataColumn::FloatData {
+                "REAL_ALL"
+            } else {
+                "ABS_ALL"
+            });
+        } else if text.is_empty() {
             return Ok(None);
         }
         let unsupported = || FlaggingError::MutateFlags {
@@ -81,7 +88,7 @@ impl CorrelationSelection {
                 mode,
                 FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Clip
             ) || (has_operator && clip_operator.is_none())
-                || text.contains("WVR"))
+                || (mode != FlagDataMode::Clip && text.contains("WVR")))
         {
             return Err(unsupported());
         }
@@ -113,8 +120,14 @@ impl CorrelationSelection {
             .collect();
         // CASA disables the clip agent when no stored product matches the
         // in-row filter, before it interprets a visibility expression.
+        let default_has_stokes = default_clip
+            && modes
+                .iter()
+                .flatten()
+                .any(|name| ["Q", "U", "V"].contains(name));
         let mut unknown_clip_expression = None;
         let clip_products = if mode == FlagDataMode::Clip
+            && !default_has_stokes
             && (clip_operator.is_some() || !required.is_empty())
         {
             let visibility = clip_operator
@@ -144,13 +157,22 @@ impl CorrelationSelection {
             } else {
                 visibility.to_owned()
             };
-            if visibility.contains(['I', 'Q', 'U', 'V']) {
-                return Err(unsupported());
-            }
-            let products: Vec<_> = RECEPTOR_PRODUCTS
-                .into_iter()
-                .filter(|name| visibility.contains(*name))
-                .collect();
+            let products = if visibility.contains("WVR") {
+                vec!["I"]
+            } else if (clip_operator.is_none() && required.contains("I"))
+                || modes.iter().all(|stored| stored.contains(&"I"))
+            {
+                // Without WVR, the mapper skips every buffer with stored I.
+                Vec::new()
+            } else {
+                if visibility.contains(['I', 'Q', 'U', 'V']) {
+                    return Err(unsupported());
+                }
+                RECEPTOR_PRODUCTS
+                    .into_iter()
+                    .filter(|name| visibility.contains(*name))
+                    .collect()
+            };
             if clip_operator.is_some() && products.is_empty() {
                 unknown_clip_expression = Some(
                     float_suffix.map_or_else(|| text.clone(), |suffix| format!("REAL {suffix}")),
@@ -163,6 +185,11 @@ impl CorrelationSelection {
         let by_polarization: Vec<Vec<usize>> = modes
             .iter()
             .map(|names| {
+                // Preserve the existing direct-plane default for Stokes data
+                // while keeping stored-I buffers outside default clipping.
+                if default_has_stokes && !names.contains(&"I") {
+                    return (0..names.len()).collect();
+                }
                 if !required.iter().all(|name| names.contains(name)) {
                     return Vec::new();
                 }
@@ -264,6 +291,13 @@ impl CorrelationSelection {
 }
 
 fn clip_planes(products: &[&str], stored: &[&str]) -> Vec<usize> {
+    if products == ["I"] {
+        return stored
+            .iter()
+            .rposition(|name| *name == "I")
+            .into_iter()
+            .collect();
+    }
     if stored.contains(&"I") || products.first().is_none_or(|name| !stored.contains(name)) {
         return Vec::new();
     }
