@@ -7873,6 +7873,11 @@ for the maximum at image pixel `[3, 2, 1]`. The first coordinate omits
 the region's sampling stride, so the reported position was never selected.
 casa-rs maps extrema to absolute image pixels using the original stride.
 
+An unfiltered `ia.statistics()` on a 5×4×2 image created with
+`linear=True` and pixel values 0 through 39 reports `npts=2` and `sum=1`,
+even though `ia.getchunk()` reads the full image. Casa-rs measures all
+40 pixels and reports `sum=780` and `trc=[4, 3, 1]`.
+
 On a three-axis image, `ia.statistics(axes=[0, 0])` can also terminate the
 process. casa-rs raises an error for the duplicate axis.
 

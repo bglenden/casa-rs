@@ -112,6 +112,19 @@ def test_statistics_breaks_extremum_ties_in_casa_pixel_order(casa):
             _assert_value(result["maxpos"], np.array([2, 0]))
 
 
+def test_statistics_include_all_pixels_with_linear_coordinates(tmp_path):
+    path = str(tmp_path / "linear.im")
+    values = np.arange(40, dtype=np.float32).reshape(5, 4, 2)
+    image = tools.image()
+    assert image.fromarray(path, values, linear=True) and image.done()
+    assert image.open(path)
+    result = image.statistics()
+    assert result["npts"][0] == values.size
+    assert result["sum"][0] == values.sum()
+    np.testing.assert_array_equal(result["trc"], [4, 3, 1])
+    assert image.done()
+
+
 def test_statistics_independent_moments_and_flux():
     image = tools.image()
     values = np.arange(24, dtype=np.float64).reshape(4, 3, 2)
