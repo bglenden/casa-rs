@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use casa_coordinates::CoordinateType;
 use casa_images::{
     ImageInterface,
     analysis::{ImageCrop, ImageCropOptions, ensure_outfile_does_not_alias_input},
@@ -14,6 +15,8 @@ use pyo3::types::{PyDict, PyString};
 use crate::convert::IntList;
 
 use super::PyImageTool;
+use super::beam_view::BeamView;
+use super::beams::subset_beam_record;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::Region;
@@ -22,10 +25,32 @@ fn copy(
     image: &dyn ImageInterface<f32>,
     coordinates: RecordValue,
     options: ImageCropOptions<'_>,
+    beams: &BeamView,
     path: Option<&Path>,
 ) -> PyResult<Storage<f32>> {
-    let crop = ImageCrop::new(image, Some(coordinates), options).map_err(raised)?;
-    let record = crop.section.coordinate_record.clone();
+    let mut crop =
+        ImageCrop::new(image, Some(coordinates), options, Some(beams.record())).map_err(raised)?;
+    let record = crop.section.coordinate_record.take();
+    let beam_set = beams.beam_set().map_err(raised)?;
+    let mut info = crop.section.image_info().to_record();
+    if beam_set.is_multi() {
+        let channels = crop.beam_planes(
+            image.find_axis(CoordinateType::Spectral),
+            beam_set.n_channels(),
+        );
+        let polarizations =
+            crop.beam_planes(image.find_axis(CoordinateType::Stokes), beam_set.n_stokes());
+        subset_beam_record(
+            &mut info,
+            Some(beams.record()),
+            &beam_set,
+            &channels,
+            &polarizations,
+        )
+        .map_err(raised)?;
+    } else {
+        beams.apply_to(&mut info);
+    }
     let mut product = Storage::create(
         crop.section.shape.clone(),
         crop.section.coordinates.clone(),
@@ -34,6 +59,8 @@ fn copy(
     )
     .map_err(raised)?;
     with_storage!(&mut product, image_out => crop.copy_to(image, image_out.as_mut()))
+        .map_err(raised)?;
+    with_storage!(&mut product, image_out => image_out.set_image_info_record(info))
         .map_err(raised)?;
     if let Some(record) = record {
         match &mut product {
@@ -111,11 +138,12 @@ impl PyImageTool {
                     mask: (!mask.is_empty()).then_some(mask),
                     stretch,
                 };
+                let beams = attached.beam_view().clone();
                 let mut cropped = match source {
                     Storage::Temp { image, fits: Some(fits), .. } => {
-                        copy(&fits.image_view(image), coordinates, options, path)
+                        copy(&fits.image_view(image), coordinates, options, &beams, path)
                     }
-                    _ => with_storage!(source, image => copy(image.as_ref(), coordinates, options, path)),
+                    _ => with_storage!(source, image => copy(image.as_ref(), coordinates, options, &beams, path)),
                 }?;
                 let history = match source {
                     Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,

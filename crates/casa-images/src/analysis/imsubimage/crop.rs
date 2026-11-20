@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_coordinates::CoordinateType;
 use casa_types::{ArrayD, RecordValue};
 use ndarray::Slice;
 
@@ -43,15 +44,27 @@ impl ImageCrop {
         image: &dyn ImageInterface<f32>,
         coordinates: Option<RecordValue>,
         options: ImageCropOptions<'_>,
+        beam_record: Option<&RecordValue>,
     ) -> Result<Self, ImageError> {
         let axes = crop_axes(options.axes, image.ndim())?;
         let selected = SubimageSelection::resolve_section(
             image,
-            options.box_selection,
+            options.box_selection.filter(|_| image.ndim() >= 2),
             options.region,
-            options.channels,
-            options.stokes,
+            options.channels.filter(|text| {
+                !text.trim().eq_ignore_ascii_case("all")
+                    && image.find_axis(CoordinateType::Spectral).is_some()
+            }),
+            options.stokes.filter(|text| {
+                !text.trim().eq_ignore_ascii_case("all")
+                    && image.find_axis(CoordinateType::Stokes).is_some()
+            }),
         )?;
+        if selected.has_multiple_regions {
+            return Err(ImageError::CasaSelection(
+                "Only a single n-dimensional rectangular region is supported".into(),
+            ));
+        }
         let stride = selected
             .stride
             .clone()
@@ -95,8 +108,22 @@ impl ImageCrop {
             })
             .to_owned()
         });
-        let section = SubimagePlan::from_selection(image, coordinates, cropped, false, &[], None)?;
+        let section =
+            SubimagePlan::from_selection(image, coordinates, cropped, false, &[], beam_record)?;
         Ok(Self { section, mask })
+    }
+
+    /// Source planes corresponding to the output for a beam-grid axis.
+    pub fn beam_planes(&self, axis: Option<usize>, planes: usize) -> Vec<usize> {
+        let Some(axis) = axis.filter(|_| planes > 1) else {
+            return vec![0];
+        };
+        let selected = &self.section.selection;
+        let start = selected.start[axis];
+        let step = selected.stride.as_ref().map_or(1, |stride| stride[axis]);
+        (0..self.section.shape[axis])
+            .map(|index| start + index * step)
+            .collect()
     }
 
     /// Copy the resolved pixels, metadata and mask into an allocated image.

@@ -96,6 +96,58 @@ def test_crop_fits_region_with_expression_and_detached_result(casa, tmp_path):
     assert path.read_bytes() == content
 
 
+def test_crop_rejects_disconnected_selections(casa, tmp_path):
+    outfile = tmp_path / "disconnected.im"
+    for backend in (casa, tools):
+        image = backend.image()
+        assert image.fromshape(shape=[7, 7, 4, 5])
+        for selection in (
+            dict(chans="0,3"),
+            dict(stokes="IV"),
+            dict(box="0,0,2,2,4,4,6,6"),
+        ):
+            with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
+                image.crop(str(outfile), region=[], **selection)
+            assert not outfile.exists()
+        assert image.done()
+
+
+def test_crop_ignores_selectors_for_absent_coordinates(casa):
+    for backend in (casa, tools):
+        image = backend.image()
+        for shape, selection in (([4, 5], dict(chans="2", stokes="I")), ([8], dict(box="0,0,3,3"))):
+            pixels = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+            assert image.fromarray(pixels=pixels)
+            cropped = image.crop(region=[], **selection)
+            assert cropped.shape().tolist() == shape
+            _assert_value(cropped.getchunk(), pixels.astype(np.float64))
+            assert cropped.done() and image.done()
+
+
+def test_crop_uses_beams_from_the_attached_image(casa, tmp_path):
+    for index, backend in enumerate((casa, tools)):
+        source = backend.image()
+        assert source.fromshape(str(tmp_path / f"source-{index}.im"), [7, 6])
+        assert source.setrestoringbeam("0.1arcmin", "3arcsec", "2rad")
+        later = backend.image()
+        assert later.open(source.name())
+        assert later.setrestoringbeam("0.2arcmin", "3arcsec", "2rad")
+        for parent, major in ((source, 0.1), (later, 0.2)):
+            path = str(tmp_path / f"beam-{index}-{major}.im")
+            cropped = parent.crop(path)
+            for reader in (None, casa if backend is tools else tools):
+                if reader is not None:
+                    cropped = reader.image()
+                    assert cropped.open(path)
+                beam = cropped.restoringbeam()
+                assert beam["major"]["unit"] == "arcmin"
+                assert beam["major"]["value"] == pytest.approx(major)
+                assert beam["positionangle"]["unit"] == "rad"
+                assert beam["positionangle"]["value"] == pytest.approx(2)
+                assert cropped.done()
+        assert later.done() and source.done()
+
+
 def test_crop_rejects_invalid_axes_and_unfindable_valid_planes(casa, tmp_path):
     for index, backend in enumerate((casa, tools)):
         image = backend.image()
