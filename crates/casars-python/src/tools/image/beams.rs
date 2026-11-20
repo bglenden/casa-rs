@@ -38,7 +38,9 @@ pub(super) fn stored_beam_record(
     if let Some(info) = info {
         if let Some(grid) = subrecord(info, "perplanebeams") {
             let index = polarization * beams.n_channels() + channel;
-            if let Some(beam) = subrecord(grid, &format!("*{index}")) {
+            if let Some(beam) = subrecord(grid, &format!("*{index}"))
+                .or_else(|| subrecord(grid, &format!("*{channel}_{polarization}")))
+            {
                 return beam.clone();
             }
         } else if let Some(beam) = subrecord(info, "restoringbeam") {
@@ -182,9 +184,11 @@ pub(super) fn restoring_beam(
 pub(super) fn plane_axes(record: &RecordValue) -> PyResult<(Option<usize>, Option<usize>)> {
     let axes = CoordinateSystem::record_coordinates(record).map_err(raised)?;
     let axis = |kind: &str| {
+        // CASA assigns beams by coordinate creation order, including after transposition.
         axes.iter()
-            .find(|axis| axis.field.starts_with(kind))
-            .and_then(|axis| axis.pixel_axes.first().copied().flatten())
+            .filter_map(|axis| Some((axis.field.strip_prefix(kind)?.parse::<usize>().ok()?, axis)))
+            .min_by_key(|(index, _)| *index)
+            .and_then(|(_, axis)| axis.pixel_axes.first().copied().flatten())
     };
     Ok((axis("spectral"), axis("stokes")))
 }

@@ -9,6 +9,8 @@ mod beams;
 mod concatenate;
 mod conformance;
 mod convertflux;
+mod copy;
+mod copy_region;
 mod create;
 mod deconvolve_components;
 mod default_record;
