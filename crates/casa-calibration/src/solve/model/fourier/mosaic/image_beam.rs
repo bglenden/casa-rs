@@ -5,7 +5,7 @@ use std::path::Path;
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
 use casa_images::{ImagePixel, PagedImage};
-use casa_tables::{Table, TableOptions};
+use casa_ms::voltage_pattern::VoltagePatternTable;
 use casa_types::{ArrayValue, Complex32, RecordValue, Value};
 use ndarray::{Array2, Axis, Ix2};
 
@@ -18,15 +18,9 @@ pub(super) struct ImageBeams {
 
 impl ImageBeams {
     pub(super) fn load(path: &Path, row: &FourierRow<'_>) -> Result<Self, GainSolveError> {
-        let table = Table::open(TableOptions::new(path)).map_err(model_error)?;
-        let records = (0..table.row_count())
-            .map(|row| {
-                table
-                    .cell_accessor(row, "pbdescription")
-                    .and_then(|cell| cell.record())
-                    .map_err(model_error)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let records = VoltagePatternTable::open(path)
+            .and_then(|table| table.definitions())
+            .map_err(model_error)?;
         let patterns = records
             .iter()
             .filter(|record| matches!(record_text(record, "name"), Ok("IMAGE")))
@@ -208,9 +202,15 @@ impl ImageBeam {
                 let real = ImagePlane::load::<f32>(record_text(record, "realimage")?, None, |v| {
                     Complex32::new(v, 0.)
                 })?;
-                // Legacy HetArrayConvFunc checks imagimage, then reads imagim.
-                let path = record_text(record, if legacy { "imagim" } else { "imagimage" })?;
-                let imaginary = if path.is_empty() && !legacy {
+                // Use the standard record field when a legacy table lacks
+                // the compatibility alias that CASA's reader expects.
+                let key = if legacy && record.get("imagim").is_some() {
+                    "imagim"
+                } else {
+                    "imagimage"
+                };
+                let path = record_text(record, key)?;
+                let imaginary = if path.is_empty() {
                     None
                 } else {
                     // PBMath2DImage uses the real-image polarization map

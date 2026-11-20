@@ -32,6 +32,7 @@ use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
 use super::moving_source::MovingSourceAnchor;
 use super::settings::{ImagerGridder, PredictionGeometry};
+use super::voltage_pattern::{legacy_mosaic_table, relocate_mosaic_table};
 use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 
 /// An uncommitted Fourier image. The scratch path uses it until the write
@@ -86,6 +87,7 @@ impl ImageModel {
             entry.container.upsert("subftm", Value::Record(grid));
         } else {
             entry.container.upsert("diskimage", path);
+            relocate_mosaic_table(&mut entry.container, &self.backing.path, &backing.path)?;
         }
         Ok(Self {
             entry,
@@ -902,6 +904,11 @@ impl ImageTransform {
                     legacy_common_mosaic(&mut record, &mosaic.stokes, telescope, mosaic.sampling);
                 }
                 MosaicBeam::Image(table) => {
+                    let table = if scratch {
+                        table.clone()
+                    } else {
+                        legacy_mosaic_table(table, path)?
+                    };
                     legacy_image_mosaic(
                         &mut record,
                         &mosaic.stokes,

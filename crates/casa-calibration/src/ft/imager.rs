@@ -58,6 +58,7 @@ pub struct ImagerPrediction {
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
     apply_voltage_pattern: bool,
+    mosaic_voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
     ambiguous_scratch_write: bool,
@@ -118,6 +119,7 @@ impl Default for ImagerPrediction {
             taylor: (1, None),
             voltage_pattern: None,
             apply_voltage_pattern: false,
+            mosaic_voltage_pattern: None,
             pending_publication: None,
             partial_batch: None,
             ambiguous_scratch_write: false,
@@ -162,6 +164,12 @@ impl ImagerPrediction {
     pub fn set_options(&mut self, options: ImagerTransformOptions) {
         self.ft_location = options.observatory_override();
         self.options = options;
+        self.reset_fourier_machine();
+    }
+
+    /// Discard the Fourier machine after a visibility selection change.
+    pub fn reset_fourier_machine(&mut self) {
+        self.mosaic_voltage_pattern = None;
     }
 
     /// The current settings, including prior buffer sizes retained by setoptions.
@@ -555,6 +563,12 @@ impl ImagerPrediction {
                 )?);
             }
         }
+        if mosaic {
+            // setvp rebuilds the sky equation. The Fourier machine retains
+            // its beam until setoptions or selectvis invalidates it.
+            self.mosaic_voltage_pattern
+                .get_or_insert_with(|| self.voltage_pattern.clone().unwrap_or_default());
+        }
         let mut images = Vec::new();
         match (pattern, scratch) {
             (Some(pattern), true) => {
@@ -662,7 +676,7 @@ impl ImagerPrediction {
             frequency_frame_valid: self.frequency_frame_valid,
             voltage_pattern,
             mosaic_voltage_table: self
-                .voltage_pattern
+                .mosaic_voltage_pattern
                 .as_ref()
                 .and_then(|pattern| pattern.table.clone()),
         };

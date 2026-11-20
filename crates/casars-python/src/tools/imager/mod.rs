@@ -387,6 +387,7 @@ impl PyImager {
                     let selected = result.map_err(runtime_error)?;
                     state.valid = selected;
                     if selected {
+                        state.prediction.reset_fourier_machine();
                         state.model_in_sky_equation = false;
                     }
                     Ok(Some(selected))

@@ -7537,7 +7537,9 @@ standard field `imagimage`. The public `imager.ft` then reports that
 
 The same responses packaged as complex Jones images work through the
 public legacy imager. Adding `imagim` as an alias in the split records
-also works and gives the same CASA prediction. The native legacy reader
-reproduces these behaviors.
+also works and gives the same CASA prediction. casa-rs reads the standard
+field for native prediction. For virtual interoperation, the Fourier grid
+owns a copy of the voltage-pattern table with the alias. A real-only
+pattern uses a zero-valued imaginary image owned by the same grid.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
 [`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
