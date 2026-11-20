@@ -15,6 +15,27 @@ def casa():
     return module
 
 
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_insert_reacquires_a_native_target_write_lock(casa, tmp_path):
+    for backend, peer in ((casa, tools), (tools, casa)):
+        source = str(tmp_path / f"{backend.__name__}-source.im")
+        target = str(tmp_path / f"{backend.__name__}-target.im")
+        values = np.array([[1, 2], [3, 4]], dtype=np.float32)
+        image = backend.image()
+        assert image.fromarray(source, values) and image.done()
+        assert image.fromshape(target, [4, 4])
+        assert image.unlock()
+        assert image.insert(source, locate=[1, 1])
+        np.testing.assert_array_equal(image.haslock(), [True, True])
+        assert image.done()
+        reader = peer.image()
+        assert reader.open(target)
+        expected = np.zeros((4, 4), dtype=np.float32)
+        expected[1:3, 1:3] = values
+        np.testing.assert_array_equal(reader.getchunk(), expected)
+        assert reader.done()
+
+
 def test_insert_detached_and_empty_intersection(casa, tmp_path):
     source = str(tmp_path / "source.im")
     writer = casa.image()

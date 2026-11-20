@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::cmp::Ordering;
 use std::path::Path;
 
 use casa_images::analysis::{ImageInsertion, SubimageRegion};
 use casa_images::{ImageError, ImageInterface, ImagePixel};
+use casa_tables::LockType;
 use pyo3::prelude::*;
 
 use crate::convert::DoubleList;
@@ -52,7 +54,26 @@ impl PyImageTool {
             };
             let mut target = attachment.lock();
             target.check_single_precision("insert")?;
-            let source = ImageHandle::open(Path::new(infile)).map_err(raised)?;
+            let source_path = Path::new(infile);
+            let lock_order = target
+                .path()
+                .filter(|_| target.fits().is_none())
+                .and_then(|path| path.canonicalize().ok())
+                .zip(source_path.canonicalize().ok())
+                .map(|(target, source)| target.cmp(&source));
+            if lock_order.is_some_and(Ordering::is_le) {
+                attachment.require_lock(&mut target, LockType::Write)?;
+            }
+            let source = if lock_order == Some(Ordering::Equal) {
+                // The target's write lock already protects this source.
+                ImageHandle::open(source_path)
+            } else {
+                ImageHandle::open_read(source_path)
+            }
+            .map_err(raised)?;
+            if !lock_order.is_some_and(Ordering::is_le) {
+                attachment.require_lock(&mut target, LockType::Write)?;
+            }
             let selected = region.as_ref().map(Region::as_region);
             let copied = match (&mut *target, &source) {
                 (ImageHandle::Float(target), ImageHandle::Float(source)) => {

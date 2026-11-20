@@ -23,8 +23,8 @@ use crate::{ImageError, ImageInterface, ImagePixel};
 use super::SubimageRegion;
 
 mod insert_region;
-mod window_masks;
 pub(super) mod saved;
+mod window_masks;
 
 use saved::{load_saved_region, parse_saved_region};
 

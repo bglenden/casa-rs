@@ -30,7 +30,11 @@ impl SubimageSelection {
             pixels
                 .slice_each_axis(|axis| {
                     let index = axis.axis.index();
-                    let offset = if cropped { start[index] - self.start[index] } else { start[index] };
+                    let offset = if cropped {
+                        start[index] - self.start[index]
+                    } else {
+                        start[index]
+                    };
                     Slice::from(offset..offset + shape[index])
                 })
                 .to_owned()
