@@ -94,13 +94,7 @@ fn describe(
         .filter(|_| native || image.fits().is_some())
         .and_then(|path| path.file_name())
         .map_or_else(|| "Temporary_Image".into(), |name| name.to_string_lossy());
-    let kind = if image.fits().is_some() {
-        "FITSImage"
-    } else if native {
-        "PagedImage"
-    } else {
-        "TempImage"
-    };
+    let kind = image.image_type_name();
     let info = image_info(image).map_err(raised)?;
     let image_type = match info.image_type {
         ImageType::Undefined => ImageType::Intensity,

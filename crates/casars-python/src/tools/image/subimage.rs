@@ -218,7 +218,7 @@ impl PyImageTool {
                 if original.fits().is_some() {
                     return not_yet_implemented_in("image", "subimage", 1627);
                 }
-                attached.require_lock(&mut original, casa_tables::LockType::Read)?;
+                attached.require_pixel_read_lock(&mut original)?;
                 if !outfile.is_empty() && let Some(source) = original.path() {
                     ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
                 }
