@@ -24,6 +24,7 @@ CASA behaviours casa-rs does not follow:
 [a masked coordinate reference-location edit](#coordsyssetreferencelocation-can-crash-when-an-axis-is-masked),
 [an omitted or undersized coordinate offset](#coordsys-relative-conversions-can-abort-on-missing-values),
 [empty input to the spectral velocity conversions](#coordsys-spectral-velocity-conversions-can-crash-on-missing-input),
+[spectral vectors with non-native byte order](#coordsys-doppler-conversion-can-misread-byte-swapped-arrays),
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
@@ -8137,3 +8138,10 @@ Calling `velocitytofrequency([1.0])` without a spectral coordinate also
 exits with `SIGSEGV` when it looks up the default frequency unit. casa-rs
 returns an empty `float64` array for empty vectors on a spectral coordinate
 and raises `RuntimeError` when the spectral coordinate is missing.
+
+## Coordsys Doppler conversion can misread byte-swapped arrays
+
+On a little-endian host, CASA 6.7.6.14 treats a big-endian `float64` NumPy
+array such as `np.array([1.0, 2.0, 3.0], dtype='>f8')` as native-endian
+bytes in `frequencytofrequency`. The values become tiny subnormal numbers
+even at zero velocity. casa-rs respects the array dtype's byte order.

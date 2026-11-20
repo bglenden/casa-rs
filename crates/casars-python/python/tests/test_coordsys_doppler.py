@@ -116,6 +116,51 @@ def test_nonfinite_inputs_and_zero_rest_frequency(casa):
         np.testing.assert_array_equal(cs.velocitytofrequency([0.0]), [0.0])
 
 
+@pytest.mark.parametrize("legacy,stored,scale,fraction", [(True, "m/s", 1000, 1 / 3), (False, "", 1, 1 / 3), (False, "Hz", 1, 1 / 4)])
+def test_restored_velocity_preferences_use_effective_units_and_conventions(casa, legacy, stored, scale, fraction):
+    for backend in (tools, casa):
+        cs = _spectral(backend)
+        record = cs.torecord()
+        spectral = record["spectral1"]
+        prefix = "vel"
+        if legacy:
+            del spectral["velUnit"]
+            del spectral["velType"]
+            prefix = "prefVel"
+        spectral[prefix + "Unit"] = stored
+        spectral[prefix + "Type"] = 1
+        assert cs.fromrecord(record)
+        default_radio = scale * LIGHT_KM_S / 4
+        fallback = scale * LIGHT_KM_S * fraction
+        np.testing.assert_allclose(cs.frequencytovelocity([1.5], velunit=""), [default_radio])
+        np.testing.assert_allclose(cs.frequencytovelocity([1.5], doppler="RATIO", velunit="Hz"), [fallback])
+        np.testing.assert_allclose(cs.velocitytofrequency([fallback], doppler="RATIO", velunit="Hz"), [1.5])
+
+
+def test_shift_preserves_individual_vector_input_types(casa):
+    for backend in (tools, casa):
+        cs = _spectral(backend)
+        np.testing.assert_array_equal(cs.frequencytofrequency("1.5"), [-1.0])
+        np.testing.assert_array_equal(cs.frequencytofrequency(""), [-1.0])
+        np.testing.assert_array_equal(cs.frequencytofrequency([True, "1.5"]), [1.0, 1.5])
+        np.testing.assert_array_equal(cs.frequencytofrequency([1.0, None, 2.0]), [1.0, 0.0, 2.0])
+
+
+def test_extreme_gamma_does_not_round_a_finite_result_to_infinity(casa):
+    for backend in (tools, casa):
+        cs = _spectral(backend)
+        np.testing.assert_allclose(cs.frequencytovelocity([2e-8], doppler="GAMMA"), [2.011873129214771e13])
+        assert np.isnan(cs.velocitytofrequency([np.inf], doppler="GAMMA")).all()
+
+
+def test_spectral_vectors_respect_non_native_array_byte_order():
+    cs = _spectral(tools)
+    samples = np.array([1.0, 1.5, 2.0], dtype=np.dtype("float64").newbyteorder("S"))
+    np.testing.assert_array_equal(cs.frequencytofrequency(samples), samples)
+    np.testing.assert_allclose(cs.frequencytovelocity(samples), LIGHT_KM_S * (1 - samples / 2))
+    np.testing.assert_allclose(cs.velocitytofrequency(samples), 2 * (1 - samples / LIGHT_KM_S))
+
+
 def test_doppler_conversions_safely_handle_missing_input():
     cs = _spectral(tools)
     for call in (cs.frequencytovelocity, cs.velocitytofrequency):

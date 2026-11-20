@@ -8,7 +8,7 @@ use casa_types::{ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 
 use crate::convert::holder::{C_MPS, DOPPLER_CODES, doppler_ref};
 use crate::convert::{Variant, double_vector_element, quantity, value::CasaValue};
@@ -29,19 +29,20 @@ fn values(value: &Bound<'_, PyAny>, method: &str) -> PyResult<Vec<f64>> {
             "<built-in function coordsys_{method}> returned a result with an exception set"
         )));
     }
-    // The binding converts a scalar string through its truth value, but
-    // parses individual text elements of a vector as numbers.
-    if value.is_instance_of::<PyString>() {
-        return Ok(vec![f64::from(u8::from(value.is_truthy()?))]);
-    }
-    if value.is_instance_of::<PyBytes>() {
+    // Scalar text takes the binding's -1 sentinel. Vector text is parsed.
+    if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytes>() {
         return Ok(vec![-1.0]);
     }
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PyUntypedArray>() {
-        let array = value
-            .py()
+        let py = value.py();
+        let options = PyDict::new(py);
+        if value.is_instance_of::<PyList>() {
+            // Preserve mixed element types while determining the nested shape.
+            options.set_item("dtype", "object")?;
+        }
+        let array = py
             .import("numpy")?
-            .call_method1("asarray", (value,))?;
+            .call_method("asarray", (value,), Some(&options))?;
         let kind = array.cast::<PyUntypedArray>()?.dtype().kind();
         if matches!(kind, b'b' | b'i' | b'u' | b'f') {
             let doubles = array.call_method1("astype", ("float64",))?;
@@ -51,7 +52,7 @@ fn values(value: &Bound<'_, PyAny>, method: &str) -> PyResult<Vec<f64>> {
         let flat = array.call_method1("ravel", ("F",))?;
         return flat
             .try_iter()?
-            .map(|item| double_vector_element(&item?))
+            .map(|item| item.map(|item| double_vector_element(&item).unwrap_or(0.0)))
             .collect();
     }
     Ok(vec![value.extract::<f64>()?])
@@ -105,6 +106,54 @@ struct VelocityConversion {
     convention: DopplerRef,
 }
 
+fn velocity_settings(
+    state: &CoordinateState,
+    field: &str,
+    spectral: &SpectralCoordinate,
+    vel_unit: &str,
+    doppler: &str,
+) -> PyResult<(f64, DopplerRef)> {
+    let speed = UnitDim::basis(Dimension::Length) / UnitDim::basis(Dimension::Time);
+    let unit = casacore::casacore_unit(vel_unit).map_err(raised)?;
+    let requested = doppler_ref(DOPPLER_CODES.resolve_or_default(doppler)).map_err(raised)?;
+    if unit.val().dim == speed {
+        return Ok((unit.val().factor / C_MPS, requested));
+    }
+    let mut stored_convention = spectral.velocity_convention();
+    let stored_unit = if let Some(Value::Record(record)) = state.record.get(field) {
+        if record.get("velType").is_none() {
+            let legacy_code = match record.get("prefVelType") {
+                Some(Value::Scalar(ScalarValue::Int32(code))) => Some(*code),
+                Some(Value::Scalar(ScalarValue::Int64(code))) => i32::try_from(*code).ok(),
+                _ => None,
+            };
+            if let Some(legacy) = legacy_code.and_then(DopplerRef::from_casacore_code) {
+                stored_convention = legacy;
+            }
+        }
+        match record.get("velUnit").or_else(|| record.get("prefVelUnit")) {
+            Some(Value::Scalar(ScalarValue::String(unit))) if !unit.is_empty() => unit.as_str(),
+            _ => "km/s",
+        }
+    } else {
+        "km/s"
+    };
+    let stored = casacore::casacore_unit(stored_unit).map_err(raised)?;
+    let factor = if stored.val().dim == speed {
+        stored.val().factor
+    } else {
+        // Restoring an incompatible unit leaves both defaults.
+        stored_convention = DopplerRef::RADIO;
+        1e3
+    };
+    let convention = if vel_unit.is_empty() {
+        requested
+    } else {
+        stored_convention
+    };
+    Ok((factor / C_MPS, convention))
+}
+
 impl VelocityConversion {
     fn new(
         state: &CoordinateState,
@@ -130,31 +179,12 @@ impl VelocityConversion {
         if frequency.val().dim != UnitDim::NODIM / UnitDim::basis(Dimension::Time) {
             return Err(frequency_error("Units are not compatible dimensionally"));
         }
-        let stored_unit = match state.record.get(field) {
-            Some(Value::Record(record)) => match record.get("velUnit") {
-                Some(Value::Scalar(ScalarValue::String(unit))) => unit,
-                _ => "km/s",
-            },
-            _ => "km/s",
-        };
-        let speed = UnitDim::basis(Dimension::Length) / UnitDim::basis(Dimension::Time);
-        let unit = casacore::casacore_unit(vel_unit).map_err(raised)?;
-        let convention = doppler_ref(DOPPLER_CODES.resolve_or_default(doppler)).map_err(raised)?;
-        let (unit, convention) = if unit.val().dim == speed {
-            (unit, convention)
-        } else {
-            let stored = casacore::casacore_unit(stored_unit).map_err(raised)?;
-            let convention = if vel_unit.is_empty() {
-                convention
-            } else {
-                spectral.velocity_convention()
-            };
-            (stored, convention)
-        };
+        let (velocity_scale, convention) =
+            velocity_settings(state, field, spectral, vel_unit, doppler)?;
         Ok(Self {
             rest_hz: spectral.rest_frequency_hz().map_err(raised)?,
             hz_per_unit: frequency.val().factor,
-            velocity_scale: unit.val().factor / C_MPS,
+            velocity_scale,
             convention,
         })
     }
