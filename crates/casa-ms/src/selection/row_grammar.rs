@@ -61,18 +61,20 @@ pub(super) fn apply(
         compiled.casa_taql_exprs.push(baseline_predicate(&baseline));
         compiled.casa_baseline = Some(baseline);
     }
+    let scan = options.scan.as_deref().map(|text| {
+        if flagdata {
+            text.split_once('\0').map_or(text, |(prefix, _)| prefix)
+        } else {
+            text
+        }
+    });
     let observation = if flagdata {
         None
     } else {
         options.observation.as_deref()
     };
     for (column, label, text, target) in [
-        (
-            "SCAN_NUMBER",
-            "scan",
-            options.scan.as_deref(),
-            &mut compiled.casa_scan_ranges,
-        ),
+        ("SCAN_NUMBER", "scan", scan, &mut compiled.casa_scan_ranges),
         (
             "OBSERVATION_ID",
             "observation",
@@ -81,6 +83,14 @@ pub(super) fn apply(
         ),
     ] {
         if let Some(text) = text.filter(|text| !text.is_empty()) {
+            // agentflagger receives a C string and its scan lexer stops
+            // at a non-ASCII byte after an otherwise complete expression.
+            let text = if flagdata {
+                text.split_once(|character: char| !character.is_ascii())
+                    .map_or(text, |(prefix, _)| prefix)
+            } else {
+                text
+            };
             let ranges = parse_numeric_row_id_ranges(text, label)?;
             compiled
                 .casa_taql_exprs

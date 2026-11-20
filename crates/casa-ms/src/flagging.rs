@@ -32,7 +32,10 @@ use thiserror::Error;
 use crate::ms::MeasurementSet;
 use crate::schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
-use crate::selection::{MsSelection, resolve_flagdata_row_indices_with_system_budget};
+use crate::selection::{
+    MsSelection, resolve_flagdata_row_indices_with_system_budget,
+    resolve_row_indices_with_system_budget,
+};
 use crate::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
     MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
@@ -133,6 +136,8 @@ pub enum QuackMode {
 pub struct FlagDataRequest {
     /// Structured row selection.
     pub selection: MsSelection,
+    /// Interpret scan and antenna expressions using the CASA task grammar.
+    pub casa_scan_and_baseline: bool,
     /// CASA-style SPW/channel selector.
     pub spw: Option<String>,
     /// Mode to execute.
@@ -195,6 +200,7 @@ impl Default for FlagDataRequest {
     fn default() -> Self {
         Self {
             selection: MsSelection::new(),
+            casa_scan_and_baseline: false,
             spw: None,
             mode: FlagDataMode::Manual,
             action: FlagDataAction::Flag,
@@ -588,21 +594,26 @@ fn selected_rows(
         path: display_ms_path(ms),
         reason: format!("select rows: {source}"),
     };
-    let rows = resolve_flagdata_row_indices_with_system_budget(ms, &request.selection)
-        .map_err(selection_error)?;
+    let resolve_rows = if request.casa_scan_and_baseline {
+        resolve_flagdata_row_indices_with_system_budget
+    } else {
+        resolve_row_indices_with_system_budget
+    };
+    let rows = resolve_rows(ms, &request.selection).map_err(selection_error)?;
     let field = request
         .selection
         .field
         .as_deref()
         .filter(|text| !text.trim().is_empty());
-    let explicit_row_filter = [
-        field,
-        request.selection.scan.as_deref(),
-        request.selection.antenna.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|text| !text.is_empty());
+    let explicit_row_filter = field.is_some()
+        || (request.casa_scan_and_baseline
+            && [
+                request.selection.scan.as_deref(),
+                request.selection.antenna.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|text| !text.is_empty()));
     if rows.is_empty() && request.selection.selectdata && explicit_row_filter {
         // An empty result can mean no matching FIELD metadata or simply no
         // selected MAIN rows. Keep separate diagnostics for the two cases.

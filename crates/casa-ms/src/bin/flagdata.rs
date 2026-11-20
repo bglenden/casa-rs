@@ -107,6 +107,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
     }
     Ok(FlagDataRequest {
         selection: selection(task, &spw)?,
+        casa_scan_and_baseline: true,
         spw: (!spw.is_empty()).then_some(spw),
         mode,
         action,
