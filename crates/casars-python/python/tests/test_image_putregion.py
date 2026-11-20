@@ -69,7 +69,7 @@ def test_putregion_validates_shape_before_creating_mask(casa, pixel_type, dtype)
         values += 2j
     for backend in (casa, tools):
         image = backend.image()
-        assert image.fromshape(shape=values.shape, type=pixel_type)
+        assert image.fromshape(shape=list(values.shape), type=pixel_type)
         assert image.putregion(values)
         before = image.maskhandler("default")
         with pytest.raises(RuntimeError, match="do not match|does not match|different shapes"):
