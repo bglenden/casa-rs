@@ -131,7 +131,7 @@ mod tests {
             ParameterValue::Array(vec!["CODE$".into(), "$HOME".into()]),
         );
         refuses(&tclean, "imagename", "literal$".into());
-        refuses(&flagdata, "field", "CODE$".into());
+        refuses(&flagdata, "vis", "data$.ms".into());
     }
 
     #[test]

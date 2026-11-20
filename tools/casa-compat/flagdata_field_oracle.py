@@ -126,15 +126,20 @@ def compare_invalid_unicode():
 def compare_literal_names():
     vis = "literal-names.ms"
     copytree("data.ms", vis)
-    with table(f"{vis}/FIELD", readonly=False, ack=False) as fields:
-        fields.putcol("NAME", ["none", "auto"])
-    original, auxiliary = snapshot(vis), auxiliary_content(vis)
-    for field in ("none", "auto"):
-        args = {"vis": vis, "mode": "summary", "field": field}
-        expected = casatasks.flagdata(**args)
-        assert set(expected["field"]) == {field}
-        assert tasks.flagdata(**args) == expected
-        assert_preserved(vis, original, auxiliary)
+    cases = (
+        (("none", "auto"), (("none", "none"), ("auto", "auto"))),
+        (("CODE$", "OTHER"), (("CODE$", "CODE$"), ('"CODE$"', "CODE$"), ("/OTHER$/", "OTHER"))),
+    )
+    for names, selectors in cases:
+        with table(f"{vis}/FIELD", readonly=False, ack=False) as fields:
+            fields.putcol("NAME", names)
+        original, auxiliary = snapshot(vis), auxiliary_content(vis)
+        for selector, name in selectors:
+            args = {"vis": vis, "mode": "summary", "field": selector}
+            expected = casatasks.flagdata(**args)
+            assert set(expected["field"]) == {name}
+            assert tasks.flagdata(**args) == expected
+            assert_preserved(vis, original, auxiliary)
 
 
 def compare_backup():
@@ -159,7 +164,7 @@ def main():
         refusals = compare_refusals()
         compare_invalid_unicode()
         compare_backup()
-    print(f"{products} field-selected products, seven summaries, four inactive calls and {refusals} refusals matched CASA")
+    print(f"{products} field-selected products, ten summaries, four inactive calls and {refusals} refusals matched CASA")
     print("Invalid UTF-8 diagnostics left flags unchanged. CASA restored the native backup to the original flags.")
 
 
