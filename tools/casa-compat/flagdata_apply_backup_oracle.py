@@ -157,6 +157,17 @@ def main():
                 assert current[0][:2] == previous[0][:2]
                 assert {path: checksum for path, checksum in current[1].items()
                         if sidecar not in path.parents} == previous[1]
+        for options in ({"field": ["FLUX"], "spw": 2},
+                        {"field": 2, "action": "none", "savepars": True, "outfile": "invalid.txt"}):
+            try:
+                tasks.run("flagdata", vis="source.ms", **options)
+            except tasks.TaskParameterError as error:
+                expected = "spw" if "spw" in options else "field"
+                assert error.completion.parameter == expected
+            else:
+                raise AssertionError(options)
+            assert not Path("source.ms.flagversions").exists()
+            assert not Path("invalid.txt").exists()
         products = check_spw_grammar()
     print(f"{len(cases)} automatic-backup outcomes and {products} SPW products checked against CASA")
 

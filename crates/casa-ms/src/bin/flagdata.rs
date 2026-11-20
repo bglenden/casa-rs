@@ -54,6 +54,7 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
+    let vector_selector = selector_argument(task)?;
     check_correlation_argument(task, &action)?;
     let mode = task.required_text("mode")?;
     let save_parameters = task.flag("savepars")? && mode != "summary";
@@ -85,7 +86,12 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             ));
         }
     };
-    check_selector_arguments(task, &action)?;
+    if let Some(selector) = vector_selector {
+        backup_before_failed_apply(task, &action)?;
+        return Err(
+            TaskFailure::execution(format!("argument _{selector} must be a string")).at(selector),
+        );
+    }
     let request = flagdata_request(task, channel_bins).or_else(|error| {
         let parameter = error.parameter.as_deref();
         if matches!(parameter, Some("datacolumn" | "field" | "spw"))
@@ -150,12 +156,19 @@ fn save_flag_parameters(
             arguments.push(format!("{name}={text}"));
             continue;
         }
-        let argument = if let Some(value) = task.session().given(name) {
-            value.clone()
+        if let Some(ParameterValue::Array(values)) = task.session().given(name) {
+            let values = values
+                .iter()
+                .map(|value| match value {
+                    ParameterValue::String(text) => selector_string_repr(text),
+                    _ => unreachable!("selector types were validated"),
+                })
+                .collect::<Vec<_>>();
+            arguments.push(format!("{name}=[{}]", values.join(", ")));
         } else {
-            ParameterValue::String(task_selection_text(task, name)?)
-        };
-        push_command_argument(&mut arguments, name, &argument);
+            let text = task_selection_text(task, name)?;
+            push_command_argument(&mut arguments, name, &ParameterValue::String(text));
+        }
     }
     if let Some(observation) = observation_text(task)? {
         push_command_argument(
@@ -287,6 +300,35 @@ fn push_command_argument(arguments: &mut Vec<String>, name: &str, value: &Parame
     arguments.push(format!("{name}={text}"));
 }
 
+fn selector_string_repr(text: &str) -> String {
+    use std::fmt::Write as _;
+
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut result = String::from(quote);
+    for character in text.chars() {
+        match character {
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\\' => result.push_str("\\\\"),
+            character if character == quote => {
+                result.push('\\');
+                result.push(character);
+            }
+            character if character.is_control() && u32::from(character) <= 0xff => {
+                write!(result, "\\x{:02x}", u32::from(character)).expect("write to String");
+            }
+            character => result.push(character),
+        }
+    }
+    result.push(quote);
+    result
+}
+
 fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
     let rflag = matches!(task.value("mode"), Some(ParameterValue::String(mode)) if mode == "rflag");
     let mut bindings = task
@@ -371,7 +413,8 @@ fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result
     }
 }
 
-fn check_selector_arguments(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
+fn selector_argument(task: &TaskInvocation<'_>) -> Result<Option<&'static str>, TaskFailure> {
+    let mut first_vector = None;
     for name in STRING_SELECTORS {
         match task.value(name) {
             None | Some(ParameterValue::String(_)) => {}
@@ -380,10 +423,7 @@ fn check_selector_arguments(task: &TaskInvocation<'_>, action: &str) -> Result<(
                     .iter()
                     .all(|item| matches!(item, ParameterValue::String(_))) =>
             {
-                backup_before_failed_apply(task, action)?;
-                return Err(
-                    TaskFailure::execution(format!("argument _{name} must be a string")).at(name),
-                );
+                first_vector.get_or_insert(name);
             }
             _ => {
                 return Err(TaskFailure::validation(format!(
@@ -393,7 +433,7 @@ fn check_selector_arguments(task: &TaskInvocation<'_>, action: &str) -> Result<(
             }
         }
     }
-    Ok(())
+    Ok(first_vector)
 }
 
 fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {

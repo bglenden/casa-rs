@@ -470,8 +470,9 @@ def _flagdata_saved_argument_text(arguments: Mapping[str, Any]) -> dict[str, str
     text = {}
     for name in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         value = arguments[name]
-        if isinstance(value, np.ndarray) and value.ndim == 0 and _flagdata_string_vector(value):
-            text[name] = str(value)
+        if isinstance(value, (list, tuple, np.ndarray)) and _flagdata_string_vector(value):
+            text[name] = (str(value) if isinstance(value, np.ndarray) and value.ndim == 0
+                          else repr([str(item) for item in value]))
     for name in ("autocorr", "clipoutside", "channelavg", "timeavg", "clipzeros", "quackincrement"):
         if isinstance(arguments[name], np.bool_):
             text[name] = str(bool(arguments[name]))

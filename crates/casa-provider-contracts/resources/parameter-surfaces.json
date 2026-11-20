@@ -23161,7 +23161,7 @@
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
             "provider": {"field": "uvrange", "adapter": "identity"},
-            "python": {"name": "uvrange", "type_hint": "str"},
+            "python": {"name": "uvrange", "type_hint": "str | list[str]"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           }
         },
@@ -23175,9 +23175,10 @@
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "SELECTOR"},
             "provider": {"field": "timerange", "adapter": "identity"},
-            "python": {"name": "timerange", "type_hint": "str"},
+            "python": {"name": "timerange", "type_hint": "str | list[str]"},
             "presentation": {"label": "Time Range", "group": "Selection", "advanced": true}
-          }
+          },
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "correlation",
@@ -23205,9 +23206,10 @@
           "projections": {
             "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
             "provider": {"field": "intent", "adapter": "identity"},
-            "python": {"name": "intent", "type_hint": "str"},
+            "python": {"name": "intent", "type_hint": "str | list[str]"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          }
+          },
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "array",
@@ -23219,7 +23221,7 @@
           "projections": {
             "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
             "provider": {"field": "array"},
-            "python": {"name": "array", "type_hint": "str"},
+            "python": {"name": "array", "type_hint": "str | list[str]"},
             "presentation": {"label": "Array", "group": "Selection", "advanced": true}
           }
         },
@@ -23248,7 +23250,7 @@
           "projections": {
             "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
             "provider": {"field": "feed"},
-            "python": {"name": "feed", "type_hint": "str"},
+            "python": {"name": "feed", "type_hint": "str | list[str]"},
             "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
           }
         },
@@ -24109,7 +24111,7 @@
             "provider": {"field": "spw", "adapter": "identity"},
             "python": {
               "name": "spw",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Spectral Window",
@@ -24118,7 +24120,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "field",
@@ -24155,7 +24157,7 @@
             "provider": {"field": "field", "adapter": "identity"},
             "python": {
               "name": "field",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Field",
@@ -24164,7 +24166,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "scan",
@@ -24201,7 +24203,7 @@
             "provider": {"field": "scan", "adapter": "identity"},
             "python": {
               "name": "scan",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Scan",
@@ -24210,7 +24212,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "antenna",
@@ -24247,7 +24249,7 @@
             "provider": {"field": "antenna", "adapter": "identity"},
             "python": {
               "name": "antenna",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Antenna",
@@ -24256,7 +24258,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "datacolumn",

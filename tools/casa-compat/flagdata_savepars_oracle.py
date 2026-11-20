@@ -134,6 +134,8 @@ def compare_original_arguments():
     cases = (
         ({"field": ["FLUX"], "spw": ["0"], "scan": ("1", "2")},
          "field=['FLUX'] spw=['0'] scan=['1', '2'] autocorr=False mode='manual'\n"),
+        ({"field": ["O'Brien", "a\nb", "a\tb", "a\\b"]},
+         "field=[\"O'Brien\", 'a\\nb', 'a\\tb', 'a\\\\b'] autocorr=False mode='manual'\n"),
         ({"mode": "clip", "clipoutside": np.bool_(False), "channelavg": np.bool_(True),
           "clipzeros": np.bool_(True), "chanbin": np.array(2), "clipminmax": [float("nan"), float("inf")]},
          "datacolumn='DATA' clipoutside=False channelavg=True chanbin=2 timeavg=False "
@@ -144,6 +146,9 @@ def compare_original_arguments():
             path = Path(f"arguments-{index}-{name}.txt")
             assert task(**common, **options, outfile=str(path)) == {}
             assert path.read_text() == command
+    path = Path("arguments-provider.txt")
+    tasks.run("flagdata", **common, **cases[1][0], outfile=str(path))
+    assert path.read_text() == cases[1][1]
 
 
 def check_reader_resync():
