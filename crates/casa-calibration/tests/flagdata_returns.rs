@@ -287,14 +287,6 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
             json!({"mode": "rflag", "channelavg": true}),
             "channelavg",
         ),
-        // CASA parses ntime before it runs any mode, and refuses
-        // 'nonsense' without flagging (Astra's #997 F6).
-        (
-            FLAGDATA,
-            "flagdata",
-            json!({"mode": "manual", "ntime": "nonsense"}),
-            "ntime",
-        ),
     ] {
         let mut values = values;
         values["vis"] = json!(vis);

@@ -22,6 +22,7 @@ use casa_provider_contracts::{
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
+use casa_types::quanta::Quantity;
 
 const STRING_SELECTORS: [&str; 9] = [
     "field",
@@ -55,6 +56,12 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     let vector_selector = selector_argument(task)?;
+    let time_chunk = time_chunk_argument(task).or_else(|error| {
+        if error.kind == TaskFailureKind::Execution {
+            backup_before_failed_apply(task, &action)?;
+        }
+        Err(error)
+    })?;
     check_correlation_argument(task, &action)?;
     let mode = task.required_text("mode")?;
     let save_parameters = task.flag("savepars")? && mode != "summary";
@@ -92,7 +99,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             TaskFailure::execution(format!("argument _{selector} must be a string")).at(selector),
         );
     }
-    let request = flagdata_request(task, channel_bins).or_else(|error| {
+    let mut request = flagdata_request(task, channel_bins).or_else(|error| {
         let parameter = error.parameter.as_deref();
         if matches!(parameter, Some("datacolumn" | "field" | "spw"))
             || (matches!(parameter, Some("channelavg" | "timeavg"))
@@ -102,6 +109,11 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         Err(error)
     })?;
+    request.time_chunk = time_chunk;
+    let display = task.required_text("display")?;
+    if matches!(display.as_str(), "data" | "report" | "both") {
+        tracing::warn!(%display, "running flagdata with its headless provider");
+    }
     let path = task.path("vis")?;
     // The CASA task derives persistence from action, including when the
     // caller supplied its hidden writeflags argument explicitly.
@@ -439,6 +451,34 @@ fn selector_argument(task: &TaskInvocation<'_>) -> Result<Option<&'static str>, 
     Ok(first_vector)
 }
 
+fn time_chunk_argument(task: &TaskInvocation<'_>) -> Result<Option<f64>, TaskFailure> {
+    let seconds = match task.value("ntime") {
+        None => return Ok(None),
+        Some(ParameterValue::String(text)) if text == "scan" => return Ok(None),
+        Some(ParameterValue::String(text)) => {
+            let quantity = Quantity::read(text)
+                .map_err(|error| TaskFailure::execution(error.to_string()).at("ntime"))?;
+            let seconds = match quantity.unit().name() {
+                "" | "s" => quantity.value(),
+                "min" => quantity.get_si_value(),
+                _ => {
+                    tracing::warn!("Cannot convert units of ntime. Will use default 0.0s");
+                    return Ok(None);
+                }
+            };
+            return Ok((seconds > 0.0 && seconds.is_finite()).then_some(seconds));
+        }
+        Some(ParameterValue::Float(value)) => *value,
+        Some(ParameterValue::Integer(value)) => *value as f64,
+        Some(ParameterValue::Bool(value)) => f64::from(u8::from(*value)),
+        _ => return Err(TaskFailure::validation("ntime must be a number or string").at("ntime")),
+    };
+    if seconds <= 0.0 {
+        return Err(TaskFailure::execution("Parameter ntime cannot be < = 0").at("ntime"));
+    }
+    Ok(seconds.is_finite().then_some(seconds))
+}
+
 fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
     if action == "apply" && task.required_text("mode")? != "summary" && task.flag("flagbackup")? {
         let ms = MeasurementSet::open(task.path("vis")?)
@@ -507,6 +547,7 @@ fn flagdata_request(
         clipoutside,
         clip_channel_bins: clip_channel_bins(task, mode, channel_bins)?,
         clip_time_bin: clip_time_bin(task, mode)?,
+        time_chunk: None,
         quackinterval,
         quackmode,
         quackincrement,

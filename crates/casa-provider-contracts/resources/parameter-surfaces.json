@@ -23431,7 +23431,7 @@
         },
         {
           "name": "ntime",
-          "concept": {"id": "flagdata.ntime", "semantic_revision": 1},
+          "concept": {"id": "flagdata.ntime", "semantic_revision": 2},
           "order": 32,
           "default": {"kind": "literal", "value": {"kind": "string", "value": "scan"}},
           "required_when": {"kind": "never"},
@@ -23439,11 +23439,15 @@
           "projections": {
             "cli": {"flags": ["--ntime"], "metavar": "TIME"},
             "provider": {"field": "ntime"},
-            "python": {"name": "ntime"},
+            "python": {"name": "ntime", "type_hint": "str | float"},
             "presentation": {"label": "Time Chunk", "group": "Automatic", "advanced": true}
           },
-          "surface_note": "CASA's flagdata parses ntime in every mode before it runs one, so a value other than 'scan' is refused in every mode until #978.",
-          "unimplemented": {"issue": 978}
+          "surface_note": "Manual, unflag, quack, clip and summary validate ntime before running. Clip time averaging does not cross iterator chunks. Automatic agents remain on #1616.",
+          "unimplemented": {"issue": 1616, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}}
+          ]}}
         },
         {
           "name": "combinescans",
@@ -23882,10 +23886,7 @@
             "python": {"name": "display"},
             "presentation": {"label": "Display", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "apply"}},
-            {"kind": "equals", "parameter": "action", "value": {"kind": "string", "value": "calculate"}}
-          ]}}
+          "surface_note": "The headless provider applies or calculates the flags and returns the task result. Interactive viewing belongs to CASA's plotting backend."
         },
         {
           "name": "savepars",

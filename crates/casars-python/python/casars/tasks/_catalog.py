@@ -952,7 +952,7 @@ def flagdata(
     addantenna: str = '',
     lowerlimit: float = 0.0,
     upperlimit: float = 90.0,
-    ntime: str = 'scan',
+    ntime: str | float = 'scan',
     combinescans: bool = False,
     timecutoff: float = 4.0,
     freqcutoff: float = 3.0,
@@ -1003,11 +1003,12 @@ def flagdata(
     Accepted only at CASA's default, where CASA reads them, until #978:
     ``inpfile``, ``reason``, ``tbuff``, ``channelavg``, ``chanbin``,
     ``timeavg``, ``timebin``, ``tolerance``, ``addantenna``, ``lowerlimit``,
-    ``upperlimit``, ``ntime``, ``combinescans``, ``timefit``, ``freqfit``,
+    ``upperlimit``, ``combinescans``, ``timefit``, ``freqfit``,
     ``maxnpieces``, ``flagdimension``, ``usewindowstats``, ``halfwin``,
     ``winsize``, ``antint_ref_antenna``, ``minchanfrac``, ``verbose``,
-    ``growaround``, ``flagneartime``, ``flagnearfreq``, ``display``,
-    ``savepars``.
+    ``growaround``, ``flagneartime``, ``flagnearfreq``, ``savepars``.
+    Accepted only at CASA's default, where CASA reads them, until #1616:
+    ``ntime``.
     """
     return _call_casa(flagdata, locals())
 
