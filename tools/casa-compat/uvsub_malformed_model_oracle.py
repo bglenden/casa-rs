@@ -48,7 +48,8 @@ def refused_prediction(factory, dataset, reverse):
 def interleave_fields(source, target):
     reader = table()
     assert reader.open(str(source))
-    sorted_rows = reader.query(sortlist='ANTENNA1, ANTENNA2, TIME DESC')
+    sorted_rows = reader.query('TIME >= 0', sortlist='ANTENNA1, ANTENNA2, TIME DESC')
+    assert sorted_rows.nrows() == reader.nrows()
     assert sorted_rows.copy(str(target), deep=True, valuecopy=True).done()
     assert sorted_rows.done() and reader.done()
     assert reader.open(str(target), nomodify=False)
