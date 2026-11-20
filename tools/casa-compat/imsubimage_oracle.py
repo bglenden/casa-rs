@@ -136,6 +136,12 @@ def make_inputs():
                      pixelaxes=[0, 1], csys=cs.torecord())
     assert rg.tofile("box.rgn", region)
     make_compound_regions(ia, cs.torecord(), rg)
+    for name, lower, upper, stride in [
+        ("stride", [0, 1, 0, 0], [5, 5, 3, 3], [2, 2, 1, 2]),
+        ("stride_degenerate", [0, 1, 1, 0], [5, 5, 2, 1], [2, 2, 3, 4]),
+        ("stride_tabular", [0, 0, 0, 0], [3, 2, 1, 0], [2, 1, 1, 1]),
+    ]:
+        assert rg.tofile(name + ".rgn", rg.box(blc=lower, trc=upper, inc=stride))
     rg.done()
     cs.done()
     ia.done()
@@ -278,6 +284,11 @@ def capture_cases(output):
         capture(name, region=name + ".rgn", error=label == "nonoverlap")
     capture("saved_compound_masked_edge", region="saved_compound_masked_edge.rgn")
     capture("saved_compound_polygon_transposed", "transposed.im", region="saved_compound_polygon_transposed.rgn")
+    capture("saved_stride", region="stride.rgn")
+    capture("saved_stride_mask", region="stride.rgn", mask='"cube.im" > 195')
+    capture("saved_stride_stretch", region="stride.rgn", mask='"stretch.im" > 200', stretch=True)
+    capture("saved_stride_drop", region="stride_degenerate.rgn", dropdeg=True, keepaxes=[3])
+    capture("saved_stride_tabular", "axis_maps/tabular_spectral_first.image", region="stride_tabular.rgn")
     capture("saved_box_conflict", "plane.im", region="saved.rgn", box="0,0,4,4", error=True)
     capture("saved_chans_conflict", region="box.rgn", chans="1", error=True)
     capture("saved_stokes_conflict", region="box.rgn", stokes="Q", error=True)

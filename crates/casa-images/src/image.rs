@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_lattices::{
-    Lattice, LatticeElement, LatticeError, LatticeMut, PagedArray, TiledShape, TraversalCacheHint,
-    TraversalCacheScope, TraversalCursorIter, TraversalSpec, recommended_tile_cache_size,
+    ArrayLattice, Lattice, LatticeElement, LatticeError, LatticeMut, PagedArray, TiledShape,
+    TraversalCacheHint, TraversalCacheScope, TraversalCursorIter, TraversalSpec,
+    recommended_tile_cache_size,
 };
 use casa_tables::{
     ColumnSchema, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerKind, Table, TableInfo, TableOptions,
@@ -3105,7 +3106,7 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
                 .map(|(&extent, &step)| SliceInfoElem::Slice {
                     start: 0,
                     end: Some(extent as isize),
-                    step: step as isize,
+                    step: step.min(extent.max(1)) as isize,
                 })
                 .collect();
             return Ok(bounding.slice(local_slice.as_slice()).to_owned());
@@ -3113,17 +3114,7 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
         let array = self
             .read_array()
             .map_err(|e| LatticeError::Table(e.to_string()))?;
-        let slice_info: Vec<SliceInfoElem> = start
-            .iter()
-            .zip(shape.iter())
-            .zip(stride.iter())
-            .map(|((&s, &n), &st)| SliceInfoElem::Slice {
-                start: s as isize,
-                end: Some((s + n * st) as isize),
-                step: st as isize,
-            })
-            .collect();
-        Ok(array.slice(slice_info.as_slice()).to_owned())
+        ArrayLattice::new(array).get_slice(start, shape, stride)
     }
 
     fn get(&self) -> Result<ArrayD<T>, LatticeError> {

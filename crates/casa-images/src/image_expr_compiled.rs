@@ -2940,7 +2940,7 @@ fn compiled_map_strategy<T: ImageExprValue>(
     })
 }
 
-fn bounded_read_cursor(shape: Vec<usize>) -> Result<Vec<usize>, LatticeError> {
+pub(crate) fn bounded_read_cursor(shape: Vec<usize>) -> Result<Vec<usize>, LatticeError> {
     let element_bytes = std::mem::size_of::<casa_types::Complex64>();
     Ok(TiledShape::new(shape, element_bytes)?.tile_shape().to_vec())
 }
