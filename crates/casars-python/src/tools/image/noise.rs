@@ -55,6 +55,7 @@ impl PyImageTool {
             }
             let selection = region.as_ref().map(Region::as_region);
             let mut noise = ImageNoise::new(r#type, &pars.0, &seeds).map_err(raised)?;
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             match &mut *image {
                 ImageHandle::Float(storage) => with_storage!(storage, target => {
                     noise.apply(target.as_mut(), selection, zero, |value, generator| {

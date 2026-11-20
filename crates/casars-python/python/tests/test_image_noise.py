@@ -1,5 +1,7 @@
 """Seeded distributions and region updates through the public image tool."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -104,6 +106,24 @@ def test_addnoise_writes_the_region_lattice_and_preserves_mask(casa, tmp_path, r
     finally:
         image.done()
         reference.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_addnoise_reacquires_native_write_lock(casa, tmp_path):
+    for backend, peer in ((casa, tools), (tools, casa)):
+        path = str(tmp_path / f"{backend.__name__}.im")
+        image = backend.image()
+        assert image.fromshape(path, [3, 4])
+        assert image.unlock()
+        assert image.addnoise("uniform", [2, 3], seeds=[1, 2])
+        np.testing.assert_array_equal(image.haslock(), [True, True])
+        values = image.getchunk()
+        assert ((values >= 2) & (values <= 3)).all()
+        assert image.done()
+        reader = peer.image()
+        assert reader.open(path)
+        np.testing.assert_array_equal(reader.getchunk(), values)
+        assert reader.done()
 
 
 def test_addnoise_reads_and_writes_multiple_tiles_with_casa_cursor_order(casa, tmp_path):
