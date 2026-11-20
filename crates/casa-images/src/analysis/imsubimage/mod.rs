@@ -4,6 +4,7 @@
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
 pub(super) mod coords;
+mod insert;
 mod noise;
 mod pixel_edit;
 pub(super) mod region;
@@ -14,6 +15,7 @@ pub use replace_masked::{
     replace_masked_real_pixels,
 };
 
+pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
 pub use pixel_edit::ImagePixelSelection;
 

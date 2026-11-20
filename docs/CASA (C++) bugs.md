@@ -8047,3 +8047,21 @@ cache has moved. The native reader reports an error if the saved recipe
 has no retained kernel images.
 [`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## `image.insert` aborts for a source that misses along one axis
+
+CASA 6.7.6.14 terminates with SIGABRT and `Slicer error:end<start` for a
+`[2, 2]` source inserted into a `[4, 4]` target at `locate=[10, 1]`
+or `[-10, 1]`. One axis overlaps. The other yields an empty clipped interval.
+The casa-rs tool raises a Python `RuntimeError` before writing pixels or mask
+bits.
+
+## `image.insert` can replace unread source pixels during a self-insert
+
+Create a native float image from a 1510 by 1510 ramp in NumPy row order and
+insert the source region `box([0, 0], [1508, 1508])` into the same image at
+`locate=[1, 1]`. CASA 6.7.6.14 returns success and persists 27,063 wrong
+pixels. For example, `(2, 152)` contains 150 instead of the original value
+1661 from `(1, 151)`. The cursor writes overlap pixels that a subsequent
+cursor reads. casa-rs snapshots the selected pixels and validity before
+writing, using scratch storage when the overlap exceeds its memory budget.
