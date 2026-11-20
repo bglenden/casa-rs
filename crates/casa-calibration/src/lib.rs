@@ -88,6 +88,7 @@ pub use uvsub::{
 pub use accumulate::{CalibrationAccumulationRequest, accumulate_calibration};
 pub use attachment::{
     AttachmentError, AttachmentMode, AttachmentOptions, CalibrationAttachment, ImagerAttachments,
+    ImagerChannelSelection,
 };
 pub use calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
 pub use output::CalibrationOutputMode;

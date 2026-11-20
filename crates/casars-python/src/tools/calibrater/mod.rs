@@ -321,7 +321,7 @@ fn bool_vector(value: &Bound<'_, PyAny>) -> PyResult<Vec<bool>> {
     value.try_iter()?.map(|item| flag(&item?)).collect()
 }
 
-fn selector(value: &Variant) -> Option<String> {
+pub(super) fn selector(value: &Variant) -> Option<String> {
     match value {
         Variant::Empty => None,
         Variant::Text(text) if text.is_empty() => None,

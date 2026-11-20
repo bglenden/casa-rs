@@ -7,7 +7,7 @@ use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::{MeasurementSet, MsResult, MsSelection, MsSelectionError, ResolvedMsSelection};
 use casa_tables::{TableError, TableWriteLock, table_cache_name};
 
-use crate::model_columns::initialize_scratch_column;
+use crate::model_columns::{has_column, initialize_scratch_column};
 use crate::session::resolve_casa_calibration_selection;
 
 pub(crate) struct OpenedMs {
@@ -113,6 +113,9 @@ pub enum AttachmentError {
     /// The stored selection could not be resolved against the attached dataset.
     #[error(transparent)]
     Selection(#[from] MsSelectionError),
+    /// The supplied image or component model could not be prepared.
+    #[error(transparent)]
+    PredictionPreparation(casa_ms::MsError),
 }
 
 impl From<TableError> for AttachmentError {
@@ -132,12 +135,13 @@ enum SelectionState {
 ///
 /// Physical row ids and channel mappings are resolved on the reopened
 /// MeasurementSet under its MAIN lock whenever a caller mutates the dataset.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CalibrationAttachment {
     path: PathBuf,
     mode: AttachmentMode,
     options: AttachmentOptions,
     selection: MsSelection,
+    imager_channels: Option<ImagerChannelSelection>,
     state: SelectionState,
     uv_ranges: Vec<[f64; 2]>,
 }
@@ -154,12 +158,23 @@ impl CalibrationAttachment {
         options: AttachmentOptions,
         selection: MsSelection,
     ) -> Result<Self, AttachmentError> {
+        Self::attach_with_channels(path, mode, options, selection, None)
+    }
+
+    fn attach_with_channels(
+        path: &Path,
+        mode: AttachmentMode,
+        options: AttachmentOptions,
+        selection: MsSelection,
+        imager_channels: Option<ImagerChannelSelection>,
+    ) -> Result<Self, AttachmentError> {
         let path = table_cache_name(path)?;
         let attachment = Self {
             path,
             mode,
             options,
             selection,
+            imager_channels,
             state: match mode {
                 AttachmentMode::Open => SelectionState::Initial,
                 AttachmentMode::Selection => SelectionState::Selected,
@@ -176,6 +191,13 @@ impl CalibrationAttachment {
         } else {
             let ms = MeasurementSet::open(&attachment.path)?;
             if mode == AttachmentMode::Selection {
+                if options.use_scratch && !has_column(&ms, VisibilityDataColumn::ModelData) {
+                    return Err(casa_ms::MsError::InvalidInput(format!(
+                        "Invalid Table operation: Table::addColumn; table {} is not writable",
+                        attachment.path.display(),
+                    ))
+                    .into());
+                }
                 attachment.require_selected_rows(&ms)?;
             }
         }
@@ -223,7 +245,15 @@ impl CalibrationAttachment {
     ///
     /// Returns an error if the table or selection cannot be read.
     pub fn replace_selection(&mut self, selection: MsSelection) -> Result<bool, AttachmentError> {
-        match self.select(selection) {
+        self.replace_selection_with_channels(selection, None)
+    }
+
+    fn replace_selection_with_channels(
+        &mut self,
+        selection: MsSelection,
+        channels: Option<ImagerChannelSelection>,
+    ) -> Result<bool, AttachmentError> {
+        match self.select_with_channels(selection, channels) {
             Ok(()) => Ok(true),
             Err(
                 AttachmentError::EmptySelection
@@ -236,16 +266,26 @@ impl CalibrationAttachment {
     }
 
     pub(crate) fn select(&mut self, selection: MsSelection) -> Result<(), AttachmentError> {
+        self.select_with_channels(selection, None)
+    }
+
+    fn select_with_channels(
+        &mut self,
+        selection: MsSelection,
+        channels: Option<ImagerChannelSelection>,
+    ) -> Result<(), AttachmentError> {
         let ms = MeasurementSet::open(&self.path)?;
         self.state = SelectionState::Rejected;
         self.uv_ranges.clear();
-        if resolve_casa_calibration_selection(&ms, &selection)?
+        let resolved = imager_selection(&ms, &selection, channels.as_ref())?;
+        if resolve_casa_calibration_selection(&ms, &resolved)?
             .selected_rows
             .is_empty()
         {
             return Err(AttachmentError::EmptySelection);
         }
         self.selection = selection;
+        self.imager_channels = channels;
         self.state = SelectionState::Selected;
         Ok(())
     }
@@ -256,6 +296,7 @@ impl CalibrationAttachment {
 
     pub(crate) fn reset_selection(&mut self) {
         self.selection = MsSelection::default();
+        self.imager_channels = None;
         self.state = SelectionState::Initial;
         self.uv_ranges.clear();
     }
@@ -329,11 +370,12 @@ impl CalibrationAttachment {
         if self.state == SelectionState::Rejected {
             return Err(AttachmentError::RejectedSelection);
         }
+        let selected = imager_selection(ms, &self.selection, self.imager_channels.as_ref())?;
         if uv_ranges.is_empty() {
-            return Ok(resolve_casa_calibration_selection(ms, &self.selection)?);
+            return Ok(resolve_casa_calibration_selection(ms, &selected)?);
         }
-        let mut selection = if self.selection.selectdata {
-            self.selection.clone()
+        let mut selection = if selected.selectdata {
+            selected.into_owned()
         } else {
             MsSelection::default()
         };
@@ -356,6 +398,73 @@ impl CalibrationAttachment {
         selection.msselect = Some(predicates.join(" AND "));
         Ok(resolve_casa_calibration_selection(ms, &selection)?)
     }
+}
+
+/// Channel counts, offsets and strides for the legacy imager selector.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImagerChannelSelection {
+    /// Number of channels for each selected spectral window, or one for all windows.
+    pub count: Vec<i64>,
+    /// First channel for each selected window, or one for all windows.
+    pub start: Vec<i64>,
+    /// Stride for each selected window, or one for all windows.
+    pub step: Vec<i64>,
+}
+
+fn imager_selection<'a>(
+    ms: &MeasurementSet,
+    selection: &'a MsSelection,
+    channels: Option<&ImagerChannelSelection>,
+) -> Result<std::borrow::Cow<'a, MsSelection>, AttachmentError> {
+    let Some(channels) =
+        channels.filter(|channels| !matches!(channels.count.as_slice(), [n] if *n < 0))
+    else {
+        return Ok(std::borrow::Cow::Borrowed(selection));
+    };
+    let windows = ms.resolve_spw_selector(selection.spw.as_deref().unwrap_or("*"))?;
+    let mut ids = windows.spw_ids().to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    // The legacy selector keeps its SPW and row selection when the iterator
+    // cannot apply a malformed explicit channel vector.
+    if [&channels.count, &channels.start, &channels.step]
+        .iter()
+        .any(|values| values.len() != 1 && values.len() != ids.len())
+    {
+        return Ok(std::borrow::Cow::Borrowed(selection));
+    }
+    let argument = |values: &[i64], index| {
+        if values.len() == 1 {
+            values[0]
+        } else {
+            values[index]
+        }
+    };
+    let spectral = ms.spectral_window()?;
+    let mut ranges = Vec::with_capacity(ids.len());
+    for (index, &id) in ids.iter().enumerate() {
+        let count = argument(&channels.count, index);
+        let start = argument(&channels.start, index);
+        let step = argument(&channels.step, index).max(1);
+        let total = i64::from(spectral.num_chan(id)?);
+        if !(0..total).contains(&start) {
+            return Ok(std::borrow::Cow::Borrowed(selection));
+        }
+        let available = (total - start) / step;
+        let count = if count <= 0 {
+            available
+        } else {
+            count.min(available)
+        };
+        if count == 0 {
+            return Ok(std::borrow::Cow::Borrowed(selection));
+        }
+        let end = start + (count - 1) * step;
+        ranges.push(format!("{id}:{start}~{end}^{step}"));
+    }
+    let mut selected = selection.clone();
+    selected.spw = Some(ranges.join(","));
+    Ok(std::borrow::Cow::Owned(selected))
 }
 
 /// MeasurementSet associations for one imager object.
@@ -397,14 +506,33 @@ impl ImagerAttachments {
         options: AttachmentOptions,
         selection: MsSelection,
     ) -> Result<bool, AttachmentError> {
+        self.select_channels(path, options, selection, None)
+    }
+
+    /// Select rows and explicit imager channel vectors, retaining the request for each input.
+    ///
+    /// # Errors
+    /// The input, channel vectors or selector cannot be applied.
+    pub fn select_channels(
+        &mut self,
+        path: Option<&Path>,
+        options: AttachmentOptions,
+        selection: MsSelection,
+        channels: Option<ImagerChannelSelection>,
+    ) -> Result<bool, AttachmentError> {
         if let Some(input) = self.inputs.first_mut()
             && input.mode == AttachmentMode::Open
         {
-            return input.replace_selection(selection);
+            return input.replace_selection_with_channels(selection, channels);
         }
         let path = path.ok_or(AttachmentError::Unattached)?;
-        let input =
-            CalibrationAttachment::attach(path, AttachmentMode::Selection, options, selection)?;
+        let input = CalibrationAttachment::attach_with_channels(
+            path,
+            AttachmentMode::Selection,
+            options,
+            selection,
+            channels,
+        )?;
         if self.current_only
             && let Some(previous) = self.inputs.last_mut()
         {
