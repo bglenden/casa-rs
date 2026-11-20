@@ -7817,6 +7817,24 @@ casa-rs resolves the operand paths when creating the result and returns 6
 with the original FITS metadata. The FITS handle is opened on the first pixel
 read and retained for subsequent reads. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
 
+## `image.addnoise` can erase pixels or fail to return on unusable input
+
+Fill an image with nonzero pixels and call
+`ia.addnoise("normal", [0, -1], zero=True, seeds=[1, 2])`. CASA 6.7.6.14
+zeros the region before reporting an illegal variance. An unknown
+distribution such as `"bogus"` has the same destructive order. casa-rs
+validates the distribution before writing the existing image.
+Passing `seeds=None` explicitly can also change the image before the Python
+wrapper raises `SystemError`. casa-rs rejects that argument before changing
+pixels.
+
+CASA also fails to return for a one-pixel image with
+`ia.addnoise("geometric", [0], seeds=[1, 2])` or
+`ia.addnoise("poisson", [800], seeds=[1, 2])`. The geometric rejection loop
+cannot draw a uniform zero with those seeds. The Poisson bound underflows to
+zero, leaving its product loop true after the product reaches zero. casa-rs
+returns a Python error for these inputs.
+
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
 With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and
@@ -7984,6 +8002,7 @@ pixels, the same call can terminate the process.
 
 casa-rs averages valid pixels over the requested axes and retains all
 other axes, for every supported image pixel type (#1627).
+
 ## Image statistics can report an extremum outside the sampled pixels
 
 In CASA 6.7.6.14, `ia.statistics(region=...)` on a box starting at
@@ -8002,3 +8021,10 @@ process. casa-rs raises an error for the duplicate axis.
 
 The pinned biweight algorithm can also terminate when every selected
 pixel is masked. casa-rs returns a recoverable error for the empty sample.
+
+## Setting the pixels of a complex image can terminate CASA
+
+On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
+type="c")` followed by `image.set(pixels=2)` terminates Python with SIGSEGV.
+casa-rs raises `RuntimeError` and preserves the complex image. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
