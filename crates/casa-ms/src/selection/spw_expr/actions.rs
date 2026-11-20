@@ -65,18 +65,23 @@ pub(super) fn resolve(
     expression: &Expression,
     windows: &[SpectralWindowRow<'_>],
     descriptions: &[DataDescriptionRow],
+    flagdata: bool,
 ) -> Result<Resolved, String> {
     let mut reports = Reports::default();
     let resolved = resolve_specs(expression, windows, descriptions, &mut reports);
-    if let Some(refusal) = reports.refusal() {
+    let report = reports.refusal();
+    if !flagdata && let Some(refusal) = report {
         return Err(refusal);
     }
-    let resolved = resolved?;
+    let mut resolved = resolved?;
     if !expression.parenthesized && resolved.spw_ids.is_empty() {
         return Err("No Spw ID(s) matched specifications".to_string());
     }
     if resolved.spw_ids.is_empty() || resolved.channels.is_empty() {
         return Err("No valid SPW & Chan combination found".to_string());
+    }
+    if let Some(warning) = report {
+        resolved.warnings.push(warning);
     }
     Ok(resolved)
 }
