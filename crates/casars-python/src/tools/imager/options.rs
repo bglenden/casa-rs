@@ -39,13 +39,14 @@ impl TransformArguments<'_> {
         previous.gridder = match machine.as_str() {
             "wproject" => ImagerGridder::w_project(self.planes),
             "mosaic" => ImagerGridder::Mosaic,
-            "pbwproject" | "pbmosaic" | "awproject" | "mawproject" | "sd" | "both" | "nift" => {
+            "pbwproject" | "pbmosaic" | "awproject" | "mawproject" | "sd" | "both" => {
                 return not_yet_implemented_in(
                     "imager",
                     "setoptions for this Fourier machine",
                     1520,
                 );
             }
+            // CASA's rGridFT (nift) and GridFT give the same predictions.
             _ => match convolution.as_str() {
                 "box" => ImagerGridder::Boxcar,
                 "sf" => ImagerGridder::Spheroidal,
