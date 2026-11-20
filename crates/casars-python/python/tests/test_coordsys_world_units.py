@@ -34,6 +34,7 @@ def test_overwrite_relabels_only_the_selected_linear_coordinate(casa):
         assert list(cs.units()) == ["Hz", "Jy", "K"]
         assert cs.setunits(["myunit", "whatever"], "linear", True)
         assert list(cs.units()) == ["Hz", "myunit", "whatever"]
+        assert cs.setunits(cs.units())
         np.testing.assert_array_equal(cs.increment()["numeric"], before)
         with pytest.raises(RuntimeError, match="length nWorldAxes"):
             cs.setunits(["m"], overwrite=True)

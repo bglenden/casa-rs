@@ -6,7 +6,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use super::construction::{stokes_values, string_arguments};
-use super::inspect::{coordinate_type, numbered_coordinates};
+use super::inspect::{coordinate_type, numbered_coordinates, units as displayed_units};
 use super::{CoordinateState, PyCoordsys};
 
 fn names(mut names: Vec<String>) -> Vec<String> {
@@ -170,10 +170,16 @@ impl PyCoordsys {
                     coordinate.pixel_axes
                 }
             };
+            let existing = (0..state.coordinates.n_coordinates())
+                .flat_map(|index| displayed_units(state.coordinates.coordinate(index)))
+                .collect::<Vec<_>>();
             for (axis, unit) in axes.into_iter().zip(units) {
                 let axis = axis.ok_or_else(|| {
                     PyRuntimeError::new_err("Cannot set the unit of a removed coordinate axis")
                 })?;
+                if existing.get(axis) == Some(&unit) {
+                    continue;
+                }
                 CoordinateSystem::set_axis_unit_in_record(&mut record, axis, &unit)
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             }
