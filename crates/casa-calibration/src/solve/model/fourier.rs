@@ -119,7 +119,8 @@ struct PreparedFourierModel {
     grids: Arc<PreparedModelGrids>,
     phase_centre: MDirection,
     tracking: Option<tracking::Tracking>,
-    fixed_field: Option<MDirection>,
+    phase_centre_time: Option<f64>,
+    timed_fields: BTreeMap<i32, MDirection>,
     project: bool,
     refocus: Option<focus::Refocus>,
     mosaic: Option<MosaicLayout>,
@@ -169,13 +170,14 @@ impl PreparedFourierModel {
             .to_world(&[(nx / 2) as f64, (ny / 2) as f64])
             .map_err(model_error)?;
         let phase_centre = MDirection::from_angles(centre[0], centre[1], direction.direction_ref());
+        let (image_shape, padding) = grid_input_geometry(terms[0], [nx, ny])?;
         let geometry = GridGeometry::new(
             ImageExtent {
-                shape: [nx, ny],
+                shape: image_shape,
                 increment_rad: [increments[0], increments[1]],
-                reference_pixel: [nx / 2, ny / 2],
+                reference_pixel: image_shape.map(|length| length / 2),
             },
-            grid_padding(terms[0])?,
+            padding,
         )
         .map_err(model_error)?;
         let polarization = grid_polarization(image, row.correlations)?;
@@ -227,7 +229,9 @@ impl PreparedFourierModel {
             grids,
             phase_centre,
             tracking,
-            fixed_field: tracking::fixed_field(terms[0], row)?,
+            phase_centre_time: record_number(terms[0], "phasecentertime")
+                .filter(|epoch| epoch.is_finite() && *epoch > 0.),
+            timed_fields: BTreeMap::new(),
             project,
             refocus: focus::Refocus::from_distance(
                 record_number(terms[0], "distance").unwrap_or(0.0),
@@ -270,7 +274,22 @@ impl PreparedFourierModel {
             .as_ref()
             .map(|tracking| tracking.centre(shift));
         let phase_centre = tracked_centre.as_ref().unwrap_or(&self.phase_centre);
-        let field = self.fixed_field.as_ref().unwrap_or(row.field);
+        // VisBuffer::phaseCenter(time) uses the current buffer's field
+        // and evaluates that direction at the supplied epoch.
+        let field: &MDirection = if let Some(epoch) = self.phase_centre_time {
+            match self.timed_fields.entry(row.row.field_id) {
+                std::collections::btree_map::Entry::Occupied(field) => field.into_mut(),
+                std::collections::btree_map::Entry::Vacant(field) => {
+                    let field_id = usize::try_from(*field.key()).map_err(model_error)?;
+                    field.insert(
+                        super::field_direction(row.ms, row.engine, field_id, epoch)
+                            .map_err(model_error)?,
+                    )
+                }
+            }
+        } else {
+            row.field
+        };
         let (projection, pointing_offset_rad, antenna_types) = match &self.mosaic {
             Some(layout) => (
                 GridFtProjection::tracked_mosaic_with_frame(
@@ -645,6 +664,24 @@ fn record_text<'a>(record: &'a RecordValue, field: &str) -> Result<&'a str, Gain
     }
 }
 
+fn grid_input_geometry(
+    record: &RecordValue,
+    stored: [usize; 2],
+) -> Result<([usize; 2], GridPadding), GainSolveError> {
+    let Some(Value::Array(ArrayValue::Float64(geometry))) =
+        record.get("casars_prediction_geometry")
+    else {
+        return Ok((stored, grid_padding(record)?));
+    };
+    let Some([nx, ny, padding]) = geometry.as_slice() else {
+        return Err(model_error("invalid imager prediction geometry"));
+    };
+    Ok((
+        [*nx as usize, *ny as usize],
+        GridPadding::CasaComposite(PaddingFactor::new(*padding as f32).map_err(model_error)?),
+    ))
+}
+
 fn grid_padding(record: &RecordValue) -> Result<GridPadding, GainSolveError> {
     if record_text(record, "name")? != "WProjectFT" {
         return Ok(GridPadding::None);
@@ -670,7 +707,14 @@ fn grid_kernel(
         let max_w = record_number(record, "maxw")
             .filter(|max_w| max_w.is_finite())
             .ok_or_else(|| model_error("virtual WProjectFT has no valid maximum W"))?;
-        let count = if max_w > 0.0 {
+        let saved_scale = record_number(record, "savedwscale")
+            .filter(|scale| scale.is_finite() && *scale > 0.0 && planes > 1);
+        let count = if let Some(scale) = saved_scale {
+            WPlaneCount::Restored {
+                planes,
+                max_w: (f64::from(planes - 1).powi(2) / scale) / 1.05,
+            }
+        } else if max_w > 0.0 {
             WPlaneCount::Restored { planes, max_w }
         } else {
             WPlaneCount::Fixed(planes)

@@ -32,6 +32,12 @@ struct Target {
 }
 
 impl VirtualFtPublication {
+    pub(crate) fn may_reference_models(&self) -> bool {
+        self.targets
+            .iter()
+            .any(|target| target.publication.may_reference_images())
+    }
+
     pub(crate) fn new<'a>(
         tables: impl Iterator<Item = &'a MeasurementSet>,
         components: Vec<VirtualModelEntry>,
@@ -128,7 +134,7 @@ impl VirtualFtPublication {
                     .images
                     .iter()
                     .enumerate()
-                    .map(|(index, model)| (&model.entry, index > 0 || self.incremental)),
+                    .map(|(index, model)| (&model.entry, self.incremental || index > 0)),
             );
             let result = target.publication.publish_holding(
                 table,

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Recover FTMachine's moving-source rotation from a stored Fourier model.
 
-use casa_ms::{
-    EphemerisBudget, PhaseCentreEphemeris, PlanetaryEphemeris, columns::time_columns::TimeColumn,
-};
+use casa_ms::{EphemerisBudget, PhaseCentreEphemeris, PlanetaryEphemeris};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::position::MPosition;
 use casa_types::measures::record::{direction_from_record, position_from_record};
@@ -125,42 +123,6 @@ impl Tracking {
 /// CASA indexes the correlator directions by integration time. A saved
 /// positive epoch uses the first integration at or after it, clamped to
 /// the last integration when it lies beyond the MeasurementSet.
-pub(super) fn fixed_field(
-    record: &RecordValue,
-    row: &FourierRow<'_>,
-) -> Result<Option<MDirection>, GainSolveError> {
-    let Some(epoch) = record_number(record, "phasecentertime").filter(|time| *time > 0.0) else {
-        return Ok(None);
-    };
-    let table = row.ms.main_table();
-    let times = TimeColumn::new(table);
-    let mut next = None::<(f64, usize)>;
-    let mut last = None::<(f64, usize)>;
-    for index in 0..table.row_count() {
-        let time = times.get_mjd_seconds(index).map_err(model_error)?;
-        if time >= epoch && next.is_none_or(|(current, _)| time < current) {
-            next = Some((time, index));
-        }
-        if last.is_none_or(|(current, _)| time > current) {
-            last = Some((time, index));
-        }
-    }
-    let (time, index) = next
-        .or(last)
-        .ok_or_else(|| model_error("empty tracking time cache"))?;
-    let ScalarValue::Int32(field) = table
-        .cell_accessor(index, "FIELD_ID")
-        .and_then(|cell| cell.scalar())
-        .map_err(model_error)?
-    else {
-        return Err(model_error("invalid tracking FIELD_ID"));
-    };
-    let field = usize::try_from(*field).map_err(model_error)?;
-    Ok(Some(
-        super::super::field_direction(row.ms, row.engine, field, time).map_err(model_error)?,
-    ))
-}
-
 fn measure<'a>(record: &'a RecordValue, name: &str) -> Result<&'a RecordValue, GainSolveError> {
     match record.get(name) {
         Some(Value::Record(measure)) => Ok(measure),

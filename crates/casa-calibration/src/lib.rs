@@ -71,6 +71,10 @@ mod weather;
 mod weight_spectra;
 mod writer;
 
+pub use ft::settings::{ImagerGridder, ImagerTransformOptions};
+pub use ft::{
+    ImagerImageDefinition, ImagerPrediction, ImagerPredictionModel, ImagerVoltagePattern,
+};
 pub use statwt::{
     StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
     StatWtSummary, StatWtTimeBin, estimate_statwt, statwt_weight_range,

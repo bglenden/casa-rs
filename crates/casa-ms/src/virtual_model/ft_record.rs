@@ -222,8 +222,9 @@ pub fn legacy_multi_term(
     let mut record = grid.clone();
     record.remove("diskimage");
     record.upsert("name", text("MultiTermFT"));
+    let name = grid.get("name").cloned().unwrap_or_else(|| text("GridFT"));
     record.upsert("subftm", Value::Record(grid));
-    record.upsert("subftname", text("GridFT"));
+    record.upsert("subftname", name);
     record.upsert("nterms", int(terms));
     record.upsert("thisterm", int(term));
     record.upsert("reffreq", double(reference_hz));

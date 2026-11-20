@@ -228,6 +228,15 @@ impl DefaultRadial {
     }
 }
 
+impl BeamPattern {
+    /// CASA's dish-diameter fallback for an unrecognized telescope.
+    /// It rescales the default sampled power profile to the dish diameter.
+    #[must_use]
+    pub fn for_dish_diameter(diameter_m: f64) -> Option<Self> {
+        Self::numeric(1.1998662 * 25. / diameter_m * 43., &NUMERIC_POWER, false)
+    }
+}
+
 /// Evaluate the same quantized Float samples without retaining a table per fit.
 pub(super) struct InverseFit {
     low: [f64; 5],
