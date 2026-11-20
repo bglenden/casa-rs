@@ -42,6 +42,7 @@ mod task_contract;
 mod world_header;
 
 mod immoments;
+mod impbcor;
 mod lel_mask;
 
 use self::axes::{direction_plane_axes, other_axes};
@@ -239,34 +240,14 @@ pub fn immath(request: &ImmathRequest) -> Result<ImageMathSummary, ImageError> {
     immath::run(request)
 }
 
-/// Apply CASA `impbcor`-style primary-beam correction.
+/// Apply primary-beam correction to a CASA or FITS image selected by region,
+/// channel, Stokes and LEL mask. The beam may be an image or a pixel array.
+///
+/// # Errors
+/// Returns an error for incompatible beam geometry, invalid selections,
+/// unsupported pixel types, or failed output publication.
 pub fn impbcor(request: &ImpbcorRequest) -> Result<PbcorSummary, ImageError> {
-    if request.box_selection.is_some()
-        || request.region.is_some()
-        || request.chans.is_some()
-        || request.stokes.is_some()
-        || request.mask.is_some()
-        || request.stretch
-    {
-        return Err(ImageError::InvalidMetadata(
-            "impbcor selection parameters (box, region, chans, stokes, mask, stretch) are not yet supported; run image-wide PB correction or use a pre-selected image"
-                .to_string(),
-        ));
-    }
-    let image = AnyPagedImage::open(&request.imagename)?;
-    let pb = AnyPagedImage::open(&request.pbimage)?;
-    match (&image, &pb) {
-        (AnyPagedImage::Float32(image), AnyPagedImage::Float32(pb)) => {
-            impbcor_typed(image, pb, request)
-        }
-        (AnyPagedImage::Float64(image), AnyPagedImage::Float64(pb)) => {
-            impbcor_typed(image, pb, request)
-        }
-        _ => Err(ImageError::InvalidMetadata(
-            "impbcor tutorial support currently requires matching real-valued pixel types"
-                .to_string(),
-        )),
-    }
+    impbcor::run(request)
 }
 
 /// Regrid an image onto a template image's shape and coordinates.
@@ -3581,7 +3562,7 @@ fn collapsed_image_info<T: ImagePixel>(image: &PagedImage<T>) -> Result<ImageInf
     Ok(info)
 }
 
-fn combined_moment_mask<T: ImagePixel>(
+fn combined_selection_mask<T: ImagePixel>(
     image: &PagedImage<T>,
     selection: &imsubimage::region::SubimageSelection,
     mask_expr: Option<&str>,
@@ -3616,106 +3597,6 @@ pub(super) fn patch_saved_coords_keyword(
     table.keywords_mut().upsert("coords", Value::Record(coords));
     table.save_metadata_only(TableOptions::new(path))?;
     Ok(())
-}
-
-fn impbcor_typed<T>(
-    image: &PagedImage<T>,
-    pb: &PagedImage<T>,
-    request: &ImpbcorRequest,
-) -> Result<PbcorSummary, ImageError>
-where
-    T: ImagePixel + Into<f64> + From<f32> + Copy,
-{
-    if image.shape() != pb.shape() {
-        return Err(ImageError::ShapeMismatch {
-            expected: image.shape().to_vec(),
-            got: pb.shape().to_vec(),
-        });
-    }
-    if request.outfile.exists() {
-        if request.overwrite {
-            fs::remove_dir_all(&request.outfile)
-                .map_err(|error| ImageError::Io(error.to_string()))?;
-        } else {
-            return Err(ImageError::Io(format!(
-                "impbcor output already exists: {}",
-                request.outfile.display()
-            )));
-        }
-    }
-    let divide = match request.mode.as_str() {
-        "divide" => true,
-        "multiply" => false,
-        other => {
-            return Err(ImageError::InvalidMetadata(format!(
-                "unsupported impbcor mode {other:?}; expected divide or multiply"
-            )));
-        }
-    };
-    let shape = image.shape().to_vec();
-    let origin = vec![0; image.ndim()];
-    let left = image.get_slice(&origin, &shape)?;
-    let right = pb.get_slice(&origin, &shape)?;
-    let image_mask = image.get_mask_slice(&origin, &shape, &vec![1; image.ndim()])?;
-    let pb_mask = pb.get_mask_slice(&origin, &shape, &vec![1; pb.ndim()])?;
-    let mut data = ArrayD::from_elem(IxDyn(&shape), T::from(0.0));
-    let mut valid = ndarray::ArrayD::from_elem(IxDyn(&shape), true);
-    Zip::from(&mut data)
-        .and(&mut valid)
-        .and(&left)
-        .and(&right)
-        .for_each(|out, valid, image, pb| {
-            let image = (*image).into();
-            let pb = (*pb).into();
-            let value = if divide {
-                if pb == 0.0 { f64::NAN } else { image / pb }
-            } else {
-                image * pb
-            };
-            *valid = (request.cutoff < 0.0 || pb >= request.cutoff) && value.is_finite();
-            *out = T::from(value as f32);
-        });
-    if let Some(mask) = image_mask {
-        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
-            *valid = *valid && *mask;
-        });
-    }
-    if let Some(mask) = pb_mask {
-        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
-            *valid = *valid && *mask;
-        });
-    }
-    let mut output = TempImage::<T>::new(
-        shape.clone(),
-        image.coordinates().clone(),
-        casa_lattices::TempStoragePolicy::Auto {
-            memory_budget_bytes: 64 * 1024 * 1024,
-            scratch: casa_lattices::ScratchSpace::SystemTemp,
-        },
-    )?;
-    let legacy_coordinates = image.table().keywords().get("coords").cloned();
-    output.set_units(image.units())?;
-    output.set_image_info(&image.image_info()?)?;
-    output.set_misc_info(image.misc_info())?;
-    output.put_slice(&data, &vec![0; output.ndim()])?;
-    if valid.iter().any(|pixel| !*pixel) {
-        output.put_mask("mask0", &valid)?;
-        output.set_default_mask("mask0")?;
-    }
-    output.save_as(&request.outfile)?;
-    if let Some(Value::Record(coords)) = legacy_coordinates {
-        patch_saved_coords_keyword(&request.outfile, coords)?;
-    }
-    Ok(PbcorSummary {
-        imagename: request.imagename.display().to_string(),
-        pbimage: request.pbimage.display().to_string(),
-        outfile: request.outfile.display().to_string(),
-        mode: request.mode.clone(),
-        cutoff: request.cutoff,
-        shape,
-        units: image.units().to_string(),
-        valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
-    })
 }
 
 fn imregrid_typed<T>(
@@ -4668,7 +4549,7 @@ mod tests {
         let pbcor_result =
             run_image_analysis_task(ImageAnalysisTaskRequest::Impbcor(ImpbcorRequest {
                 imagename: source_path.clone(),
-                pbimage: mask_path.clone(),
+                pbimage: mask_path.clone().into(),
                 outfile: pbcor_path.clone(),
                 mode: "divide".to_string(),
                 cutoff: 0.3,

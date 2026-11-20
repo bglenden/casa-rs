@@ -9,6 +9,9 @@ from collections.abc import Mapping
 from os import PathLike
 from typing import Any, Literal, TypeAlias
 
+from numpy import floating
+from numpy.typing import NDArray
+
 from ..parameters import ParameterData
 from ._runner import TaskCompletion, _call_casa, _run
 
@@ -897,15 +900,15 @@ def flagmanager(
 
 def impbcor(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    pbimage: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
+    pbimage: StrPath | NDArray[floating] | list[ParameterData] | tuple[ParameterData, ...] = ...,
     outfile: StrPath = ...,
     overwrite: bool = ...,
     box: str = ...,
-    region: str = ...,
+    region: StrPath | Mapping[str, ParameterData] = ...,
     chans: str = ...,
     stokes: str = ...,
     mask: str = ...,
-    mode: Literal['divide', 'multiply'] = ...,
+    mode: str = ...,
     cutoff: float = ...,
     stretch: bool = ...,
 ) -> Any:

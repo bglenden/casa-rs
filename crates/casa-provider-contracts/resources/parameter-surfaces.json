@@ -25206,10 +25206,10 @@
     {
       "kind": "task",
       "id": "impbcor",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Primary Beam Correction",
       "category": "Images",
-      "summary": "Apply primary-beam correction to a CASA image",
+      "summary": "Apply primary-beam correction to a CASA or FITS image",
       "provider_family": "image_analysis",
       "casa_task": "impbcor",
       "execution": {
@@ -25288,7 +25288,7 @@
           "name": "pbimage",
           "concept": {
             "id": "parameter.pbimage",
-            "semantic_revision": 2
+            "semantic_revision": 3
           },
           "order": 1,
           "default": {
@@ -25322,7 +25322,7 @@
             },
             "python": {
               "name": "pbimage",
-              "type_hint": null
+              "type_hint": "StrPath | NDArray[floating] | list[ParameterData] | tuple[ParameterData, ...]"
             },
             "presentation": {
               "label": "PB Image",
@@ -25386,7 +25386,7 @@
           "name": "cutoff",
           "concept": {
             "id": "parameter.cutoff",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 10,
           "default": {
@@ -25420,7 +25420,7 @@
             },
             "python": {
               "name": "cutoff",
-              "type_hint": null
+              "type_hint": "float"
             },
             "presentation": {
               "label": "Cutoff",
@@ -25478,13 +25478,12 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null,
-          "unimplemented": {"issue": 977}
+          "reviewed_homonym": null
         },
         {
           "name": "region",
           "concept": {
-            "id": "image.selection.region",
+            "id": "impbcor.region",
             "semantic_revision": 1
           },
           "order": 5,
@@ -25519,7 +25518,7 @@
             },
             "python": {
               "name": "region",
-              "type_hint": null
+              "type_hint": "StrPath | Mapping[str, ParameterData]"
             },
             "presentation": {
               "label": "Region",
@@ -25528,8 +25527,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null,
-          "unimplemented": {"issue": 977}
+          "reviewed_homonym": {"review_id": "#977", "reason": "The same image selection also accepts a casacore region record through this task."}
         },
         {
           "name": "chans",
@@ -25578,8 +25576,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null,
-          "unimplemented": {"issue": 977}
+          "reviewed_homonym": null
         },
         {
           "name": "stokes",
@@ -25628,8 +25625,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null,
-          "unimplemented": {"issue": 977}
+          "reviewed_homonym": null
         },
         {
           "name": "mask",
@@ -25678,14 +25674,13 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null,
-          "unimplemented": {"issue": 977}
+          "reviewed_homonym": null
         },
         {
           "name": "mode",
           "concept": {
             "id": "impbcor.mode",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 9,
           "default": {
@@ -25829,11 +25824,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null,
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
-          }
+          "reviewed_homonym": null
         }
       ]
     },

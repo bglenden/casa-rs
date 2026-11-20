@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Types shared by image-analysis execution and build-time schema generation.
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use casa_provider_contracts::ParameterValue;
 use schemars::JsonSchema;
@@ -509,39 +509,66 @@ impl Default for ImmathRequest {
 /// CASA `impbcor` request for primary-beam image correction.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImpbcorRequest {
-    /// Input CASA image path.
+    /// Input CASA or FITS image path.
     pub imagename: PathBuf,
-    /// Primary-beam CASA image path.
-    pub pbimage: PathBuf,
+    /// Primary-beam image or floating-point pixels.
+    pub pbimage: PbcorBeam,
     /// Output CASA image path.
     pub outfile: PathBuf,
     /// Correction mode. Supported values are `divide` and `multiply`.
     #[serde(default = "default_impbcor_mode")]
     pub mode: String,
-    /// Minimum PB value to keep. Negative disables cutoff masking.
+    /// Inclusive lower bound for division or upper bound for multiplication.
+    /// Negative or NaN disables cutoff masking.
     #[serde(default = "default_impbcor_cutoff")]
     pub cutoff: f64,
-    /// Optional pixel box selection. Not implemented for `impbcor` yet.
+    /// Optional inclusive direction-plane pixel box.
     #[serde(default, rename = "box")]
     pub box_selection: Option<String>,
-    /// Optional region selection. Not implemented for `impbcor` yet.
+    /// Optional CASA region.
     #[serde(default)]
-    pub region: Option<PathBuf>,
-    /// Optional channel selector. Not implemented for `impbcor` yet.
+    pub region: Option<PbcorRegion>,
+    /// Optional channel selector.
     #[serde(default)]
     pub chans: Option<String>,
-    /// Optional Stokes selector. Not implemented for `impbcor` yet.
+    /// Optional Stokes selector.
     #[serde(default)]
     pub stokes: Option<String>,
-    /// Optional mask expression. Not implemented for `impbcor` yet.
+    /// Optional LEL mask expression.
     #[serde(default)]
     pub mask: Option<String>,
-    /// Stretch masks to match the selected image shape. Not implemented for `impbcor` yet.
+    /// Extend a conforming mask over singleton or missing axes.
     #[serde(default)]
     pub stretch: bool,
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
+}
+
+/// Input primary beam for CASA `impbcor`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PbcorBeam {
+    /// Path to a real-valued image with matching direction coordinates.
+    Image(PathBuf),
+    /// Floating-point array with the image shape or its two direction axes.
+    Pixels(Vec<ParameterValue>),
+}
+
+impl From<PathBuf> for PbcorBeam {
+    fn from(path: PathBuf) -> Self {
+        Self::Image(path)
+    }
+}
+
+/// Region representations accepted by CASA `impbcor`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PbcorRegion {
+    /// CRTF text, filename, or saved image region name.
+    Text(String),
+    /// Casacore region record, as returned by the region manager.
+    Record(BTreeMap<String, ParameterValue>),
 }
 
 /// CASA `imregrid` request for template-image regridding.
@@ -687,13 +714,13 @@ pub struct ImageMathSummary {
 pub struct PbcorSummary {
     /// Input CASA image path.
     pub imagename: String,
-    /// Primary-beam CASA image path.
+    /// Primary-beam image path or a description of a supplied pixel array.
     pub pbimage: String,
     /// Output CASA image path.
     pub outfile: String,
     /// Correction mode.
     pub mode: String,
-    /// Minimum PB value kept.
+    /// Cutoff used by the selected mode.
     pub cutoff: f64,
     /// Output image shape.
     pub shape: Vec<usize>,
