@@ -3785,6 +3785,21 @@ range on FLOAT_DATA uses the signed values, as CASA does. The
 `tools/casa-compat/flagdata_clip_range_oracle.py` comparison verifies both
 choices with independent expected flags.
 
+## Clip visibility operators can flag unrequested samples
+
+In CASA 6.7.6.14, `flagdata(mode="clip", correlation="IMAG_XX")`
+can also flag YY. The visibility mapper scans the operator for product
+names and treats the I in IMAG as a request for Stokes I. The paired
+fixture puts the XX imaginary value outside the range and its derived
+Stokes I value inside it. CASA flags both contributing planes at that
+channel. casa-rs evaluates the explicit XX product.
+
+With `correlation="REAL_XX", clipzeros=True`, CASA compares the signed
+real value to the zero tolerance. A finite value of −3 is flagged.
+casa-rs compares the magnitude to the zero tolerance and uses the
+signed value for any explicit range. The clip operator oracle checks
+both cases against independent expected flags. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## An overflowing observation selector flags a different observation
 
 In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.

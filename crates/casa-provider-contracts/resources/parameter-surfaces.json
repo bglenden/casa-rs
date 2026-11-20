@@ -22120,7 +22120,7 @@
             "python": {"name": "correlation", "type_hint": "str"},
             "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
           },
-          "surface_note": "Selects stored correlation planes for manual, unflag, quack, summary and clip. Summary reads all stored planes when given a complex visibility operator. Clip accepts bare receptor labels. Visibility operators in clip and other modes remain on #978.",
+          "surface_note": "Selects stored correlation planes for manual, unflag, quack, summary and clip. Clip supports ABS, REAL, IMAG, ARG and NORM on receptor labels. Summary counts stored flags for an operator expression. Derived Stokes, WVR and other mode combinations remain on #978.",
           "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata selects stored correlation planes inside its agents using literal expressions."}
         },
         {

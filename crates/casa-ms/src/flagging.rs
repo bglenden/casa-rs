@@ -49,7 +49,7 @@ mod correlation;
 mod extend;
 mod summary;
 
-use correlation::CorrelationSelection;
+use correlation::{ClipMetric, CorrelationSelection};
 mod version_backup;
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{save_next_flag_backup, save_next_partition_flag_backup};
@@ -392,7 +392,9 @@ fn flagdata_with_persistence(
         check_channel_selections(ms, selections)?;
     }
     let correlations = match request.correlation.as_deref() {
-        Some(expression) => CorrelationSelection::read(ms, request.mode, expression)?,
+        Some(expression) => {
+            CorrelationSelection::read(ms, request.mode, request.data_column, expression)?
+        }
         None => None,
     };
 
@@ -787,6 +789,15 @@ fn apply_clip_flags(
         tracing::warn!("clipoutside must be a scalar Boolean to start the clip agent");
         return Ok(ChangeSet::default());
     };
+    if let Some(expression) = correlations.and_then(CorrelationSelection::unknown_clip_expression) {
+        return Err(FlaggingError::MutateFlags {
+            path: display_ms_path(ms),
+            reason: format!(
+                "Unknown polarization requested, ({expression}) supported types are: \
+                 XX,YY,XY,YX,RR,LL,RL,LR,I,Q,U,V"
+            ),
+        });
+    }
     let options = ClipOptions {
         zeros: request.clipzeros,
         // CASA's clipping agent stores its bounds as single-precision values.
@@ -795,6 +806,9 @@ fn apply_clip_flags(
             .map(|bounds| bounds.map(|limit| f64::from(limit as f32))),
         outside,
         planes: None,
+        metric: correlations
+            .and_then(CorrelationSelection::clip_metric)
+            .unwrap_or(ClipMetric::Amplitude),
     };
     // CASA flags non-finite data and, with clipzeros, near-zero samples.
     let path = display_ms_path(ms);
@@ -1841,6 +1855,29 @@ struct ClipOptions<'a> {
     bounds: Option<[f64; 2]>,
     outside: bool,
     planes: Option<&'a [usize]>,
+    metric: ClipMetric,
+}
+
+impl ClipMetric {
+    fn apply32(self, value: Complex32) -> f32 {
+        match self {
+            Self::Amplitude => value.norm(),
+            Self::Real => value.re,
+            Self::Imaginary => value.im,
+            Self::Phase => value.arg(),
+            Self::SquaredMagnitude => value.norm_sqr(),
+        }
+    }
+
+    fn apply64(self, value: Complex64) -> f64 {
+        match self {
+            Self::Amplitude => value.norm(),
+            Self::Real => value.re,
+            Self::Imaginary => value.im,
+            Self::Phase => value.arg(),
+            Self::SquaredMagnitude => value.norm_sqr(),
+        }
+    }
 }
 
 fn apply_clip_array(
@@ -1864,6 +1901,7 @@ fn apply_clip_array(
         bounds,
         outside,
         planes,
+        metric,
     } = options;
     let matches_range = |value: f64, [lower, upper]: [f64; 2]| {
         if outside {
@@ -1872,30 +1910,39 @@ fn apply_clip_array(
             value >= lower && value <= upper
         }
     };
+    let clip_scalar = |value: f64| {
+        is_casa_clip(value.abs(), zeros)
+            || bounds.is_some_and(|bounds| matches_range(value, bounds))
+    };
     match data {
         ArrayValue::Complex32(values) => {
             clip_cells(values, flags, channels, planes, changed, |value| {
-                is_casa_clip_complex32(value, zeros)
-                    || bounds.is_some_and(|bounds| matches_range(f64::from(value.norm()), bounds))
+                if metric == ClipMetric::Amplitude {
+                    is_casa_clip_complex32(value, zeros)
+                        || bounds
+                            .is_some_and(|bounds| matches_range(f64::from(value.norm()), bounds))
+                } else {
+                    clip_scalar(f64::from(metric.apply32(value)))
+                }
             })
         }
         ArrayValue::Complex64(values) => {
             clip_cells(values, flags, channels, planes, changed, |value| {
-                is_casa_clip_complex64(value, zeros)
-                    || bounds.is_some_and(|bounds| matches_range(value.norm(), bounds))
+                if metric == ClipMetric::Amplitude {
+                    is_casa_clip_complex64(value, zeros)
+                        || bounds.is_some_and(|bounds| matches_range(value.norm(), bounds))
+                } else {
+                    clip_scalar(metric.apply64(value))
+                }
             })
         }
         ArrayValue::Float32(values) => {
             clip_cells(values, flags, channels, planes, changed, |value| {
-                is_casa_clip(f64::from(value).abs(), zeros)
-                    || bounds.is_some_and(|bounds| matches_range(f64::from(value), bounds))
+                clip_scalar(f64::from(value))
             })
         }
         ArrayValue::Float64(values) => {
-            clip_cells(values, flags, channels, planes, changed, |value| {
-                is_casa_clip(value.abs(), zeros)
-                    || bounds.is_some_and(|bounds| matches_range(value, bounds))
-            })
+            clip_cells(values, flags, channels, planes, changed, clip_scalar)
         }
         _ => Ok(()),
     }
@@ -3543,6 +3590,7 @@ mod tests {
         bounds: None,
         outside: true,
         planes: None,
+        metric: ClipMetric::Amplitude,
     };
 
     use super::*;

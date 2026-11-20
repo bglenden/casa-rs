@@ -6,20 +6,40 @@ use std::collections::BTreeSet;
 use crate::listobs::stokes_name;
 use crate::{MeasurementSet, MsError};
 
-use super::{FlagDataMode, FlaggingError, display_ms_path};
+use super::{FlagDataColumn, FlagDataMode, FlaggingError, display_ms_path};
 
 // CASA checks the first named receptor product in this order before
 // constructing its clipping visibility mapper for a buffer.
 const RECEPTOR_PRODUCTS: [&str; 8] = ["XX", "YY", "XY", "YX", "RR", "LL", "LR", "RL"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClipMetric {
+    Amplitude,
+    Real,
+    Imaginary,
+    Phase,
+    SquaredMagnitude,
+}
+
+const CLIP_OPERATORS: [(&str, ClipMetric); 5] = [
+    ("REAL", ClipMetric::Real),
+    ("IMAG", ClipMetric::Imaginary),
+    ("ARG", ClipMetric::Phase),
+    ("ABS", ClipMetric::Amplitude),
+    ("NORM", ClipMetric::SquaredMagnitude),
+];
+
 pub(super) struct CorrelationSelection {
     by_description: Vec<Vec<usize>>,
+    clip_metric: Option<ClipMetric>,
+    unknown_clip_expression: Option<String>,
 }
 
 impl CorrelationSelection {
     pub(super) fn read(
         ms: &MeasurementSet,
         mode: FlagDataMode,
+        data_column: FlagDataColumn,
         expression: &str,
     ) -> Result<Option<Self>, FlaggingError> {
         let text = expression
@@ -36,9 +56,16 @@ impl CorrelationSelection {
                 "flagdata correlation {expression:?} is unimplemented in this mode (#978)"
             ),
         };
-        let has_operator = ["ABS", "ARG", "REAL", "IMAG", "NORM"]
-            .iter()
-            .any(|operator| text.contains(operator));
+        let has_operator = CLIP_OPERATORS.iter().any(|(name, _)| text.contains(*name));
+        let clip_operator = if mode == FlagDataMode::Clip {
+            CLIP_OPERATORS.iter().find_map(|(name, metric)| {
+                text.strip_prefix(*name)
+                    .filter(|rest| !CLIP_OPERATORS.iter().any(|(name, _)| rest.contains(*name)))
+                    .map(|rest| (*metric, rest.trim_start_matches(['_', ' '])))
+            })
+        } else {
+            None
+        };
         // The summary agent reads stored flags and does not evaluate
         // visibility expressions. CASA leaves its planes unfiltered here.
         if mode == FlagDataMode::Summary && has_operator {
@@ -48,7 +75,7 @@ impl CorrelationSelection {
             && (!matches!(
                 mode,
                 FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Clip
-            ) || has_operator
+            ) || (has_operator && clip_operator.is_none())
                 || text.contains("WVR"))
         {
             return Err(unsupported());
@@ -74,13 +101,28 @@ impl CorrelationSelection {
             .flatten()
             .copied()
             .filter(|name| {
-                (RECEPTOR_PRODUCTS.contains(name) || *name == "I") && text.contains(*name)
+                clip_operator.is_none()
+                    && (RECEPTOR_PRODUCTS.contains(name) || *name == "I")
+                    && text.contains(*name)
             })
             .collect();
         // CASA disables the clip agent when no stored product matches the
         // in-row filter, before it interprets a visibility expression.
-        let clip_products = if mode == FlagDataMode::Clip && !required.is_empty() {
-            let visibility = if text.contains("ALL") {
+        let mut unknown_clip_expression = None;
+        let clip_products = if mode == FlagDataMode::Clip
+            && (clip_operator.is_some() || !required.is_empty())
+        {
+            let visibility = clip_operator.map_or(text.as_str(), |(_, expression)| expression);
+            // The REAL fallback uses the suffix after CASA's separator.
+            let float_suffix = (data_column == FlagDataColumn::FloatData
+                && clip_operator.is_some_and(|(metric, _)| metric != ClipMetric::Real))
+            .then(|| {
+                text.split_once('_')
+                    .or_else(|| text.split_once(' '))
+                    .map_or("", |(_, rest)| rest)
+            });
+            let visibility = float_suffix.unwrap_or(visibility);
+            let visibility = if visibility.contains("ALL") {
                 modes
                     .iter()
                     .flatten()
@@ -91,17 +133,21 @@ impl CorrelationSelection {
                     .collect::<Vec<_>>()
                     .join(",")
             } else {
-                text
+                visibility.to_owned()
             };
             if visibility.contains(['I', 'Q', 'U', 'V']) {
                 return Err(unsupported());
             }
-            Some(
-                RECEPTOR_PRODUCTS
-                    .into_iter()
-                    .filter(|name| visibility.contains(*name))
-                    .collect::<Vec<_>>(),
-            )
+            let products: Vec<_> = RECEPTOR_PRODUCTS
+                .into_iter()
+                .filter(|name| visibility.contains(*name))
+                .collect();
+            if clip_operator.is_some() && products.is_empty() {
+                unknown_clip_expression = Some(
+                    float_suffix.map_or_else(|| text.clone(), |suffix| format!("REAL {suffix}")),
+                );
+            }
+            Some(products)
         } else {
             None
         };
@@ -131,7 +177,8 @@ impl CorrelationSelection {
             .map(|row| {
                 let id = descriptions.polarization_id(row)?;
                 let spw = descriptions.spectral_window_id(row)?;
-                let active = !descriptions.flag_row(row)? && !windows.flag_row(spw as usize)?;
+                let active = clip_operator.is_some()
+                    || (!descriptions.flag_row(row)? && !windows.flag_row(spw as usize)?);
                 Ok((id, active))
             })
             .collect::<Result<Vec<_>, MsError>>()
@@ -158,7 +205,11 @@ impl CorrelationSelection {
                 })
             })
             .collect::<Result<_, _>>()?;
-        Ok(Some(Self { by_description }))
+        Ok(Some(Self {
+            by_description,
+            clip_metric: clip_operator.map(|(metric, _)| metric),
+            unknown_clip_expression,
+        }))
     }
 
     pub(super) fn planes(&self, ddid: i32) -> &[usize] {
@@ -169,6 +220,14 @@ impl CorrelationSelection {
 
     pub(super) fn has_setup(&self) -> bool {
         self.by_description.iter().any(|planes| !planes.is_empty())
+    }
+
+    pub(super) fn clip_metric(&self) -> Option<ClipMetric> {
+        self.clip_metric
+    }
+
+    pub(super) fn unknown_clip_expression(&self) -> Option<&str> {
+        self.unknown_clip_expression.as_deref()
     }
 }
 
