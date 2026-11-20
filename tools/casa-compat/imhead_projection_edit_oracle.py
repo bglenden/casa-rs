@@ -33,6 +33,8 @@ def main():
     cases += [('car', 'projection', target, 'AIR') for target in ('SIN', 'AZP')]
     cases += [(source, 'projection', 'AZP', None)
               for source in ('../imhead_projection/slant', '../imhead_projection/ncp')]
+    cases += [('../imhead_projection/slant', 'projection', 'AIR', initial)
+              for initial in (None, 'AZP')]
     expected = {'casa_version': version_string(), 'cases': []}
     with tempfile.TemporaryDirectory(prefix='imhead-projection-') as temp:
         for index, (source, key, value, initial) in enumerate(cases):

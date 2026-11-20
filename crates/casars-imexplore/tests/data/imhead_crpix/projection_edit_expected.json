@@ -900,6 +900,59 @@
           0.9997091126550155
         ]
       ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"SIN\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        1.23456789,
+        -1.23e-06
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0006838725677167013,
+          -0.0006838724077994187
+        ],
+        [
+          6.2830143390565025,
+          -0.00034193623117342186
+        ]
+      ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"AZP\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "initial": "AZP",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        1.23456789,
+        -1.23e-06
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0006838725677167013,
+          -0.0006838724077994187
+        ],
+        [
+          6.2830143390565025,
+          -0.00034193623117342186
+        ]
+      ]
     }
   ]
 }

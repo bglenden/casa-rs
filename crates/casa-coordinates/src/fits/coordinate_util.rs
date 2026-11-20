@@ -183,12 +183,19 @@ fn emit_direction(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
 
     h.set(format!("CTYPE{a1}"), FitsValue::String(ctype_lon));
     h.set(format!("CTYPE{a2}"), FitsValue::String(ctype_lat));
-    if direction.projection().projection_type() == ProjectionType::AZP {
-        let parameters = direction.projection().parameters();
-        for index in 0..2 {
-            let value = parameters.get(index).copied().unwrap_or(0.0);
-            h.set(format!("PV{a2}_{}", index + 1), FitsValue::Float(value));
-        }
+    let projection = direction.projection();
+    for (index, &default) in projection
+        .projection_type()
+        .fits_parameter_defaults()
+        .iter()
+        .enumerate()
+    {
+        let value = projection
+            .parameters()
+            .get(index)
+            .copied()
+            .unwrap_or(default);
+        h.set(format!("PV{a2}_{}", index + 1), FitsValue::Float(value));
     }
 
     // CRVAL in degrees
@@ -624,20 +631,23 @@ fn parse_direction(
     // Projection
     let proj_type = ProjectionType::from_name(proj_code)
         .ok_or_else(|| CoordinateError::UnsupportedProjection(proj_code.to_string()))?;
-    let proj = if proj_type == ProjectionType::AZP {
-        let distance = h.get_float(&format!("PV{a2}_1"));
-        let tilt = h.get_float(&format!("PV{a2}_2"));
-        let parameters = if distance.is_none() && tilt.is_none() {
-            vec![]
-        } else {
-            vec![distance.unwrap_or(0.0), tilt.unwrap_or(0.0)]
-        };
-        let projection = Projection::with_parameters(proj_type, parameters);
-        projection.validate_conversion_parameters()?;
-        projection
+    let defaults = proj_type.fits_parameter_defaults();
+    let specified = (1..=defaults.len())
+        .map(|index| h.get_float(&format!("PV{a2}_{index}")))
+        .collect::<Vec<_>>();
+    let parameters = if specified.iter().any(Option::is_some) {
+        specified
+            .into_iter()
+            .zip(defaults)
+            .map(|(value, &default)| value.unwrap_or(default))
+            .collect()
     } else {
-        Projection::new(proj_type)
+        vec![]
     };
+    let proj = Projection::with_parameters(proj_type, parameters);
+    if !defaults.is_empty() {
+        proj.validate_conversion_parameters()?;
+    }
 
     let lon_scale = celestial_unit_scale_to_rad(h, a1)?;
     let lat_scale = celestial_unit_scale_to_rad(h, a2)?;

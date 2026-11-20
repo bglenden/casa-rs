@@ -328,8 +328,14 @@ fn restricted_zenithal_records_accept_supported_parameters() {
         (
             ProjectionType::AIR,
             // WCSLIB defaults an omitted AIR latitude to 90 degrees.
-            vec![vec![], vec![90.0], vec![0.0, 0.0], vec![0.0, 0.0, 90.0]],
-            vec![vec![45.0, 0.0], vec![-90.0]],
+            vec![
+                vec![],
+                vec![90.0],
+                vec![0.0, 0.0],
+                vec![0.0, 0.0, 90.0],
+                vec![45.0],
+            ],
+            vec![vec![-90.0], vec![91.0]],
         ),
     ] {
         let record_with = |parameters| {
