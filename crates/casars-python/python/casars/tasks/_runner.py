@@ -261,6 +261,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     if name in ("split", "mstransform"):
         _validate_ms_transform_datacolumn(arguments["datacolumn"])
         _coerce_ms_transform_selectors(name, values)
+        _coerce_ms_channel_width(name, values)
         try:
             return run(name, **values).value
         except TaskParameterError as error:
@@ -270,6 +271,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if error.completion.parameter == "datacolumn" and message.startswith("unsupported datacolumn "):
                 invalid = arguments["datacolumn"]
                 raise AssertionError(str({"datacolumn": [f"unallowed value {invalid}"]})) from error
+            if error.completion.parameter == "width" and message == "list index out of range":
+                raise IndexError(message) from error
             raise
     if name == "ft":
         for selector in ("uvrange", "observation"):
@@ -595,6 +598,44 @@ def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
                 "RecordRep::get_pointer - incorrect data type String   "
                 f"used for field {name} with type {record_type:<8}"
             )
+
+
+def _coerce_ms_channel_width(task: str, values: dict[str, Any]) -> None:
+    import numpy as np
+
+    name = "width" if task == "split" else "chanbin"
+    if name not in values:
+        return
+    value = values[name]
+    integers = (int, np.int32, np.int64)
+    if isinstance(value, np.ndarray) and value.ndim == 0 and value.dtype.type in integers:
+        values[name] = value.item()
+        return
+    if isinstance(value, integers):
+        return
+    if name == "width" and isinstance(value, str):
+        values[name] = int(value) if value.isdigit() else 1
+        return
+    if not isinstance(value, (str, bytes)):
+        try:
+            vector = list(iter(value))
+        except TypeError:
+            vector = None
+        if vector is not None and all(isinstance(item, integers) for item in vector):
+            values[name] = vector
+            return
+        if name == "width" and vector and all(isinstance(item, str) for item in vector):
+            # A numeric string list is converted to a map by CASA's Python
+            # task. The processing raises at the subsequent scalar comparison.
+            if vector[0].isdigit():
+                list(map(int, vector))
+                raise TypeError("'>' not supported between instances of 'map' and 'int'")
+            raise TypeError("'int' object is not iterable")
+    kinds = ["cStr", "cStrVec"] if name == "width" else []
+    kinds.extend(["cInt", "cIntVec"])
+    if value is None:
+        raise AssertionError(str({name: ["null value not allowed"] * len(kinds)}))
+    raise AssertionError(str({name: [f"must be of {kind} type" for kind in kinds]}))
 
 
 def _validate_ms_transform_datacolumn(value: Any) -> None:

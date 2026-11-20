@@ -13252,8 +13252,7 @@
             "provider": {"field": "usewtspectrum"},
             "python": {"name": "usewtspectrum"},
             "presentation": {"label": "Use Weight Spectrum", "group": "Data", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "combinespws",
@@ -13286,16 +13285,16 @@
         },
         {
           "name": "chanbin",
-          "concept": {"id": "parameter.chanbin", "semantic_revision": 1},
+          "concept": {"id": "mstransform.chanbin", "semantic_revision": 1},
           "order": 23,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "Averages chanbin channels when chanaverage is True, as CASA's mstransform does.",
+          "surface_note": "Averages chanbin channels when chanaverage is True. A list with more than one entry gives one width per selected spectral window.",
           "projections": {
             "cli": {"flags": ["--chanbin"], "metavar": "N"},
             "provider": {"field": "chanbin", "adapter": "identity"},
-            "python": {"name": "chanbin"},
+            "python": {"name": "chanbin", "type_hint": "int | list[int] | tuple[int, ...]"},
             "presentation": {"label": "Channel Bin", "group": "Spectral"}
           }
         },
@@ -14036,7 +14035,7 @@
         },
         {
           "name": "width",
-          "concept": {"id": "ms.transform.width", "semantic_revision": 1},
+          "concept": {"id": "ms.transform.width", "semantic_revision": 2},
           "order": 16,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
           "required_when": {"kind": "never"},
@@ -14044,7 +14043,7 @@
           "projections": {
             "cli": {"flags": ["--width"], "metavar": "N"},
             "provider": {"field": "width", "adapter": "identity"},
-            "python": {"name": "width"},
+            "python": {"name": "width", "type_hint": "int | str | list[int] | tuple[int, ...]"},
             "presentation": {"label": "Channel Width", "group": "Selection"}
           },
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "Channel-averaging width is distinct from image and PV-slice widths."}
@@ -23325,6 +23324,7 @@
             "python": {"name": "chanbin"},
             "presentation": {"label": "Channel Bin", "group": "Clip", "advanced": true}
           },
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "Flagging bin controls are distinct from the transform's per-window widths."},
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},

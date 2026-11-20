@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! SPECTRAL_WINDOW metadata for channel selection without averaging.
+//! SPECTRAL_WINDOW metadata for channel selection and averaging.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -11,6 +11,20 @@ use ndarray::Array1;
 use crate::SubtableId;
 
 use super::{MsTransformError, TransformChannelSelection, all_channels_selected, f64_vector_cell};
+
+pub(super) struct ChannelWindow {
+    pub(super) first: usize,
+    pub(super) last: usize,
+    pub(super) dropped: bool,
+}
+
+struct SpectralGrid {
+    centres: Vec<f64>,
+    widths: Vec<f64>,
+    resolution: Vec<f64>,
+    reference: f64,
+    bandwidth: f64,
+}
 
 pub(super) fn remap_associations(
     mut row: RecordValue,
@@ -52,6 +66,7 @@ pub(super) fn write_channel_selection(
     output_ms: &Path,
     compact_ids: &BTreeMap<i32, i32>,
     selections: &BTreeMap<i32, TransformChannelSelection>,
+    averaged: Option<&BTreeMap<i32, Vec<ChannelWindow>>>,
 ) -> Result<(), MsTransformError> {
     let path = output_ms.join(SubtableId::SpectralWindow.name());
     let error = |source: casa_tables::TableError| MsTransformError::MutateMeasurementSet {
@@ -64,25 +79,43 @@ pub(super) fn write_channel_selection(
         let row = new_id as usize;
         let selection = &selections[old_id];
         let freq = f64_vector_cell(&table, row, "CHAN_FREQ", &path)?;
-        if all_channels_selected(&selection.channels, freq.len()) {
+        let averaged = averaged.map(|windows| windows[old_id].as_slice());
+        if all_channels_selected(&selection.channels, freq.len())
+            && averaged.is_none_or(|bins| bins.len() == freq.len())
+        {
             continue;
         }
         let widths = f64_vector_cell(&table, row, "CHAN_WIDTH", &path)?;
         let resolution = f64_vector_cell(&table, row, "RESOLUTION", &path)?;
-        let (centres, widths, resolution) =
-            selected_windows(selection, &freq, &widths, &resolution).ok_or_else(|| {
-                MsTransformError::SpectralMetadata {
-                    path: path.display().to_string(),
-                    reason: format!("SPW {old_id} channel metadata does not cover the selection"),
-                }
-            })?;
-        let reference = centres[0].min(centres[centres.len() - 1]);
-        let total = widths.iter().map(|width| width.abs()).sum();
+        let unaveraged;
+        let windows = match averaged {
+            Some(windows) => windows,
+            None => {
+                unaveraged = selection
+                    .channels
+                    .iter()
+                    .zip(&selection.metadata_ends)
+                    .map(|(&first, &last)| ChannelWindow {
+                        first,
+                        last,
+                        dropped: false,
+                    })
+                    .collect::<Vec<_>>();
+                &unaveraged
+            }
+        };
+        let grid = selected_windows(windows, &freq, &widths, &resolution).ok_or_else(|| {
+            MsTransformError::SpectralMetadata {
+                path: path.display().to_string(),
+                reason: format!("SPW {old_id} channel metadata does not cover the selection"),
+            }
+        })?;
+        let channel_count = grid.centres.len();
         for (name, values) in [
-            ("CHAN_FREQ", centres),
-            ("CHAN_WIDTH", widths),
-            ("EFFECTIVE_BW", resolution.clone()),
-            ("RESOLUTION", resolution),
+            ("CHAN_FREQ", grid.centres),
+            ("CHAN_WIDTH", grid.widths),
+            ("EFFECTIVE_BW", grid.resolution.clone()),
+            ("RESOLUTION", grid.resolution),
         ] {
             let value = Value::Array(ArrayValue::Float64(Array1::from_vec(values).into_dyn()));
             table
@@ -91,12 +124,9 @@ pub(super) fn write_channel_selection(
                 .map_err(error)?;
         }
         for (name, value) in [
-            (
-                "NUM_CHAN",
-                ScalarValue::Int32(selection.channels.len() as i32),
-            ),
-            ("REF_FREQUENCY", ScalarValue::Float64(reference)),
-            ("TOTAL_BANDWIDTH", ScalarValue::Float64(total)),
+            ("NUM_CHAN", ScalarValue::Int32(channel_count as i32)),
+            ("REF_FREQUENCY", ScalarValue::Float64(grid.reference)),
+            ("TOTAL_BANDWIDTH", ScalarValue::Float64(grid.bandwidth)),
         ] {
             table
                 .column_accessor_mut(name)
@@ -115,26 +145,47 @@ pub(super) fn write_channel_selection(
 }
 
 fn selected_windows(
-    selection: &TransformChannelSelection,
+    windows: &[ChannelWindow],
     freq: &[f64],
     widths: &[f64],
     resolution: &[f64],
-) -> Option<(Vec<f64>, Vec<f64>, Vec<f64>)> {
+) -> Option<SpectralGrid> {
     let sign = if freq.last()? < freq.first()? {
         -1.0
     } else {
         1.0
     };
-    let mut centre = Vec::with_capacity(selection.channels.len());
-    let mut width = Vec::with_capacity(selection.channels.len());
-    let mut res = Vec::with_capacity(selection.channels.len());
+    let mut grid = SpectralGrid {
+        centres: Vec::with_capacity(windows.len()),
+        widths: Vec::with_capacity(windows.len()),
+        resolution: Vec::with_capacity(windows.len()),
+        reference: 0.0,
+        bandwidth: 0.0,
+    };
     // MSTransformDataHandler::fillSPWTable uses the stride's span for the
-    // metadata even though the visibility iterator copies just its first sample.
-    for (&first, &last) in selection.channels.iter().zip(&selection.metadata_ends) {
+    // metadata even though the visibility iterator reads only stride samples.
+    let centre =
+        |window: &ChannelWindow| Some((freq.get(window.first)? + freq.get(window.last)?) * 0.5);
+    grid.reference = centre(windows.first()?)?.min(centre(windows.last()?)?);
+    let mut dropped_width = 0.0;
+    for &ChannelWindow {
+        first,
+        last,
+        dropped,
+    } in windows
+    {
         let separation = (freq.get(last)? - freq.get(first)?) * sign;
-        centre.push((freq[first] + freq[last]) * 0.5);
-        width.push((separation + (widths.get(first)? + widths.get(last)?).abs() * 0.5) * sign);
-        res.push(separation + (resolution.get(first)? + resolution.get(last)?) * 0.5);
+        let width = (separation + (widths.get(first)? + widths.get(last)?).abs() * 0.5) * sign;
+        grid.bandwidth += width.abs();
+        if dropped {
+            dropped_width += width;
+        } else {
+            grid.centres.push((freq[first] + freq[last]) * 0.5);
+            grid.widths.push(width);
+            grid.resolution
+                .push(separation + (resolution.get(first)? + resolution.get(last)?) * 0.5);
+        }
     }
-    Some((centre, width, res))
+    grid.bandwidth -= dropped_width;
+    Some(grid)
 }

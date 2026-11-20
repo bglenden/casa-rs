@@ -7283,6 +7283,46 @@ pixel maps are `[0, -2]`. casa-rs raises `RuntimeError` before applying
 either name. Passing the one visible axis name without a coordinate type
 renames that axis and preserves the stored removed-axis name (#1626).
 
+## Channel-width argument variants can crash both MeasurementSet tasks
+
+CASA 6.7.6.14 `split` and `mstransform` leave a partial MeasurementSet after
+crashing on a zero-dimensional NumPy integer array or an active width list
+with a zero or negative width. `mstransform` also crashes on an empty
+`chanbin` list when `chanaverage=True`.
+
+The native tasks interpret a zero-dimensional integer array as its scalar
+value. They reject invalid active lists before creating output. The public
+channel-averaging oracle runs the crash cases in separate processes and checks
+the native outcomes. [Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7018325259)
+
+## Channel averaging can leave the weights of FLOAT_DATA or LAG_DATA undefined
+
+With only FLOAT_DATA or LAG_DATA selected, the CASA 6.7.6.14 channel-averaging
+writer can leave required WEIGHT and SIGMA cells undefined. The spectral
+statistics writer branches on DATA, CORRECTED_DATA and MODEL_DATA.
+
+The native tasks derive defined weights and sigmas from calibrated input
+weights and channel flags. LAG_DATA retains its independent lag axis. The
+channel-averaging oracle checks the derived numbers against the input.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7018429826)
+
+## Selecting defined spectra or several channel ranges can crash channel averaging
+
+Both CASA 6.7.6.14 tasks can terminate with SIGSEGV and leave an incomplete MS
+when physical row zero has undefined weight spectra and the selection starts
+with defined spectra. The output structure checks the physical first row for
+spectral columns, and the writer checks the first selected row.
+
+An active per-SPW width vector can also crash when an expression selects more
+than one channel range in a window. The upstream data handler compares the
+number of widths with the number of ranges, even when the vector covers every
+selected window.
+
+The native tasks allocate output columns for the selected spectra and apply
+the requested width to each selected SPW. The oracle verifies both crashes in
+subprocesses and compares native products against equivalent CASA selections.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7019329916)
+
 ## Transforming an MS with FLOAT_DATA can replace the requested complex DATA
 
 For an input with separately populated DATA and FLOAT_DATA, CASA 6.7.6.14
