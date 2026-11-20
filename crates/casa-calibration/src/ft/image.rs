@@ -155,6 +155,10 @@ pub(crate) struct TaylorTerm {
 /// The image spectral coordinate determines the default Taylor frequency.
 pub(crate) fn reference_frequency(path: &Path) -> MsResult<f64> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
+    image_reference_frequency(&image)
+}
+
+pub(super) fn image_reference_frequency(image: &PagedImage<f32>) -> MsResult<f64> {
     let index = coordinate_index(image.coordinates(), CoordinateType::Spectral)?;
     let CoordinateModel::Spectral(spectral) = image.coordinates().coordinate(index) else {
         unreachable!("a spectral coordinate index names a spectral coordinate")
@@ -171,10 +175,11 @@ pub(crate) fn prepare_image(
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
+    let image = PagedImage::<f32>::open(path).map_err(invalid)?;
     prepare_configured_images(
         ms,
         selected,
-        path,
+        &image,
         taylor,
         keep_zero,
         scratch,
@@ -186,13 +191,12 @@ pub(crate) fn prepare_image(
 pub(super) fn prepare_configured_images(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
-    path: &Path,
+    image: &PagedImage<f32>,
     taylor: Option<TaylorTerm>,
     keep_zero: bool,
     scratch: bool,
     options: &mut PredictionGeometry,
 ) -> MsResult<Vec<ImageModel>> {
-    let image = PagedImage::<f32>::open(path).map_err(invalid)?;
     let [nx, ny, _, _] = *image.shape() else {
         return Err(invalid(
             "ft requires four direction, Stokes and spectral image axes",
@@ -213,9 +217,9 @@ pub(super) fn prepare_configured_images(
                 shape,
             };
             let layout =
-                ImageTransform::new(ms, selected, &image, scratch, options.clone(), window)?;
+                ImageTransform::new(ms, selected, image, scratch, options.clone(), window)?;
             outputs.extend(write_model_grid(
-                ms, selected, &image, taylor, keep_zero, scratch, layout,
+                ms, selected, image, taylor, keep_zero, scratch, layout,
             )?);
             if facets > 1 && matches!(options.settings.gridder, ImagerGridder::Mosaic) {
                 // CubeSkyEquation assigns the first image to MosaicFT and
