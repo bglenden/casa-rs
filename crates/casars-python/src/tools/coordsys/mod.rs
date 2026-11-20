@@ -10,6 +10,7 @@ mod frame_metadata;
 mod inspect;
 mod observation;
 mod reference;
+mod rest_frequency;
 mod stubs;
 pub(crate) mod surface;
 mod transform_many;

@@ -19,6 +19,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[a non-finite rest frequency](#coordsyssetrestfrequency-can-store-an-infinite-frequency),
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
@@ -8082,3 +8083,10 @@ pixels. For example, `(2, 152)` contains 150 instead of the original value
 1661 from `(1, 151)`. The cursor writes overlap pixels that a subsequent
 cursor reads. casa-rs snapshots the selected pixels and validity before
 writing, using scratch storage when the overlap exceeds its memory budget.
+
+## `coordsys.setrestfrequency` can store an infinite frequency
+
+CASA 6.7.6.14 accepts `cs.setrestfrequency(float('inf'))` and writes an
+infinite active rest frequency. That value cannot produce meaningful Doppler
+velocities. casa-rs raises `RuntimeError` and retains the previous frequency
+list, active frequency and coordinate transform.

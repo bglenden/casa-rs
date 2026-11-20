@@ -354,7 +354,7 @@ const METHODS: &[Method] = &[
             param("append", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setspectral",
