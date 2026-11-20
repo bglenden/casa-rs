@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::ffi::{CString, c_char, c_long};
+use std::ffi::{c_char, c_long};
 use std::ptr;
 
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyInt, PySequence, PyString};
+
+use crate::convert::{double_vector_element as double, numeric_text};
 
 pub(super) struct NoiseParameters(pub(super) Vec<f64>);
 pub(super) struct NoiseSeeds(pub(super) Vec<i64>);
@@ -96,14 +98,6 @@ fn array_numbers<T>(
     flat.try_iter()?.map(|item| scalar(&item?)).collect()
 }
 
-fn double(value: &Bound<'_, PyAny>) -> PyResult<f64> {
-    if let Some(text) = numeric_text(value)? {
-        // SAFETY: text is NUL-terminated and no end pointer was requested.
-        return Ok(unsafe { strtod(text.as_ptr(), ptr::null_mut()) });
-    }
-    value.extract()
-}
-
 fn seed(value: &Bound<'_, PyAny>) -> PyResult<i64> {
     if let Some(text) = numeric_text(value)? {
         // CASA converts a string vector through 32-bit decimal integers.
@@ -126,22 +120,7 @@ fn seed(value: &Bound<'_, PyAny>) -> PyResult<i64> {
     })
 }
 
-fn numeric_text(value: &Bound<'_, PyAny>) -> PyResult<Option<CString>> {
-    let bytes = if let Ok(text) = value.cast::<PyString>() {
-        text.to_str()?.as_bytes()
-    } else if let Ok(text) = value.cast::<PyBytes>() {
-        text.as_bytes()
-    } else {
-        return Ok(None);
-    };
-    let prefix = bytes.split(|byte| *byte == 0).next().unwrap_or_default();
-    Ok(Some(
-        CString::new(prefix).expect("the prefix contains no NUL"),
-    ))
-}
-
 unsafe extern "C" {
-    fn strtod(text: *const c_char, end: *mut *mut c_char) -> f64;
     fn strtol(text: *const c_char, end: *mut *mut c_char, base: i32) -> c_long;
 }
 
