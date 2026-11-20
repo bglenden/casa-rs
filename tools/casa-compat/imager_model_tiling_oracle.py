@@ -58,6 +58,9 @@ def integer_controls(root, dataset, factories):
             tool = configure(factory, target, 0)
             for value, expected in ((None, SystemError), (2**63, SystemError),
                                     (np.bool_(True), SystemError), (4., TypeError),
+                                    (np.float32(2), SystemError), ((), SystemError),
+                                    (1+2j, SystemError), (np.float64(2), TypeError),
+                                    ([], TypeError), ({}, TypeError), (b'2', TypeError),
                                     ('4096', TypeError)):
                 try:
                     tool.setoptions(imagetilevol=value)
@@ -66,6 +69,25 @@ def integer_controls(root, dataset, factories):
                 else:
                     raise AssertionError((engine, value, expected))
             assert tool.done()
+
+
+def oversized_tile(root, dataset, factory):
+    with TemporaryDirectory(dir=root) as work:
+        case = Path(work)
+        target = case / 'large.ms'
+        make_input(dataset, target, scratch=True)
+        tool = factory()
+        assert tool.open(str(target), usescratch=True)
+        assert tool.selectvis(field=0)
+        assert tool.defineimage(nx=2048, ny=2048, cellx='15arcsec', celly='15arcsec',
+                                phasecenter=0, stokes='IQUV', mode='channel', nchan=32,
+                                start=0, step=1, outframe='TOPO')
+        assert tool.setoptions(imagetilevol=1 << 29)
+        before = data(target, 'MODEL_DATA')
+        model = case / 'refused.im'
+        assert not tool.ft(str(model)) and tool.done()
+        assert not model.exists()
+        np.testing.assert_array_equal(data(target, 'MODEL_DATA'), before)
 
 
 def run(root, dataset):
@@ -108,6 +130,7 @@ def run(root, dataset):
             report[str(volume)] = wanted
             print(volume, 'tile', wanted, 'both writers and readers', flush=True)
     integer_controls(root, dataset, factories)
+    oversized_tile(root, dataset, native)
     (root / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
 
 

@@ -690,7 +690,7 @@ impl ImagerPrediction {
                 };
                 let mut image = PagedImage::<f32>::create_with_tile_shape(
                     definition.shape.to_vec(),
-                    model_tile_shape(definition.shape, self.image_tile_volume).to_vec(),
+                    model_tile_shape(definition.shape, self.image_tile_volume)?.to_vec(),
                     definition.coordinates.clone(),
                     path,
                 )

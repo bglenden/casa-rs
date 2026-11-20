@@ -7,8 +7,9 @@ use casa_calibration::{
 use casa_types::measures::position::PositionRef;
 use pyo3::{
     Borrowed,
-    exceptions::{PyOverflowError, PySystemError, PyTypeError},
+    exceptions::{PySystemError, PyTypeError},
     prelude::*,
+    types::{PyBytes, PyDict, PyFloat, PyList, PyString},
 };
 
 use crate::convert::{Variant, measures::position};
@@ -22,24 +23,26 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ImageTileVolume {
     type Error = PyErr;
 
     fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        match value.extract::<i64>() {
-            // The legacy Python wrapper reads a signed long and narrows it
-            // to the imager's signed Int before it computes a tile shape.
-            Ok(volume) => Ok(Self(volume as i32)),
-            Err(error)
-                if value.is_none()
-                    || error.is_instance_of::<PyOverflowError>(value.py())
-                    || value.hasattr("__index__")?
-                    || value.is_instance(&value.py().import("numpy")?.getattr("bool_")?)? =>
-            {
-                Err(PySystemError::new_err(
-                    "<built-in function imager_setoptions> returned a result with an exception set",
-                ))
-            }
-            Err(_) => Err(PyTypeError::new_err(
+        if value.is_instance_of::<PyFloat>()
+            || value.is_instance_of::<PyString>()
+            || value.is_instance_of::<PyBytes>()
+            || value.is_instance_of::<PyList>()
+            || value.is_instance_of::<PyDict>()
+        {
+            return Err(PyTypeError::new_err(
                 "argument _imagetilevol must be an integer",
-            )),
+            ));
         }
+        // The legacy Python wrapper reads a signed long and narrows it
+        // to the imager's signed Int before it computes a tile shape.
+        value
+            .extract::<i64>()
+            .map(|volume| Self(volume as i32))
+            .map_err(|_| {
+                PySystemError::new_err(
+                    "<built-in function imager_setoptions> returned a result with an exception set",
+                )
+            })
     }
 }
 
