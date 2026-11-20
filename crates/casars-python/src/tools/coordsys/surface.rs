@@ -276,7 +276,7 @@ const METHODS: &[Method] = &[
             param("value", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setnames",

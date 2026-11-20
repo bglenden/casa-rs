@@ -9,6 +9,7 @@ pub(super) use construction::{append_coordinate, validate_coordinate_indices};
 mod doppler;
 mod frame_metadata;
 mod inspect;
+mod linear_transform;
 mod observation;
 mod reference;
 mod rest_frequency;

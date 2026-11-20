@@ -103,6 +103,7 @@ pub struct TabularCoordinate {
     world_values: Vec<f64>,
     /// Linear tabular coordinates carry no sampled lookup table.
     linear: Option<(f64, f64, f64)>,
+    linear_transform: f64,
     name: String,
     unit: String,
 }
@@ -135,6 +136,7 @@ impl TabularCoordinate {
             pixel_values,
             world_values,
             linear: None,
+            linear_transform: 1.0,
             name: name.into(),
             unit: unit.into(),
         }
@@ -152,6 +154,7 @@ impl TabularCoordinate {
             pixel_values: Vec::new(),
             world_values: Vec::new(),
             linear: Some((reference_value, increment, reference_pixel)),
+            linear_transform: 1.0,
             name: name.into(),
             unit: unit.into(),
         }
@@ -165,6 +168,34 @@ impl TabularCoordinate {
     /// Returns the world lookup table.
     pub fn world_values(&self) -> &[f64] {
         &self.world_values
+    }
+
+    /// The multiplier applied to offsets from the reference world value.
+    pub fn linear_transform(&self) -> f64 {
+        self.linear_transform
+    }
+
+    /// Set the live linear transform of this coordinate.
+    ///
+    /// # Errors
+    /// Returns an error for a nonfinite transform or collapsed lookup table.
+    pub fn with_linear_transform(mut self, transform: f64) -> Result<Self, CoordinateError> {
+        if !transform.is_finite() || (self.linear.is_none() && transform == 0.0) {
+            return Err(CoordinateError::InvalidRecord(
+                "linear transform would produce invalid tabular samples".into(),
+            ));
+        }
+        self.linear_transform = transform;
+        Ok(self)
+    }
+
+    fn scaled_world(&self, value: f64) -> f64 {
+        if self.linear_transform == 1.0 {
+            value
+        } else {
+            let reference = self.world_values[0];
+            reference + self.linear_transform * (value - reference)
+        }
     }
 
     pub(crate) fn edit(&mut self, edit: TabularEdit) -> Result<f64, CoordinateError> {
@@ -290,9 +321,13 @@ impl Coordinate for TabularCoordinate {
             });
         }
         let world = if let Some((crval, cdelt, crpix)) = self.linear {
-            crval + cdelt * (pixel[0] - crpix)
+            crval + cdelt * self.linear_transform * (pixel[0] - crpix)
         } else {
-            interpolate(&self.pixel_values, &self.world_values, pixel[0])?
+            self.scaled_world(interpolate(
+                &self.pixel_values,
+                &self.world_values,
+                pixel[0],
+            )?)
         };
         Ok(vec![world])
     }
@@ -310,9 +345,14 @@ impl Coordinate for TabularCoordinate {
                     "zero tabular increment".into(),
                 ));
             }
-            crpix + (world[0] - crval) / cdelt
+            crpix + (world[0] - crval) / (cdelt * self.linear_transform)
         } else {
-            interpolate(&self.world_values, &self.pixel_values, world[0])?
+            let mut value = world[0];
+            if self.linear_transform != 1.0 {
+                let reference = self.world_values[0];
+                value = reference + (value - reference) / self.linear_transform;
+            }
+            interpolate(&self.world_values, &self.pixel_values, value)?
         };
         Ok(vec![pixel])
     }
@@ -373,8 +413,11 @@ impl TabularCoordinate {
         rec.upsert(
             "pc",
             Value::Array(ArrayValue::Float64(
-                ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[1, 1]), vec![1.0])
-                    .expect("1x1 tabular pc matrix"),
+                ndarray::ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[1, 1]),
+                    vec![self.linear_transform],
+                )
+                .expect("1x1 tabular pc matrix"),
             )),
         );
         rec.upsert(
@@ -391,7 +434,12 @@ impl TabularCoordinate {
         );
         rec.upsert(
             "worldvalues",
-            Value::Array(ArrayValue::from_f64_vec(self.world_values.clone())),
+            Value::Array(ArrayValue::from_f64_vec(
+                self.world_values
+                    .iter()
+                    .map(|&value| self.scaled_world(value))
+                    .collect(),
+            )),
         );
         rec
     }

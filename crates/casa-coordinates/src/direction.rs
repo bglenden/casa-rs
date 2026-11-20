@@ -381,6 +381,43 @@ impl DirectionCoordinate {
         self
     }
 
+    /// Set the native WCS PC matrix and absorb each row's signed scale into
+    /// the corresponding increment, as casacore's direction setter does.
+    ///
+    /// # Errors
+    /// The matrix must be 2 by 2 with finite rows that can be normalized.
+    pub fn with_normalized_pc_matrix(
+        mut self,
+        mut pc: Array2<f64>,
+    ) -> Result<Self, CoordinateError> {
+        if pc.shape() != [2, 2] {
+            return Err(CoordinateError::InvalidRecord(
+                "direction PC must be 2 by 2".into(),
+            ));
+        }
+        for (axis, mut row) in pc.rows_mut().into_iter().enumerate() {
+            let norm_squared = row.iter().map(|value| value * value).sum::<f64>();
+            if norm_squared == 1.0 {
+                continue;
+            }
+            if norm_squared == 0.0 || !norm_squared.is_finite() || row[axis] == 0.0 {
+                return Err(CoordinateError::InvalidRecord(
+                    "wcs wcsset_error: Linear transformation matrix is singular".into(),
+                ));
+            }
+            let scale = norm_squared.sqrt().copysign(row[axis]);
+            row.mapv_inplace(|element| element / scale);
+            self.cdelt[axis] *= scale;
+            if !self.cdelt[axis].is_finite() {
+                return Err(CoordinateError::InvalidRecord(
+                    "linear transform would produce a non-finite increment".into(),
+                ));
+            }
+        }
+        self.pc = pc;
+        Ok(self)
+    }
+
     /// Sets the reference pixel, as the coordsys tool's
     /// `setreferencepixel(type='direction')` does, keeping the reference
     /// value. Returns `self` for chaining.

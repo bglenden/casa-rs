@@ -87,21 +87,12 @@ fn linear_transform(state: &CoordinateState, kind: &str) -> PyResult<CasaValue> 
     let (model, placement) = coordinate(state, coordinate_type(kind))?
         .ok_or_else(|| PyRuntimeError::new_err("Failed AlwaysAssert which < nCoordinates()"))?;
     let native = state.record.get(&placement.field);
-    if let CoordinateModel::Spectral(_) = model {
-        let pc = native.and_then(|value| match value {
-            Value::Record(spectral) => match spectral.get("wcs") {
-                Some(Value::Record(wcs)) => wcs.get("pc"),
-                _ => None,
-            },
-            _ => None,
-        });
-        let pc = match pc {
-            Some(Value::Scalar(ScalarValue::Float64(value))) => *value,
-            Some(Value::Scalar(ScalarValue::Float32(value))) => f64::from(*value),
-            Some(Value::Scalar(ScalarValue::Int32(value))) => f64::from(*value),
-            Some(Value::Scalar(ScalarValue::Int64(value))) => *value as f64,
-            _ => 1.0,
-        };
+    let scalar = match model {
+        CoordinateModel::Spectral(spectral) => Some(spectral.linear_transform()),
+        CoordinateModel::Tabular(tabular) => Some(tabular.linear_transform()),
+        _ => None,
+    };
+    if let Some(pc) = scalar {
         return Ok(CasaValue::Floats {
             shape: vec![1, 1],
             values: vec![pc],

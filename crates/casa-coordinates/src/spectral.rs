@@ -21,8 +21,8 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
 use crate::record_utils::{
-    get_optional_i32, get_optional_string, get_optional_vec_f64, get_optional_vec_string,
-    get_required_f64, get_required_vec_f64,
+    get_optional_f64, get_optional_i32, get_optional_string, get_optional_vec_f64,
+    get_optional_vec_string, get_required_f64, get_required_vec_f64,
 };
 use crate::tabular::{TabularEdit, edit_table};
 
@@ -95,6 +95,8 @@ pub struct SpectralCoordinate {
     velocity_convention: DopplerRef,
     /// Pixel-to-world mapping state.
     mapping: SpectralMapping,
+    /// Native WCS (or live sampled) linear transform.
+    linear_transform: f64,
     /// The world axis name.
     name: String,
     /// The world axis unit string.
@@ -130,6 +132,7 @@ impl SpectralCoordinate {
                 cdelt,
                 crpix,
             },
+            linear_transform: 1.0,
             name: "Frequency".into(),
             unit: "Hz".into(),
             unit_scale_hz: Some(1.0),
@@ -170,6 +173,7 @@ impl SpectralCoordinate {
                 cdelt,
                 crpix,
             },
+            linear_transform: 1.0,
             name: "Frequency".into(),
             unit: "Hz".into(),
             unit_scale_hz: Some(1.0),
@@ -436,6 +440,30 @@ impl SpectralCoordinate {
         matches!(self.mapping, SpectralMapping::Linear { .. })
     }
 
+    /// The native one-axis linear transform multiplier.
+    pub fn linear_transform(&self) -> f64 {
+        self.linear_transform
+    }
+
+    /// Set the linear transform applied to the frequency offset from the reference.
+    ///
+    /// # Errors
+    /// Returns an error for a nonfinite transform or a singular linear WCS.
+    pub fn with_linear_transform(mut self, transform: f64) -> Result<Self, CoordinateError> {
+        if !transform.is_finite() || transform == 0.0 {
+            if !self.has_linear_mapping() {
+                return Err(CoordinateError::InvalidRecord(
+                    "linear transform would produce invalid tabular samples".into(),
+                ));
+            }
+            return Err(CoordinateError::InvalidRecord(
+                "wcs wcsset_error: Linear transformation matrix is singular".into(),
+            ));
+        }
+        self.linear_transform = transform;
+        Ok(self)
+    }
+
     /// Returns the CASA conversion-layer frequency frame, if configured.
     pub fn conversion_frequency_ref(&self) -> Option<FrequencyRef> {
         self.conversion
@@ -594,7 +622,13 @@ impl SpectralCoordinate {
                 rest_frequency,
             )?
         } else {
-            Self::new(frequency_ref, crval[0], cdelt[0], crpix[0], rest_frequency)
+            let mut result = Self::new(frequency_ref, crval[0], cdelt[0], crpix[0], rest_frequency);
+            if let Some(Value::Record(wcs)) = rec.get("wcs")
+                && let Some(pc) = get_optional_f64(wcs, "pc")
+            {
+                result = result.with_linear_transform(pc)?;
+            }
+            result
         };
         if let Some(convention) =
             get_optional_i32(rec, "velType").and_then(DopplerRef::from_casacore_code)
@@ -674,12 +708,20 @@ impl Coordinate for SpectralCoordinate {
                 crval,
                 cdelt,
                 crpix,
-            } => crval + cdelt * (pixel[0] - crpix),
+            } => crval + cdelt * self.linear_transform * (pixel[0] - crpix),
             SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
+                crval,
                 ..
-            } => interpolate(pixel_values, world_values, pixel[0])?,
+            } => {
+                let world = interpolate(pixel_values, world_values, pixel[0])?;
+                if self.linear_transform == 1.0 {
+                    world
+                } else {
+                    crval + self.linear_transform * (world - crval)
+                }
+            }
         };
         Ok(vec![self.convert_native_to_world(world)?])
     }
@@ -698,18 +740,27 @@ impl Coordinate for SpectralCoordinate {
                 cdelt,
                 crpix,
             } => {
-                if cdelt.abs() < 1e-300 {
+                let increment = cdelt * self.linear_transform;
+                if increment.abs() < 1e-300 {
                     return Err(CoordinateError::ConversionFailed(
                         "zero spectral increment".into(),
                     ));
                 }
-                crpix + (native_world - crval) / cdelt
+                crpix + (native_world - crval) / increment
             }
             SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
+                crval,
                 ..
-            } => interpolate(world_values, pixel_values, native_world)?,
+            } => {
+                let unscaled = if self.linear_transform == 1.0 {
+                    native_world
+                } else {
+                    crval + (native_world - crval) / self.linear_transform
+                };
+                interpolate(world_values, pixel_values, unscaled)?
+            }
         };
         Ok(vec![pixel])
     }
@@ -803,7 +854,10 @@ impl SpectralCoordinate {
                 wcs.upsert("crval", Value::Scalar(ScalarValue::Float64(*crval)));
                 wcs.upsert("crpix", Value::Scalar(ScalarValue::Float64(*crpix)));
                 wcs.upsert("cdelt", Value::Scalar(ScalarValue::Float64(*cdelt)));
-                wcs.upsert("pc", Value::Scalar(ScalarValue::Float64(1.0)));
+                wcs.upsert(
+                    "pc",
+                    Value::Scalar(ScalarValue::Float64(self.linear_transform)),
+                );
                 wcs.upsert("ctype", Value::Scalar(ScalarValue::String("FREQ".into())));
                 rec.upsert("wcs", Value::Record(wcs));
             }
@@ -828,7 +882,16 @@ impl SpectralCoordinate {
                     "crpix",
                     Value::Array(ArrayValue::from_f64_vec(vec![*crpix])),
                 );
-                tabular.upsert("pc", Value::Array(ArrayValue::from_f64_vec(vec![1.0])));
+                tabular.upsert(
+                    "pc",
+                    Value::Array(ArrayValue::Float64(
+                        ndarray::ArrayD::from_shape_vec(
+                            ndarray::IxDyn(&[1, 1]),
+                            vec![self.linear_transform],
+                        )
+                        .expect("1x1 spectral tabular PC matrix"),
+                    )),
+                );
                 tabular.upsert(
                     "axes",
                     Value::Array(ArrayValue::from_string_vec(vec![self.name.clone()])),
@@ -844,7 +907,17 @@ impl SpectralCoordinate {
                 tabular.upsert(
                     "worldvalues",
                     Value::Array(ArrayValue::from_f64_vec(
-                        world_values.iter().map(|value| value * to_hz).collect(),
+                        world_values
+                            .iter()
+                            .map(|value| {
+                                let world = if self.linear_transform == 1.0 {
+                                    *value
+                                } else {
+                                    crval + self.linear_transform * (value - crval)
+                                };
+                                world * to_hz
+                            })
+                            .collect(),
                     )),
                 );
                 rec.upsert("tabular", Value::Record(tabular));
