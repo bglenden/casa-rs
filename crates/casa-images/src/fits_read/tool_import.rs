@@ -519,6 +519,14 @@ where
         self.shape
     }
 
+    fn is_persistent(&self) -> bool {
+        true
+    }
+
+    fn is_paged(&self) -> bool {
+        true
+    }
+
     fn is_writable(&self) -> bool {
         false
     }
