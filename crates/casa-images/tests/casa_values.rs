@@ -440,38 +440,38 @@ fn imregrid_refuses_casas_default_template_get() {
     );
 }
 
-/// impbcor's selection controls are CASA parameters casa-rs takes only at
-/// their defaults: anything else is refused before the task starts, naming
-/// its parameter and #977, as is CASA's numeric-array `pbimage`.
 #[test]
-fn impbcor_refuses_its_selection_controls_before_it_starts() {
+fn impbcor_accepts_casa_selection_and_numeric_beams() {
     let workspace = tempfile::tempdir().unwrap();
     let root = workspace.path();
     write_image(&root.join("in.image"), 2.0);
     write_image(&root.join("pb.image"), 1.0);
     let impbcor = env!("CARGO_BIN_EXE_impbcor");
-    let base = || json!({"imagename": "in.image", "pbimage": "pb.image", "outfile": "out.im"});
-    for (parameter, value) in [
-        ("box", json!("0,0,1,1")),
-        ("region", json!("box[[0pix,0pix],[1pix,1pix]]")),
-        ("chans", json!("0")),
-        ("stokes", json!("I")),
-        ("mask", json!("in.image > 0")),
-    ] {
-        let mut values = base();
-        values[parameter] = value;
-        assert_refuses(
-            json_run(impbcor, "impbcor", values, root),
-            parameter,
-            "#977",
-        );
-    }
-    // stretch is read only with a mask, as CASA reads it.
-    let mut stretched = base();
-    stretched["stretch"] = json!(true);
-    let reply = json_run(impbcor, "impbcor", stretched, root);
-    assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
-    assert!(root.join("out.im").exists());
+    let reply = json_run(
+        impbcor,
+        "impbcor",
+        json!({
+            "imagename": "in.image", "pbimage": vec![vec![2.0; 4]; 4], "outfile": "pixels.im",
+            "box": "0,0,1,1", "chans": "0", "mask": "in.image > 0",
+            "stretch": true,
+        }),
+        root,
+    );
+    assert!(
+        matches!(
+            reply,
+            TaskReply::Succeeded {
+                value: CasaValue::None,
+                ..
+            }
+        ),
+        "{reply:?}"
+    );
+    let selected = casa_images::PagedImage::<f32>::open(root.join("pixels.im")).unwrap();
+    assert_eq!(selected.shape(), &[2, 2, 1]);
+    let values = selected.get().unwrap();
+    assert_eq!(values[[0, 0, 0]], 1.0);
+    assert_eq!(values[[1, 1, 0]], 6.0);
     let box_line = [
         "--imagename",
         "in.image",
@@ -482,18 +482,15 @@ fn impbcor_refuses_its_selection_controls_before_it_starts() {
         "--box",
         "0,0,1,1",
     ];
-    assert_refused(&run(impbcor, &box_line, root), "#977");
-    assert!(!root.join("o.im").exists());
-    // CASA's pbimage may be the beam's pixels; casa-rs takes its name only.
-    let mut pixels = base();
-    pixels["pbimage"] = json!([[1.0, 1.0], [1.0, 1.0]]);
-    pixels["outfile"] = json!("pixels.im");
-    let reply = json_run(impbcor, "impbcor", pixels, root);
+    let cli = run(impbcor, &box_line, root);
     assert!(
-        matches!(&reply, TaskReply::Failed { parameter: Some(name), .. } if name == "pbimage"),
-        "{reply:?}"
+        cli.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cli.stderr)
     );
-    assert!(!root.join("pixels.im").exists());
+    let selected = casa_images::PagedImage::<f32>::open(root.join("o.im")).unwrap();
+    assert_eq!(selected.shape(), &[2, 2, 3]);
+    assert!(selected.get().unwrap().iter().all(|&value| value == 2.0));
 }
 
 /// An old casa-rs profile is refused before the task writes an image.
