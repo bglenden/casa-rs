@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use casa_images::analysis::evaluate_image_tool_mask;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{
     AnyPagedImage, ImageInterface,
@@ -11,10 +12,11 @@ use casa_images::{
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 use pyo3::prelude::*;
 
+use super::PyImageTool;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::masks::{has_region, validate_name};
 use super::pixels::Chunk;
-use super::{PyImageTool, stub};
+use super::stub;
 
 pub(super) struct MaskTarget<'a> {
     pub shape: &'a [usize],
@@ -147,18 +149,6 @@ fn evaluate_typed<T: ImageExprValue + PartialOrd + ExprValueConvert>(
     compiled.get().map_err(raised)
 }
 
-pub(super) fn evaluate(expression: &str, shape: &[usize]) -> PyResult<ArrayD<bool>> {
-    evaluate_mask(
-        expression,
-        MaskTarget {
-            shape,
-            section: None,
-            stretch: false,
-            method: "calcmask",
-        },
-    )
-}
-
 pub(super) fn evaluate_mask(expression: &str, target: MaskTarget<'_>) -> PyResult<ArrayD<bool>> {
     if expression.is_empty() {
         return Err(raised("Exception: You must specify an expression."));
@@ -224,8 +214,11 @@ impl PyImageTool {
             if !mask.is_empty() && image.fits().is_some() {
                 return Err(raised("Exception: Cannot make requested mask for this image type which is FITSImage."));
             }
+            if mask.is_empty() {
+                return Err(raised("Exception: You must specify an expression."));
+            }
             attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
-            let values = evaluate(mask, image.shape())?;
+            let values = evaluate_image_tool_mask(mask, image.shape()).map_err(raised)?;
             let generated;
             let mask_name = if name.is_empty() {
                 generated = (0..)
@@ -242,8 +235,10 @@ impl PyImageTool {
                 with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_default_mask(mask_name))).map_err(raised)?;
             }
             if state.history {
+                let mask = if mask.len() > 300 { "..." } else { mask };
+                let name = if name.len() > 300 { "..." } else { name };
                 image.record_history("calcmask", format!(
-                    "ia.calcmask(mask={mask:?}, name={name:?}, asdefault={asdefault})"
+                    "ia.calcmask(mask=\"{mask}\", name=\"{name}\", asdefault={asdefault})"
                 ))?;
             }
             image.save().map_err(raised)?;

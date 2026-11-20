@@ -323,7 +323,13 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     if name == "flagdata":
-        _coerce_flagdata_options(values)
+        correlation_vector = _coerce_flagdata_options(values)
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            if correlation_vector and error.completion.parameter == "correlation":
+                raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
+            raise
     return run(name, **values).value
 
 
@@ -429,13 +435,14 @@ def _bandpass_statistics(value):
     return value
 
 
-def _coerce_flagdata_options(values: dict[str, Any]) -> None:
+def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
     import numpy as np
 
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
     vector_selectors = []
+    correlation_vector = None
     for parameter in ("field", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         if parameter not in values:
             continue
@@ -448,6 +455,23 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
             vector_selectors.append(parameter)
         else:
             errors[parameter] = ["must be of cStr type", "must be of cStrVec type"]
+    if "correlation" in values:
+        value = values["correlation"]
+        if isinstance(value, str):
+            values["correlation"] = str(value)
+        elif value is None:
+            errors["correlation"] = ["null value not allowed"] * 3
+        elif _flagdata_string_vector(value):
+            if isinstance(value, np.ndarray) and value.ndim == 0:
+                item = str(value.item())
+                values["correlation"] = [item] if item else ""
+                if item:
+                    correlation_vector = "numpy.ndarray"
+            else:
+                values["correlation"] = [str(item) for item in value]
+                correlation_vector = "list"
+        else:
+            errors["correlation"] = ["must be of cStr type", "must be of cStrVec type"]
     if "observation" in values:
         value = values["observation"]
         if value is None:
@@ -519,10 +543,11 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
             errors["clipminmax"] = [str(error)]
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
-    if vector_selectors and values.get("action") not in ("", "none"):
+    if vector_selectors and not correlation_vector and values.get("action") not in ("", "none"):
         raise TypeError(f"argument _{vector_selectors[0]} must be a string")
     for parameter in vector_selectors:
         del values[parameter]
+    return correlation_vector
 
 
 def _flagdata_string_vector(value: Any) -> bool:
