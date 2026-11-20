@@ -300,7 +300,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
     vector_selectors = []
-    for parameter in ("field", "scan", "antenna", "timerange"):
+    for parameter in ("field", "array", "feed", "scan", "antenna", "timerange"):
         if parameter not in values:
             continue
         value = values[parameter]

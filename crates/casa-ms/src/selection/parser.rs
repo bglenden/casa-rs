@@ -48,8 +48,8 @@ pub(crate) fn selection_from_options(
             selection = apply_antenna_selector(ms, selection, antenna)?;
         }
     }
-    if grammar == RowGrammar::Transform {
-        selection = super::row_grammar::apply_transform_selectors(ms, selection, options)?;
+    if grammar == RowGrammar::Transform || flagdata {
+        selection = super::row_grammar::apply_array_feed_uv(ms, selection, options, flagdata)?;
     } else if let Some(array) = options.array.as_deref() {
         selection = selection.array(&parse_numeric_id_selector(array, "array")?);
     }
