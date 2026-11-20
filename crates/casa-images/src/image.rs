@@ -2969,11 +2969,9 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
         let stage = tempfile::tempdir_in(image_path).map_err(|e| ImageError::Io(e.to_string()))?;
         let staged_path = stage.path().join("mask");
         let tiled = TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?;
-        let mut mask =
-            PagedArray::<bool>::create_with_cache(tiled, &staged_path, self.cache_bytes())?;
-        mask.set(value)?;
-        mask.flush()?;
-        drop(mask);
+        let layout = PagedArray::<bool>::storage_layout(tiled, self.cache_bytes())?;
+        TiledArrayStorage::create_filled_bool_table(&staged_path, &layout, value)
+            .map_err(|e| ImageError::Table(e.to_string()))?;
         casa_tables::publication::rename_without_replacing(&staged_path, &image_path.join(name))
             .map_err(|e| ImageError::Io(e.to_string()))?;
         self.register_paged_mask(name);
