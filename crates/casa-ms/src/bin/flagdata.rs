@@ -101,6 +101,27 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
             );
         }
     };
+    let quackinterval = match task.value("quackinterval") {
+        Some(ParameterValue::Float(value)) => Some(*value),
+        Some(ParameterValue::Integer(value)) => Some(*value as f64),
+        _ => None,
+    };
+    let quackincrement = match task.value("quackincrement") {
+        Some(ParameterValue::Bool(value)) => Some(*value),
+        _ => None,
+    };
+    let requested_quackmode = match task.value("quackmode") {
+        Some(ParameterValue::String(text)) => quackmode(text),
+        _ => QuackMode::Disabled,
+    };
+    let quackmode = if quackinterval.is_some() && quackincrement.is_some() {
+        requested_quackmode
+    } else {
+        QuackMode::Disabled
+    };
+    if mode == FlagDataMode::Quack && quackmode == QuackMode::Disabled {
+        tracing::warn!("quack mode and interval require supported scalar options");
+    }
     Ok(FlagDataRequest {
         selection: selection(task, &spw)?,
         spw: (!spw.is_empty()).then_some(spw),
@@ -121,8 +142,9 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         clipzeros: task.flag("clipzeros")?,
         clipminmax,
         clipoutside,
-        quackinterval: task.number("quackinterval")?,
-        quackmode: quackmode(&task.required_text("quackmode")?)?,
+        quackinterval: quackinterval.unwrap_or_default(),
+        quackmode,
+        quackincrement: quackincrement.unwrap_or_default(),
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         timedevscale: task.number("timedevscale")?,
@@ -219,15 +241,13 @@ fn data_column(text: &str, mode: FlagDataMode) -> Result<FlagDataColumn, TaskFai
     }
 }
 
-/// CASA's `quackmode`: `beg` flags the first `quackinterval` of each scan
-/// and `endb` the last; `end` and `tail`, which flag all but those, are
-/// #978.
-fn quackmode(text: &str) -> Result<QuackMode, TaskFailure> {
-    match text.to_ascii_lowercase().as_str() {
-        "beg" => Ok(QuackMode::Beg),
-        "endb" => Ok(QuackMode::End),
-        "end" | "tail" => Err(not_yet("quackmode", text)),
-        _ => Err(unknown("quackmode", text, "'beg', 'endb', 'end' or 'tail'")),
+fn quackmode(text: &str) -> QuackMode {
+    match text {
+        "beg" => QuackMode::Beg,
+        "endb" => QuackMode::End,
+        "end" => QuackMode::BeforeEnd,
+        "tail" => QuackMode::Tail,
+        _ => QuackMode::Disabled,
     }
 }
 
@@ -349,12 +369,43 @@ mod tests {
     }
 
     #[test]
+    fn scan_edge_options_preserve_cli_switches_and_numeric_intervals() {
+        let request = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "quack",
+            "--quackmode",
+            "tail",
+            "--quackinterval",
+            "2.5",
+            "--quackincrement",
+        ])
+        .unwrap();
+        assert_eq!(request.quackmode, QuackMode::Tail);
+        assert_eq!(request.quackinterval, 2.5);
+        assert!(request.quackincrement);
+
+        let request = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "quack",
+            "--quackmode",
+            "end",
+            "--no-quackincrement",
+        ])
+        .unwrap();
+        assert_eq!(request.quackmode, QuackMode::BeforeEnd);
+        assert!(!request.quackincrement);
+    }
+
+    #[test]
     fn casa_values_not_implemented_yet_name_978() {
         for (name, value) in [
             ("--mode", "shadow"),
             ("--mode", "list"),
             ("--datacolumn", "MODEL"),
-            ("--quackmode", "tail"),
         ] {
             let error = request_for(&["--vis", "in.ms", name, value]).unwrap_err();
             assert!(error.message.contains("#978"), "{name} {value}: {error:?}");

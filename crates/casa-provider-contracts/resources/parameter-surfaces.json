@@ -22302,10 +22302,9 @@
           "projections": {
             "cli": {"flags": ["--quackincrement"], "false_flags": ["--no-quackincrement"]},
             "provider": {"field": "quackincrement"},
-            "python": {"name": "quackincrement"},
+            "python": {"name": "quackincrement", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Quack Increment", "group": "Quack", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "quack"}}}
+          }
         },
         {
           "name": "tolerance",
@@ -23441,7 +23440,7 @@
             },
             "python": {
               "name": "quackinterval",
-              "type_hint": null
+              "type_hint": "float | list[float]"
             },
             "presentation": {
               "label": "Quack Interval",
@@ -23490,7 +23489,7 @@
             },
             "python": {
               "name": "quackmode",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Quack Mode",

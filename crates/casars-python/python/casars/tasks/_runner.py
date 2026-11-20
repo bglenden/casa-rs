@@ -299,16 +299,19 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
-    if "clipoutside" in values:
-        outside = values["clipoutside"]
-        if outside is None:
-            errors["clipoutside"] = ["null value not allowed"] * 3
+    for parameter, default in (("clipoutside", True), ("quackincrement", False)):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if value is None:
+            errors[parameter] = ["null value not allowed"] * 3
         else:
-            converted = _flagdata_clip_outside(outside)
+            converted = _flagdata_bool_option(value, numpy_default=default)
             if converted is None:
-                errors["clipoutside"] = ["must be of cBool type", "must be of cBoolVec type"]
+                errors[parameter] = ["must be of cBool type", "must be of cBoolVec type"]
             else:
-                values["clipoutside"] = converted
+                values[parameter] = converted
+    _coerce_flagdata_quack_options(values, errors, cfloat, cint)
     for parameter, expected, casa_type in (
         ("spwchan", bool, "cBool"),
         ("spwcorr", bool, "cBool"),
@@ -352,13 +355,13 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
         raise AssertionError(str(dict(sorted(errors.items()))))
 
 
-def _flagdata_clip_outside(value: Any) -> bool | list[bool] | None:
+def _flagdata_bool_option(value: Any, *, numpy_default: bool) -> bool | list[bool] | None:
     import numpy as np
 
     if isinstance(value, bool):
         return value
     if isinstance(value, np.bool_):
-        return True
+        return numpy_default
     if isinstance(value, np.ndarray) and value.ndim == 0:
         value = (value.item(),)
     if isinstance(value, Iterable) and not isinstance(value, str):
@@ -366,6 +369,64 @@ def _flagdata_clip_outside(value: Any) -> bool | list[bool] | None:
         if all(isinstance(item, (bool, np.bool_)) for item in items):
             return [bool(item) for item in items]
     return None
+
+
+def _coerce_flagdata_quack_options(
+    values: dict[str, Any],
+    errors: dict[str, list[str]],
+    numeric: tuple[type, ...],
+    integer: tuple[type, ...],
+) -> None:
+    import numpy as np
+
+    if "quackmode" in values:
+        mode = values["quackmode"]
+        if isinstance(mode, str):
+            values["quackmode"] = str(mode)
+        elif mode is None:
+            errors["quackmode"] = ["null value not allowed"] * 3
+        else:
+            if isinstance(mode, np.ndarray) and mode.ndim == 0:
+                mode = (mode[()],)
+            options = list(mode) if isinstance(mode, Iterable) else None
+            if options is not None and all(isinstance(item, str) for item in options):
+                values["quackmode"] = [str(item) for item in options]
+            else:
+                errors["quackmode"] = ["must be of cStr type", "must be of cStrVec type"]
+
+    if "quackinterval" not in values:
+        return
+    interval = values["quackinterval"]
+    if isinstance(interval, numeric):
+        values["quackinterval"] = _flagdata_quack_seconds(interval)
+        return
+    if interval is None:
+        errors["quackinterval"] = ["null value not allowed"] * 5
+        return
+
+    messages = [f"must be of {kind} type" for kind in ("cFloat", "cFloatVec", "cInt", "cIntVec")]
+    if isinstance(interval, np.ndarray) and interval.ndim == 0:
+        if isinstance(interval[()], integer):
+            interval = (interval[()],)
+        else:
+            if isinstance(interval[()], numeric):
+                messages[1] = "field 'quackinterval' cannot be coerced: iteration over a 0-d array"
+            errors["quackinterval"] = messages
+            return
+    options = list(interval) if isinstance(interval, Iterable) and not isinstance(interval, str) else None
+    if options is not None and all(isinstance(item, numeric) for item in options):
+        values["quackinterval"] = [_flagdata_quack_seconds(item) for item in options]
+    else:
+        errors["quackinterval"] = messages
+
+
+def _flagdata_quack_seconds(value: Any) -> float:
+    seconds = float(value)
+    # The profile carries finite numbers. NaN disables the agent and an
+    # infinite positive interval covers the entire finite scan.
+    if isnan(seconds):
+        return 0.0
+    return max(-sys.float_info.max, min(seconds, sys.float_info.max))
 
 
 def _flagdata_clip_range(

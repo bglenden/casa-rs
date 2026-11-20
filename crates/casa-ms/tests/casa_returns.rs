@@ -411,12 +411,6 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
             json!({"mode": "rflag", "action": "calculate"}),
             "action",
         ),
-        (
-            FLAGDATA,
-            "flagdata",
-            json!({"quackmode": "tail"}),
-            "quackmode",
-        ),
         // An unimplemented CASA parameter, refused at any value but its
         // default where CASA reads it: channel averaging in clip mode.
         (

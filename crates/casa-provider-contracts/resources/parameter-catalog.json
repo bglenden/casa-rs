@@ -5743,10 +5743,10 @@
       "semantic_revision": 1,
       "casa_name": "quackinterval",
       "value_domain": {
-        "kind": "float"
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "numeric_variant"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -5765,13 +5765,7 @@
       "semantic_revision": 2,
       "casa_name": "quackmode",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "beg",
-          "end",
-          "endb",
-          "tail"
-        ]
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -9183,7 +9177,7 @@
       "id": "flagdata.quackincrement",
       "semantic_revision": 1,
       "casa_name": "quackincrement",
-      "value_domain": {"kind": "bool"},
+      "value_domain": {"kind": "variant"},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,
