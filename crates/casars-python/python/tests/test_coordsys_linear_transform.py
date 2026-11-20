@@ -111,6 +111,8 @@ def test_tabular_pc_live_and_record_restore_semantics(casa, sampled):
         restored = backend.coordsys()
         assert restored.fromrecord(recorded)
         np.testing.assert_array_equal(restored.lineartransform("tabular"), [[1.0]])
+        np.testing.assert_array_equal(restored.torecord()["tabular0"]["pc"], [[1.0]])
+        np.testing.assert_allclose(restored.torecord()["tabular0"]["cdelt"], [8.0 if sampled else 1.0])
         np.testing.assert_array_equal(restored.toworld([1.0])["numeric"], [14.0 if sampled else 1.0])
 
 
@@ -126,7 +128,7 @@ def test_later_tabular_edits_preserve_the_live_matrix(casa, sampled, field):
             assert cs.fromrecord(record)
         assert cs.setlineartransform("tabular", [[2.0]])
         if field == "name":
-            assert cs.setnames(["Tabular sample"], "tabular")
+            assert cs.setnames(["TabularSample"], "tabular")
             expected = 14.0 if sampled else 2.0
         elif field == "increment":
             assert cs.setincrement([7.0], "tabular")
@@ -150,6 +152,35 @@ def test_singular_matrices_keep_forward_transforms_and_report_undefined_inverses
         assert np.isfinite(world).all()
         assert np.isnan(cs.topixel(world)["numeric"]).all()
         assert np.isnan(cs.topixelmany(world[:, None])["numeric"]).all()
+
+
+def test_small_valid_matrices_are_invertible_and_zero_wcs_rows_are_rejected(casa):
+    for backend in (tools, casa):
+        cs = backend.coordsys().newcoordsys(linear=2)
+        matrix = np.eye(2) * 1e-16
+        assert cs.setlineartransform("linear", matrix)
+        pixel = np.array([1.0, 2.0])
+        world = cs.toworld(pixel)["numeric"]
+        np.testing.assert_allclose(cs.topixel(world)["numeric"], pixel)
+        with pytest.raises(RuntimeError, match="Linear transformation matrix is singular"):
+            cs.setlineartransform("linear", [[0.0, 0.0], [0.0, 1.0]])
+        np.testing.assert_array_equal(cs.lineartransform("linear"), matrix)
+
+
+def test_setter_and_getter_select_the_same_record_coordinate_with_permuted_axes(casa):
+    original = casa.coordsys().newcoordsys(linear=1)
+    assert original.addcoordinate(linear=1)
+    record = original.torecord()
+    for prefix in ("pixelmap", "worldmap"):
+        record[prefix + "0"] = np.array([1], dtype=np.int32)
+        record[prefix + "1"] = np.array([0], dtype=np.int32)
+    for backend in (tools, casa):
+        cs = backend.coordsys()
+        assert cs.fromrecord(record)
+        assert cs.setlineartransform("linear", [[3.0]])
+        np.testing.assert_array_equal(cs.lineartransform("linear"), [[3.0]])
+        np.testing.assert_array_equal(cs.toworld([1.0, 2.0])["numeric"], [1.0, 6.0])
+        np.testing.assert_array_equal(cs.torecord()["linear0"]["pc"], [[3.0]])
 
 
 def test_linear_coordinate_matrix_after_native_write_and_reopen(casa, tmp_path):
@@ -182,8 +213,9 @@ def test_invalid_matrix_type_and_rank_do_not_edit_a_coordinate():
     record["tabular0"]["pixelvalues"] = np.array([0.0, 2.0, 5.0])
     record["tabular0"]["worldvalues"] = np.array([10.0, 14.0, 30.0])
     assert standalone.fromrecord(record)
-    with pytest.raises(RuntimeError, match="invalid tabular samples"):
-        standalone.setlineartransform("tabular", [[0.0]])
+    for value in (0.0, 1e-20, 1e308):
+        with pytest.raises(RuntimeError, match="invalid tabular samples"):
+            standalone.setlineartransform("tabular", [[value]])
     np.testing.assert_array_equal(standalone.lineartransform("tabular"), [[1.0]])
 
 
@@ -211,6 +243,7 @@ def test_sampled_spectral_transform_is_folded_into_persisted_samples(casa):
         np.testing.assert_allclose(record["spectral0"]["tabular"]["worldvalues"], [1e9, 6e8, 0.0])
         assert cs.fromrecord(record)
         np.testing.assert_array_equal(cs.lineartransform("spectral"), [[1.0]])
+        np.testing.assert_array_equal(cs.torecord()["spectral0"]["tabular"]["pc"], [[1.0]])
         np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [6e8])
 
 
@@ -222,10 +255,45 @@ def test_later_spectral_edits_keep_the_live_sampled_matrix(casa):
         cs = backend.coordsys()
         assert cs.fromrecord(sample)
         assert cs.setlineartransform("spectral", [[2.0]])
-        assert cs.setnames(["Custom frequency"], "spectral")
+        assert cs.setnames(["CustomFrequency"], "spectral")
         assert cs.setrestfrequency(2e9)
         np.testing.assert_array_equal(cs.lineartransform("spectral"), [[2.0]])
         np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [1.4e9])
         assert cs.setincrement([7.0], "spectral")
         np.testing.assert_array_equal(cs.lineartransform("spectral"), [[2.0]])
         np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [1e9 + 11.2], atol=1e-7, rtol=0.0)
+
+
+def test_live_sampled_spectral_reference_pixel_keeps_its_world_anchor(casa):
+    source = casa.coordsys().newcoordsys(spectral=True)
+    assert source.setspectral(frequencies={"value": np.array([1e9, 1.2e9, 1.5e9]), "unit": "Hz"})
+    sample = source.torecord()
+    for backend in (tools, casa):
+        cs = backend.coordsys()
+        assert cs.fromrecord(sample)
+        assert cs.setlineartransform("spectral", [[2.0]])
+        assert cs.setreferencepixel([2.0], "spectral")
+        np.testing.assert_array_equal(cs.referencepixel()["numeric"], [2.0])
+        np.testing.assert_allclose(cs.referencevalue()["numeric"], [1e9])
+        np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [4e8])
+        np.testing.assert_allclose(cs.torecord()["spectral0"]["tabular"]["worldvalues"], [0, 4e8, 1e9])
+
+
+def test_sampled_spectral_record_keeps_the_scale_of_nested_units(casa):
+    source = casa.coordsys().newcoordsys(spectral=True)
+    assert source.setspectral(frequencies={"value": np.array([1e9, 1.2e9, 1.5e9]), "unit": "Hz"})
+    record = source.torecord()
+    spectral = record["spectral0"]
+    spectral["unit"] = "GHz"
+    spectral["restfreq"] /= 1e9
+    spectral["restfreqs"] /= 1e9
+    table = spectral["tabular"]
+    table["units"] = np.array(["MHz"])
+    for field in ("crval", "cdelt", "worldvalues"):
+        table[field] /= 1e6
+    cs = tools.coordsys()
+    assert cs.fromrecord(record)
+    assert cs.setlineartransform("spectral", [[2.0]])
+    np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [1.4])
+    assert cs.fromrecord(cs.torecord())
+    np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [1.4])

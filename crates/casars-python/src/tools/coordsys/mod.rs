@@ -101,9 +101,23 @@ fn current_epoch(mut info: ObsInfo) -> ObsInfo {
 }
 
 impl CoordinateState {
-    fn from_record(record: RecordValue) -> PyResult<Self> {
+    fn from_record(mut record: RecordValue) -> PyResult<Self> {
         let coordinates = CoordinateSystem::from_record(&record)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        for (index, placement) in CoordinateSystem::record_coordinates(&record)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(Value::Record(original)) = record.get(&placement.field)
+                && let Some(normalized) = linear_transform::normalize_restored_matrix(
+                    original,
+                    coordinates.coordinate(index),
+                )?
+            {
+                record.upsert(placement.field, Value::Record(normalized));
+            }
+        }
         Ok(Self {
             coordinates,
             record,

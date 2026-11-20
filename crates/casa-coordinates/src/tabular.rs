@@ -14,10 +14,90 @@ use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
 use crate::record_utils::{get_optional_string, get_optional_vec_string, get_required_vec_f64};
 
-pub(crate) enum TabularEdit {
+/// An edit to one of a tabular coordinate's live reference parameters.
+#[derive(Clone, Copy)]
+pub enum TabularEdit {
+    /// Move the live reference pixel.
     ReferencePixel(f64),
+    /// Change the live reference world value.
     ReferenceValue(f64),
+    /// Change the live world-axis increment.
     Increment(f64),
+}
+
+impl TabularEdit {
+    pub(crate) fn apply(self, [mut crval, mut cdelt, mut crpix]: [f64; 3]) -> [f64; 3] {
+        match self {
+            Self::ReferencePixel(value) => crpix = value,
+            Self::ReferenceValue(value) => crval = value,
+            Self::Increment(value) => cdelt = value,
+        }
+        [crval, cdelt, crpix]
+    }
+}
+
+pub(crate) fn scaled_world(value: f64, reference: f64, transform: f64) -> f64 {
+    if transform == 1.0 {
+        value
+    } else {
+        reference + transform * (value - reference)
+    }
+}
+
+pub(crate) fn validate_transform_samples(
+    values: &[f64],
+    reference: f64,
+    transform: f64,
+) -> Result<(), CoordinateError> {
+    let invalid = || {
+        CoordinateError::InvalidRecord(
+            "linear transform would produce invalid tabular samples".into(),
+        )
+    };
+    if !transform.is_finite() || transform == 0.0 || values.len() < 2 {
+        return Err(invalid());
+    }
+    let increasing = (values[values.len() - 1] > values[0]) == (transform > 0.0);
+    let mut previous = scaled_world(values[0], reference, transform);
+    for &value in &values[1..] {
+        let next = scaled_world(value, reference, transform);
+        if !previous.is_finite()
+            || !next.is_finite()
+            || next == previous
+            || (next > previous) != increasing
+        {
+            return Err(invalid());
+        }
+        previous = next;
+    }
+    Ok(())
+}
+
+pub(crate) fn sample_reference(record: &RecordValue) -> Result<[f64; 3], CoordinateError> {
+    let read = |field| {
+        let values = get_required_vec_f64(record, field)?;
+        match values.as_slice() {
+            [value] if value.is_finite() => Ok(*value),
+            _ => Err(CoordinateError::InvalidRecord(format!(
+                "invalid tabular {field}"
+            ))),
+        }
+    };
+    Ok([read("crval")?, read("cdelt")?, read("crpix")?])
+}
+
+pub(crate) fn validate_live_edit(edit: TabularEdit) -> Result<(), CoordinateError> {
+    let value = match edit {
+        TabularEdit::ReferencePixel(value)
+        | TabularEdit::ReferenceValue(value)
+        | TabularEdit::Increment(value) => value,
+    };
+    if !value.is_finite() || (value == 0.0 && matches!(edit, TabularEdit::Increment(_))) {
+        return Err(CoordinateError::InvalidRecord(
+            "invalid tabular reference parameter".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) struct EditedTable {
@@ -103,6 +183,7 @@ pub struct TabularCoordinate {
     world_values: Vec<f64>,
     /// Linear tabular coordinates carry no sampled lookup table.
     linear: Option<(f64, f64, f64)>,
+    sample_reference: Option<[f64; 3]>,
     linear_transform: f64,
     name: String,
     unit: String,
@@ -136,6 +217,7 @@ impl TabularCoordinate {
             pixel_values,
             world_values,
             linear: None,
+            sample_reference: None,
             linear_transform: 1.0,
             name: name.into(),
             unit: unit.into(),
@@ -154,6 +236,7 @@ impl TabularCoordinate {
             pixel_values: Vec::new(),
             world_values: Vec::new(),
             linear: Some((reference_value, increment, reference_pixel)),
+            sample_reference: None,
             linear_transform: 1.0,
             name: name.into(),
             unit: unit.into(),
@@ -180,7 +263,9 @@ impl TabularCoordinate {
     /// # Errors
     /// Returns an error for a nonfinite transform or collapsed lookup table.
     pub fn with_linear_transform(mut self, transform: f64) -> Result<Self, CoordinateError> {
-        if !transform.is_finite() || (self.linear.is_none() && transform == 0.0) {
+        if self.linear.is_none() {
+            validate_transform_samples(&self.world_values, self.reference_world(), transform)?;
+        } else if !transform.is_finite() {
             return Err(CoordinateError::InvalidRecord(
                 "linear transform would produce invalid tabular samples".into(),
             ));
@@ -190,12 +275,50 @@ impl TabularCoordinate {
     }
 
     fn scaled_world(&self, value: f64) -> f64 {
-        if self.linear_transform == 1.0 {
+        scaled_world(value, self.reference_world(), self.linear_transform)
+    }
+
+    fn reference_world(&self) -> f64 {
+        if let Some((value, _, _)) = self.linear {
+            value
+        } else if let Some([value, _, _]) = self.sample_reference {
             value
         } else {
-            let reference = self.world_values[0];
-            reference + self.linear_transform * (value - reference)
+            self.world_values[0]
         }
+    }
+
+    /// Restore live reference parameters from an in-memory record containing
+    /// unscaled lookup values. Public record restoration normalizes them.
+    ///
+    /// # Errors
+    /// Returns an error if a required reference parameter is missing.
+    pub fn with_live_reference(mut self, record: &RecordValue) -> Result<Self, CoordinateError> {
+        let [crval, cdelt, crpix] = sample_reference(record)?;
+        if self.linear.is_some() {
+            self.linear = Some((crval, cdelt, crpix));
+        } else {
+            self.sample_reference = Some([crval, cdelt, crpix]);
+        }
+        Ok(self)
+    }
+
+    /// Edit the live reference without renormalizing a sampled coordinate.
+    ///
+    /// # Errors
+    /// Returns an error if the edit produces an invalid mapping.
+    pub fn edit_live_reference(&mut self, edit: TabularEdit) -> Result<(), CoordinateError> {
+        validate_live_edit(edit)?;
+        let reference = [
+            self.reference_value()[0],
+            self.increment()[0],
+            self.reference_pixel()[0],
+        ];
+        self.edit(edit)?;
+        if self.linear.is_none() {
+            self.sample_reference = Some(edit.apply(reference));
+        }
+        Ok(())
     }
 
     pub(crate) fn edit(&mut self, edit: TabularEdit) -> Result<f64, CoordinateError> {
@@ -349,7 +472,7 @@ impl Coordinate for TabularCoordinate {
         } else {
             let mut value = world[0];
             if self.linear_transform != 1.0 {
-                let reference = self.world_values[0];
+                let reference = self.reference_world();
                 value = reference + (value - reference) / self.linear_transform;
             }
             interpolate(&self.world_values, &self.pixel_values, value)?
@@ -358,21 +481,25 @@ impl Coordinate for TabularCoordinate {
     }
 
     fn reference_value(&self) -> Vec<f64> {
-        vec![
-            self.linear
-                .map_or_else(|| self.world_values[0], |(crval, _, _)| crval),
-        ]
+        vec![self.reference_world()]
     }
 
     fn reference_pixel(&self) -> Vec<f64> {
-        vec![
-            self.linear
-                .map_or_else(|| self.pixel_values[0], |(_, _, crpix)| crpix),
-        ]
+        let value = if let Some((_, _, value)) = self.linear {
+            value
+        } else if let Some([_, _, value]) = self.sample_reference {
+            value
+        } else {
+            self.pixel_values[0]
+        };
+        vec![value]
     }
 
     fn increment(&self) -> Vec<f64> {
         if let Some((_, cdelt, _)) = self.linear {
+            return vec![cdelt];
+        }
+        if let Some([_, cdelt, _]) = self.sample_reference {
             return vec![cdelt];
         }
         // Casacore derives the global increment from the table endpoints.

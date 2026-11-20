@@ -409,7 +409,7 @@ pub(crate) fn invert_matrix(m: &Array2<f64>) -> Result<Array2<f64>, CoordinateEr
             }
         }
 
-        if max_val < 1e-15 {
+        if max_val == 0.0 || !max_val.is_finite() {
             return Err(CoordinateError::SingularTransform("singular PC matrix"));
         }
 

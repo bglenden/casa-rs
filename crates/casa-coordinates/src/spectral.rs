@@ -24,7 +24,10 @@ use crate::record_utils::{
     get_optional_f64, get_optional_i32, get_optional_string, get_optional_vec_f64,
     get_optional_vec_string, get_required_f64, get_required_vec_f64,
 };
-use crate::tabular::{TabularEdit, edit_table};
+use crate::tabular::{
+    TabularEdit, edit_table, sample_reference, scaled_world, validate_live_edit,
+    validate_transform_samples,
+};
 
 #[derive(Debug, Clone)]
 enum SpectralMapping {
@@ -361,6 +364,19 @@ impl SpectralCoordinate {
     /// Apply a tabular coordinate edit and canonicalize the resulting table
     /// as casacore does when it saves and restores a spectral coordinate.
     pub(crate) fn edit_tabular(&mut self, edit: TabularEdit) -> Result<f64, CoordinateError> {
+        self.apply_table_edit(edit, false)
+    }
+
+    /// Edit the live tabular reference parameters without normalizing them.
+    ///
+    /// # Errors
+    /// Returns an error if the axis has no samples or the edit is invalid.
+    pub fn edit_live_reference(&mut self, edit: TabularEdit) -> Result<(), CoordinateError> {
+        validate_live_edit(edit)?;
+        self.apply_table_edit(edit, true).map(|_| ())
+    }
+
+    fn apply_table_edit(&mut self, edit: TabularEdit, live: bool) -> Result<f64, CoordinateError> {
         let SpectralMapping::Tabular {
             pixel_values,
             world_values,
@@ -374,9 +390,11 @@ impl SpectralCoordinate {
             ));
         };
         let updated = edit_table(pixel_values, world_values, *crval, *cdelt, *crpix, edit)?;
-        *crval = updated.values[0];
-        *cdelt = updated.increment;
-        *crpix = pixel_values[0];
+        [*crval, *cdelt, *crpix] = if live {
+            edit.apply([*crval, *cdelt, *crpix])
+        } else {
+            [updated.values[0], updated.increment, pixel_values[0]]
+        };
         *world_values = updated.values;
         Ok(updated.old)
     }
@@ -450,17 +468,56 @@ impl SpectralCoordinate {
     /// # Errors
     /// Returns an error for a nonfinite transform or a singular linear WCS.
     pub fn with_linear_transform(mut self, transform: f64) -> Result<Self, CoordinateError> {
-        if !transform.is_finite() || transform == 0.0 {
-            if !self.has_linear_mapping() {
-                return Err(CoordinateError::InvalidRecord(
-                    "linear transform would produce invalid tabular samples".into(),
-                ));
-            }
+        if let SpectralMapping::Tabular {
+            world_values,
+            crval,
+            ..
+        } = &self.mapping
+        {
+            validate_transform_samples(world_values, *crval, transform)?;
+        } else if !transform.is_finite() || transform == 0.0 {
             return Err(CoordinateError::InvalidRecord(
                 "wcs wcsset_error: Linear transformation matrix is singular".into(),
             ));
         }
         self.linear_transform = transform;
+        Ok(self)
+    }
+
+    /// Read the live reference and unscaled samples from an in-memory record.
+    /// Public record restoration normalizes the tabulated mapping.
+    ///
+    /// # Errors
+    /// Returns an error for missing reference parameters or invalid samples.
+    pub fn with_live_reference(mut self, record: &RecordValue) -> Result<Self, CoordinateError> {
+        let Some(Value::Record(table)) = record.get("tabular") else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing spectral table".into(),
+            ));
+        };
+        let [crval, cdelt, crpix] = sample_reference(table)?;
+        let pixels = get_required_vec_f64(table, "pixelvalues")?;
+        let mut worlds = get_required_vec_f64(table, "worldvalues")?;
+        let unit = get_optional_vec_string(table, "units")
+            .and_then(|units| units.into_iter().next())
+            .unwrap_or_else(|| "Hz".into());
+        let to_hz = frequency_unit_scale(&unit).ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!("invalid tabular spectral unit {unit:?}"))
+        })?;
+        let scale = to_hz / self.unit_scale_hz.unwrap_or(1.0);
+        for world in &mut worlds {
+            *world *= scale;
+        }
+        self.mapping = Self::from_tabular(
+            self.frequency_ref,
+            pixels,
+            worlds,
+            crval * scale,
+            cdelt * scale,
+            crpix,
+            self.rest_frequency,
+        )?
+        .mapping;
         Ok(self)
     }
 
@@ -716,11 +773,7 @@ impl Coordinate for SpectralCoordinate {
                 ..
             } => {
                 let world = interpolate(pixel_values, world_values, pixel[0])?;
-                if self.linear_transform == 1.0 {
-                    world
-                } else {
-                    crval + self.linear_transform * (world - crval)
-                }
+                scaled_world(world, *crval, self.linear_transform)
             }
         };
         Ok(vec![self.convert_native_to_world(world)?])
@@ -910,11 +963,7 @@ impl SpectralCoordinate {
                         world_values
                             .iter()
                             .map(|value| {
-                                let world = if self.linear_transform == 1.0 {
-                                    *value
-                                } else {
-                                    crval + self.linear_transform * (value - crval)
-                                };
+                                let world = scaled_world(*value, *crval, self.linear_transform);
                                 world * to_hz
                             })
                             .collect(),

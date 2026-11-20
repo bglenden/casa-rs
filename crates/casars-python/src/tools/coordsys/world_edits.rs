@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_coordinates::tabular::TabularEdit;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::quanta::{Quantity, Unit};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PySystemError, PyTypeError};
@@ -139,10 +140,8 @@ fn apply_location(
             continue;
         }
         let value = declared_value(value, unit.as_deref())?;
-        CoordinateSystem::set_reference_pixel_in_record(&mut updated, axis, pixel)
-            .map_err(raised)?;
-        CoordinateSystem::set_reference_value_in_record(&mut updated, axis, value)
-            .map_err(raised)?;
+        state.edit_record_axis(&mut updated, axis, TabularEdit::ReferencePixel(pixel))?;
+        state.edit_record_axis(&mut updated, axis, TabularEdit::ReferenceValue(value))?;
     }
     state.apply_edited_record(updated)?;
     Ok(true)
@@ -204,15 +203,11 @@ fn apply_edit(
             if old_values.get(local) == Some(&value) {
                 continue;
             }
-            match edit {
-                WorldEdit::Reference => {
-                    CoordinateSystem::set_reference_value_in_record(&mut updated, axis, value)
-                }
-                WorldEdit::Increment => {
-                    CoordinateSystem::set_increment_in_record(&mut updated, axis, value)
-                }
-            }
-            .map_err(raised)?;
+            let parameter = match edit {
+                WorldEdit::Reference => TabularEdit::ReferenceValue(value),
+                WorldEdit::Increment => TabularEdit::Increment(value),
+            };
+            state.edit_record_axis(&mut updated, axis, parameter)?;
         }
     }
     if values.next().is_some() {

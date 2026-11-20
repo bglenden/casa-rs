@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_coordinates::tabular::TabularEdit;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_types::{RecordValue, Value};
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::PyRuntimeError;
@@ -9,7 +10,7 @@ use pyo3::prelude::*;
 
 use crate::convert::Variant;
 
-use super::frame_metadata::missing;
+use super::frame_metadata::{coordinate, missing};
 use super::inspect::coordinate_type;
 use super::{CoordinateState, PyCoordsys};
 
@@ -73,7 +74,18 @@ fn edit_record(original: &RecordValue, changed: &CoordinateModel) -> PyResult<Re
             let (key, fields) = if spectral.has_linear_mapping() {
                 ("wcs", &["pc"][..])
             } else {
-                ("tabular", &["pc", "pixelvalues", "worldvalues"][..])
+                (
+                    "tabular",
+                    &[
+                        "pc",
+                        "crval",
+                        "cdelt",
+                        "crpix",
+                        "units",
+                        "pixelvalues",
+                        "worldvalues",
+                    ][..],
+                )
             };
             let Some(Value::Record(source)) = native.get(key) else {
                 return Err(raised(format!("Missing spectral coordinate field {key}")));
@@ -87,10 +99,38 @@ fn edit_record(original: &RecordValue, changed: &CoordinateModel) -> PyResult<Re
             }
         }
         CoordinateModel::Direction(_) => write_fields(&mut updated, &native, &["pc", "cdelt"])?,
-        CoordinateModel::Tabular(_) => write_fields(&mut updated, &native, &["pc", "worldvalues"])?,
+        CoordinateModel::Tabular(_) => write_fields(
+            &mut updated,
+            &native,
+            &["pc", "crval", "cdelt", "crpix", "worldvalues"],
+        )?,
         _ => write_fields(&mut updated, &native, &["pc"])?,
     }
     Ok(updated)
+}
+
+pub(super) fn normalize_restored_matrix(
+    original: &RecordValue,
+    model: &CoordinateModel,
+) -> PyResult<Option<RecordValue>> {
+    let table = match model {
+        CoordinateModel::Tabular(_) => original,
+        CoordinateModel::Spectral(spectral) if !spectral.has_linear_mapping() => {
+            recorded_coordinate(original, "tabular")?
+        }
+        _ => return Ok(None),
+    };
+    let matrix = match table.get("pc") {
+        Some(Value::Array(ArrayValue::Float64(values))) => values.first().copied(),
+        Some(Value::Array(ArrayValue::Float32(values))) => values.first().copied().map(f64::from),
+        Some(Value::Scalar(ScalarValue::Float64(value))) => Some(*value),
+        _ => None,
+    };
+    if matrix.is_some_and(|factor| factor != 1.0) {
+        Ok(Some(edit_record(original, model)?))
+    } else {
+        Ok(None)
+    }
 }
 
 fn update_stored_coordinate(
@@ -137,6 +177,31 @@ fn change_tabular_matrix(model: &CoordinateModel, factor: f64) -> PyResult<Coord
     }
 }
 
+fn live_tabular_model(model: &CoordinateModel, record: &RecordValue) -> PyResult<CoordinateModel> {
+    match model {
+        CoordinateModel::Tabular(tabular) => Ok(tabular
+            .clone()
+            .with_live_reference(record)
+            .map_err(raised)?
+            .into()),
+        CoordinateModel::Spectral(spectral) => Ok(spectral
+            .clone()
+            .with_live_reference(record)
+            .map_err(raised)?
+            .into()),
+        _ => Err(raised(
+            "Coordinate no longer supports its tabular transform",
+        )),
+    }
+}
+
+fn recorded_coordinate<'a>(record: &'a RecordValue, field: &str) -> PyResult<&'a RecordValue> {
+    match record.get(field) {
+        Some(Value::Record(value)) => Ok(value),
+        _ => Err(raised("Missing coordinate record")),
+    }
+}
+
 impl CoordinateState {
     fn tabular_matrices(&self) -> impl Iterator<Item = (usize, f64)> + '_ {
         (0..self.coordinates.n_coordinates()).filter_map(|index| {
@@ -164,6 +229,54 @@ impl CoordinateState {
         self.apply_edited_coordinates(record, coordinates)
     }
 
+    pub(super) fn edit_record_axis(
+        &self,
+        record: &mut RecordValue,
+        axis: usize,
+        edit: TabularEdit,
+    ) -> PyResult<()> {
+        if self.tabular_matrices().next().is_some() {
+            let placements = CoordinateSystem::record_coordinates(record).map_err(raised)?;
+            if let Some((index, placement)) = placements
+                .iter()
+                .enumerate()
+                .find(|(_, placement)| placement.pixel_axes.contains(&Some(axis)))
+                && live_tabular_matrix(self.coordinates.coordinate(index)).is_some()
+            {
+                let native = recorded_coordinate(record, &placement.field)?;
+                let base = change_tabular_matrix(self.coordinates.coordinate(index), 1.0)?;
+                let mut model = live_tabular_model(&base, native)?;
+                match &mut model {
+                    CoordinateModel::Tabular(table) => {
+                        table.edit_live_reference(edit).map_err(raised)?
+                    }
+                    CoordinateModel::Spectral(spectral) => {
+                        spectral.edit_live_reference(edit).map_err(raised)?
+                    }
+                    _ => {
+                        return Err(raised(
+                            "Coordinate no longer supports its tabular transform",
+                        ));
+                    }
+                }
+                return update_stored_coordinate(record, &placement.field, &model);
+            }
+        }
+        match edit {
+            TabularEdit::ReferencePixel(value) => {
+                CoordinateSystem::set_reference_pixel_in_record(record, axis, value)
+            }
+            TabularEdit::ReferenceValue(value) => {
+                CoordinateSystem::set_reference_value_in_record(record, axis, value)
+            }
+            TabularEdit::Increment(value) => {
+                CoordinateSystem::set_increment_in_record(record, axis, value)
+            }
+        }
+        .map(|_| ())
+        .map_err(raised)
+    }
+
     pub(super) fn apply_edited_coordinates(
         &mut self,
         mut record: RecordValue,
@@ -173,8 +286,11 @@ impl CoordinateState {
         if matrices.peek().is_some() {
             let placements = CoordinateSystem::record_coordinates(&record).map_err(raised)?;
             for (index, factor) in &mut matrices {
-                let changed = change_tabular_matrix(coordinates.coordinate(index), factor)?;
-                update_stored_coordinate(&mut record, &placements[index].field, &changed)?;
+                let field = &placements[index].field;
+                let native = recorded_coordinate(&record, field)?;
+                let base = live_tabular_model(coordinates.coordinate(index), native)?;
+                let changed = change_tabular_matrix(&base, factor)?;
+                update_stored_coordinate(&mut record, field, &changed)?;
                 coordinates.replace_coordinate(index, changed);
             }
         }
@@ -190,13 +306,12 @@ fn apply_matrix(
     kind: CoordinateType,
     matrix: Array2<f64>,
 ) -> PyResult<bool> {
-    let index = state
-        .coordinates
-        .find_coordinate(kind)
-        .ok_or_else(|| missing(kind))?;
+    let (model, placement) = coordinate(state, kind)?.ok_or_else(|| missing(kind))?;
     let placements = CoordinateSystem::record_coordinates(&state.record).map_err(raised)?;
-    let placement = &placements[index];
-    let model = state.coordinates.coordinate(index);
+    let index = placements
+        .iter()
+        .position(|entry| entry.field == placement.field)
+        .ok_or_else(|| raised("Missing coordinate placement"))?;
     let sliced = placement.pixel_axes.contains(&None);
     let full = if sliced {
         placement.model(&state.record).map_err(raised)?
@@ -223,7 +338,18 @@ fn apply_matrix(
             .with_normalized_pc_matrix(matrix)
             .map_err(raised)?
             .into(),
-        CoordinateModel::Linear(linear) => linear.with_pc_matrix(matrix).into(),
+        CoordinateModel::Linear(linear) => {
+            if matrix
+                .rows()
+                .into_iter()
+                .any(|row| row.iter().all(|&value| value == 0.0))
+            {
+                return Err(raised(
+                    "wcs wcsset_error: Linear transformation matrix is singular",
+                ));
+            }
+            linear.with_pc_matrix(matrix).into()
+        }
         CoordinateModel::Spectral(spectral) => spectral
             .with_linear_transform(matrix[[0, 0]])
             .map_err(raised)?
