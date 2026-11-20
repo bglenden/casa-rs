@@ -109,6 +109,21 @@ def main():
             ({"mode": "summary", "field": "unknown"}, RuntimeError, False),
             ({"action": "calculate", "field": "unknown"}, RuntimeError, False),
             ({"action": "apply", "field": "unknown", "flagbackup": False}, RuntimeError, False),
+            ({"field": ["FLUX"]}, TypeError, True),
+            ({"spw": ["0"]}, TypeError, True),
+            ({"array": ["0"]}, TypeError, True),
+            ({"feed": ["0"]}, TypeError, True),
+            ({"scan": ["1"]}, TypeError, True),
+            ({"antenna": ["EA01"]}, TypeError, True),
+            ({"uvrange": ["0~100m"]}, TypeError, True),
+            ({"timerange": ["00:01:00"]}, TypeError, True),
+            ({"intent": ["CALIBRATE_PHASE"]}, TypeError, True),
+            ({"field": []}, TypeError, True),
+            ({"field": np.array("FLUX")}, TypeError, True),
+            ({"mode": "summary", "field": ["FLUX"]}, TypeError, False),
+            ({"action": "calculate", "field": ["FLUX"]}, TypeError, False),
+            ({"field": ["FLUX"], "correlation": ["XX"]}, AttributeError, True),
+            ({"field": [0]}, AssertionError, False),
         )
         for index, (options, error_type, backup) in enumerate(cases):
             for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
@@ -118,8 +133,11 @@ def main():
                 before = datetime.now().replace(microsecond=0)
                 try:
                     task(vis=vis, **options)
-                except error_type:
-                    pass
+                except error_type as error:
+                    if error_type is TypeError:
+                        selector = next(key for key, value in options.items()
+                                        if isinstance(value, (list, np.ndarray)))
+                        assert str(error) == f"argument _{selector} must be a string"
                 else:
                     raise AssertionError((name, options))
                 after = datetime.now().replace(microsecond=0)
@@ -139,6 +157,17 @@ def main():
                 assert current[0][:2] == previous[0][:2]
                 assert {path: checksum for path, checksum in current[1].items()
                         if sidecar not in path.parents} == previous[1]
+        for options in ({"field": ["FLUX"], "spw": 2},
+                        {"field": 2, "action": "none", "savepars": True, "outfile": "invalid.txt"}):
+            try:
+                tasks.run("flagdata", vis="source.ms", **options)
+            except tasks.TaskParameterError as error:
+                expected = "spw" if "spw" in options else "field"
+                assert error.completion.parameter == expected
+            else:
+                raise AssertionError(options)
+            assert not Path("source.ms.flagversions").exists()
+            assert not Path("invalid.txt").exists()
         products = check_spw_grammar()
     print(f"{len(cases)} automatic-backup outcomes and {products} SPW products checked against CASA")
 

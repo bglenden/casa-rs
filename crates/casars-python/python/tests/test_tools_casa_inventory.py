@@ -29,7 +29,6 @@ from _casa_tools import (
 ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030,
           "calibrater": 1528}
 CALIBRATER_OWNERS = {
-    "initweights": 1524,
     "accumulate": 1525, "createcaltable": 1525, "updatecaltable": 1525,
     "rerefant": 1525, "smooth": 1525,
     "listcal": 1526, "plotcal": 1526,
@@ -40,7 +39,7 @@ IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
 IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
-    "initcalset", "delmod", "setptmodel", "modelfit",
+    "initcalset", "delmod", "setptmodel", "modelfit", "initweights",
 }
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve"},

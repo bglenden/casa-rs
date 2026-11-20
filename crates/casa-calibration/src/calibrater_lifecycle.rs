@@ -22,6 +22,7 @@ use crate::{
 
 pub(crate) mod ep_cache;
 pub(crate) mod legacy_ep;
+mod weights;
 
 use legacy_ep::LegacyEpSolver;
 
@@ -97,6 +98,9 @@ pub enum CalibraterLifecycleError {
     /// CASA's visibility component fitter uses the legacy iterator.
     #[error("Calibrater::modelfit not implemented")]
     FitNeedsLegacyIterator,
+    /// The attached tool could not initialize its visibility weights.
+    #[error("Error in Calibrater::initWeights.")]
+    InitWeights(#[source] casa_ms::MsError),
     /// MeasurementSet attachment or visibility selection failed.
     #[error(transparent)]
     Attachment(#[from] AttachmentError),

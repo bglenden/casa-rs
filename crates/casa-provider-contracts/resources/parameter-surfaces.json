@@ -23153,31 +23153,32 @@
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 3},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 4},
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
-            "provider": {"field": "uvrange"},
-            "python": {"name": "uvrange", "type_hint": "str"},
+            "provider": {"field": "uvrange", "adapter": "identity"},
+            "python": {"name": "uvrange", "type_hint": "str | list[str]"},
             "presentation": {"label": "UV Range", "group": "Selection", "advanced": true}
           }
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 4},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 6},
           "order": 10,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "SELECTOR"},
-            "provider": {"field": "timerange"},
-            "python": {"name": "timerange", "type_hint": "str"},
+            "provider": {"field": "timerange", "adapter": "identity"},
+            "python": {"name": "timerange", "type_hint": "str | list[str]"},
             "presentation": {"label": "Time Range", "group": "Selection", "advanced": true}
-          }
+          },
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "correlation",
@@ -23197,17 +23198,18 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 3},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 4},
           "order": 13,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
             "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
-            "provider": {"field": "intent"},
-            "python": {"name": "intent", "type_hint": "str"},
+            "provider": {"field": "intent", "adapter": "identity"},
+            "python": {"name": "intent", "type_hint": "str | list[str]"},
             "presentation": {"label": "Intent", "group": "Selection", "advanced": true}
-          }
+          },
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "array",
@@ -23219,7 +23221,7 @@
           "projections": {
             "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
             "provider": {"field": "array"},
-            "python": {"name": "array", "type_hint": "str"},
+            "python": {"name": "array", "type_hint": "str | list[str]"},
             "presentation": {"label": "Array", "group": "Selection", "advanced": true}
           }
         },
@@ -23248,7 +23250,7 @@
           "projections": {
             "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
             "provider": {"field": "feed"},
-            "python": {"name": "feed", "type_hint": "str"},
+            "python": {"name": "feed", "type_hint": "str | list[str]"},
             "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
           }
         },
@@ -24078,7 +24080,7 @@
           "name": "spw",
           "concept": {
             "id": "ms.selection.spw",
-            "semantic_revision": 1
+            "semantic_revision": 6
           },
           "order": 6,
           "default": {
@@ -24106,13 +24108,10 @@
               "false_flags": [],
               "metavar": "SELECTOR"
             },
-            "provider": {
-              "field": "spw",
-              "adapter": "omit_none"
-            },
+            "provider": {"field": "spw", "adapter": "identity"},
             "python": {
               "name": "spw",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Spectral Window",
@@ -24121,13 +24120,13 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "field",
           "concept": {
             "id": "ms.selection.field",
-            "semantic_revision": 4
+            "semantic_revision": 8
           },
           "order": 7,
           "default": {
@@ -24155,13 +24154,10 @@
               "false_flags": [],
               "metavar": "SELECTOR"
             },
-            "provider": {
-              "field": "field",
-              "adapter": "identity"
-            },
+            "provider": {"field": "field", "adapter": "identity"},
             "python": {
               "name": "field",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Field",
@@ -24170,13 +24166,13 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "scan",
           "concept": {
             "id": "ms.selection.scan",
-            "semantic_revision": 2
+            "semantic_revision": 6
           },
           "order": 12,
           "default": {
@@ -24204,13 +24200,10 @@
               "false_flags": [],
               "metavar": "SELECTOR"
             },
-            "provider": {
-              "field": "scan",
-              "adapter": "identity"
-            },
+            "provider": {"field": "scan", "adapter": "identity"},
             "python": {
               "name": "scan",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Scan",
@@ -24219,13 +24212,13 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "antenna",
           "concept": {
             "id": "ms.selection.antenna",
-            "semantic_revision": 2
+            "semantic_revision": 7
           },
           "order": 8,
           "default": {
@@ -24253,13 +24246,10 @@
               "false_flags": [],
               "metavar": "IDS_OR_NAMES"
             },
-            "provider": {
-              "field": "antenna",
-              "adapter": "identity"
-            },
+            "provider": {"field": "antenna", "adapter": "identity"},
             "python": {
               "name": "antenna",
-              "type_hint": null
+              "type_hint": "str | list[str]"
             },
             "presentation": {
               "label": "Antenna",
@@ -24268,7 +24258,7 @@
               "hidden": false
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata preserves selector vectors for saved commands and checks scalar selection after any automatic flag backup."}
         },
         {
           "name": "datacolumn",

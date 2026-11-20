@@ -387,7 +387,15 @@ fn refused_arguments_change_nothing() {
     for (binary, args) in [
         (
             env!("CARGO_BIN_EXE_flagdata"),
-            vec!["--vis", ms_arg, "--mode", "manual", "--spw", "0:99~100"],
+            vec![
+                "--vis",
+                ms_arg,
+                "--mode",
+                "manual",
+                "--spw",
+                "0:never",
+                "--no-flagbackup",
+            ],
         ),
         (
             env!("CARGO_BIN_EXE_mstransform"),
