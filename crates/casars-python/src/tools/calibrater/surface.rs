@@ -86,19 +86,22 @@ const METHODS: &[Method] = &[
             S::Implemented,
         )
     },
-    method(
-        "initweights",
-        &[
-            param("wtmode", K::Text, D::Text("nyq")),
-            param("dowtsp", K::Bool, D::Bool(false)),
-            param("tsystable", K::Text, D::Text("")),
-            param("gainfield", K::Text, D::Text("")),
-            param("interp", K::Text, D::Text("")),
-            param("spwmap", K::Any, D::Empty),
-        ],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "initweights",
+            &[
+                param("wtmode", K::Text, D::Text("nyq")),
+                param("dowtsp", K::Bool, D::Bool(false)),
+                param("tsystable", K::Text, D::Text("")),
+                param("gainfield", K::Text, D::Text("")),
+                param("interp", K::Text, D::Text("")),
+                param("spwmap", K::Ints, D::Empty),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
     method(
         "linpolcor",
         &[
