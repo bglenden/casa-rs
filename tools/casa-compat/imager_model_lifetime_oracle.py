@@ -76,6 +76,25 @@ def scratch_controls(root, dataset, factory, options, expected):
     assert tool.done()
 
 
+def moved_source(root, dataset, factory, first, second, model, expected):
+    root.mkdir()
+    local_model = root / 'model.im'
+    component_path = root / 'point.cl'
+    shutil.copytree(model, local_model)
+    component(component_path, coordinates(dataset), 2.)
+    paths = {'image': local_model, 'components': component_path}
+    keywords = {'image': 'model', 'components': 'complist'}
+    target = root / 'source-moved.ms'
+    make_input(dataset, target, scratch=True)
+    tool = configured_imager(factory, target, root / 'unused-cache', scratch=True, machine='ft')
+    assert tool.ft(**{keywords[first]: str(paths[first])})
+    paths[first].rename(root / 'moved-source')
+    assert tool.ft(**{keywords[second]: str(paths[second])})
+    assert not paths[first].exists()
+    np.testing.assert_array_equal(data(target, 'MODEL_DATA'), expected)
+    assert tool.done()
+
+
 def run(root, dataset, model):
     from casars.tools import imager as native, ms as native_ms
 
@@ -101,6 +120,9 @@ def run(root, dataset, model):
                 compare(scratch['native'], scratch['casa'], f'{label}-scratch', results)
                 if incremental:
                     continue
+                for engine, factory in engines:
+                    moved_source(case / f'{engine}-moved', dataset, factory, first, second,
+                                 model, scratch[engine])
                 virtual_products = {}
                 for writer, factory in engines:
                     path = case / f'{writer}-saved.ms'

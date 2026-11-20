@@ -41,6 +41,13 @@ struct SkyModelPaths {
     components: Option<PathBuf>,
 }
 
+impl ImagerState {
+    fn reset_sky_model(&mut self) {
+        self.sky_model = SkyModelPaths::default();
+        self.prediction.clear_retained_model_sources();
+    }
+}
+
 /// CASA's calibration-facing legacy imager.
 #[pyclass(name = "imager", module = "casars.tools", frozen)]
 pub(crate) struct PyImager {
@@ -186,7 +193,7 @@ impl PyImager {
                 .prediction
                 .define_model_geometry(request)
                 .map_err(runtime_error)?;
-            state.sky_model = SkyModelPaths::default();
+            state.reset_sky_model();
             Ok(true)
         })
     }
@@ -315,7 +322,7 @@ impl PyImager {
                 .prediction
                 .configure_single_dish(setup)
                 .map_err(runtime_error)?;
-            state.sky_model = SkyModelPaths::default();
+            state.reset_sky_model();
             Ok(true)
         })
     }
@@ -359,7 +366,7 @@ impl PyImager {
                     parallactic.to_radians(),
                 )
                 .map_err(runtime_error)?;
-            state.sky_model = SkyModelPaths::default();
+            state.reset_sky_model();
             Ok(())
         })?;
         let mut lines = vec![LogLine::info("Setting voltage pattern parameters")];
@@ -459,7 +466,7 @@ impl PyImager {
                     state.valid = selected;
                     if selected {
                         state.prediction.reset_fourier_machine();
-                        state.sky_model = SkyModelPaths::default();
+                        state.reset_sky_model();
                     }
                     Ok(Some(selected))
                 }
@@ -534,10 +541,11 @@ impl PyImager {
                 incremental,
                 phase_centre_time: (phasecentertime >= 0.).then_some(phasecentertime),
             };
-            match state
-                .prediction
-                .predict_attached(&state.attachments, model, state.uses_scratch)
-            {
+            match state.prediction.predict_attached_retaining_sources(
+                &state.attachments,
+                model,
+                state.uses_scratch,
+            ) {
                 Ok(true) => {
                     if !images.is_empty() {
                         state.sky_model.images = images;

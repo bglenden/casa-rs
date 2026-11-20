@@ -31,7 +31,7 @@ pub(crate) const KERNEL_IMAGE: &str = "CASARS_LEGACY_PBW_KERNEL";
 pub(super) fn prepare_model(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
-    path: &Path,
+    model: &PagedImage<f32>,
     geometry: &PredictionGeometry,
     options: (&ImagerLegacyPbWOptions, Option<&LegacyEpOffsets>),
     keep_zero: bool,
@@ -54,8 +54,7 @@ pub(super) fn prepare_model(
             "legacy pbmosaic prediction with several fields is pending #1520",
         ));
     }
-    let model = PagedImage::<f32>::open(path).map_err(invalid)?;
-    let (shape, increment, coordinates) = model_geometry(&model)?;
+    let (shape, increment, coordinates) = model_geometry(model)?;
     let [side, _, _, _] = shape;
     let host = HostResources::detect().map_err(invalid)?;
     let _memory = reserve_model(&host, side)?;
