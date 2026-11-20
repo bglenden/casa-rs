@@ -12,8 +12,11 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use super::invalid;
 
 const OFFSETS: &str = "casars_legacy_pbw_ep_offsets";
+const EPOCHS: &str = "casars_legacy_pbw_ep_epochs";
 
 pub(crate) struct LegacyEpOffsets {
+    antennas: usize,
+    epochs: Vec<f64>,
     values: Vec<Option<[f64; 2]>>,
     _memory: Reservation,
 }
@@ -43,7 +46,7 @@ impl LegacyEpOffsets {
                     "legacy pointing offsets for this spectral-window layout are pending #1520",
                 ));
             }
-            self.baseline_offset([row.antenna1_id, row.antenna2_id])?;
+            self.baseline_offset([row.antenna1_id, row.antenna2_id], row.time_mjd_seconds)?;
         }
         Ok(())
     }
@@ -83,8 +86,15 @@ impl LegacyEpOffsets {
                 "legacy pointing offsets for this spectral-window layout are pending #1520",
             ));
         }
+        let samples = table.row_count();
+        let slots = samples
+            .checked_div(antennas)
+            .filter(|count| count * antennas == samples)
+            .ok_or_else(|| {
+                invalid("legacy EP table does not match the MeasurementSet antenna count")
+            })?;
         let host = HostResources::detect().map_err(invalid)?;
-        let mut offsets = Self::empty(antennas, &host)?;
+        let mut offsets = Self::empty(antennas, slots, &host)?;
         let _reading = admit(
             &host,
             &ResourcePolicy::Balanced,
@@ -96,7 +106,7 @@ impl LegacyEpOffsets {
             },
         )
         .map_err(invalid)?;
-        let mut time = None;
+        let mut rows = Vec::with_capacity(samples);
         let gains = table.column_accessor("GAIN")?;
         for first in (0..table.row_count()).step_by(256) {
             let indices: Vec<_> = (first..(first + 256).min(table.row_count())).collect();
@@ -111,19 +121,13 @@ impl LegacyEpOffsets {
                 else {
                     return Err(invalid("legacy EP TIME must be Float64"));
                 };
-                if !epoch.is_finite() || *time.get_or_insert(*epoch) != *epoch {
-                    return Err(invalid(
-                        "legacy pointing offsets with several solution times are pending #1520",
-                    ));
+                if !epoch.is_finite() {
+                    return Err(invalid("legacy EP solution times must be finite"));
                 }
                 let antenna =
                     usize::try_from(integer(&table, row, "ANTENNA1")?).map_err(invalid)?;
-                let slot = offsets
-                    .values
-                    .get_mut(antenna)
-                    .ok_or_else(|| invalid("legacy EP antenna is outside the selected array"))?;
-                if slot.is_some() {
-                    return Err(invalid("legacy EP table contains repeated antenna offsets"));
+                if antenna >= antennas {
+                    return Err(invalid("legacy EP antenna is outside the selected array"));
                 }
                 // The legacy apply path reads the first azimuth/elevation pair
                 // (entries zero and two) for both visibility correlations.
@@ -144,44 +148,73 @@ impl LegacyEpOffsets {
                 if !offset.iter().all(|value| value.is_finite()) {
                     return Err(invalid("legacy EP pointing offsets must be finite"));
                 }
-                *slot = Some(offset);
+                rows.push((*epoch, antenna, offset));
             }
         }
-        if offsets.values.iter().any(Option::is_none) {
-            return Err(invalid(
-                "legacy EP table does not match the MeasurementSet antenna count",
-            ));
+        rows.sort_unstable_by(|left, right| left.0.total_cmp(&right.0).then(left.1.cmp(&right.1)));
+        for (slot, rows) in rows.chunks_exact(antennas).enumerate() {
+            let epoch = rows[0].0;
+            if offsets.epochs.last() == Some(&epoch)
+                || rows
+                    .iter()
+                    .enumerate()
+                    .any(|(index, &(time, antenna, _))| time != epoch || antenna != index)
+            {
+                return Err(invalid(
+                    "legacy EP table does not match the MeasurementSet antenna count at each solution time",
+                ));
+            }
+            offsets.epochs.push(epoch);
+            for &(_, antenna, offset) in rows {
+                offsets.values[slot * antennas + antenna] = Some(offset);
+            }
         }
         Ok(offsets)
     }
 
-    fn empty(antennas: usize, host: &HostResources) -> MsResult<Self> {
+    fn empty(antennas: usize, slots: usize, host: &HostResources) -> MsResult<Self> {
+        let samples = antennas
+            .checked_mul(slots)
+            .ok_or_else(|| invalid("legacy EP solution size overflows usize"))?;
         let memory = admit(
             host,
             &ResourcePolicy::Balanced,
             &Demand {
                 phase: "legacy EP antenna offsets",
                 // The retained record uses three Float32 values per antenna.
-                memory: (antennas as u64)
-                    .saturating_mul((size_of::<Option<[f64; 2]>>() + 3 * size_of::<f32>()) as u64),
+                memory: (samples as u64)
+                    .saturating_mul((size_of::<Option<[f64; 2]>>() + 3 * size_of::<f32>()) as u64)
+                    .saturating_add((slots as u64).saturating_mul((2 * size_of::<f64>()) as u64)),
             },
         )
         .map_err(invalid)?;
         Ok(Self {
-            values: vec![None; antennas],
+            antennas,
+            epochs: Vec::with_capacity(slots),
+            values: vec![None; samples],
             _memory: memory,
         })
     }
 
     pub(super) fn save(&self, record: &mut RecordValue) {
-        let mut packed = ArrayD::zeros(IxDyn(&[3, self.values.len()]).f());
-        for (antenna, offset) in self.values.iter().enumerate() {
-            if let Some([l, m]) = offset {
-                packed[[0, antenna]] = 1.;
-                packed[[1, antenna]] = *l as f32;
-                packed[[2, antenna]] = *m as f32;
-            }
+        let mut shape = vec![3, self.antennas];
+        if self.epochs.len() > 1 {
+            shape.push(self.epochs.len());
+            record.upsert(
+                EPOCHS,
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[self.epochs.len()]), self.epochs.clone())
+                        .expect("one value per epoch"),
+                )),
+            );
         }
+        let packed = self
+            .values
+            .iter()
+            .flat_map(|offset| offset.map_or([0.; 3], |[l, m]| [1., l as f32, m as f32]))
+            .collect();
+        let packed = ArrayD::from_shape_vec(IxDyn(&shape).f(), packed)
+            .expect("three values per antenna and slot");
         record.upsert(OFFSETS, Value::Array(ArrayValue::Float32(packed)));
     }
 
@@ -194,15 +227,41 @@ impl LegacyEpOffsets {
                 "saved legacy EP offsets must contain Float32 values",
             ));
         };
-        if packed.shape() != [3, antennas] {
-            return Err(invalid(
-                "saved legacy EP offsets do not match the antenna count",
-            ));
-        }
+        let epochs = match packed.shape() {
+            [3, count] if *count == antennas => None,
+            [3, count, slots] if *count == antennas && *slots > 1 => {
+                let Some(Value::Array(ArrayValue::Float64(epochs))) = record.get(EPOCHS) else {
+                    return Err(invalid("saved legacy EP offsets have no solution times"));
+                };
+                if epochs.shape() != [*slots]
+                    || !epochs.iter().all(|epoch| epoch.is_finite())
+                    || epochs
+                        .iter()
+                        .zip(epochs.iter().skip(1))
+                        .any(|(left, right)| left >= right)
+                {
+                    return Err(invalid("saved legacy EP solution times are invalid"));
+                }
+                Some(epochs)
+            }
+            _ => {
+                return Err(invalid(
+                    "saved legacy EP offsets do not match the antenna count",
+                ));
+            }
+        };
         let host = HostResources::detect().map_err(invalid)?;
-        let mut offsets = Self::empty(antennas, &host)?;
-        for (antenna, slot) in offsets.values.iter_mut().enumerate() {
-            let [ok, l, m] = std::array::from_fn(|axis| packed[[axis, antenna]]);
+        let mut offsets = Self::empty(antennas, epochs.map_or(1, ArrayD::len), &host)?;
+        if let Some(epochs) = epochs {
+            offsets.epochs.extend(epochs.iter().copied());
+        } else {
+            offsets.epochs.push(0.);
+        }
+        for (index, slot) in offsets.values.iter_mut().enumerate() {
+            let [ok, l, m] = std::array::from_fn(|axis| {
+                let indices = [axis, index % antennas, index / antennas];
+                packed[IxDyn(&indices[..packed.ndim()])]
+            });
             match ok {
                 0. => {}
                 1. if l.is_finite() && m.is_finite() => *slot = Some([f64::from(l), f64::from(m)]),
@@ -216,10 +275,12 @@ impl LegacyEpOffsets {
         Ok(Some(offsets))
     }
 
-    pub(crate) fn baseline_offset(&self, antennas: [i32; 2]) -> MsResult<[f64; 2]> {
+    pub(crate) fn baseline_offset(&self, antennas: [i32; 2], time: f64) -> MsResult<[f64; 2]> {
+        let slot = self.nearest_slot(time);
+        let values = &self.values[slot * self.antennas..][..self.antennas];
         let offset = |antenna: i32| {
             let antenna = usize::try_from(antenna).map_err(invalid)?;
-            self.values.get(antenna).copied().flatten().ok_or_else(|| {
+            values.get(antenna).copied().flatten().ok_or_else(|| {
                 invalid(format!(
                     "legacy EP table has no offsets for antenna {antenna}"
                 ))
@@ -228,6 +289,18 @@ impl LegacyEpOffsets {
         let left = offset(antennas[0])?;
         let right = offset(antennas[1])?;
         Ok(std::array::from_fn(|axis| (left[axis] + right[axis]) * 0.5))
+    }
+
+    fn nearest_slot(&self, time: f64) -> usize {
+        let upper = self.epochs.partition_point(|epoch| *epoch < time);
+        if upper == 0
+            || upper < self.epochs.len()
+                && self.epochs[upper] - time < time - self.epochs[upper - 1]
+        {
+            upper
+        } else {
+            upper - 1
+        }
     }
 }
 
