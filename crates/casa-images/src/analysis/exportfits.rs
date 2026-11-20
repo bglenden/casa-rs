@@ -12,7 +12,7 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, FitsValue,
     fits::try_to_fits_header,
 };
-use casa_types::{ArrayD, quanta::time::MvTime};
+use casa_types::{ArrayD, RecordValue, quanta::time::MvTime};
 use fitsio::{
     FitsFile,
     hdu::FitsHdu,
@@ -23,7 +23,7 @@ use ndarray::IxDyn;
 
 use super::{FitsExportSummary, SPEED_OF_LIGHT_M_S, import_fits_for_reading};
 use crate::image::{ImageHistoryEntry, image_history_entries};
-use crate::{AnyPagedImage, ImageError, ImageInterface, ImagePixel, PagedImage};
+use crate::{AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage};
 
 mod publication;
 mod tool_export;
@@ -184,10 +184,11 @@ fn export_paged<T: ExportFitsPixel>(
 }
 
 #[derive(Default)]
-struct FitsWriteOptions {
+struct FitsWriteOptions<'a> {
     deglast: bool,
     wavelength: Option<Wavelength>,
     tool_metadata: bool,
+    beam_record: Option<&'a RecordValue>,
 }
 
 fn export_fits_typed<T: ExportFitsPixel>(
@@ -195,7 +196,7 @@ fn export_fits_typed<T: ExportFitsPixel>(
     image: &dyn ImageInterface<T>,
     history_entries: &[ImageHistoryEntry],
     stored_bpa: Option<f64>,
-    options: FitsWriteOptions,
+    options: FitsWriteOptions<'_>,
 ) -> Result<FitsExportSummary, ImageError> {
     validate_output_target(request)?;
     let plan = ExportAxisPlan::build(
@@ -216,7 +217,10 @@ fn export_fits_typed<T: ExportFitsPixel>(
         request.optical,
         options.wavelength,
     )?;
-    let info = image.image_info()?;
+    let mut info = image.image_info()?;
+    if let Some(record) = options.beam_record {
+        info.beam_set = ImageInfo::from_record(record)?.beam_set;
+    }
     let extra_cards = if options.tool_metadata {
         let coordinates = image.coordinates();
         let output_axis = |axis| plan.old_to_new.get(axis - 1).copied().flatten();

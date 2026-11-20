@@ -53,17 +53,27 @@ impl PyImageTool {
             deglast,
             wavelength,
             airwavelength,
+            beam_record: None,
         };
         py.detach(|| {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let handle = attachment.lock();
-            let ImageHandle::Float(storage) = &*handle else {
+            let mut handle = attachment.lock();
+            if !matches!(*handle, ImageHandle::Float(_)) {
                 return Err(raised(
                     "Only writing float-valued images to FITS is supported",
                 ));
+            }
+            attachment.require_lock(&mut handle, casa_tables::LockType::Read)?;
+            let ImageHandle::Float(storage) = &*handle else {
+                unreachable!("image storage stays fixed while locked");
+            };
+            let beams = attachment.beam_view();
+            let options = ImageFitsExportOptions {
+                beam_record: Some(beams.record()),
+                ..options
             };
             let request = ExportFitsRequest {
                 imagename: handle.path().map_or_else(PathBuf::new, Path::to_path_buf),

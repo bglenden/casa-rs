@@ -30,6 +30,8 @@ pub struct ImageFitsExportOptions<'a> {
     pub wavelength: bool,
     /// Use wavelength in air when writing wavelength.
     pub airwavelength: bool,
+    /// Saved restoring beams from the attached tool.
+    pub beam_record: Option<&'a RecordValue>,
 }
 
 /// Write a selected part of an attached float image using the shared FITS writer.
@@ -49,10 +51,11 @@ pub fn export_attached_fits(
     } else {
         Wavelength::Vacuum
     });
-    let write_options = FitsWriteOptions {
+    let mut write_options = FitsWriteOptions {
         deglast: options.deglast,
         wavelength,
         tool_metadata: true,
+        beam_record: options.beam_record,
     };
     if options.region.is_none() && options.mask.is_none() {
         return export_fits_typed(request, image, history, None, write_options);
@@ -62,7 +65,8 @@ pub fn export_attached_fits(
         dropdeg: false,
         keepaxes: &[],
     };
-    let plan = SubimagePlan::new(image, Some(coordinates), selection)?;
+    let plan =
+        SubimagePlan::new_with_beams(image, Some(coordinates), selection, options.beam_record)?;
     let mut selected = TempImage::new(
         plan.shape.clone(),
         plan.coordinates.clone(),
@@ -72,6 +76,7 @@ pub fn export_attached_fits(
         },
     )?;
     plan.copy_to(image, &mut selected, options.mask, options.stretch)?;
+    write_options.beam_record = None;
     export_fits_typed(request, &selected, history, None, write_options)
 }
 

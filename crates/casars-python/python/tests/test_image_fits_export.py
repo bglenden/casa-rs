@@ -19,6 +19,31 @@ def casa():
     return module
 
 
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+@pytest.mark.parametrize("cropped", [False, True])
+def test_export_uses_the_open_tools_beams_and_reacquires_read_lock(casa, tmp_path, cropped):
+    selection = {"region": casa.regionmanager().box([0, 0], [1, 2])} if cropped else {}
+    for backend in (casa, tools):
+        source = str(tmp_path / f"{backend.__name__}.im")
+        target = tmp_path / f"{backend.__name__}.fits"
+        writer, reader = backend.image(), backend.image()
+        assert writer.fromshape(source, [3, 4])
+        assert writer.setrestoringbeam("4arcsec", "2arcsec", "12deg")
+        assert reader.open(source)
+        assert writer.setrestoringbeam("8arcsec", "4arcsec", "27deg")
+        assert reader.unlock()
+        np.testing.assert_array_equal(reader.haslock(), [False, False])
+        assert reader.tofits(str(target), **selection)
+        np.testing.assert_array_equal(reader.haslock(), [True, False])
+        header, _, _ = _parse_fits_primary(target)
+        assert header["BMAJ"] == pytest.approx(4 / 3600)
+        assert header["BMIN"] == pytest.approx(2 / 3600)
+        assert header["BPA"] == pytest.approx(12)
+        assert (header["NAXIS1"], header["NAXIS2"]) == ((2, 3) if cropped else (3, 4))
+        assert reader.done()
+        assert writer.done()
+
+
 @pytest.mark.parametrize("persistent", [False, True])
 @pytest.mark.parametrize("bitpix", [-32, 16])
 def test_export_cross_reads_pixels_and_metadata(casa, tmp_path, persistent, bitpix):
