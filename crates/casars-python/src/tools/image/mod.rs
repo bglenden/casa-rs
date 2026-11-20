@@ -35,6 +35,7 @@ mod masks;
 mod metadata;
 mod modify;
 mod noise;
+mod pixel_edit;
 mod pixels;
 mod point;
 mod records;
