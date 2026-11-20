@@ -41,7 +41,6 @@ def virtual(factory, path, target):
     before = corrected_or_data(target)
     tool = factory()
     assert tool.open(str(target), nomodify=False)
-    assert tool.msselect({'field': '0'})
     assert tool.uvsub() and tool.done()
     return before - data(target, 'CORRECTED_DATA')
 
@@ -106,6 +105,11 @@ def run(root, dataset, model):
                 for writer, factory in engines:
                     path = case / f'{writer}-saved.ms'
                     make_input(dataset, path, scratch=False)
+                    seed = imager()
+                    assert seed.open(str(path), usescratch=True) and seed.done()
+                    editor = table()
+                    assert editor.open(str(path), nomodify=False)
+                    assert editor.removecols('MODEL_DATA') and editor.done()
                     publish(factory, path, [options[first], options[second]], scratch=False)
                     for reader, source in (('casa', casa_ms), ('native', native_ms)):
                         virtual_products[writer, reader] = virtual(
