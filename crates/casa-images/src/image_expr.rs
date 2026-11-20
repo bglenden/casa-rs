@@ -776,6 +776,7 @@ struct SectionSource<T> {
 enum NumericExprNode<'a, T: ImageExprValue> {
     Source(&'a dyn ImageInterface<T>),
     Sections(SectionSource<T>),
+    Vector(Arc<ArrayD<T>>),
     Scalar(T),
     UnaryOp {
         op: ImageExprUnaryOp,
@@ -802,6 +803,7 @@ enum NumericExprNode<'a, T: ImageExprValue> {
         op: ReductionOp,
         child: Box<NumericExprNode<'a, T>>,
         child_shape: Vec<usize>,
+        empty_value: Option<T>,
     },
     /// Fractile (quantile) of the full child array — real types only.
     Fractile {
@@ -870,6 +872,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
         match self {
             Self::Source(_)
             | Self::Sections(_)
+            | Self::Vector(_)
             | Self::Scalar(_)
             | Self::StripMask { .. }
             | Self::TypeBridge { .. } => false,
@@ -895,6 +898,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
         match self {
             Self::Source(image) => Some(image.shape().to_vec()),
             Self::Sections(source) => Some(source.shape.clone()),
+            Self::Vector(values) => Some(values.shape().to_vec()),
             Self::Scalar(_) => Some(vec![]),
             Self::UnaryOp { child, .. }
             | Self::CustomUnary { child, .. }
@@ -938,7 +942,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
                 }
                 None => Ok(None),
             },
-            Self::Scalar(_) | Self::StripMask { .. } => Ok(None),
+            Self::Scalar(_) | Self::Vector(_) | Self::StripMask { .. } => Ok(None),
             Self::UnaryOp { child, .. } | Self::CustomUnary { child, .. } => {
                 child.propagated_mask()
             }
@@ -982,7 +986,7 @@ impl<'a, T: ImageExprValue> NumericExprNode<'a, T> {
 
     fn kind_name(&self) -> &'static str {
         match self {
-            Self::Source(_) | Self::Sections(_) => "source",
+            Self::Source(_) | Self::Sections(_) | Self::Vector(_) => "source",
             Self::Scalar(_) => "scalar",
             Self::UnaryOp { .. } => "unary-op",
             Self::BinaryOp { .. } => "binary-op",
@@ -1332,6 +1336,16 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
             meta: ImageExprMeta::from_image(image)?,
             expr_string: None,
         })
+    }
+
+    pub(crate) fn from_vector(values: Vec<T>) -> Self {
+        let mut meta = Self::scalar(T::default_value()).meta;
+        meta.shape = vec![values.len()];
+        Self {
+            node: NumericExprNode::Vector(Arc::new(ndarray::Array1::from_vec(values).into_dyn())),
+            meta,
+            expr_string: None,
+        }
     }
 
     pub(crate) fn custom_unary(
@@ -1984,6 +1998,14 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
     }
 
     pub(crate) fn make_reduction(self, op: ReductionOp) -> Self {
+        self.make_reduction_with_empty_value(op, None)
+    }
+
+    pub(crate) fn make_reduction_with_empty_value(
+        self,
+        op: ReductionOp,
+        empty_value: Option<T>,
+    ) -> Self {
         let child_shape = self.meta.shape.clone();
         let mut meta = self.meta;
         meta.shape = vec![];
@@ -1992,6 +2014,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
                 op,
                 child: Box::new(self.node),
                 child_shape,
+                empty_value,
             },
             meta,
             expr_string: None,

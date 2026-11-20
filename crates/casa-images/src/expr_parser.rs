@@ -675,6 +675,7 @@ struct Parser<'a, 's, T: ImageExprValue + PartialOrd + ExprValueConvert, R: Imag
     resolver: &'s R,
     complex_resolver: Option<&'s dyn ImageResolver<'a, Complex64>>,
     casa_scalar_literals: bool,
+    integer_array_argument: bool,
     single_precision_sources: Option<&'s dyn Fn(&str) -> bool>,
     _marker: std::marker::PhantomData<&'a T>,
 }
@@ -694,6 +695,7 @@ where
             resolver,
             complex_resolver: None,
             casa_scalar_literals: false,
+            integer_array_argument: false,
             single_precision_sources: None,
             _marker: std::marker::PhantomData,
         })
@@ -1054,7 +1056,12 @@ where
 
         // Expect comma and second argument
         self.expect(&Token::Comma)?;
-        let arg2 = self.parse_expression()?;
+        let previous_indices = self.integer_array_argument;
+        self.integer_array_argument =
+            name.eq_ignore_ascii_case("indexin") || name.eq_ignore_ascii_case("rebin");
+        let arg2 = self.parse_expression();
+        self.integer_array_argument = previous_indices;
+        let arg2 = arg2?;
 
         if self.current == Token::RParen {
             self.advance()?;
@@ -1136,12 +1143,7 @@ where
             _ => None,
         };
         if let Some(op) = reduction {
-            let single = arg.single_precision();
-            let expression = arg.into_numeric(pos)?.make_reduction(op);
-            return Ok(ExprNode::numeric(
-                round_real_reduction(expression, single),
-                single,
-            ));
+            return self.eval_reduction(arg, op, pos);
         }
         if let Some(op) = unary_op {
             match arg {
@@ -1287,6 +1289,40 @@ where
         }
     }
 
+    fn eval_reduction(
+        &self,
+        arg: ExprNode<'a, T>,
+        op: ReductionOp,
+        pos: usize,
+    ) -> Result<ExprNode<'a, T>, ExprParseError> {
+        let single = arg.single_precision();
+        let empty_value = self.casa_scalar_literals.then(|| {
+            let value = if matches!(
+                op,
+                ReductionOp::Min | ReductionOp::Max | ReductionOp::Mean | ReductionOp::Median
+            ) {
+                if single {
+                    -f64::from(f32::MIN_POSITIVE)
+                } else {
+                    -f64::MIN_POSITIVE
+                }
+            } else {
+                0.0
+            };
+            T::from_f64(value)
+        });
+        let input = if self.casa_scalar_literals {
+            arg.into_numeric_or_constant(pos)?
+        } else {
+            arg.into_numeric(pos)?
+        };
+        let expression = input.make_reduction_with_empty_value(op, empty_value);
+        Ok(ExprNode::numeric(
+            round_real_reduction(expression, single),
+            single,
+        ))
+    }
+
     fn eval_function_2(
         &self,
         name: &str,
@@ -1367,6 +1403,7 @@ where
             }
             "replace" => {
                 // replace(image, replacement) — replaces masked-out pixels while keeping mask.
+                let single = arg1.single_precision() && arg2.single_precision();
                 let primary = arg1.into_numeric(pos)?;
                 let replacement = arg2.into_numeric_or_constant(pos)?;
                 primary
@@ -1375,7 +1412,7 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::numeric(r, false))
+                    .map(|r| ExprNode::numeric(r, single))
             }
             "spectralindex" => {
                 if T::is_complex() {
@@ -1501,6 +1538,7 @@ where
                 // iif(condition, true_val, false_val): a scalar branch is
                 // a constant expression beside an image one, as LEL allows.
                 let condition = arg1.into_mask(pos)?;
+                let single = arg2.single_precision() && arg3.single_precision();
                 let if_true = arg2.into_numeric_or_constant(pos)?;
                 let if_false = arg3.into_numeric_or_constant(pos)?;
                 ImageExprBuilder::iif(condition, if_true, if_false)
@@ -1508,7 +1546,7 @@ where
                         message: e.to_string(),
                         position: pos,
                     })
-                    .map(|r| ExprNode::numeric(r, false))
+                    .map(|r| ExprNode::numeric(r, single))
             }
             "fractilerange1d" | "fractilerange" => {
                 // fractilerange1d(expr, frac1, frac2)
@@ -1624,6 +1662,82 @@ where
         Ok(ExprNode::IntArray(values))
     }
 
+    fn parse_typed_array_literal(&mut self) -> Result<ExprNode<'a, T>, ExprParseError> {
+        let pos = self.current_pos;
+        self.expect(&Token::LBracket)?;
+        let mut values = vec![self.parse_expression()?];
+        while self.current == Token::Comma {
+            self.advance()?;
+            values.push(self.parse_expression()?);
+        }
+        self.expect(&Token::RBracket)?;
+        let boolean = values
+            .iter()
+            .any(|value| matches!(value, ExprNode::Mask(_)));
+        if boolean {
+            if !values
+                .iter()
+                .all(|value| matches!(value, ExprNode::Mask(_)))
+            {
+                return Err(ExprParseError {
+                    message:
+                        "LatticeExprNode::resultDataType - Bool and numeric operands cannot mixed"
+                            .into(),
+                    position: pos,
+                });
+            }
+            let flags = values
+                .into_iter()
+                .map(|value| {
+                    let mask = value.into_mask(pos)?;
+                    scalar_array_element(mask.shape(), pos)?;
+                    mask.compile()
+                        .and_then(|mask| mask.get_at(&[]))
+                        .map_err(array_error(pos))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(ExprNode::Mask(MaskExprBuilder::from_constant(
+                ndarray::Array1::from_vec(flags).into_dyn(),
+            )));
+        }
+        let single = values.iter().all(ExprNode::single_precision);
+        if values
+            .iter()
+            .any(|value| matches!(value, ExprNode::Complex(..)))
+        {
+            let pixels = values
+                .into_iter()
+                .map(|value| {
+                    let expression = complex::promote(value, pos)?;
+                    scalar_array_element(expression.shape(), pos)?;
+                    expression
+                        .compile()
+                        .and_then(|expression| expression.get_at(&[]))
+                        .map_err(array_error(pos))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(ExprNode::Complex(
+                Box::new(ImageExprBuilder::from_vector(pixels)),
+                single,
+            ));
+        }
+        let pixels = values
+            .into_iter()
+            .map(|value| {
+                let expression = value.into_numeric_or_constant(pos)?;
+                scalar_array_element(expression.shape(), pos)?;
+                expression
+                    .compile()
+                    .and_then(|expression| expression.get_at(&[]))
+                    .map_err(array_error(pos))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ExprNode::numeric(
+            ImageExprBuilder::from_vector(pixels),
+            single,
+        ))
+    }
+
     fn parse_primary(&mut self) -> Result<ExprNode<'a, T>, ExprParseError> {
         match self.current.clone() {
             Token::LParen => {
@@ -1631,6 +1745,9 @@ where
                 let inner = self.parse_expression()?;
                 self.expect(&Token::RParen)?;
                 Ok(inner)
+            }
+            Token::LBracket if self.casa_scalar_literals && !self.integer_array_argument => {
+                self.parse_typed_array_literal()
             }
             Token::LBracket => self.parse_array_literal(),
             Token::Number(value) => {
@@ -1661,6 +1778,24 @@ where
                 position: self.current_pos,
             }),
         }
+    }
+}
+
+fn scalar_array_element(shape: &[usize], position: usize) -> Result<(), ExprParseError> {
+    if shape.is_empty() {
+        Ok(())
+    } else {
+        Err(ExprParseError {
+            message: "array literal elements must be scalar".into(),
+            position,
+        })
+    }
+}
+
+fn array_error(position: usize) -> impl FnOnce(ImageError) -> ExprParseError {
+    move |error| ExprParseError {
+        message: error.to_string(),
+        position,
     }
 }
 
@@ -1855,6 +1990,42 @@ where
         ));
     };
     mask.compile()
+}
+
+/// The evaluated pixel type of a public image calculator expression.
+pub enum ImageToolPixelExpression {
+    /// Real pixels, with double precision used for promoted operands.
+    Real(ImageExpression<f64>),
+    /// Complex pixels, with double precision used for promoted operands.
+    Complex(ImageExpression<Complex64>),
+}
+
+pub(crate) fn compile_image_tool_pixels<'a, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+    single_precision: &dyn Fn(&str) -> bool,
+) -> Result<ImageToolPixelExpression, ImageError>
+where
+    R: ImageResolver<'a, f64>,
+{
+    let parsed = parse_casa_pixel_expression(expression, real, complex, single_precision)
+        .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
+    match parsed {
+        ExprNode::Scalar(scalar) => ImageExprBuilder::scalar(scalar.value)
+            .compile()
+            .map(ImageToolPixelExpression::Real),
+        ExprNode::Numeric(builder, _) => builder.compile().map(ImageToolPixelExpression::Real),
+        ExprNode::Complex(builder, _) => builder.compile().map(ImageToolPixelExpression::Complex),
+        ExprNode::IntArray(values) => {
+            ImageExprBuilder::from_vector(values.into_iter().map(|value| value as f64).collect())
+                .compile()
+                .map(ImageToolPixelExpression::Real)
+        }
+        ExprNode::Mask(_) => Err(ImageError::CasaSelection(
+            "Exception: Unsupported node data type Bool.".into(),
+        )),
+    }
 }
 
 pub(crate) enum ReplacementPixels {

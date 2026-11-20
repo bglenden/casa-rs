@@ -11,8 +11,8 @@ use casa_types::{ArrayD, Complex32, Complex64};
 
 use crate::analysis::mask_error_wording;
 use crate::expr_parser::{
-    HashMapResolver, ReplacementPixels, evaluate_replacement, parse_image_tool_mask,
-    parse_subimage_mask_expr, referenced_images,
+    HashMapResolver, ImageToolPixelExpression, ReplacementPixels, compile_image_tool_pixels,
+    evaluate_replacement, parse_image_tool_mask, parse_subimage_mask_expr, referenced_images,
 };
 use crate::fits_read::{FitsSectionReader, FitsToolImport};
 use crate::image_expr::{ImageExprMeta, ImageExprValue};
@@ -58,6 +58,25 @@ impl Operand {
 fn is_single_precision(opened: &[(String, Operand)], name: &str) -> bool {
     opened.iter().any(|(source, value)| {
         source == name && matches!(value, Operand::Real(_, true) | Operand::Complex(_, true))
+    })
+}
+
+/// Compile a real or complex LEL pixel expression for the public image tool.
+///
+/// # Errors
+/// Returns an error for invalid expressions, undefined operands, or Boolean results.
+pub fn compile_image_tool_expression(
+    expression: &str,
+) -> Result<ImageToolPixelExpression, ImageError> {
+    if expression.is_empty() {
+        return Err(ImageError::CasaSelection(
+            "Exception: You must specify an expression.".into(),
+        ));
+    }
+    let opened = image_operands(expression)?;
+    let (real, complex) = operand_resolvers(&opened);
+    compile_image_tool_pixels(expression, &real, &complex, &|name| {
+        is_single_precision(&opened, name)
     })
 }
 
