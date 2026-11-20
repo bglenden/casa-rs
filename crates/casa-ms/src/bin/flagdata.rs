@@ -145,23 +145,21 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
 
 /// The row selection of `spw`, `field`, `scan` and `antenna`.
 fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFailure> {
-    let mut selection = MsSelection::new();
+    let field = task_selection_text(task, "field")?;
+    let mut selection = MsSelection {
+        field: (!field.is_empty()).then_some(field),
+        ..MsSelection::default()
+    };
     if !spw.is_empty() {
         selection = selection
             .spw_selector(spw)
             .map_err(|error| TaskFailure::validation(error.to_string()).at("spw"))?;
     }
-    for name in ["field", "scan"] {
-        let text = task_selection_text(task, name)?;
-        if text.is_empty() {
-            continue;
-        }
-        let ids = parse_numeric_id_selector(&text, name)
-            .map_err(|error| TaskFailure::validation(error.to_string()).at(name))?;
-        selection = match name {
-            "field" => selection.field(&ids),
-            _ => selection.scan(&ids),
-        };
+    let scan = task_selection_text(task, "scan")?;
+    if !scan.is_empty() {
+        let ids = parse_numeric_id_selector(&scan, "scan")
+            .map_err(|error| TaskFailure::validation(error.to_string()).at("scan"))?;
+        selection = selection.scan(&ids);
     }
     let antenna = task_selection_text(task, "antenna")?;
     if !antenna.is_empty() {

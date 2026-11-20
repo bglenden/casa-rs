@@ -24160,7 +24160,7 @@
                 "--field"
               ],
               "false_flags": [],
-              "metavar": "IDS"
+              "metavar": "SELECTOR"
             },
             "provider": {
               "field": "field",

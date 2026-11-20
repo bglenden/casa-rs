@@ -584,12 +584,29 @@ fn selected_rows(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
 ) -> Result<Vec<usize>, FlaggingError> {
-    resolve_row_indices_with_system_budget(ms, &request.selection).map_err(|source| {
-        FlaggingError::MutateFlags {
+    let selection_error = |source| FlaggingError::MutateFlags {
+        path: display_ms_path(ms),
+        reason: format!("select rows: {source}"),
+    };
+    let rows =
+        resolve_row_indices_with_system_budget(ms, &request.selection).map_err(selection_error)?;
+    if rows.is_empty()
+        && request.selection.selectdata
+        && let Some(field) = request
+            .selection
+            .field
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+    {
+        // An empty result can mean no matching FIELD metadata or simply no
+        // selected MAIN rows. Keep separate diagnostics for the two cases.
+        ms.resolve_field_selector(field).map_err(selection_error)?;
+        return Err(FlaggingError::MutateFlags {
             path: display_ms_path(ms),
-            reason: format!("select rows: {source}"),
-        }
-    })
+            reason: "MSSelectionNullSelection : The selected table has zero rows.".to_string(),
+        });
+    }
+    Ok(rows)
 }
 
 fn clip_read_plan(
