@@ -4,19 +4,26 @@
 use std::collections::BTreeMap;
 
 use casa_coordinates::{
-    CoordinateModel, FitsKeyword, FitsValue, ProjectionType, fits::try_to_fits_header,
+    CoordinateModel, CoordinateSystem, FitsKeyword, FitsValue, ProjectionType,
+    fits::{coordinate_util::fits_stokes_axis, try_to_fits_header},
 };
+use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::position::PositionRef;
 use casa_types::quanta::format::{FITS, format_time};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::image::ImageHistoryEntry;
-use crate::{ImageError, ImageInterface, ImageType};
+use crate::{ImageError, ImageInfo, ImageInterface, ImageType};
 
 use super::{ExportAxisPlan, build_export_keywords, split_axis_keyword, visit_history_cards};
 
 /// Ordered FITS cards and CASA's grouped dictionary representation of them.
-pub struct ImageFitsHeader(Vec<FitsKeyword>);
+pub struct ImageFitsHeader(Vec<HeaderCard>);
+
+struct HeaderCard {
+    keyword: FitsKeyword,
+    group: Option<&'static str>,
+}
 
 /// Build a FITS header for an attached image without reading its pixels.
 ///
@@ -33,11 +40,18 @@ pub fn image_fits_header(
 ) -> Result<ImageFitsHeader, ImageError> {
     let coords = image.coordinates();
     let plan = ExportAxisPlan::build(coords, shape, false, false, false)?;
-    let base = try_to_fits_header(coords, shape)?;
-    let mut wcs: BTreeMap<String, FitsValue> =
-        build_export_keywords(coords, &base, &plan, true, true)?
+    let standard_wcs = || {
+        let base = try_to_fits_header(coords, shape)?;
+        let mut wcs = build_export_keywords(coords, &base, &plan, true, true)?
             .into_iter()
             .collect();
+        normalize_wcs(coords, &mut wcs)?;
+        Ok::<_, ImageError>(wcs)
+    };
+    let (mut wcs, projection) = match standard_wcs() {
+        Ok(wcs) => (wcs, Some(projection_parameters(coords))),
+        Err(_) => (linear_fallback(coords, shape.len())?, None),
+    };
     let mut header = ImageFitsHeader(Vec::new());
     header.add("SIMPLE", FitsValue::Logical(true), Some("Standard FITS"));
     header.add(
@@ -56,8 +70,10 @@ pub fn image_fits_header(
         Some("PHYSICAL = PIXEL*BSCALE + BZERO"),
     );
     header.add("BZERO", FitsValue::Float(0.0), None);
-    header.image_metadata(image)?;
-    header.axes(shape.len(), &mut wcs, projection_parameters(coords));
+    let info = image.image_info()?;
+    header.image_metadata(image.units(), &info)?;
+    let standard = projection.is_some();
+    header.axes(shape.len(), &mut wcs, projection);
     for (name, comment) in [
         ("RESTFRQ", "Rest Frequency (Hz)"),
         ("SPECSYS", "Spectral reference frame"),
@@ -75,7 +91,11 @@ pub fn image_fits_header(
             }
         }
     }
-    header.observation(image, &mut wcs)?;
+    if standard {
+        header.observation(image, &mut wcs)?;
+    } else {
+        header.text("TIMESYS", "UTC");
+    }
     header.extend_misc(image.misc_info())?;
     header.add(
         "DATE",
@@ -87,8 +107,15 @@ pub fn image_fits_header(
         Some("Date FITS file was written"),
     );
     header.text("ORIGIN", "casacore-3.8.0");
+    if info.beam_set.is_multi() {
+        header.add(
+            "CASAMBM",
+            FitsValue::Logical(true),
+            Some("CASA multiple BEAMS table present"),
+        );
+    }
     if !history.is_empty() {
-        visit_history_cards(history, |text| {
+        visit_history_cards(history, false, |text| {
             header.text("HISTORY", text);
             Ok(())
         })?;
@@ -105,10 +132,15 @@ pub fn image_fits_header(
 
 impl ImageFitsHeader {
     fn add(&mut self, name: impl Into<String>, value: FitsValue, comment: Option<&str>) {
-        self.0.push(FitsKeyword {
-            name: name.into(),
-            value,
-            comment: comment.map(str::to_owned),
+        let name = name.into();
+        let group = group_name(&name);
+        self.0.push(HeaderCard {
+            keyword: FitsKeyword {
+                name,
+                value,
+                comment: comment.map(str::to_owned),
+            },
+            group,
         });
     }
 
@@ -120,8 +152,7 @@ impl ImageFitsHeader {
         self.add(name, FitsValue::Integer(number), None);
     }
 
-    fn image_metadata(&mut self, image: &dyn ImageInterface<f32>) -> Result<(), ImageError> {
-        let info = image.image_info()?;
+    fn image_metadata(&mut self, units: &str, info: &ImageInfo) -> Result<(), ImageError> {
         if let Some(beam) = info.beam_set.single_beam().filter(|beam| !beam.is_null()) {
             self.add("BMAJ", FitsValue::Float(beam.major_in("deg")?), None);
             self.add("BMIN", FitsValue::Float(beam.minor_in("deg")?), None);
@@ -132,12 +163,6 @@ impl ImageFitsHeader {
                 angle += 180.0;
             }
             self.add("BPA", FitsValue::Float(angle), None);
-        } else if info.beam_set.is_multi() {
-            self.add(
-                "CASAMBM",
-                FitsValue::Logical(true),
-                Some("CASA multiple BEAMS table present"),
-            );
         }
         let image_type = if info.image_type == ImageType::Undefined {
             ImageType::Intensity
@@ -145,10 +170,10 @@ impl ImageFitsHeader {
             info.image_type
         };
         self.text("BTYPE", image_type.to_string());
-        self.text("OBJECT", info.object_name);
+        self.text("OBJECT", &info.object_name);
         self.add(
             "BUNIT",
-            FitsValue::String(image.units().to_owned()),
+            FitsValue::String(units.to_owned()),
             Some("Brightness (pixel) unit"),
         );
         Ok(())
@@ -158,22 +183,25 @@ impl ImageFitsHeader {
         &mut self,
         rank: usize,
         wcs: &mut BTreeMap<String, FitsValue>,
-        projection: Vec<(String, FitsValue)>,
+        projection: Option<Vec<(String, FitsValue)>>,
     ) {
         for keyword in ["EQUINOX", "RADESYS", "LONPOLE", "LATPOLE"] {
             if let Some(value) = wcs.remove(keyword) {
                 self.add(keyword, value, None);
             }
         }
-        for col in 1..=rank {
-            for row in 1..=rank {
-                let name = format!("PC{row}_{col}");
-                let value = wcs
-                    .remove(&name)
-                    .unwrap_or(FitsValue::Float(f64::from(row == col)));
-                self.add(name, value, None);
+        if projection.is_some() {
+            for col in 1..=rank {
+                for row in 1..=rank {
+                    let name = format!("PC{row}_{col}");
+                    let value = wcs
+                        .remove(&name)
+                        .unwrap_or(FitsValue::Float(f64::from(row == col)));
+                    self.add(name, value, None);
+                }
             }
         }
+        let projection = projection.unwrap_or_default();
         let interleave_projection = projection.len() == rank;
         let mut projection = projection.into_iter();
         for axis in 1..=rank {
@@ -231,7 +259,7 @@ impl ImageFitsHeader {
             if name.is_empty() || !name.is_ascii() {
                 continue;
             }
-            let values = misc_values(&field.value)?;
+            let values = misc_values(&name, &field.value)?;
             if values.is_empty() {
                 continue;
             }
@@ -239,15 +267,35 @@ impl ImageFitsHeader {
                 Value::Array(array) => array.shape().to_vec(),
                 _ => Vec::new(),
             };
-            let names = misc_keyword_names(&name, &shape, values.len())?;
-            cards_by_field.push((shape, names.into_iter().zip(values).collect::<Vec<_>>()));
+            cards_by_field.push((name, shape, values));
         }
-        // casacore interleaves adjacent arrays with the same shape.
-        for run in cards_by_field.chunk_by(|(first, _), (next, _)| first == next) {
-            for index in 0..run[0].1.len() {
-                for (_, cards) in run {
-                    let (name, value) = &cards[index];
-                    self.add(name, value.clone(), None);
+        // casacore interleaves arrays of the same rank and element count,
+        // naming matrix cards using the last array's row count in the run.
+        for run in cards_by_field.chunk_by(|(_, first, values), (_, next, other)| {
+            first.len() == next.len() && values.len() == other.len()
+        }) {
+            let shape = &run.last().expect("nonempty run").1;
+            let mut fields = Vec::with_capacity(run.len());
+            for (name, _, values) in run {
+                let names = misc_keyword_names(name, shape, values.len())?;
+                fields.push(names.into_iter().zip(values));
+            }
+            for _ in 0..run[0].2.len() {
+                for cards in &mut fields {
+                    let (mut key, value) = cards.next().expect("one card per value");
+                    if key == "COMMENT"
+                        && matches!(value, FitsValue::String(text) if text.is_empty())
+                    {
+                        key.clear();
+                    }
+                    self.0.push(HeaderCard {
+                        keyword: FitsKeyword {
+                            name: key,
+                            value: value.clone(),
+                            comment: None,
+                        },
+                        group: None,
+                    });
                 }
             }
         }
@@ -256,14 +304,19 @@ impl ImageFitsHeader {
 
     /// The FITS header as consecutive 80-byte cards, with no block padding.
     pub fn card_string(&self) -> String {
-        self.0.iter().map(render_card).collect()
+        self.0
+            .iter()
+            .map(|card| render_card(&card.keyword))
+            .collect()
     }
 
     /// The FITS header as a CASA record with the given entry names omitted.
     pub fn record(&self, exclude: &[String]) -> RecordValue {
         let mut grouped = BTreeMap::<String, Vec<FitsValue>>::new();
-        for keyword in &self.0 {
-            let name = group_name(&keyword.name).unwrap_or(&keyword.name);
+        for card in &self.0 {
+            let keyword = &card.keyword;
+            let name = card.group.unwrap_or(&keyword.name);
+            let name = if name.is_empty() { "        " } else { name };
             grouped
                 .entry(name.to_owned())
                 .or_default()
@@ -288,7 +341,125 @@ impl ImageFitsHeader {
     }
 }
 
-fn projection_parameters(coords: &casa_coordinates::CoordinateSystem) -> Vec<(String, FitsValue)> {
+fn linear_fallback(
+    coords: &CoordinateSystem,
+    rank: usize,
+) -> Result<BTreeMap<String, FitsValue>, ImageError> {
+    if coords.n_world_axes() != rank {
+        return Err(header_creation_error());
+    }
+    let mut axis = 1;
+    let mut wcs = BTreeMap::new();
+    for index in 0..coords.n_coordinates() {
+        let coordinate = coords.coordinate(index);
+        let (reference, increment, units) = match coordinate {
+            CoordinateModel::Direction(direction) => {
+                let (reference, increment) = direction.reference_and_increment_in_world_units();
+                (reference, increment, direction.visible_world_units())
+            }
+            _ => (
+                coordinate.reference_value(),
+                coordinate.increment(),
+                coordinate.axis_units(),
+            ),
+        };
+        let names = coordinate.axis_names();
+        let pixels = coordinate.reference_pixel();
+        for local in 0..coordinate.n_pixel_axes() {
+            let mut name = names[local].to_ascii_uppercase();
+            let mut unit = units[local].clone();
+            truncate_bytes(&mut name, 8);
+            truncate_bytes(&mut unit, 8);
+            for (key, value) in [
+                ("CTYPE", FitsValue::String(name)),
+                ("CRVAL", FitsValue::Float(reference[local])),
+                ("CDELT", FitsValue::Float(increment[local])),
+                ("CRPIX", FitsValue::Float(pixels[local] + 1.0)),
+                ("CUNIT", FitsValue::String(unit)),
+            ] {
+                wcs.insert(format!("{key}{axis}"), value);
+            }
+            axis += 1;
+        }
+    }
+    Ok(wcs)
+}
+
+fn normalize_wcs(
+    coords: &CoordinateSystem,
+    wcs: &mut BTreeMap<String, FitsValue>,
+) -> Result<(), ImageError> {
+    if !wcs.contains_key("RESTFRQ") {
+        wcs.remove("SPECSYS");
+    }
+    let mut axis = 1;
+    for index in 0..coords.n_coordinates() {
+        let coordinate = coords.coordinate(index);
+        match coordinate {
+            CoordinateModel::Direction(direction) => {
+                let frame = direction.direction_ref();
+                let (longitude, latitude) = match frame {
+                    DirectionRef::GALACTIC => ("GLON", "GLAT"),
+                    DirectionRef::SUPERGAL => ("SLON", "SLAT"),
+                    DirectionRef::ECLIPTIC | DirectionRef::MECLIPTIC | DirectionRef::TECLIPTIC => {
+                        ("ELON", "ELAT")
+                    }
+                    DirectionRef::J2000
+                    | DirectionRef::JMEAN
+                    | DirectionRef::APP
+                    | DirectionRef::B1950
+                    | DirectionRef::B1950Vla
+                    | DirectionRef::BMEAN
+                    | DirectionRef::BTRUE
+                    | DirectionRef::ICRS
+                    | DirectionRef::HADEC => ("RA--", "DEC-"),
+                    _ => ("??LN", "??LT"),
+                };
+                let projection = direction.projection().name();
+                for (offset, name) in [longitude, latitude].into_iter().enumerate() {
+                    wcs.insert(
+                        format!("CTYPE{}", axis + offset),
+                        FitsValue::String(format!("{name}-{projection}")),
+                    );
+                }
+                wcs.remove("EQUINOX");
+                wcs.remove("RADESYS");
+                let reference = match frame {
+                    DirectionRef::J2000 => Some(("FK5", Some(2000.0))),
+                    DirectionRef::B1950 => Some(("FK4", Some(1950.0))),
+                    DirectionRef::B1950Vla => Some(("FK4", Some(1979.9))),
+                    DirectionRef::ICRS => Some(("ICRS", None)),
+                    _ => None,
+                };
+                if let Some((system, equinox)) = reference {
+                    wcs.insert("RADESYS".into(), FitsValue::String(system.into()));
+                    if let Some(equinox) = equinox {
+                        wcs.insert("EQUINOX".into(), FitsValue::Float(equinox));
+                    }
+                }
+            }
+            CoordinateModel::Stokes(stokes) => {
+                let (reference, increment) =
+                    fits_stokes_axis(stokes.stokes()).ok_or_else(header_creation_error)?;
+                wcs.insert(format!("CRVAL{axis}"), FitsValue::Float(reference));
+                wcs.insert(format!("CDELT{axis}"), FitsValue::Float(increment));
+                wcs.insert(format!("CRPIX{axis}"), FitsValue::Float(1.0));
+            }
+            _ => {}
+        }
+        axis += coordinate.n_pixel_axes();
+    }
+    for (key, value) in wcs.iter_mut() {
+        if matches!(split_axis_keyword(key), Some(("CTYPE" | "CUNIT", _)))
+            && let FitsValue::String(text) = value
+        {
+            truncate_bytes(text, 8);
+        }
+    }
+    Ok(())
+}
+
+fn projection_parameters(coords: &CoordinateSystem) -> Vec<(String, FitsValue)> {
     let mut result = Vec::new();
     let mut offset = 0;
     for index in 0..coords.n_coordinates() {
@@ -313,7 +484,7 @@ fn projection_parameters(coords: &casa_coordinates::CoordinateSystem) -> Vec<(St
     result
 }
 
-fn unsupported_misc() -> ImageError {
+fn header_creation_error() -> ImageError {
     ImageError::InvalidMetadata("header creation failed: Error creating initial FITS header".into())
 }
 
@@ -343,11 +514,11 @@ fn misc_keyword_names(
                 })
                 .collect())
         }
-        _ => Err(unsupported_misc()),
+        _ => Err(header_creation_error()),
     }
 }
 
-fn misc_values(value: &Value) -> Result<Vec<FitsValue>, ImageError> {
+fn misc_values(name: &str, value: &Value) -> Result<Vec<FitsValue>, ImageError> {
     let card_integer = |value| FitsValue::Integer(i64::from(value as i32));
     macro_rules! array {
         ($values:expr, $variant:ident, $map:expr) => {
@@ -370,15 +541,22 @@ fn misc_values(value: &Value) -> Result<Vec<FitsValue>, ImageError> {
                 ScalarValue::Int64(value) => card_integer(*value),
                 ScalarValue::Float32(value) => FitsValue::Float(f64::from(*value)),
                 ScalarValue::Float64(value) => FitsValue::Float(*value),
-                ScalarValue::String(value) => FitsValue::String(value.clone()),
+                ScalarValue::String(value) => {
+                    let mut text = value.clone();
+                    if name.starts_with("COMMENT") || name.starts_with("HISTORY") {
+                        truncate_bytes(&mut text, 72);
+                        return Ok(vec![FitsValue::String(text)]);
+                    }
+                    FitsValue::String(text)
+                }
                 ScalarValue::Complex32(_) | ScalarValue::Complex64(_) => {
-                    return Err(unsupported_misc());
+                    return Err(header_creation_error());
                 }
             };
             vec![scalar]
         }
         Value::Array(ArrayValue::Complex32(_) | ArrayValue::Complex64(_)) => Vec::new(),
-        Value::Array(value) if value.shape().len() > 2 => return Err(unsupported_misc()),
+        Value::Array(value) if value.shape().len() > 2 => return Err(header_creation_error()),
         Value::Array(value) => match value {
             ArrayValue::Bool(values) => array!(values, Logical, |value: &bool| *value),
             ArrayValue::UInt8(values) => array!(values, Integer, |value: &u8| i64::from(*value)),
@@ -402,14 +580,14 @@ fn misc_values(value: &Value) -> Result<Vec<FitsValue>, ImageError> {
         .iter()
         .any(|value| matches!(value, FitsValue::String(text) if text.len() > 68))
     {
-        return Err(unsupported_misc());
+        return Err(header_creation_error());
     }
     Ok(values)
 }
 
-fn group_name(name: &str) -> Option<&str> {
-    if matches!(name, "COMMENT" | "HISTORY" | "NAXIS") {
-        return Some(name);
+fn group_name(name: &str) -> Option<&'static str> {
+    if name == "NAXIS" {
+        return Some("NAXIS");
     }
     if let Some((base, _)) = split_axis_keyword(name) {
         return (base != "CUNIT").then_some(base);
@@ -420,7 +598,7 @@ fn group_name(name: &str) -> Option<&str> {
 }
 
 fn padded_text(name: &str, value: &str) -> String {
-    if matches!(name, "END" | "HISTORY" | "COMMENT") {
+    if matches!(name, "        " | "END" | "HISTORY" | "COMMENT") {
         value.to_owned()
     } else {
         let mut text = value.to_owned();
@@ -478,7 +656,7 @@ fn array(name: &str, values: &[FitsValue]) -> ArrayValue {
 fn render_card(keyword: &FitsKeyword) -> String {
     let name = &keyword.name;
     let mut card = match &keyword.value {
-        FitsValue::String(text) if matches!(name.as_str(), "END" | "HISTORY" | "COMMENT") => {
+        FitsValue::String(text) if matches!(name.as_str(), "" | "END" | "HISTORY" | "COMMENT") => {
             format!("{name:<8}{text}")
         }
         value => {
@@ -513,13 +691,17 @@ fn render_card(keyword: &FitsKeyword) -> String {
         card.push_str(" /");
         card.push_str(comment);
     }
-    if card.len() > 80 {
-        let length = (0..=80)
-            .rev()
-            .find(|index| card.is_char_boundary(*index))
-            .expect("zero is a boundary");
-        card.truncate(length);
-    }
+    truncate_bytes(&mut card, 80);
     card.extend(std::iter::repeat_n(' ', 80 - card.len()));
     card
+}
+
+fn truncate_bytes(text: &mut String, limit: usize) {
+    if text.len() > limit {
+        let boundary = (0..=limit)
+            .rev()
+            .find(|index| text.is_char_boundary(*index))
+            .expect("zero is a boundary");
+        text.truncate(boundary);
+    }
 }

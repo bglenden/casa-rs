@@ -1115,11 +1115,12 @@ fn write_history_cards(
     let _ = fits
         .primary_hdu()
         .map_err(|error| ImageError::Io(error.to_string()))?;
-    visit_history_cards(entries, |text| write_single_history_card(fits, text))
+    visit_history_cards(entries, true, |text| write_single_history_card(fits, text))
 }
 
 fn visit_history_cards(
     entries: &[crate::image::ImageHistoryEntry],
+    provenance_per_line: bool,
     mut emit: impl FnMut(&str) -> Result<(), ImageError>,
 ) -> Result<(), ImageError> {
     emit("CASA START LOGTABLE")?;
@@ -1144,10 +1145,13 @@ fn visit_history_cards(
             let split: Vec<&str> = entry.message.lines().collect();
             if split.is_empty() { vec![""] } else { split }
         };
-        // Always emit (metadata, line) pairs so `fits_read::history` keeps LOGTABLE pairing intact.
-        for line in lines {
-            for chunk in wrap_fits_history_text(&meta) {
-                emit(&chunk)?;
+        // The export reader expects a provenance card for each exported
+        // line. The tool's metadata view uses one per native log row.
+        for (index, line) in lines.into_iter().enumerate() {
+            if index == 0 || provenance_per_line {
+                for chunk in wrap_fits_history_text(&meta) {
+                    emit(&chunk)?;
+                }
             }
             for chunk in wrap_fits_history_text(line) {
                 emit(&chunk)?;

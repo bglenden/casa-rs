@@ -137,3 +137,91 @@ def test_fitsheader_preserves_matrix_cards_and_repeated_text(casa):
         outputs.append(header)
         image.done()
     _assert_value(outputs[1], outputs[0])
+
+
+@pytest.mark.parametrize("stokes", ["XX YY", "RR LL", "I V", "I Q V"])
+def test_fitsheader_encodes_actual_stokes_planes(casa, tmp_path, stokes):
+    path = str(tmp_path / "stokes.im")
+    source = casa.image()
+    assert source.fromshape(path, [3, 4, len(stokes.split()), 3])
+    coords = source.coordsys()
+    assert coords.setstokes(stokes)
+    assert source.setcoordsys(coords.torecord())
+    coords.done()
+    source.done()
+    outputs = []
+    for factory in (casa.image, tools.image):
+        image = factory()
+        assert image.open(path)
+        outputs.append(image.fitsheader(exclude=["DATE", "HISTORY"]))
+        image.done()
+    _assert_value(outputs[1], outputs[0])
+
+
+@pytest.mark.parametrize("frame", ["B1950_VLA", "AZEL", "ICRS"])
+def test_fitsheader_uses_native_celestial_frame(casa, tmp_path, frame):
+    path = str(tmp_path / "frame.im")
+    source = casa.image()
+    assert source.fromshape(path, [3, 4])
+    coords = source.coordsys()
+    assert coords.setreferencecode(frame, "direction", False)
+    assert source.setcoordsys(coords.torecord())
+    coords.done()
+    source.done()
+    outputs = []
+    for factory in (casa.image, tools.image):
+        image = factory()
+        assert image.open(path)
+        outputs.append(image.fitsheader(exclude=["DATE", "HISTORY"]))
+        image.done()
+    _assert_value(outputs[1], outputs[0])
+
+
+def test_fitsheader_linear_name_no_rest_frequency_and_multibeam_card(casa):
+    oracle = casa.coordsys().newcoordsys(linear=2, spectral=True)
+    assert oracle.setnames(["averylongaxis", "blah"], "linear")
+    assert oracle.setrestfrequency("0Hz")
+    coordinates = oracle.torecord()
+    oracle.done()
+    outputs = []
+    for factory in (casa.image, tools.image):
+        image = factory()
+        assert image.fromshape(shape=[3, 4, 3], csys=coordinates)
+        assert image.setrestoringbeam("8arcsec", "4arcsec", "30deg", channel=0)
+        assert image.setrestoringbeam("15arcsec", "6arcsec", "20deg", channel=1)
+        header = image.fitsheader(exclude=["DATE", "HISTORY"])
+        assert "SPECSYS" not in header
+        assert "AVERYLON" in header["CTYPE"]
+        raw = image.fitsheader(True)
+        names = [raw[index:index + 8].strip() for index in range(0, len(raw), 80)]
+        assert names[names.index("ORIGIN") + 1] == "CASAMBM"
+        outputs.append(header)
+        image.done()
+    _assert_value(outputs[1], outputs[0])
+
+
+def test_fitsheader_groups_history_once_per_row_and_keeps_misc_card_names(casa):
+    outputs = []
+    for factory in (casa.image, tools.image):
+        image = factory()
+        assert image.fromshape(shape=[3, 4])
+        assert image.sethistory("review", ["aa\nbb"])
+        assert image.setmiscinfo({
+            "COMMENTfoo": "v" * 75,
+            "COMMENTzero": "",
+            "Crval1": "x",
+            "ab": np.arange(6).reshape(2, 3),
+            "ac": np.arange(6).reshape(3, 2),
+        })
+        header = image.fitsheader(exclude="DATE")
+        assert header["COMMENT"] == "v" * 72
+        assert header["CRVAL1"] == "x       "
+        assert header["AB3_1"] == 1 and header["AB1_2"] == 4
+        history = header.pop("HISTORY").tolist()
+        index = history.index("aa")
+        assert "SRCCODE='::review'" in history[index - 1] and history[index + 1] == "bb"
+        raw = image.fitsheader(True)
+        assert " " * 80 in [raw[index:index + 80] for index in range(0, len(raw), 80)]
+        outputs.append(header)
+        image.done()
+    _assert_value(outputs[1], outputs[0])
