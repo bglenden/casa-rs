@@ -110,6 +110,21 @@ def compare_product(reference, native, axis, keep, case):
             assert all((native / name).resolve().is_relative_to(native) for name in SUBTABLES), case
 
 
+def compare_mms_taql(root, source):
+    for keep in (True, False):
+        reference, native = (root / f"taql-{keep}-{side}.ms" for side in ("casa", "native"))
+        options = dict(vis=str(source), keepmms=keep, datacolumn="data")
+        assert casatasks.split(outputvis=str(reference), scan="1", **options) is None
+        assert tasks.split(outputvis=str(native), msselect="SCAN_NUMBER == 1", **options) is None
+        compare_rows(reference, native, MAIN, f"Multi-MS TaQL keep={keep}")
+        for want, got in zip(partitions(reference, keep), partitions(native, keep), strict=True):
+            compare_rows(want, got, MAIN, f"Multi-MS TaQL member keep={keep}")
+        with table(str(source), ack=False) as original, table(str(native), ack=False) as output:
+            assert 0 < output.nrows() < original.nrows()
+            assert (output.getcol("SCAN_NUMBER") == 1).all()
+    return 2
+
+
 def main():
     assert tuple(casatasks.version()) == (6, 7, 6, 14)
     with TemporaryDirectory(prefix="split-mms-") as work:
@@ -160,6 +175,7 @@ def main():
                     compare_product(destinations[0], moved, partition_axis, keep, label)
                     count += 1
             if axis == "scan":
+                count += compare_mms_taql(root, mms)
                 for module in (casatasks, tasks):
                     out = root / f"{module.__name__}-cannot-span.ms"
                     try:
