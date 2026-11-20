@@ -29,7 +29,8 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ImageTileVolume {
             Err(error)
                 if value.is_none()
                     || error.is_instance_of::<PyOverflowError>(value.py())
-                    || value.hasattr("__index__")? =>
+                    || value.hasattr("__index__")?
+                    || value.is_instance(&value.py().import("numpy")?.getattr("bool_")?)? =>
             {
                 Err(PySystemError::new_err(
                     "<built-in function imager_setoptions> returned a result with an exception set",
