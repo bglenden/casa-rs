@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::CoordinateType;
+use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::IxDyn;
 
