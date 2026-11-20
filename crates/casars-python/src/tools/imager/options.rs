@@ -5,11 +5,42 @@ use casa_calibration::{
     ImagerGridder, ImagerSingleDish, ImagerSingleDishKernel, ImagerTransformOptions,
 };
 use casa_types::measures::position::PositionRef;
-use pyo3::prelude::*;
+use pyo3::{
+    Borrowed,
+    exceptions::{PyOverflowError, PySystemError, PyTypeError},
+    prelude::*,
+};
 
 use crate::convert::{Variant, measures::position};
 
 use super::runtime_error;
+
+#[derive(Default)]
+pub(super) struct ImageTileVolume(pub(super) i32);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for ImageTileVolume {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        match value.extract::<i64>() {
+            // The legacy Python wrapper reads a signed long and narrows it
+            // to the imager's signed Int before it computes a tile shape.
+            Ok(volume) => Ok(Self(volume as i32)),
+            Err(error)
+                if value.is_none()
+                    || error.is_instance_of::<PyOverflowError>(value.py())
+                    || value.hasattr("__index__")? =>
+            {
+                Err(PySystemError::new_err(
+                    "<built-in function imager_setoptions> returned a result with an exception set",
+                ))
+            }
+            Err(_) => Err(PyTypeError::new_err(
+                "argument _imagetilevol must be an integer",
+            )),
+        }
+    }
+}
 
 pub(super) struct TransformArguments<'a> {
     pub(super) machine: &'a str,

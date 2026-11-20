@@ -32,10 +32,8 @@ pub(super) fn model_tile_shape([nx, ny, npol, nchan]: [usize; 4], volume: i32) -
         let preferred = floor + usize::from(floor * floor < area);
         side = if preferred > nx.min(ny) {
             nx.min(ny)
-        } else if preferred > 0 {
-            nx / (nx / preferred)
         } else {
-            0
+            nx.checked_div(preferred).map_or(0, |tiles| nx / tiles)
         };
         side = side.max(10);
     }

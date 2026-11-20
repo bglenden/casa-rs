@@ -12,6 +12,7 @@ from casatools import imager, table
 import numpy as np
 
 from imager_legacy_pbw_oracle import data, make_input
+from imager_prediction_options_oracle import empty_image
 
 
 def configure(factory, dataset, volume):
@@ -38,20 +39,51 @@ def product(factory, image):
     return list(tiled['DEFAULTTILESHAPE']), pixels
 
 
+def integer_controls(root, dataset, factories):
+    class Index:
+        def __index__(self):
+            return 4096
+
+    with TemporaryDirectory(dir=root) as case:
+        case = Path(case)
+        for engine, factory in factories:
+            target = case / f'{engine}-arguments.ms'
+            make_input(dataset, target, scratch=True)
+            for label, value in (('numpy', np.int64(4096)), ('index', Index()), ('bool', True)):
+                model = case / f'{engine}-{label}.im'
+                tool = configure(factory, target, value)
+                assert tool.ft(str(model)) and tool.done()
+                side = 10 if label == 'bool' else 12
+                assert product(table, model)[0] == [side, side, 4, 10]
+            tool = configure(factory, target, 0)
+            for value, expected in ((None, SystemError), (2**63, SystemError),
+                                    (np.bool_(True), SystemError), (4., TypeError),
+                                    ('4096', TypeError)):
+                try:
+                    tool.setoptions(imagetilevol=value)
+                except expected:
+                    pass
+                else:
+                    raise AssertionError((engine, value, expected))
+            assert tool.done()
+
+
 def run(root, dataset):
     from casars.tools import imager as native, table as native_table
 
     assert casatasks.version_string() == '6.7.6.14'
     root.mkdir(parents=True)
     cases = ((None, 32), (0, 32), (1, 10), (4096, 12), (-4096, 12),
-             (40_000, 32), (2**31 - 1, 72), (-2**31, 32))
+             (40_000, 32), (2**31 - 1, 72), (-2**31, 32), (2**31, 32),
+             (2**31 + 4096, 72), (2**32 + 4096, 12), (-2**31 - 1, 72), (2**63 - 1, 10))
     report = {}
+    factories = (('casa', imager), ('native', native))
     for volume, side in cases:
         with TemporaryDirectory(dir=root) as case:
             case = Path(case)
             images = {}
             visibilities = {}
-            for engine, factory in (('casa', imager), ('native', native)):
+            for engine, factory in factories:
                 target = case / f'{engine}.ms'
                 model = case / f'{engine}.im'
                 make_input(dataset, target, scratch=True)
@@ -72,8 +104,10 @@ def run(root, dataset):
                     assert tile == wanted, (volume, writer, reader, tile)
                     np.testing.assert_array_equal(pixels, np.zeros_like(pixels))
             np.testing.assert_equal(visibilities['native'], visibilities['casa'])
+            np.testing.assert_equal(empty_image(images['native']), empty_image(images['casa']))
             report[str(volume)] = wanted
             print(volume, 'tile', wanted, 'both writers and readers', flush=True)
+    integer_controls(root, dataset, factories)
     (root / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
 
 
