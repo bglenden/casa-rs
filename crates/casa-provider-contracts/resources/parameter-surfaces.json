@@ -23898,7 +23898,15 @@
             "python": {"name": "savepars"},
             "presentation": {"label": "Save Parameters", "group": "Output", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "extend"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "list"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "shadow"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "elevation"}},
+            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "antint"}}
+          ]}}
         },
         {
           "name": "cmdreason",
@@ -23912,8 +23920,7 @@
             "provider": {"field": "cmdreason"},
             "python": {"name": "cmdreason"},
             "presentation": {"label": "Command Reason", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "outfile",
@@ -23928,8 +23935,7 @@
             "python": {"name": "outfile"},
             "presentation": {"label": "Command File", "group": "Output", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "flagdata's outfile receives the saved flag commands, distinct from an output image path."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "flagdata's outfile receives the saved flag commands, distinct from an output image path."}
         },
         {
           "name": "overwrite",
@@ -23944,8 +23950,7 @@
             "python": {"name": "overwrite"},
             "presentation": {"label": "Overwrite", "group": "Output", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "flagdata's overwrite lets savepars replace its command file, distinct from replacing a task's output product."},
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "savepars", "value": {"kind": "bool", "value": true}}}
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "flagdata's overwrite lets savepars replace its command file, distinct from replacing a task's output product."}
         },
         {
           "name": "writeflags",
