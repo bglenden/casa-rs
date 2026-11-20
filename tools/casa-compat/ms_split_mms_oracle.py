@@ -125,6 +125,24 @@ def compare_mms_taql(root, source):
     return 2
 
 
+def compare_mms_reuse(root, casa_input, native_input):
+    reference = root / "reuse-casa-casa.ms"
+    for writer, source in (("casa", casa_input), ("native", native_input)):
+        for reader, module in (("casa", casatasks), ("native", tasks)):
+            label = f"reuse-{writer}-{reader}"
+            output = root / f"{label}.ms"
+            assert module.split(vis=str(source), outputvis=str(output), keepmms=True,
+                                spw="1:1~2", datacolumn="data") is None, label
+            with table(str(source), ack=False) as original, table(str(output), ack=False) as result:
+                assert 0 < result.nrows() < original.nrows(), label
+                assert result.getcell("DATA", 0).shape[0] == 2, label
+            compare_rows(reference, output, MAIN, label)
+            for expected, actual in zip(partitions(reference, True), partitions(output, True),
+                                        strict=True):
+                compare_rows(expected, actual, MAIN, f"{label} member")
+    return 4
+
+
 def main():
     assert tuple(casatasks.version()) == (6, 7, 6, 14)
     with TemporaryDirectory(prefix="split-mms-") as work:
@@ -174,6 +192,8 @@ def main():
                     destinations[1].rename(moved)
                     compare_product(destinations[0], moved, partition_axis, keep, label)
                     count += 1
+                    if axis == "scan" and case == "full" and keep:
+                        count += compare_mms_reuse(root, destinations[0], moved)
             if axis == "scan":
                 count += compare_mms_taql(root, mms)
                 for module in (casatasks, tasks):
