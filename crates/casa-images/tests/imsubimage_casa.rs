@@ -8,11 +8,78 @@ use casa_images::analysis::{SubimageOptions, SubimagePlan, SubimageRegion};
 use casa_images::image::image_history_entries;
 use casa_images::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImagePixel, ImpvRequest, ImsubimageRequest,
-    PagedImage, PvPosition, imhead, impbcor, impv, imsubimage,
+    PagedImage, PvPosition, TempImage, TempStoragePolicy, imhead, impbcor, impv, imsubimage,
 };
 use casa_provider_contracts::ParameterValue;
-use casa_types::{Complex32, Complex64, ScalarValue, Value};
+use casa_types::{ArrayValue, Complex32, Complex64, ScalarValue, Value};
 use serde_json::Value as Json;
+
+#[test]
+fn the_image_editor_uses_the_same_strided_section_geometry() {
+    let input = PagedImage::<f32>::open(input_path("cube.im")).unwrap();
+    let region = casa_tables::read_table_record_file(&input_path("stride.rgn")).unwrap();
+    let (plan, stride) =
+        SubimagePlan::for_edit(&input, Some(SubimageRegion::Record(&region))).unwrap();
+    assert_eq!(plan.shape, [3, 3, 4, 2]);
+    assert_eq!(stride, [2, 2, 1, 2]);
+    let (start, end) = plan.bounds();
+    assert_eq!(start, [0, 1, 0, 0]);
+    assert_eq!(end, [4, 5, 3, 2]);
+    let from = input.coordinates().to_world(&[4.0, 5.0, 3.0, 2.0]).unwrap();
+    let actual = plan.coordinates.to_world(&[2.0, 2.0, 3.0, 1.0]).unwrap();
+    for (actual, expected) in actual.into_iter().zip(from) {
+        close(actual, expected, "editor strided WCS");
+    }
+}
+
+#[test]
+fn a_strided_array_section_can_reach_the_edge_without_enabling_dense_complex_copy() {
+    let cube = PagedImage::<f32>::open(input_path("cube.im")).unwrap();
+    let mut input = TempImage::new(
+        cube.shape().to_vec(),
+        cube.coordinates().clone(),
+        TempStoragePolicy::Memory,
+    )
+    .unwrap();
+    let pixels = cube.get_slice(&[0, 0, 0, 0], cube.shape()).unwrap();
+    input.put_slice(&pixels, &[0, 0, 0, 0]).unwrap();
+    let region = casa_tables::read_table_record_file(&input_path("stride.rgn")).unwrap();
+    let (plan, _) = SubimagePlan::for_edit(&input, Some(SubimageRegion::Record(&region))).unwrap();
+    let mut output = TempImage::<f32>::new(
+        plan.shape.clone(),
+        plan.coordinates.clone(),
+        TempStoragePolicy::Memory,
+    )
+    .unwrap();
+    plan.copy_to(&input, &mut output, None, false).unwrap();
+    let values = output.get_slice(&[0, 0, 0, 0], &plan.shape).unwrap();
+    assert_eq!(values[[2, 2, 3, 1]], pixels[[4, 5, 3, 2]]);
+
+    let mut dense_region = region.clone();
+    dense_region.upsert("inc", Value::Array(ArrayValue::from_f64_vec(vec![1.0; 4])));
+    let mut complex = TempImage::<Complex32>::new(
+        plan.shape.clone(),
+        plan.coordinates.clone(),
+        TempStoragePolicy::Memory,
+    )
+    .unwrap();
+    complex.set_units("untouched").unwrap();
+    let error = plan
+        .make_complex_to(
+            &input,
+            &input,
+            &mut complex,
+            Some(SubimageRegion::Record(&dense_region)),
+        )
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("requires a unit-stride image section"),
+        "{error}"
+    );
+    assert_eq!(complex.units(), "untouched");
+}
 
 #[test]
 fn compound_regions_still_require_multi_region_task_support() {
@@ -327,6 +394,9 @@ fn subimage_matches_casa_6_7_6_14() {
                 "saved_relative_disjoint" => "does not intersect the image",
                 "saved_relative_wide" => "SIN deproject: point outside unit circle",
                 "saved_compound_nonoverlap" => "regions do not overlap",
+                "saved_axis_stretch_invalid" => "a stretch axis does not have length 1",
+                "saved_axis_concat_invalid" => "number of regions has to match the range",
+                "saved_axis_concat_frame_invalid" => "region axis is unknown or inconsistent",
                 "drop_all" => "cannot drop all axes",
                 "empty" => "outfile must be specified",
                 unexpected => panic!("no assertion for error case {unexpected}"),

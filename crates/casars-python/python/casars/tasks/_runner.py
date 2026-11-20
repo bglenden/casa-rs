@@ -339,7 +339,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
                 if completion.message == "no flagdata summary report for the selected correlations":
                     raise KeyError("nreport") from error
-            if completion.parameter in ("channelavg", "chanbin"):
+            if completion.parameter in ("channelavg", "chanbin", "timeavg"):
                 raise RuntimeError(completion.message) from error
             raise
     return run(name, **values).value
@@ -499,7 +499,8 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
                 values["observation"] = str(value)
         else:
             errors["observation"] = ["must be of cStr type", "must be of cInt type"]
-    for parameter, default in (("clipoutside", True), ("quackincrement", False), ("channelavg", False)):
+    for parameter, default in (("clipoutside", True), ("quackincrement", False),
+                               ("channelavg", False), ("timeavg", False)):
         if parameter not in values:
             continue
         value = values[parameter]
@@ -520,6 +521,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
         ("basecnt", bool, "cBool"),
         ("fieldcnt", bool, "cBool"),
         ("name", str, "cStr"),
+        ("timebin", str, "cStr"),
         ("minrel", cfloat, "cFloat"),
         ("maxrel", cfloat, "cFloat"),
         ("minabs", cint, "cInt"),

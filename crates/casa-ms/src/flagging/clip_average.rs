@@ -159,7 +159,7 @@ pub(super) enum ChannelReduction<'a> {
 }
 
 impl<'a> ChannelReduction<'a> {
-    fn weights(self) -> Option<SpectralWeights<'a>> {
+    pub(super) fn weights(self) -> Option<SpectralWeights<'a>> {
         let Self::Weighted {
             spectrum,
             inverse_sigma,
@@ -182,13 +182,13 @@ fn matrix<T>(array: &ArrayD<T>) -> ArrayView2<'_, T> {
         .expect("clipping rows are rank two")
 }
 
-enum SpectralWeights<'a> {
+pub(super) enum SpectralWeights<'a> {
     Single(ArrayView2<'a, f32>, bool),
     Double(ArrayView2<'a, f64>, bool),
 }
 
 impl SpectralWeights<'_> {
-    fn get(&self, index: (usize, usize)) -> f64 {
+    pub(super) fn get(&self, index: (usize, usize)) -> f64 {
         match self {
             Self::Single(weights, true) => {
                 let sigma = weights[index];

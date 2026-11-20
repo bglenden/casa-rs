@@ -23319,7 +23319,7 @@
         },
         {
           "name": "timeavg",
-          "concept": {"id": "flagdata.timeavg", "semantic_revision": 1},
+          "concept": {"id": "flagdata.timeavg", "semantic_revision": 2},
           "order": 22,
           "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
           "required_when": {"kind": "never"},
@@ -23327,11 +23327,10 @@
           "projections": {
             "cli": {"flags": ["--timeavg"], "false_flags": ["--no-timeavg"]},
             "provider": {"field": "timeavg"},
-            "python": {"name": "timeavg"},
+            "python": {"name": "timeavg", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Time Average", "group": "Clip", "advanced": true}
           },
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
           ]}}
@@ -23350,7 +23349,6 @@
             "presentation": {"label": "Time Bin", "group": "Clip", "advanced": true}
           },
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
           ]}}

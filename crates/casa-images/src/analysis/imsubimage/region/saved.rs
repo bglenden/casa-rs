@@ -61,22 +61,21 @@ pub(super) fn parse_saved_region(
                 Err(_) => compound::decode(region_name, rec, target_coords, full_shape, plane),
             }
         }
-        "WCIntersection" | "WCDifference" | "WCComplement" => {
+        "WCIntersection" | "WCDifference" | "WCComplement" | "WCExtension" | "WCConcatenation" => {
             compound::decode(region_name, rec, target_coords, full_shape, plane)
         }
         "LCSlicer" | "LCBox" => {
-            let (blc, trc) = if class_name == "LCSlicer" {
+            let (blc, trc, stride) = if class_name == "LCSlicer" {
                 let section = decode_lc_slicer(region_name, rec, target_coords, full_shape)?;
-                if let Some((axis, stride)) =
-                    section.stride.iter().enumerate().find(|&(_, &s)| s != 1)
-                {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "saved region '{region_name}' has non-unit stride {stride} on axis {axis}"
-                    )));
-                }
-                (section.lower, section.upper)
+                let stride = section
+                    .stride
+                    .iter()
+                    .any(|&step| step != 1)
+                    .then_some(section.stride);
+                (section.lower, section.upper, stride)
             } else {
-                decode_lc_box(region_name, rec, full_shape)?
+                let (lower, upper) = decode_lc_box(region_name, rec, full_shape)?;
+                (lower, upper, None)
             };
             let shapes = if full_shape.len() >= 2 {
                 vec![
@@ -96,6 +95,7 @@ pub(super) fn parse_saved_region(
                 shapes,
                 saved_mask: None,
                 saved_bounds: Some((blc, shape)),
+                stride,
             })
         }
         "WCBox" => {
@@ -118,6 +118,7 @@ pub(super) fn parse_saved_region(
                 shapes,
                 saved_mask: None,
                 saved_bounds: Some((blc, shape)),
+                stride: None,
             })
         }
         "WCEllipsoid" => {
@@ -128,6 +129,7 @@ pub(super) fn parse_saved_region(
                 shapes: vec![ellipse.into()],
                 saved_mask: None,
                 saved_bounds: Some(bounds),
+                stride: None,
             })
         }
         other => Err(ImageError::InvalidMetadata(format!(
@@ -171,16 +173,17 @@ fn polygon_region(
         shapes: Vec::new(),
         saved_mask: Some(SavedRegionMask::Whole(mask)),
         saved_bounds: Some((min_pt, shape)),
+        stride: None,
     })
 }
 
-pub(in crate::analysis::imsubimage) struct SlicerSection {
-    pub(in crate::analysis::imsubimage) lower: Vec<usize>,
-    pub(in crate::analysis::imsubimage) upper: Vec<usize>,
-    pub(in crate::analysis::imsubimage) stride: Vec<usize>,
+struct SlicerSection {
+    lower: Vec<usize>,
+    upper: Vec<usize>,
+    stride: Vec<usize>,
 }
 
-pub(in crate::analysis::imsubimage) fn decode_lc_slicer(
+fn decode_lc_slicer(
     name: &str,
     rec: &RecordValue,
     coords: &CoordinateSystem,
@@ -362,23 +365,51 @@ fn decode_wc_box(
     coords: &CoordinateSystem,
     full_shape: &[usize],
 ) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
+    decode_wc_box_axes(name, rec, coords, full_shape, |_| true)
+}
+
+fn decode_wc_box_axes(
+    name: &str,
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+    full_shape: &[usize],
+    include: impl Fn(usize) -> bool,
+) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
     let (axes, origin) = wc_pixel_axes(name, "WCBox", rec, coords)?;
     let mut modes = read_numeric_vec(rec.get("absrel")).unwrap_or_default();
     if modes.is_empty() {
         modes.resize(axes.len(), 1.0);
     }
+    let dimension_mismatch =
+        || ImageError::InvalidMetadata(format!("WCBox {name:?} dimension mismatch"));
+    if modes.len() != axes.len() {
+        return Err(dimension_mismatch());
+    }
+    let selected_axes = axes
+        .iter()
+        .copied()
+        .filter(|&axis| include(axis))
+        .collect::<Vec<_>>();
+    let modes = modes
+        .into_iter()
+        .zip(&axes)
+        .filter_map(|(mode, &axis)| include(axis).then_some(mode))
+        .collect::<Vec<_>>();
     let mut bounds = Vec::new();
     for (key, low) in [("blc", true), ("trc", false)] {
         let quantities = read_quantum_list(rec.get(key))?;
-        if quantities.len() != axes.len() || modes.len() != axes.len() {
-            return Err(ImageError::InvalidMetadata(format!(
-                "WCBox {name:?} dimension mismatch"
-            )));
+        if quantities.len() != axes.len() {
+            return Err(dimension_mismatch());
         }
+        let quantities = quantities
+            .into_iter()
+            .zip(&axes)
+            .filter_map(|(quantity, &axis)| include(axis).then_some(quantity))
+            .collect::<Vec<_>>();
         bounds.push(wc_box_corner(
             coords,
             full_shape,
-            &axes,
+            &selected_axes,
             &quantities,
             &modes,
             origin,

@@ -103,6 +103,25 @@ impl LegacyEpConvolution {
         beam: &ndarray::ArrayD<f32>,
         sampling: usize,
     ) -> Result<[Vec<Complex32>; 4], OperatorError> {
+        Self::prepare_pbw_model(image, beam, sampling, Some(0.05))
+    }
+
+    /// Prepare the four circular Fourier planes, optionally dividing by
+    /// the average beam above the requested legacy PB cutoff.
+    ///
+    /// # Errors
+    /// The image, average beam, sampling or cutoff is invalid.
+    pub fn prepare_pbw_model(
+        image: &ndarray::ArrayD<f32>,
+        beam: &ndarray::ArrayD<f32>,
+        sampling: usize,
+        cutoff: Option<f32>,
+    ) -> Result<[Vec<Complex32>; 4], OperatorError> {
+        if cutoff.is_some_and(|limit| !limit.is_finite() || limit < 0.) {
+            return Err(invalid(
+                "the PB correction cutoff must be finite and nonnegative",
+            ));
+        }
         let [nx, ny, 4, 1] = *image.shape() else {
             return Err(invalid("legacy EP needs a single-channel IQUV image"));
         };
@@ -153,11 +172,14 @@ impl LegacyEpConvolution {
                     ][pol];
                     let taper = sinc[x] * sinc[y];
                     let correction = primary_beam(x, y, pol) / peak * taper;
-                    grid.push(if correction.abs() >= 0.05 {
-                        circular / correction
-                    } else {
-                        circular * taper
-                    });
+                    grid.push(
+                        if cutoff.is_some_and(|limit| correction != 0. && correction.abs() >= limit)
+                        {
+                            circular / correction
+                        } else {
+                            circular * taper
+                        },
+                    );
                 }
             }
             fft.transform(grid, false)?;
