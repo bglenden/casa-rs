@@ -3,6 +3,9 @@
 use casa_images::{ImageBeamSet, ImageError, ImageInfo};
 use casa_types::RecordValue;
 
+use super::beams::{image_info, image_info_record};
+use super::handle::ImageHandle;
+
 const BEAM_FIELDS: [&str; 2] = ["restoringbeam", "perplanebeams"];
 
 /// PagedImage's cached beam metadata belongs to one open CASA image.
@@ -15,10 +18,12 @@ pub(super) struct BeamView {
 }
 
 impl BeamView {
-    pub(super) fn from_info(info: Option<&RecordValue>) -> Self {
+    pub(super) fn from_image(image: &ImageHandle) -> Self {
         let mut view = Self::default();
-        if let Some(info) = info {
+        if let Some(info) = image_info_record(image) {
             view.capture(info);
+        } else if let Ok(info) = image_info(image) {
+            view.capture(&info.to_record());
         }
         view
     }

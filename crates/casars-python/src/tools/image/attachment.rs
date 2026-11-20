@@ -12,7 +12,6 @@ use casa_tables::{Table, TableError, TableOptions, TableUseLock, TableWriteLock}
 use pyo3::prelude::*;
 
 use super::beam_view::BeamView;
-use super::beams::image_info_record;
 use super::handle::{ImageHandle, raised};
 use super::stub;
 
@@ -38,7 +37,7 @@ pub(super) struct AttachedImage {
 
 impl AttachedImage {
     pub(super) fn temporary(image: ImageHandle) -> Self {
-        let beam_view = BeamView::from_info(image_info_record(&image));
+        let beam_view = BeamView::from_image(&image);
         Self {
             image: Arc::new(SharedImage {
                 handle: Mutex::new(image),
@@ -81,7 +80,7 @@ impl AttachedImage {
     fn read_current_beams(&self) -> PyResult<()> {
         let mut handle = self.lock();
         self.require_lock(&mut handle, casa_tables::LockType::Read)?;
-        *self.beam_view() = BeamView::from_info(image_info_record(&handle));
+        *self.beam_view() = BeamView::from_image(&handle);
         Ok(())
     }
 
@@ -149,7 +148,7 @@ impl AttachedImage {
             .transpose()
             .map_err(raised)?;
         let handle = ImageHandle::open_native(path, lock_attempts).map_err(raised)?;
-        let beam_view = BeamView::from_info(image_info_record(&handle));
+        let beam_view = BeamView::from_image(&handle);
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
             use_lock,
@@ -370,7 +369,7 @@ impl AttachedImage {
             Ok(image) => image,
             Err(error) => return restore_native_move(source, &target, backup, error),
         };
-        let beam_view = BeamView::from_info(image_info_record(&handle));
+        let beam_view = BeamView::from_image(&handle);
         let image = Arc::new(SharedImage {
             handle: Mutex::new(handle),
             use_lock: self.image.use_lock.clone(),
