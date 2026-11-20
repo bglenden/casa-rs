@@ -204,6 +204,21 @@ pub fn set_grid_motion(
 /// CASA's reader constructs the convolution from the next buffer when
 /// the `HetArrayConvFunc` cache is empty.
 pub fn legacy_mosaic(record: &mut RecordValue, stokes: &str, beam_class: i32, sampling: u16) {
+    legacy_array_mosaic(record, stokes, beam_class, "", sampling);
+}
+
+/// Record an externally supplied table of per-antenna image voltage patterns.
+pub fn legacy_image_mosaic(record: &mut RecordValue, stokes: &str, table: &str, sampling: u16) {
+    legacy_array_mosaic(record, stokes, 8, table, sampling);
+}
+
+fn legacy_array_mosaic(
+    record: &mut RecordValue,
+    stokes: &str,
+    beam_class: i32,
+    table: &str,
+    sampling: u16,
+) {
     let beam = RecordValue::new(vec![
         RecordField::new("name", text("HetArrayConvFunc")),
         RecordField::new("ndefined", int(0)),
@@ -212,7 +227,7 @@ pub fn legacy_mosaic(record: &mut RecordValue, stokes: &str, beam_class: i32, sa
             "donemainconv",
             Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[0]), false))),
         ),
-        RecordField::new("vptable", text("")),
+        RecordField::new("vptable", text(table)),
         RecordField::new("pbclass", int(beam_class)),
     ]);
     legacy_mosaic_record(record, stokes, sampling, beam);

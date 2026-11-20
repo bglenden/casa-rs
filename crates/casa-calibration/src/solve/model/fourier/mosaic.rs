@@ -208,6 +208,7 @@ fn array_kernels(
         let kernels = match restore(rules, geometry, polarization, &window, loaded, beams.len())? {
             Some(kernels) => kernels,
             None => image_kernels(
+                if legacy { rules } else { MosaicRules::Tclean },
                 geometry,
                 direction,
                 polarization,
@@ -360,6 +361,7 @@ fn restore(
 }
 
 fn image_kernels(
+    rules: MosaicRules,
     geometry: &GridGeometry,
     direction: &DirectionCoordinate,
     polarization: &PolarizationRouting,
@@ -367,19 +369,19 @@ fn image_kernels(
     window: MosaicWindow,
     patterns: &image_beam::ImageBeams,
 ) -> Result<MosaicPb, GainSolveError> {
-    let patterns = patterns.screens()?;
+    let patterns = patterns.screens(rules == MosaicRules::Simulator)?;
     let support = patterns
         .iter()
         .map(|beam| beam.support_pixels(geometry.image().increment_rad[0], reference_hz))
         .max()
         .unwrap_or(0);
     let pc = direction.pc_matrix();
-    MosaicPb::from_image_screens(
+    MosaicPb::from_image_screens_with_rules(
+        rules,
         geometry,
         polarization,
         reference_hz,
-        patterns.len(),
-        support,
+        (patterns.len(), support),
         &[window],
         |[first, second], side, increment, hz, voltage, power| {
             let centre = (side / 2) as f64;

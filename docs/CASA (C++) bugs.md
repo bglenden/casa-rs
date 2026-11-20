@@ -7526,3 +7526,20 @@ case in `crates/casa-images/tests/data/imregrid/expected.json` records a
 beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
 of the pixels being copied.
+
+## Legacy MosaicFT rejects split voltage-pattern image records
+
+The CASA 6.7.6.14 legacy `HetArrayConvFunc::findAntennaSizes` checks
+for `realimage` and `imagimage` in a custom `IMAGE` record. It reads
+the imaginary image from `imagim`. `vpmanager.setpbimage` saves the
+standard field `imagimage`. The public `imager.ft` then reports that
+`imagim` is unknown and returns false.
+
+The same responses packaged as complex Jones images work through the
+public legacy imager. Adding `imagim` as an alias in the split records
+also works and gives the same CASA prediction. casa-rs reads the standard
+field for native prediction. For virtual interoperation, the Fourier grid
+owns a copy of the voltage-pattern table with the alias. A real-only
+pattern uses a zero-valued imaginary image owned by the same grid.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
