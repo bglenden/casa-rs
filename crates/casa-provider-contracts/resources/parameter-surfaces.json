@@ -13036,7 +13036,7 @@
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 5},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 7},
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
@@ -13052,7 +13052,7 @@
         },
         {
           "name": "spw",
-          "concept": {"id": "ms.selection.spw", "semantic_revision": 4},
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 5},
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
@@ -13083,7 +13083,7 @@
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 5},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 6},
           "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
@@ -13852,7 +13852,7 @@
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 5},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 7},
           "order": 3,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13867,7 +13867,7 @@
         },
         {
           "name": "spw",
-          "concept": {"id": "ms.selection.spw", "semantic_revision": 4},
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 5},
           "order": 4,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13896,7 +13896,7 @@
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 5},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 6},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
