@@ -46,12 +46,14 @@ use crate::{
 use casa_numerics::solve_weighted_least_squares;
 
 mod clip;
+mod clip_average;
 mod clip_columns;
 mod correlation;
 mod extend;
 mod summary;
 
 use clip::{ClipOptions, apply_clip_array};
+use clip_average::{ChannelBins, check_channel_bins};
 use clip_columns::ClipColumns;
 use correlation::{ClipProjection, CorrelationSelection};
 mod version_backup;
@@ -186,6 +188,9 @@ pub struct FlagDataRequest {
     pub clipminmax: Option<[f64; 2]>,
     /// Flag outside or inside the range. An accepted vector disables the clip agent.
     pub clipoutside: Option<bool>,
+    /// Average selected channels before clipping. A singleton width is used
+    /// for all spectral windows. Zero passes through and one takes the whole window.
+    pub clip_channel_bins: Option<Vec<u32>>,
     /// Quack interval in seconds.
     pub quackinterval: f64,
     /// Quack scan edge.
@@ -242,6 +247,7 @@ impl Default for FlagDataRequest {
             clipzeros: false,
             clipminmax: None,
             clipoutside: Some(true),
+            clip_channel_bins: None,
             quackinterval: 0.0,
             quackmode: QuackMode::Beg,
             quackincrement: false,
@@ -348,6 +354,9 @@ pub enum FlaggingError {
     /// A requested clipping column is missing from the MeasurementSet.
     #[error("Failed to parse parameters for mode clip")]
     MissingClipColumn,
+    /// The channel averaging widths do not match the spectral windows.
+    #[error("Error parsing ChannelAverageTVI configuration")]
+    InvalidClipChannelBins,
 
     /// Flag-version management failed.
     #[error("failed to manage flag version for {path}: {reason}")]
@@ -808,13 +817,19 @@ fn apply_clip_flags(
     if request.clipoutside.is_some() {
         clip_columns::require_physical_model(ms, request.data_column, selected_rows, &path)?;
     }
-    let Some(mut columns) = ClipColumns::bind(ms.main_table(), request.data_column)? else {
+    let widths = request.clip_channel_bins.as_deref();
+    let average = widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
+    let Some(mut columns) = ClipColumns::bind(ms.main_table(), request.data_column, average)?
+    else {
         return Ok(ChangeSet::default());
     };
     let Some(outside) = request.clipoutside else {
         tracing::warn!("clipoutside must be a scalar Boolean to start the clip agent");
         return Ok(ChangeSet::default());
     };
+    if let Some(widths) = widths {
+        check_channel_bins(ms, widths, &path)?;
+    }
     let options = ClipOptions {
         zeros: request.clipzeros,
         // CASA's clipping agent stores its bounds as single-precision values.
@@ -831,8 +846,10 @@ fn apply_clip_flags(
     let mut flagged_samples = 0usize;
     let mut total_samples = 0usize;
     let mut row_changes = Vec::<(usize, usize)>::new();
-    let include_ddid =
-        channel_selections.is_some() || correlations.is_some() || columns.uses_weight_spectrum();
+    let include_ddid = average
+        || channel_selections.is_some()
+        || correlations.is_some()
+        || columns.uses_weight_spectrum();
     let bytes_per_sample = columns.bytes_per_sample(ms.main_table(), &path)?;
     let read_plan = clip_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
     for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
@@ -885,33 +902,31 @@ fn apply_clip_flags(
                     reason: format!("{column} row {row} is not rank-2"),
                 });
             }
-            let data_value = data_cells.row(row_slot, flags, row, &path)?;
             let nchan = flags.shape()[1];
-            let channels =
-                if let Some((selectors, ddid)) = channel_selections.zip(ddid) {
-                    let spw = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
-                        FlaggingError::MutateFlags {
-                            path: path.clone(),
-                            reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
-                        }
-                    })?;
-                    Some(match selectors.get(&spw) {
-                        Some(selection) => selection.indices(nchan).map_err(|source| {
-                            FlaggingError::MutateFlags {
-                                path: path.clone(),
-                                reason: format!("resolve SPW {spw} channels: {source}"),
-                            }
-                        })?,
-                        None => (0..nchan).collect(),
-                    })
-                } else {
-                    None
-                };
+            let (channels, width) = if average || channel_selections.is_some() {
+                clip_channel_selection(
+                    ddid,
+                    &ddid_to_spw,
+                    channel_selections,
+                    widths,
+                    nchan,
+                    &path,
+                )?
+            } else {
+                (None, 0)
+            };
+            let bins = channels
+                .as_deref()
+                .and_then(|channels| ChannelBins::new(width, channels, flags));
+            let data_value = data_cells.row(row_slot, flags, bins.as_ref(), row, &path)?;
+            let (clip_flags, clip_channels) = bins
+                .as_ref()
+                .map_or((flags, channels.as_deref()), |bins| (bins.flags(), None));
             row_changes.clear();
             apply_clip_array(
                 data_value.as_ref(),
-                flags,
-                channels.as_deref(),
+                clip_flags,
+                clip_channels,
                 ClipOptions {
                     projections,
                     ..options
@@ -935,7 +950,19 @@ fn apply_clip_flags(
                             .iter()
                             .any(|item| matches!(item, ClipProjection::Stokes(..)))
                 });
-                let row_changed = if may_overlap {
+                let row_changed = if let Some(bins) = &bins {
+                    row_changes
+                        .iter()
+                        .map(|&(corr, bin)| {
+                            bins.original_channels(bin)
+                                .iter()
+                                .filter(|&&chan| {
+                                    !std::mem::replace(&mut flag_planes[(corr, chan)], true)
+                                })
+                                .count()
+                        })
+                        .sum()
+                } else if may_overlap {
                     row_changes
                         .iter()
                         .filter(|&&(corr, chan)| {
@@ -962,6 +989,54 @@ fn apply_clip_flags(
         total_samples,
     });
     Ok(changed)
+}
+
+fn clip_channel_selection(
+    ddid: Option<i32>,
+    ddid_to_spw: &BTreeMap<i32, i32>,
+    selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    widths: Option<&[u32]>,
+    channel_count: usize,
+    path: &str,
+) -> Result<(Option<Vec<usize>>, u32), FlaggingError> {
+    let ddid = ddid.expect("selected channels project DATA_DESC_ID");
+    let spw = ddid_to_spw
+        .get(&ddid)
+        .copied()
+        .ok_or_else(|| FlaggingError::MutateFlags {
+            path: path.to_string(),
+            reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
+        })?;
+    let width = match widths {
+        None => 0,
+        Some([width]) => *width,
+        Some(widths) => {
+            widths
+                .get(spw as usize)
+                .copied()
+                .ok_or_else(|| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!("SPW {spw} has no channel bin"),
+                })?
+        }
+    };
+    let mut channels =
+        match selections.and_then(|selectors| selectors.get(&spw)) {
+            Some(selection) => Some(selection.indices(channel_count).map_err(|source| {
+                FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!("resolve SPW {spw} channels: {source}"),
+                }
+            })?),
+            None if width > 0 => Some((0..channel_count).collect()),
+            None => None,
+        };
+    if width > 0
+        && let Some(channels) = &mut channels
+    {
+        channels.sort_unstable();
+    }
+    Ok((channels, width))
 }
 
 fn apply_quack_flags(

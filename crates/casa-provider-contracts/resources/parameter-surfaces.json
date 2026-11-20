@@ -23282,7 +23282,7 @@
         },
         {
           "name": "channelavg",
-          "concept": {"id": "flagdata.channelavg", "semantic_revision": 1},
+          "concept": {"id": "flagdata.channelavg", "semantic_revision": 2},
           "order": 20,
           "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
           "required_when": {"kind": "never"},
@@ -23290,18 +23290,17 @@
           "projections": {
             "cli": {"flags": ["--channelavg"], "false_flags": ["--no-channelavg"]},
             "provider": {"field": "channelavg"},
-            "python": {"name": "channelavg"},
+            "python": {"name": "channelavg", "type_hint": "bool | list[bool]"},
             "presentation": {"label": "Channel Average", "group": "Clip", "advanced": true}
           },
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
           ]}}
         },
         {
           "name": "chanbin",
-          "concept": {"id": "parameter.chanbin", "semantic_revision": 1},
+          "concept": {"id": "parameter.chanbin", "semantic_revision": 2},
           "order": 21,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
           "required_when": {"kind": "never"},
@@ -23309,12 +23308,11 @@
           "projections": {
             "cli": {"flags": ["--chanbin"], "metavar": "N"},
             "provider": {"field": "chanbin"},
-            "python": {"name": "chanbin"},
+            "python": {"name": "chanbin", "type_hint": "int | list[int]"},
             "presentation": {"label": "Channel Bin", "group": "Clip", "advanced": true}
           },
-          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "Flagging bin controls are distinct from the transform's per-window widths."},
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata accepts per-window channel counts and maps averaged flags back to the input channels. Mstransform uses the bin width to create new visibility channels."},
           "unimplemented": {"issue": 978, "applies_when": {"kind": "any", "predicates": [
-            {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "clip"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "tfcrop"}},
             {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "rflag"}}
           ]}}
