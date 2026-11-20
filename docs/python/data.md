@@ -166,6 +166,10 @@ region's stride.
 
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
+Use `ia.subimage(...)` on that attachment for a temporary or native
+section with its WCS and validity mask. With `wantreturn=False`
+and an output path, the tool publishes the section and returns a detached
+image tool.
 Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
 reopens the moved file and reads its stored metadata again.
 
@@ -176,7 +180,7 @@ coordinates before applying the selection to the source. An existing writable
 destination mask receives the source validity over the inserted section.
 
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
-writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
+writable native CASA image for pixel edits. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.
 `zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
@@ -197,13 +201,15 @@ forms are tracked in #1625.
 Use `ia.getregion(region=...)` to read that same selection. Pass
 `getmask=True` to read validity, `mask` to apply a lattice expression,
 or `axes` to average the valid pixels along selected axes.
+Use `ia.boundingbox(region=...)` to inspect the inclusive pixel corners,
+stride, sampled shape and world coordinates of the corners.
 
-`ia.statistics()` returns statistics over a real native CASA or
-temporary image. Pass `axes` for per-plane results, `region` or `mask` to
-select pixels, and `robust=True` for the median, quartiles, and median absolute
-deviation. The tool supports classical, biweight, Chauvenet, fit-to-half and
-hinges-and-fences statistics. FITS statistics, disk storage, logfile output,
-and flux for per-plane beams are tracked in
+`ia.statistics()` returns statistics over a real native CASA image, an
+attached FITS image, or a temporary image. Pass `axes` for per-plane results,
+`region` or `mask` to select pixels, and `robust=True` for the median,
+quartiles, and median absolute deviation. The tool supports classical,
+biweight, Chauvenet, fit-to-half and hinges-and-fences statistics. Disk
+storage, logfile output, and flux for per-plane beams are tracked in
 [#1627](https://github.com/bglenden/casa-rs/issues/1627).
 
 The remaining CASA image and coordinate operations are tracked in

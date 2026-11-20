@@ -181,7 +181,7 @@ fn polygon_region(
     })
 }
 
-pub(super) fn strided_lc_slicer(
+pub(super) fn lc_slicer_section(
     rec: &RecordValue,
     coords: &CoordinateSystem,
     shape: &[usize],
@@ -193,9 +193,6 @@ pub(super) fn strided_lc_slicer(
         return Ok(None);
     }
     let section = decode_lc_slicer("region", rec, coords, shape)?;
-    if section.stride.iter().all(|&step| step == 1) {
-        return Ok(None);
-    }
     let count = section
         .lower
         .iter()
@@ -207,6 +204,37 @@ pub(super) fn strided_lc_slicer(
         start: section.lower,
         count,
         stride: section.stride,
+    }))
+}
+
+pub(super) fn compound_section(
+    record: &RecordValue,
+    coords: &CoordinateSystem,
+    shape: &[usize],
+    plane: [usize; 2],
+) -> Result<StridedSection, ImageError> {
+    let (start, count) = compound::bounds("region", record, coords, shape, plane)?;
+    Ok(StridedSection {
+        start,
+        count,
+        stride: vec![1; shape.len()],
+    })
+}
+
+pub(super) fn relative_polygon_section(
+    record: &RecordValue,
+    coords: &CoordinateSystem,
+    shape: &[usize],
+) -> Result<Option<StridedSection>, ImageError> {
+    if relative::mode(record).is_none() {
+        return Ok(None);
+    }
+    let (axes, plane) = relative::polygon_plane("region", record, coords, shape)?;
+    let (start, count) = plane.section(shape, axes);
+    Ok(Some(StridedSection {
+        start,
+        count,
+        stride: vec![1; shape.len()],
     }))
 }
 

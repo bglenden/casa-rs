@@ -9,7 +9,7 @@ use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
     fits::coordinate_util::from_fits_header_with_axis_order,
 };
-use casa_lattices::{Lattice, LatticeError};
+use casa_lattices::{Lattice, LatticeError, TraversalCursorIter, TraversalSpec};
 use casa_types::measures::{
     EpochRef, MEpoch, MPosition,
     direction::{DirectionRef, MDirection},
@@ -22,7 +22,7 @@ use fitsio::{
     hdu::{FitsHdu, HduInfo},
     threadsafe_fitsfile::ThreadsafeFitsFile,
 };
-use ndarray::{Array2, Axis, IxDyn, ShapeBuilder};
+use ndarray::{Array2, Axis, IxDyn, ShapeBuilder, Slice, Zip};
 
 use super::{
     PrimaryHdu, brightness_unit, history::history_from_cards, image_info_from_fits_header,
@@ -519,6 +519,14 @@ where
         self.shape
     }
 
+    fn is_persistent(&self) -> bool {
+        true
+    }
+
+    fn is_paged(&self) -> bool {
+        true
+    }
+
     fn is_writable(&self) -> bool {
         false
     }
@@ -578,11 +586,52 @@ where
         shape: &[usize],
         stride: &[usize],
     ) -> Result<Option<ArrayD<bool>>, ImageError> {
-        let pixels = (self.read)(start, shape, stride)?;
-        Ok(pixels
-            .iter()
-            .any(|value| value.is_nan())
-            .then(|| pixels.mapv(|value| !value.is_nan())))
+        let invalid =
+            || ImageError::InvalidMetadata("FITS pixel section is outside the image".into());
+        if start.len() != self.ndim() || shape.len() != self.ndim() || stride.len() != self.ndim() {
+            return Err(invalid());
+        }
+        for (axis, &count) in shape.iter().enumerate() {
+            if count == 0
+                || stride[axis] == 0
+                || (count - 1)
+                    .checked_mul(stride[axis])
+                    .and_then(|span| start[axis].checked_add(span))
+                    .is_none_or(|last| last >= self.shape[axis])
+            {
+                return Err(invalid());
+            }
+        }
+        let mut full_mask = None;
+        let cursors = TraversalCursorIter::new(
+            shape.to_vec(),
+            self.nice_cursor_shape(),
+            TraversalSpec::tiles(),
+        );
+        for cursor in cursors {
+            let cursor = cursor?;
+            let source = cursor
+                .position
+                .iter()
+                .zip(start)
+                .zip(stride)
+                .map(|((&offset, &first), &step)| first + offset * step)
+                .collect::<Vec<_>>();
+            let pixels = (self.read)(&source, &cursor.shape, stride)?;
+            if pixels.iter().any(|value| value.is_nan()) {
+                let mask =
+                    full_mask.get_or_insert_with(|| ArrayD::from_elem(IxDyn(shape).f(), true));
+                let mut window = mask.slice_each_axis_mut(|axis| {
+                    let dim = axis.axis.index();
+                    let offset = cursor.position[dim];
+                    Slice::from(offset..offset + cursor.shape[dim])
+                });
+                Zip::from(&mut window)
+                    .and(&pixels)
+                    .for_each(|valid, &pixel| *valid = !pixel.is_nan());
+            }
+        }
+        Ok(full_mask)
     }
 }
 
@@ -1077,6 +1126,46 @@ mod section_tests {
         let region = reader.read(&[1, 0, 1], &[1, 2, 2], &[1, 2, 2]).unwrap();
         assert_eq!(region.shape(), [1, 2, 2]);
         assert_eq!(region.as_slice_memory_order().unwrap(), [7., 11., 19., 23.]);
+    }
+
+    #[test]
+    fn fits_mask_batches_large_strided_requests() {
+        let shape = [2050, 2052];
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(LinearCoordinate::new(
+            2,
+            vec!["X".into(), "Y".into()],
+            vec!["".into(); 2],
+        ));
+        let metadata = TempImage::new(vec![1, 1], coordinates, TempStoragePolicy::Memory).unwrap();
+        let largest = Cell::new(0);
+        let image = fits_section_image(
+            &shape,
+            &metadata,
+            Path::new("virtual.fits"),
+            |origin, extent, stride| {
+                largest.set(largest.get().max(extent.iter().product()));
+                Ok(ArrayD::from_shape_fn(IxDyn(extent), |index| {
+                    let pixel = [
+                        origin[0] + index[0] * stride[0],
+                        origin[1] + index[1] * stride[1],
+                    ];
+                    if matches!(pixel, [1, 2] | [2049, 2050]) {
+                        f32::NAN
+                    } else {
+                        1.0
+                    }
+                }))
+            },
+        );
+        let count = [1025, 1025];
+        let mask = image
+            .get_mask_slice(&[1, 2], &count, &[2, 2])
+            .unwrap()
+            .unwrap();
+        assert!(largest.get() < count.iter().product());
+        assert!(!mask[[0, 0]] && !mask[[1024, 1024]]);
+        assert_eq!(mask.iter().filter(|&&valid| !valid).count(), 2);
     }
 
     #[test]

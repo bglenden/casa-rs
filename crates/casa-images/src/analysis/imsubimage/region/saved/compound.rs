@@ -72,6 +72,23 @@ pub(super) fn decode(
     })
 }
 
+pub(super) fn bounds(
+    name: &str,
+    record: &RecordValue,
+    coords: &CoordinateSystem,
+    full_shape: &[usize],
+    plane: [usize; 2],
+) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
+    let region = compile(name, record, coords, full_shape, plane)?;
+    let count = region
+        .start
+        .iter()
+        .zip(region.end)
+        .map(|(&start, end)| end - start)
+        .collect();
+    Ok((region.start, count))
+}
+
 fn compile(
     name: &str,
     record: &RecordValue,
