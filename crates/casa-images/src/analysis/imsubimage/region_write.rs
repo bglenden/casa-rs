@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_lattices::{TraversalCacheHint, TraversalCacheMode};
 use ndarray::{ArrayD, Axis, Dimension, IxDyn, Slice, Zip, indices};
 
 use crate::{ImageError, ImageInterface, ImagePixel, MutableImageInterface};
@@ -15,7 +16,7 @@ use super::{SubimageRegion, region::SubimageSelection};
 /// # Errors
 /// Returns an error for invalid arrays or regions, or failed image access.
 pub fn put_image_region<T: ImagePixel>(
-    image: &mut dyn MutableImageInterface<T>,
+    image: &mut impl MutableImageInterface<T>,
     pixels: Option<ArrayD<T>>,
     mask: Option<ArrayD<bool>>,
     region: Option<SubimageRegion<'_>>,
@@ -41,7 +42,24 @@ pub fn put_image_region<T: ImagePixel>(
         ));
     }
     let selection = ImageRegionWrite::new(image, region, array_shape, replicate)?;
-    selection.apply(image, pixels, mask, fresh_mask_name, usemask)
+    let tile = image.nice_cursor_shape();
+    let small_edit =
+        tile != image.shape() && selection.count.iter().product::<usize>() <= tile.iter().product();
+    if small_edit {
+        // Keep a small edit from loading and unpacking every tile of a native mask.
+        let hint = TraversalCacheHint {
+            mode: TraversalCacheMode::Tiles,
+            section_start: selection.start.clone(),
+            section_shape: selection.count.clone(),
+            requested_cursor: tile,
+            axis_path: (0..image.ndim()).collect(),
+        };
+        image.with_traversal_cache_hint_mut(&hint, |image| {
+            Ok(selection.apply(image, pixels, mask, fresh_mask_name, usemask))
+        })?
+    } else {
+        selection.apply(image, pixels, mask, fresh_mask_name, usemask)
+    }
 }
 
 struct ImageRegionWrite {
@@ -108,6 +126,9 @@ impl ImageRegionWrite {
     ) -> Result<(), ImageError> {
         if let Some(mask) = mask {
             let name = if let Some(name) = image.default_mask_name() {
+                if !image.named_mask_is_writable(&name)? {
+                    return Err(ImageError::CasaSelection("The mask is not writable".into()));
+                }
                 name
             } else {
                 image.create_filled_mask(fresh_mask_name, true)?;

@@ -892,13 +892,22 @@ impl<T: ImagePixel> PagedImage<T> {
     }
 
     fn set_cache_bytes_shared(&self, max_cache_bytes: usize) -> Result<(), ImageError> {
-        self.max_cache_bytes.set(if max_cache_bytes == 0 {
+        // Cache replacement drops the previous handle. Surface any pending
+        // write error before reopening it with a different budget.
+        if self.tiled_io.is_some() {
+            self.flush_pixels_for_reopen()?;
+        }
+        let previous = self.max_cache_bytes.replace(if max_cache_bytes == 0 {
             DEFAULT_TILED_ARRAY_CACHE_BYTES
         } else {
             max_cache_bytes
         });
+        if let Err(error) = self.refresh_tiled_io() {
+            self.max_cache_bytes.set(previous);
+            return Err(error);
+        }
         self.persistent_masks.borrow_mut().clear();
-        self.refresh_tiled_io()
+        Ok(())
     }
 
     fn persistent_mask_relative_path(record: &RecordValue) -> Result<String, ImageError> {
