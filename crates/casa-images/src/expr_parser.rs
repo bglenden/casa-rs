@@ -101,9 +101,6 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use casa_types::ArrayD;
-use ndarray::IxDyn;
-
 use crate::error::ImageError;
 use crate::image::ImageInterface;
 use crate::image_expr::{
@@ -584,7 +581,7 @@ impl ScalarLiteral {
 /// Intermediate parse result: either a numeric expression or a boolean mask.
 enum ExprNode<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> {
     Numeric(Box<ImageExprBuilder<'a, T>>, bool),
-    Complex(Box<ImageExprBuilder<'a, Complex64>>),
+    Complex(Box<ImageExprBuilder<'a, Complex64>>, bool),
     Scalar(ScalarLiteral),
     Mask(MaskExprBuilder<'a, T>),
     IntArray(Vec<i64>),
@@ -598,7 +595,7 @@ impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
     fn single_precision(&self) -> bool {
         match self {
             Self::Scalar(value) => value.single_precision,
-            Self::Numeric(_, single) => *single,
+            Self::Numeric(_, single) | Self::Complex(_, single) => *single,
             _ => false,
         }
     }
@@ -615,7 +612,7 @@ impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
                 message: "expected numeric expression but found boolean mask".into(),
                 position: pos,
             }),
-            Self::Complex(_) => Err(ExprParseError {
+            Self::Complex(..) => Err(ExprParseError {
                 message: "expected real expression but found a complex image".into(),
                 position: pos,
             }),
@@ -646,7 +643,7 @@ impl<'a, T: ImageExprValue + PartialOrd + ExprValueConvert> ExprNode<'a, T> {
         match self {
             Self::Numeric(expression, _) => Ok(*expression),
             Self::Scalar(value) => Ok(ImageExprBuilder::scalar(T::from_f64(value.value))),
-            Self::Mask(_) | Self::IntArray(_) | Self::Complex(_) => Err(ExprParseError {
+            Self::Mask(_) | Self::IntArray(_) | Self::Complex(..) => Err(ExprParseError {
                 message: "expected numeric expression".into(),
                 position: pos,
             }),
@@ -732,7 +729,7 @@ where
         op: ImageExprBinaryOp,
         pos: usize,
     ) -> Result<ExprNode<'a, T>, ExprParseError> {
-        if matches!(&lhs, ExprNode::Complex(_)) || matches!(&rhs, ExprNode::Complex(_)) {
+        if matches!(&lhs, ExprNode::Complex(..)) || matches!(&rhs, ExprNode::Complex(..)) {
             return arithmetic_complex(lhs, rhs, op, pos);
         }
         if lhs.single_precision()
@@ -884,7 +881,7 @@ where
             self.advance()?;
             let right = self.parse_add_expr()?;
 
-            if matches!(&left, ExprNode::Complex(_)) || matches!(&right, ExprNode::Complex(_)) {
+            if matches!(&left, ExprNode::Complex(..)) || matches!(&right, ExprNode::Complex(..)) {
                 return compare_complex(left, right, op, pos);
             }
             match (&left, &right) {
@@ -996,7 +993,9 @@ where
                     ExprNode::Numeric(expr, single) => {
                         Ok(ExprNode::numeric((*expr).negate(), single))
                     }
-                    ExprNode::Complex(expr) => Ok(ExprNode::Complex(Box::new((*expr).negate()))),
+                    ExprNode::Complex(expr, single) => {
+                        Ok(ExprNode::Complex(Box::new((*expr).negate()), single))
+                    }
                     ExprNode::Mask(_) | ExprNode::IntArray(_) => Err(ExprParseError {
                         message: "cannot negate a non-numeric expression".into(),
                         position: pos,
@@ -1122,8 +1121,8 @@ where
             _ => None,
         };
 
-        if let ExprNode::Complex(expr) = arg {
-            return complex_function(&lower, *expr, unary_op, pos);
+        if let ExprNode::Complex(expr, single) = arg {
+            return complex_function(&lower, *expr, single, unary_op, pos);
         }
         let reduction = match lower.as_str() {
             "sum" => Some(ReductionOp::Sum),
@@ -1162,7 +1161,7 @@ where
                     true,
                 )),
                 ExprNode::Numeric(expr, false) => Ok(ExprNode::numeric((*expr).unary(op), false)),
-                ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(_) => {
+                ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(..) => {
                     Err(ExprParseError {
                         message: format!("function '{name}' requires a numeric argument"),
                         position: pos,
@@ -1188,7 +1187,7 @@ where
                         })
                     }
                     ExprNode::Numeric(expr, _) => Ok(ExprNode::Mask((*expr).isnan())),
-                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(_) => {
+                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(..) => {
                         Err(ExprParseError {
                             message: "isnan() requires a numeric argument".into(),
                             position: pos,
@@ -1224,21 +1223,18 @@ where
                     let mask = arg.into_mask(pos)?;
                     Ok(ExprNode::numeric(ImageExprBuilder::nfalse(mask), false))
                 }
-                "mask" => {
-                    let expr = arg.into_numeric(pos)?;
-                    let shape = expr.shape().to_vec();
-                    let mask = match expr.source_mask() {
-                        Ok(Some(m)) => m,
-                        _ => ArrayD::from_elem(IxDyn(&shape), true),
-                    };
-                    Ok(ExprNode::Mask(MaskExprBuilder::from_constant(mask)))
-                }
+                "mask" => match arg {
+                    ExprNode::Mask(mask) => Ok(ExprNode::Mask(mask.validity())),
+                    other => Ok(ExprNode::Mask(
+                        other.into_numeric_or_constant(pos)?.validity(),
+                    )),
+                },
                 "value" => match arg {
                     ExprNode::Numeric(expr, single) => {
                         Ok(ExprNode::numeric((*expr).strip_mask(), single))
                     }
                     ExprNode::Scalar(_) => Ok(arg),
-                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(_) => {
+                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(..) => {
                         Err(ExprParseError {
                             message: "value() requires a numeric argument".into(),
                             position: pos,
@@ -1268,7 +1264,7 @@ where
                         Ok(ExprNode::numeric(*expr, false))
                     }
                     ExprNode::Numeric(_, _) | ExprNode::Scalar(_) => Ok(arg),
-                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(_) => {
+                    ExprNode::Mask(_) | ExprNode::IntArray(_) | ExprNode::Complex(..) => {
                         Err(ExprParseError {
                             message: format!("'{lower}()' requires a numeric argument"),
                             position: pos,
@@ -1372,14 +1368,9 @@ where
             "replace" => {
                 // replace(image, replacement) — replaces masked-out pixels while keeping mask.
                 let primary = arg1.into_numeric(pos)?;
-                let shape = primary.shape().to_vec();
                 let replacement = arg2.into_numeric_or_constant(pos)?;
-                let mask = match primary.source_mask() {
-                    Ok(Some(m)) => m,
-                    _ => ArrayD::from_elem(IxDyn(&shape), true),
-                };
                 primary
-                    .replace(replacement, mask)
+                    .replace_invalid(replacement)
                     .map_err(|e| ExprParseError {
                         message: e.to_string(),
                         position: pos,
@@ -1550,12 +1541,15 @@ where
     }
 
     fn resolve_image(&self, name: &str, pos: usize) -> Result<ExprNode<'a, T>, ExprParseError> {
+        let single = self
+            .single_precision_sources
+            .is_some_and(|source| source(name));
         if let Some(source) = self
             .complex_resolver
             .and_then(|resolver| resolver.resolve(name).ok())
         {
             return ImageExprBuilder::from_dyn(source)
-                .map(|expr| ExprNode::Complex(Box::new(expr)))
+                .map(|expr| ExprNode::Complex(Box::new(expr), single))
                 .map_err(|error| ExprParseError {
                     message: error.to_string(),
                     position: pos,
@@ -1569,9 +1563,6 @@ where
             message: e.to_string(),
             position: pos,
         })?;
-        let single = self
-            .single_precision_sources
-            .is_some_and(|source| source(name));
         Ok(ExprNode::numeric(expr, single))
     }
 
@@ -1859,6 +1850,25 @@ where
     Ok(result)
 }
 
+pub(crate) fn parse_image_tool_mask<'a, R>(
+    expression: &str,
+    real: &R,
+    complex: &dyn ImageResolver<'a, Complex64>,
+    single_precision: &dyn Fn(&str) -> bool,
+) -> Result<MaskExpression<f64>, ImageError>
+where
+    R: ImageResolver<'a, f64>,
+{
+    let result = parse_casa_pixel_expression(expression, real, complex, single_precision)
+        .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
+    let ExprNode::Mask(mask) = result else {
+        return Err(ImageError::CasaSelection(
+            "Exception: The expression type must be Boolean.".into(),
+        ));
+    };
+    mask.compile()
+}
+
 pub(crate) enum ReplacementPixels {
     Real(ndarray::ArrayD<f64>),
     Complex(ndarray::ArrayD<Complex64>),
@@ -1907,7 +1917,7 @@ where
             check_shape(builder.shape())?;
             Ok(ReplacementPixels::Real(builder.compile()?.get()?))
         }
-        ExprNode::Complex(builder) if want_complex => {
+        ExprNode::Complex(builder, _) if want_complex => {
             check_shape(builder.shape())?;
             Ok(ReplacementPixels::Complex(builder.compile()?.get()?))
         }
