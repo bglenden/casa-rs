@@ -7,9 +7,9 @@ use std::fs;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
+use casa_types::ArrayD;
 use casa_types::quanta::Quantity;
 use casa_types::quanta::casacore::mvangle_radians;
-use casa_types::ArrayD;
 use ndarray::{Array2, Axis, IxDyn, Slice, Zip};
 
 use crate::analysis::axes::{direction_plane_axes, stokes_for_axis};

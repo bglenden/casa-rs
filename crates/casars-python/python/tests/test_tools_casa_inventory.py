@@ -60,6 +60,7 @@ IMPLEMENTED["coordsys"] = {
 }
 IMPLEMENTED["image"] = {
     "addnoise",
+    "coordmeasures", "topixel", "toworld",
     "adddegaxes",
     "statistics",
     "beamarea", "beamforconvolvedsize", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "deconvolvefrombeam", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",

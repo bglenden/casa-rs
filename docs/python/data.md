@@ -72,6 +72,15 @@ World values use the units reported by `cs.units()`.
 NumPy `float32`, `float64`, `longdouble`, `longlong`, and `ulonglong`
 matrices are converted to double precision, as in CASA.
 
+Use `ia.toworld(pixels, format="nqsm")` to convert one image position.
+Each format letter requests numeric values, quantities, strings, or
+measures. Pass `dovelocity=False` to omit spectral velocities from the
+measure record. Pass one of these representations to `ia.topixel(world)`
+to obtain the zero-based pixel coordinates in its `numeric` field.
+`ia.coordmeasures(pixel)` returns world measures and the pixel's intensity
+and validity. Pass `dframe` or `sframe` to request specific direction or
+spectral frames.
+
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
