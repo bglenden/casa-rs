@@ -52,7 +52,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | smoothcal | smoothcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
-| split | split | yes | 19 | 19 | 0 | 1 | 1 | 0 |
+| split | split | yes | 19 | 19 | 0 | 0 | 1 | 0 |
 | statwt | statwt | yes | 25 | 25 | 0 | 0 | 0 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 3 | 22 | 0 |
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
@@ -2346,7 +2346,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `keepmms`
 - casa-rs parameters CASA lacks: `msselect`
 - Shared parameters: 19, in CASA's order: yes
 - Defaults that differ: none
