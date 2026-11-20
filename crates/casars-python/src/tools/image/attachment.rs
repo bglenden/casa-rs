@@ -44,6 +44,7 @@ pub(super) struct AttachedImage {
     live_coordinates: Option<LiveCoordinates>,
 }
 
+#[derive(Clone)]
 struct LiveCoordinates {
     record: RecordValue,
     system: CoordinateSystem,
@@ -422,6 +423,7 @@ impl AttachedImage {
                 beam_view: Mutex::new(self.beam_view().clone()),
                 retained_inputs: Vec::new(),
                 operand_paths: Vec::new(),
+                live_coordinates: self.live_coordinates.clone(),
             });
         }
         if old_name
@@ -490,7 +492,9 @@ impl AttachedImage {
             handle: Mutex::new(handle),
             use_lock: self.image.use_lock.clone(),
             shareable: self.image.shareable,
-            coordinates_replaced: AtomicBool::new(false),
+            coordinates_replaced: AtomicBool::new(
+                self.image.coordinates_replaced.load(Ordering::Relaxed),
+            ),
         });
         registry.remove(source);
         registry.insert(target.clone(), vec![Arc::downgrade(&image)]);
@@ -500,7 +504,7 @@ impl AttachedImage {
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
-            live_coordinates: None,
+            live_coordinates: self.live_coordinates.clone(),
         })
     }
 
