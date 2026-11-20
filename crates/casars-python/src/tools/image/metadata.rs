@@ -52,18 +52,18 @@ impl PyImageTool {
     fn coordsys(&self, py: Python<'_>, axes: Option<IntList>) -> PyResult<Py<PyAny>> {
         let tool = py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(PyCoordsys::empty());
             };
-            let image = image.lock();
+            let image = attachment.lock();
             let axes = axes.as_ref().map_or(&[][..], |arg| arg.0.as_slice());
             let all_axes = axes.is_empty()
                 || axes == [-1]
                 || axes.iter().copied().eq(0..image.shape().len() as i64);
             if all_axes {
-                return image.coordsys();
+                return attachment.coordsys(&image);
             }
-            let coordinates = image.coordinates();
+            let (coordinates, _) = attachment.coordinate_view(&image);
             let mut result = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
             let mut first = 0;
             let mut selected = Vec::new();
@@ -79,7 +79,7 @@ impl PyImageTool {
             if selected != axes {
                 return Err(stub("coordsys").unwrap_err());
             }
-            PyCoordsys::from_record(result.to_record())
+            PyCoordsys::from_image_coordinates(&result, result.to_record())
         })?;
         Ok(Py::new(py, tool)?.into_any())
     }
@@ -104,6 +104,7 @@ impl PyImageTool {
             }
             attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             image.set_coordinate_record(record)?;
+            attachment.coordinates_changed();
             if history {
                 image.record_history("setcoordsys", "ia.setcoordsys(csys={...})".into())?;
             }

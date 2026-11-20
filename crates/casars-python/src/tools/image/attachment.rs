@@ -5,11 +5,16 @@
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
+use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableError, TableOptions, TableUseLock, TableWriteLock};
+use casa_types::RecordValue;
 use pyo3::prelude::*;
+
+use crate::tools::coordsys::PyCoordsys;
 
 use super::beam_view::BeamView;
 use super::handle::{ImageHandle, raised};
@@ -19,6 +24,7 @@ pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
     use_lock: Option<Arc<TableUseLock>>,
     shareable: bool,
+    coordinates_replaced: AtomicBool,
 }
 
 type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
@@ -35,6 +41,12 @@ pub(super) struct AttachedImage {
     beam_view: Mutex<BeamView>,
     retained_inputs: Vec<Self>,
     operand_paths: Vec<PathBuf>,
+    live_coordinates: Option<LiveCoordinates>,
+}
+
+struct LiveCoordinates {
+    record: RecordValue,
+    system: CoordinateSystem,
 }
 
 impl AttachedImage {
@@ -45,11 +57,13 @@ impl AttachedImage {
                 handle: Mutex::new(image),
                 use_lock: None,
                 shareable: false,
+                coordinates_replaced: AtomicBool::new(false),
             }),
             key: None,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
+            live_coordinates: None,
         }
     }
 
@@ -139,6 +153,7 @@ impl AttachedImage {
                 beam_view: Mutex::default(),
                 retained_inputs: Vec::new(),
                 operand_paths: Vec::new(),
+                live_coordinates: None,
             })
     }
 
@@ -178,6 +193,7 @@ impl AttachedImage {
             handle: Mutex::new(handle),
             use_lock,
             shareable: lock_attempts.is_some(),
+            coordinates_replaced: AtomicBool::new(false),
         });
         let opened = Self {
             image,
@@ -185,6 +201,7 @@ impl AttachedImage {
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
+            live_coordinates: None,
         };
         opened.check_bound_name(&opened.lock())?;
         Ok(opened)
@@ -204,6 +221,54 @@ impl AttachedImage {
             .handle
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn capture_live_coordinates(
+        image: &ImageHandle,
+    ) -> PyResult<Option<(RecordValue, CoordinateSystem)>> {
+        let coordinates = image.coordinates();
+        let has_samples =
+            (0..coordinates.n_coordinates()).any(|index| match coordinates.coordinate(index) {
+                CoordinateModel::Spectral(spectral) => !spectral.has_linear_mapping(),
+                CoordinateModel::Tabular(_) => true,
+                _ => false,
+            });
+        if !has_samples {
+            return Ok(None);
+        }
+        let record = image.coordinate_record();
+        let system = CoordinateSystem::from_live_record(&record).map_err(raised)?;
+        Ok(Some((record, system)))
+    }
+
+    pub(super) fn keep_live_coordinates(&mut self, record: RecordValue, system: CoordinateSystem) {
+        self.live_coordinates = Some(LiveCoordinates { record, system });
+    }
+
+    pub(super) fn coordinates_changed(&self) {
+        self.image
+            .coordinates_replaced
+            .store(true, Ordering::Relaxed);
+    }
+
+    pub(super) fn coordinate_view<'a>(
+        &'a self,
+        image: &'a ImageHandle,
+    ) -> (&'a CoordinateSystem, RecordValue) {
+        let record = image.coordinate_record();
+        let system = self
+            .live_coordinates
+            .as_ref()
+            .filter(|live| {
+                !self.image.coordinates_replaced.load(Ordering::Relaxed) && live.record == record
+            })
+            .map_or_else(|| image.coordinates(), |live| &live.system);
+        (system, record)
+    }
+
+    pub(super) fn coordsys(&self, image: &ImageHandle) -> PyResult<PyCoordsys> {
+        let (coordinates, record) = self.coordinate_view(image);
+        PyCoordsys::from_image_coordinates(coordinates, record)
     }
 
     pub(super) fn beam_view(&self) -> MutexGuard<'_, BeamView> {
@@ -425,6 +490,7 @@ impl AttachedImage {
             handle: Mutex::new(handle),
             use_lock: self.image.use_lock.clone(),
             shareable: self.image.shareable,
+            coordinates_replaced: AtomicBool::new(false),
         });
         registry.remove(source);
         registry.insert(target.clone(), vec![Arc::downgrade(&image)]);
@@ -434,6 +500,7 @@ impl AttachedImage {
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
             operand_paths: Vec::new(),
+            live_coordinates: None,
         })
     }
 

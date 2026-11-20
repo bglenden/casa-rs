@@ -33,7 +33,7 @@ impl PyImageTool {
             };
             let image = attachment.lock();
             image.check_single_precision("coordmeasures")?;
-            let coords = image.coordsys()?;
+            let coords = attachment.coordsys(&image)?;
             let requested = pixel.iter().map(|&axis| axis as i64).collect::<Vec<_>>();
             let result = coords.image_measures(pixel, dframe, sframe)?;
             match &*image {
@@ -125,7 +125,7 @@ impl PyImageTool {
         self.state()
             .image
             .as_ref()
-            .map(|image| image.lock().coordsys())
+            .map(|attachment| attachment.coordsys(&attachment.lock()))
             .transpose()
     }
 }

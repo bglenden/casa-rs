@@ -1465,18 +1465,6 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
-    /// Keep the coordinate references of a newly computed image while its
-    /// tool remains open. The stored native record is left intact.
-    ///
-    /// # Errors
-    /// The stored coordinate record contains invalid live references.
-    pub fn restore_live_coordinate_references(&mut self) -> Result<(), ImageError> {
-        if let Some(Value::Record(record)) = self.table.keywords().get("coords") {
-            self.coords = CoordinateSystem::from_live_record(record)?;
-        }
-        Ok(())
-    }
-
     /// Returns the brightness unit string.
     pub fn units(&self) -> &str {
         &self.units

@@ -200,15 +200,6 @@ pub(super) fn publish_image(
     overwrite: bool,
     build: impl FnOnce(Option<&Path>) -> PyResult<ImageHandle>,
 ) -> PyResult<AttachedImage> {
-    publish_image_with(outfile, overwrite, build, |_| Ok(()))
-}
-
-pub(super) fn publish_image_with(
-    outfile: &str,
-    overwrite: bool,
-    build: impl FnOnce(Option<&Path>) -> PyResult<ImageHandle>,
-    attach_native: impl FnOnce(&mut ImageHandle) -> PyResult<()>,
-) -> PyResult<AttachedImage> {
     if outfile.is_empty() {
         return build(None).map(AttachedImage::temporary);
     }
@@ -264,10 +255,7 @@ pub(super) fn publish_image_with(
     } else {
         rename_without_replacing(&product, &path).map_err(raised)?;
     }
-    match AttachedImage::open_created(&mut registry, &path).and_then(|image| {
-        attach_native(&mut image.lock())?;
-        Ok(image)
-    }) {
+    match AttachedImage::open_created(&mut registry, &path) {
         Ok(image) => {
             // The old table is inside the private staging directory after an exchange.
             drop(stage);

@@ -225,23 +225,8 @@ impl<'a> ImageRebin<'a> {
             shape: &self.binned_shape,
             stride: &ones,
         };
-        let kernel = self
-            .factors
-            .iter()
-            .zip(steps)
-            .map(|(&factor, &step)| (factor - 1) * step + 1)
-            .fold(1_usize, usize::saturating_mul);
-        let mut remaining = (MAX_TILE_SAMPLES / kernel).max(1);
-        let output_cursor = image
-            .nice_cursor_shape()
-            .into_iter()
-            .zip(&self.factors)
-            .map(|(axis, &factor)| {
-                let count = axis.div_ceil(factor).min(remaining).max(1);
-                remaining /= count;
-                count
-            })
-            .collect();
+        let (output_cursor, large_bin) =
+            output_tile(image.nice_cursor_shape(), &self.factors, steps);
         let mut masked = false;
         for tile in binned.cursors(output_cursor) {
             let tile = tile?;
@@ -262,7 +247,7 @@ impl<'a> ImageRebin<'a> {
                 })
                 .collect::<Vec<_>>();
             let origin = input.source_start(&start);
-            let (pixels, valid) = if kernel > MAX_TILE_SAMPLES {
+            let (pixels, valid) = if large_bin {
                 let (value, valid) = read_large_bin(&reader, &origin, &extent, steps)?;
                 (
                     ArrayD::from_elem(IxDyn(&tile.shape), value),
@@ -298,6 +283,38 @@ impl<'a> ImageRebin<'a> {
     }
 }
 
+fn output_tile(
+    source_cursor: Vec<usize>,
+    factors: &[usize],
+    strides: &[usize],
+) -> (Vec<usize>, bool) {
+    let kernel: Vec<_> = factors
+        .iter()
+        .zip(strides)
+        .map(|(&factor, &step)| (factor - 1) * step + 1)
+        .collect();
+    let mut volume = kernel.iter().copied().fold(1_usize, usize::saturating_mul);
+    if volume > MAX_TILE_SAMPLES {
+        return (vec![1; factors.len()], true);
+    }
+    let tile = source_cursor
+        .into_iter()
+        .zip(factors)
+        .zip(strides)
+        .zip(kernel)
+        .map(|(((size, &factor), &step), span)| {
+            // Leave room for one bin on each axis we have yet to size.
+            let other_axes = volume / span;
+            let max_span = MAX_TILE_SAMPLES / other_axes;
+            let max_selected = (max_span - 1) / step + 1;
+            let bins = size.div_ceil(factor).min(max_selected / factor).max(1);
+            volume = other_axes * ((bins * factor - 1) * step + 1);
+            bins
+        })
+        .collect();
+    (tile, false)
+}
+
 fn read_large_bin<T: ImageExprValue>(
     reader: &PixelSections<'_, T>,
     origin: &[usize],
@@ -321,7 +338,7 @@ fn read_large_bin<T: ImageExprValue>(
         })
         .collect();
     let mut sum = T::default_value();
-    let mut count = 0;
+    let mut count = 0_usize;
     let mut masked = false;
     for tile in section.cursors(dense_cursor) {
         let tile = tile?;
@@ -340,4 +357,25 @@ fn read_large_bin<T: ImageExprValue>(
         sum = sum.div_by_real(count as f64);
     }
     Ok((sum, masked.then_some(count > 0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_TILE_SAMPLES, output_tile};
+
+    #[test]
+    fn rebin_limits_the_dense_mask_read_across_strided_bins() {
+        let factors = [2, 1];
+        let strides = [1, 1024];
+        let (tile, large) = output_tile(vec![64, 64], &factors, &strides);
+        assert!(!large);
+        assert_eq!(tile, [32, 4]);
+        let dense_samples = tile
+            .iter()
+            .zip(factors)
+            .zip(strides)
+            .map(|((&bins, factor), step)| (bins * factor - 1) * step + 1)
+            .product::<usize>();
+        assert!(dense_samples <= MAX_TILE_SAMPLES);
+    }
 }

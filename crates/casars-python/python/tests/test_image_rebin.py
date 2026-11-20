@@ -204,20 +204,26 @@ def test_rebin_sampled_frequencies_survive_native_reopen(casa, tmp_path, limits,
         path = str(tmp_path / f"sampled-{index}.im")
         result = source.rebin(path, [1, 1, 3], region=region, crop=crop)
         assert result.coordsys().referencepixel()["numeric"][-1] == pytest.approx(-1 / 3)
+        assert result.coordsys([2]).referencepixel()["numeric"][0] == pytest.approx(-1 / 3)
         for channel, value in enumerate(expected):
             assert result.toworld([0, 0, channel])["numeric"][-1] == pytest.approx(value)
+        sibling = writer.image()
+        assert sibling.open(path)
+        assert sibling.coordsys().referencepixel()["numeric"][-1] == pytest.approx(0)
+        assert sibling.done()
+        assert result.coordsys().referencepixel()["numeric"][-1] == pytest.approx(-1 / 3)
         assert result.done() and source.done()
         for reader in (casa, tools):
-            result = reader.image()
-            assert result.open(path)
-            reference = result.coordsys().referencepixel()["numeric"][-1]
+            reopened = reader.image()
+            assert reopened.open(path)
+            reference = reopened.coordsys().referencepixel()["numeric"][-1]
             assert reference == pytest.approx(0)
-            stored = result.coordsys().torecord()["spectral1"]["tabular"]
+            stored = reopened.coordsys().torecord()["spectral1"]["tabular"]
             np.testing.assert_allclose(stored["crpix"], [0])
             np.testing.assert_allclose(stored["crval"], expected[:1])
             for channel, value in enumerate(expected):
-                assert result.toworld([0, 0, channel])["numeric"][-1] == pytest.approx(value)
-            assert result.done()
+                assert reopened.toworld([0, 0, channel])["numeric"][-1] == pytest.approx(value)
+            assert reopened.done()
 
 
 def test_rebin_selects_multiple_beams_and_rejects_spectral_rebin(casa):
@@ -261,6 +267,11 @@ def test_rebin_validation_and_overwrite(casa, tmp_path):
                 source.rebin(str(target), factors, **kwargs)
             assert not target.exists()
         product = source.rebin(str(target), 2)
+        np.testing.assert_array_equal(product.shape(), [3, 4, 2])
+        assert product.done()
+        with pytest.raises(RuntimeError, match="All rebinning factors are 1"):
+            source.rebin(str(target), [1], overwrite=True)
+        assert product.open(str(target))
         np.testing.assert_array_equal(product.shape(), [3, 4, 2])
         assert product.done()
         with pytest.raises(RuntimeError, match="exists|already a file"):

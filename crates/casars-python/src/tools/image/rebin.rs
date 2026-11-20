@@ -15,9 +15,10 @@ use pyo3::prelude::*;
 use crate::convert::IntList;
 
 use super::PyImageTool;
+use super::attachment::AttachedImage;
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_image_with;
+use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{Region, mask_argument};
 
@@ -109,7 +110,8 @@ impl PyImageTool {
             let attachment = state.image.as_ref().ok_or_else(|| raised("Unable to create image"))?;
             let region = region?;
             let mask = mask?;
-            publish_image_with(outfile, overwrite, |path| {
+            let mut live_coordinates = None;
+            let mut product = publish_image(outfile, overwrite, |path| {
                 let mut handle = attachment.lock();
                 match &*handle {
                     ImageHandle::Double(_) => return Err(raised("rebin does not support images with double precision pixel values.")),
@@ -153,15 +155,17 @@ impl PyImageTool {
                     let factors = factors.iter().map(usize::to_string).collect::<Vec<_>>().join(",");
                     output.record_history("rebin", format!("ia.rebin(outfile={outfile:?}, bin=[{factors}], region={region}, mask={mask:?}, dropdeg={dropdeg}, overwrite={overwrite}, stretch={stretch}, crop={crop})"))?;
                 }
+                if path.is_some() {
+                    live_coordinates = AttachedImage::capture_live_coordinates(&output)?;
+                }
                 output.save().map_err(raised)?;
                 attachment.release_requested_lock(&mut handle)?;
                 Ok(output)
-            }, |output| {
-                with_pixels!(output, storage => match storage {
-                    Storage::Paged(image) => image.restore_live_coordinate_references().map_err(raised),
-                    Storage::Temp { .. } => Ok(()),
-                })
-            })
+            })?;
+            if let Some((record, system)) = live_coordinates {
+                product.keep_live_coordinates(record, system);
+            }
+            Ok::<_, PyErr>(product)
         })?;
         Py::new(py, Self::attached(product))
     }

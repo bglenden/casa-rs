@@ -226,13 +226,6 @@ impl ImageHandle {
         with_pixels!(self, storage => with_storage!(storage, image => image.coordinates()))
     }
 
-    pub(super) fn coordsys(&self) -> PyResult<crate::tools::coordsys::PyCoordsys> {
-        crate::tools::coordsys::PyCoordsys::from_image_coordinates(
-            self.coordinates(),
-            self.coordinate_record(),
-        )
-    }
-
     pub(super) fn path(&self) -> Option<&Path> {
         if let Some(fits) = self.fits() {
             return Some(&fits.path);
