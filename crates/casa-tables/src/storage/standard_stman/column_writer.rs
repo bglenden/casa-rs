@@ -346,7 +346,7 @@ pub(super) fn write_ssm_file_columns_with_layout(
 /// Append an indirect cell to the array file and return its offset there:
 /// a record as its serialized bytes, an array as itself, and 0 for an
 /// undefined cell.
-fn write_indirect_cell(
+pub(super) fn write_indirect_cell(
     writer: &mut StManArrayFileWriter,
     desc: &ColumnDescContents,
     value: Option<&Value>,
