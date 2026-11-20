@@ -295,12 +295,12 @@ pub use storage::{
 };
 pub use table::{
     ColumnAddition, ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride,
-    ColumnOverrides, DataManagerKind, EndianFormat, GeneratedArrayColumn, GeneratedArrayValueRun,
-    GeneratedScalarColumn, GeneratedScalarValueRun, IncrementalCorruption, IncrementalLayoutCheck,
-    ManagerAddition, PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult,
-    RecordColumnCell, RecordColumnIter, RequiredScalarColumnDestination,
-    RequiredScalarColumnValues, RequiredScalarColumnValuesMut, RowRange,
-    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
+    ColumnOverrides, CompressedComplexArray, DataManagerKind, EndianFormat, GeneratedArrayColumn,
+    GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun, IncrementalCorruption,
+    IncrementalLayoutCheck, ManagerAddition, PreparedRowAppender, PreparedTableRow,
+    PreparedTableRowMut, QueryResult, RecordColumnCell, RecordColumnIter,
+    RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
+    RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
     SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
     SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
     StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,

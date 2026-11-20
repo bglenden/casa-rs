@@ -9,9 +9,9 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
-    FlagSummaryOptions, QuackMode, flagdata_empty_record, flagdata_named_summary_record,
-    flagdata_path, flagdata_task_schema_bundle, ms_task_success, parse_numeric_id_selector,
-    task_selection_text,
+    FlagSummaryOptions, QuackMode, calculate_flagdata_path, flagdata_empty_record,
+    flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
+    parse_numeric_id_selector, task_selection_text,
 };
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
@@ -35,36 +35,44 @@ fn main() -> ExitCode {
 }
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    if !applies(task)? {
-        // CASA's action '' or 'none' only saves the parameters, which is
-        // savepars (#978); without it CASA warns and returns {}.
-        tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
-        return ms_task_success(flagdata_empty_record(), &None::<FlagDataReport>);
-    }
+    let action = task.required_text("action")?;
+    let calculate = match action.as_str() {
+        "apply" => false,
+        "calculate" => true,
+        "" | "none" => {
+            // CASA saves parameters for these actions when savepars is set.
+            tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
+            return ms_task_success(flagdata_empty_record(), &None::<FlagDataReport>);
+        }
+        _ => {
+            return Err(unknown(
+                "action",
+                &action,
+                "'apply', 'calculate', 'none' or ''",
+            ));
+        }
+    };
     let request = flagdata_request(task)?;
-    let report = flagdata_path(task.path("vis")?, &request)
-        .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let path = task.path("vis")?;
+    // The CASA task derives persistence from action, including when the
+    // caller supplied its hidden writeflags argument explicitly.
+    let report = if calculate {
+        if !matches!(
+            request.mode,
+            FlagDataMode::Manual | FlagDataMode::Clip | FlagDataMode::Quack | FlagDataMode::Summary
+        ) {
+            return Err(not_yet("action", &action));
+        }
+        calculate_flagdata_path(path, &request)
+    } else {
+        flagdata_path(path, &request)
+    }
+    .map_err(|error| TaskFailure::execution(error.to_string()))?;
     let value = match &report.summary {
         Some(summary) => flagdata_named_summary_record(summary, &task.required_text("name")?),
         None => flagdata_empty_record(),
     };
     ms_task_success(value, &Some(report))
-}
-
-/// Whether CASA's `action` runs the flagging: `apply` does, `''` and
-/// `none` do not, and `calculate`, which flags without writing, is #978.
-fn applies(task: &TaskInvocation<'_>) -> Result<bool, TaskFailure> {
-    let text = task.required_text("action")?;
-    match text.as_str() {
-        "apply" => Ok(true),
-        "" | "none" => Ok(false),
-        "calculate" => Err(not_yet("action", &text)),
-        _ => Err(unknown(
-            "action",
-            &text,
-            "'apply', 'calculate', 'none' or ''",
-        )),
-    }
 }
 
 /// The resolved run as a [`FlagDataRequest`]; the parameters the surface
@@ -278,7 +286,10 @@ mod tests {
         assert!(request.extendflags && request.extendpols);
         assert_eq!((request.growtime, request.growfreq), (50.0, 50.0));
         assert_eq!((request.timedevscale, request.freqdevscale), (5.0, 5.0));
-        assert!(read(&["--vis", "in.ms"], applies).unwrap());
+        assert_eq!(
+            read(&["--vis", "in.ms"], |task| task.required_text("action")).unwrap(),
+            "apply"
+        );
     }
 
     #[test]
@@ -302,7 +313,7 @@ mod tests {
         assert_eq!(request.data_column, FlagDataColumn::CorrectedData);
         assert_eq!(request.quackmode, QuackMode::End);
         // A command line cannot give action=''; tests/flagging.rs runs it.
-        assert!(!read(&["--vis", "in.ms", "--action", "none"], applies).unwrap());
+        assert!(read(&["--vis", "in.ms", "--action", "none"], run).is_ok());
     }
 
     #[test]
@@ -317,7 +328,11 @@ mod tests {
             assert!(error.message.contains("#978"), "{name} {value}: {error:?}");
             assert_eq!(error.parameter.as_deref(), Some(&name[2..]));
         }
-        let error = read(&["--vis", "in.ms", "--action", "calculate"], applies).unwrap_err();
+        let error = read(
+            &["--vis", "in.ms", "--mode", "rflag", "--action", "calculate"],
+            |task| run(task).map(|_| ()),
+        )
+        .unwrap_err();
         assert!(error.message.contains("#978"), "{error:?}");
     }
 

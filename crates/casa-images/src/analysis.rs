@@ -46,6 +46,7 @@ mod impbcor;
 mod lel_mask;
 
 use self::axes::{direction_plane_axes, other_axes};
+pub use self::exportfits::{ImageFitsHeader, image_fits_header};
 pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
 pub use self::list_log::imhead_list_log;

@@ -45,7 +45,7 @@ def test_data_schema_bundle_reports_object_surface() -> None:
     # The CASA tools of casars.tools share the bundle (test_tools_*.py).
     assert set(objects) == {
         "Image", "simulator", "measures", "quanta", "componentlist",
-        "image", "coordsys", "table", "msmetadata", "ms",
+        "image", "coordsys", "table", "msmetadata", "ms", "calibrater",
     }
     assert {prop["name"] for prop in objects["Image"]["properties"]} == {
         "shape",

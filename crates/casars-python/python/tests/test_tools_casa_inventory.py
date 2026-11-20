@@ -1,5 +1,4 @@
-"""The CASA tools #1025 adds to `casars.tools`: `image`, `coordsys`, `table`,
-`msmetadata` and `ms` (ADR-0017).
+"""CASA tool signatures and implementation status for `casars.tools` (ADR-0017).
 
 Each class has every method of CASA 6.7.6.14's installed binding, with its
 signature (`data/casa_<tool>_signatures.json`, written by
@@ -27,11 +26,23 @@ from _casa_tools import (
 )
 
 #: Each tool, and the issue its refused methods name.
-ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030}
+ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030,
+          "calibrater": 1528}
+CALIBRATER_OWNERS = {
+    "initweights": 1524,
+    "accumulate": 1525, "createcaltable": 1525, "updatecaltable": 1525,
+    "rerefant": 1525, "smooth": 1525,
+    "listcal": 1526, "plotcal": 1526,
+    "setmodel": 1520,
+}
 
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
+IMPLEMENTED["calibrater"] = {
+    "open", "close", "done", "setvi", "selectvis", "reset",
+    "initcalset", "delmod", "setptmodel", "modelfit",
+}
 IMPLEMENTED["coordsys"] = {
     "addcoordinate", "axesmap", "axiscoordinatetypes", "conversiontype", "coordinatetype", "copy", "done", "epoch",
     "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "getconversiontype", "lineartransform",
@@ -43,7 +54,7 @@ IMPLEMENTED["coordsys"] = {
     "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
-    "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fromarray", "fromfits", "fromshape",
+    "beamarea", "brightnessunit", "calcmask", "close", "commonbeam", "coordsys", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
     "getchunk", "history", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
     "makearray", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
@@ -109,5 +120,19 @@ def test_a_method_casa_rs_lacks_names_its_issue(tool: str) -> None:
             for parameter in inspect.signature(getattr(cls, name)).parameters.values()
             if parameter.name != "self" and parameter.default is inspect.Parameter.empty
         ]
-        with pytest.raises(NotImplementedError, match=rf"^{tool}\.{name} .*\(#{ISSUES[tool]}\)$"):
+        issue = CALIBRATER_OWNERS.get(name, ISSUES[tool]) if tool == "calibrater" else ISSUES[tool]
+        with pytest.raises(NotImplementedError, match=rf"^{tool}\.{name} .*\(#{issue}\)$"):
             getattr(instance, name)(**{parameter: None for parameter in required})
+
+
+def test_calibrater_method_returns_before_open() -> None:
+    instance = tools.calibrater()
+    assert instance.close() is True
+    assert instance.done() is True
+    assert instance.setvi(old=True, quiet=True) is True
+    assert instance.selectvis() is False
+    assert instance.reset() is False
+    assert instance.initcalset() is False
+    assert instance.delmod() is False
+    with pytest.raises(RuntimeError, match=r"Error in Calibrater::setModel: no VisEquation\."):
+        instance.setptmodel()

@@ -753,7 +753,7 @@ impl MeasurementSetWritePlan {
         let array_bytes_per_row = array_columns.iter().try_fold(0usize, |total, column| {
             let element_bytes = match column.value_type {
                 StreamedTiledShapeValueType::Bool => 1,
-                StreamedTiledShapeValueType::Float32 => 4,
+                StreamedTiledShapeValueType::Float32 | StreamedTiledShapeValueType::Int32 => 4,
                 StreamedTiledShapeValueType::Float64 => 8,
                 StreamedTiledShapeValueType::Complex32 => 8,
             };
@@ -834,7 +834,8 @@ impl MeasurementSetWritePlan {
                     .unwrap_or(0)
                     * match column.value_type {
                         StreamedTiledShapeValueType::Bool => 1,
-                        StreamedTiledShapeValueType::Float32 => 4,
+                        StreamedTiledShapeValueType::Float32
+                        | StreamedTiledShapeValueType::Int32 => 4,
                         StreamedTiledShapeValueType::Float64
                         | StreamedTiledShapeValueType::Complex32 => 8,
                     },

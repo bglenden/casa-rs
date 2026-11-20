@@ -434,7 +434,7 @@ const METHODS: &[Method] = &[
             param("exclude", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromarray",

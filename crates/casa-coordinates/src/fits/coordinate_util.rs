@@ -332,6 +332,12 @@ fn extended_stokes_axis(stokes: &[StokesType]) -> Option<(f64, f64)> {
     if !stokes.iter().copied().any(extended_stokes) {
         return None;
     }
+    fits_stokes_axis(stokes)
+}
+
+/// FITS reference value and increment for regularly ordered Stokes planes.
+/// Returns `None` when the codes cannot share a linear FITS axis.
+pub fn fits_stokes_axis(stokes: &[StokesType]) -> Option<(f64, f64)> {
     let mut codes = stokes.iter().copied().map(fits_stokes_code);
     let start = codes.next()?;
     let second = codes.next().unwrap_or(start + 1);

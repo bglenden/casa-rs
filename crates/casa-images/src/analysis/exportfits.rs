@@ -26,6 +26,10 @@ use super::{FitsExportSummary, SPEED_OF_LIGHT_M_S, import_fits_for_reading};
 use crate::image::image_history_entries;
 use crate::{AnyPagedImage, ImageError, ImageInterface, ImagePixel, PagedImage};
 
+mod tool_header;
+
+pub use tool_header::{ImageFitsHeader, image_fits_header};
+
 /// Minimum blank sentinel value in scaled 16-bit FITS images.
 const SHORT_BLANK: i16 = i16::MIN;
 
@@ -1111,7 +1115,15 @@ fn write_history_cards(
     let _ = fits
         .primary_hdu()
         .map_err(|error| ImageError::Io(error.to_string()))?;
-    write_single_history_card(fits, "CASA START LOGTABLE")?;
+    visit_history_cards(entries, true, |text| write_single_history_card(fits, text))
+}
+
+fn visit_history_cards(
+    entries: &[crate::image::ImageHistoryEntry],
+    provenance_per_line: bool,
+    mut emit: impl FnMut(&str) -> Result<(), ImageError>,
+) -> Result<(), ImageError> {
+    emit("CASA START LOGTABLE")?;
     for entry in entries {
         let timestamp = format_utc_history_timestamp(entry.time_mjd_seconds);
         let priority = if entry.priority.trim().is_empty() {
@@ -1133,17 +1145,20 @@ fn write_history_cards(
             let split: Vec<&str> = entry.message.lines().collect();
             if split.is_empty() { vec![""] } else { split }
         };
-        // Always emit (metadata, line) pairs so `fits_read::history` keeps LOGTABLE pairing intact.
-        for line in lines {
-            for chunk in wrap_fits_history_text(&meta) {
-                write_single_history_card(fits, &chunk)?;
+        // The export reader expects a provenance card for each exported
+        // line. The tool's metadata view uses one per native log row.
+        for (index, line) in lines.into_iter().enumerate() {
+            if index == 0 || provenance_per_line {
+                for chunk in wrap_fits_history_text(&meta) {
+                    emit(&chunk)?;
+                }
             }
             for chunk in wrap_fits_history_text(line) {
-                write_single_history_card(fits, &chunk)?;
+                emit(&chunk)?;
             }
         }
     }
-    write_single_history_card(fits, "CASA END LOGTABLE")
+    emit("CASA END LOGTABLE")
 }
 
 fn write_single_history_card(fits: &mut FitsFile, text: &str) -> Result<(), ImageError> {
