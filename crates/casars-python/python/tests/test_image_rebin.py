@@ -211,7 +211,10 @@ def test_rebin_sampled_frequencies_survive_native_reopen(casa, tmp_path, limits,
             result = reader.image()
             assert result.open(path)
             reference = result.coordsys().referencepixel()["numeric"][-1]
-            assert reference == pytest.approx(-1 / 3 if limits[0] == limits[1] else 0)
+            assert reference == pytest.approx(0)
+            stored = result.coordsys().torecord()["spectral1"]["tabular"]
+            np.testing.assert_allclose(stored["crpix"], [0])
+            np.testing.assert_allclose(stored["crval"], expected[:1])
             for channel, value in enumerate(expected):
                 assert result.toworld([0, 0, channel])["numeric"][-1] == pytest.approx(value)
             assert result.done()
