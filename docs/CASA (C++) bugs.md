@@ -1883,6 +1883,21 @@ and checks the documented failure from the CASA reader.
 [`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
+## Legacy nift can abort while preparing a virtual model
+
+In CASA 6.7.6.14, `imager.setoptions(ftmachine='nift')` constructs an
+`rGridFT`. Live scratch prediction agrees with GridFT for the paired
+visibility fixtures. `CubeSkyEquation::init` falls through to a `GridFT`
+cast for the `rGridFT` object. Some virtual and faceted scratch runs
+abort during `ft` in that path.
+
+casa-rs uses the shared interferometric prediction and publishes a
+`GridFT` virtual recipe. CASA reads that recipe through `uvsub`. The
+paired oracle checks the scratch prediction against pinned `nift` and
+the virtual prediction against a readable pinned GridFT reference.
+[`imager_nift_oracle.py`](../tools/casa-compat/imager_nift_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
 ## Mosaic multi-image prediction depends on image order
 
 - Date noted: 2026-11-11
