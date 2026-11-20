@@ -2,6 +2,7 @@
 //! Recover FTMachine's moving-source rotation from a stored Fourier model.
 
 use casa_ms::{EphemerisBudget, PhaseCentreEphemeris, PlanetaryEphemeris};
+use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::position::MPosition;
 use casa_types::measures::record::{direction_from_record, position_from_record};
@@ -71,7 +72,26 @@ impl Tracking {
         }))
     }
 
-    pub(super) fn shift(&mut self, row: &FourierRow<'_>) -> Result<[f64; 2], GainSolveError> {
+    pub(super) fn observe(
+        &mut self,
+        row: &FourierRow<'_>,
+        virtual_anchor: Option<&mut Option<MDirection>>,
+    ) -> Result<(MeasFrame, [f64; 2]), GainSolveError> {
+        let frame = row
+            .engine
+            .spectral_frame_observatory_direction(row.row.time_seconds, row.field.clone())
+            .map_err(model_error)?
+            .with_position(self.position.clone());
+        let shift = self.shift(row, &frame, virtual_anchor)?;
+        Ok((frame, shift))
+    }
+
+    fn shift(
+        &mut self,
+        row: &FourierRow<'_>,
+        frame: &MeasFrame,
+        virtual_anchor: Option<&mut Option<MDirection>>,
+    ) -> Result<[f64; 2], GainSolveError> {
         let key = [
             row.row.time_seconds.to_bits(),
             row.phase_time.to_bits(),
@@ -82,11 +102,6 @@ impl Tracking {
         {
             return Ok(shift);
         }
-        let frame = row
-            .engine
-            .spectral_frame_observatory_direction(row.row.time_seconds, row.field.clone())
-            .map_err(model_error)?
-            .with_position(self.position.clone());
         let source = match &self.source {
             Source::Field => row
                 .engine
@@ -105,16 +120,21 @@ impl Tracking {
                 )
                 .map_err(model_error)?,
             Source::Direction(direction) => direction.clone(),
-            Source::Named(planet) => planet.direction(&frame).map_err(model_error)?,
+            Source::Named(planet) => planet.direction(frame).map_err(model_error)?,
             Source::Legacy(source) => source
-                .direction(&frame, self.image_direction.refer())
+                .direction(frame, self.image_direction.refer())
                 .map_err(model_error)?,
         };
-        let (longitude, latitude) = source
-            .convert_to(self.image_direction.refer(), &frame)
-            .map_err(model_error)?
-            .as_angles();
-        let (anchor_lon, anchor_lat) = self.first_direction.as_angles();
+        let source = source
+            .convert_to(self.image_direction.refer(), frame)
+            .map_err(model_error)?;
+        let (longitude, latitude) = source.as_angles();
+        let anchor = match virtual_anchor {
+            // VisModelData calls initMaps on its first observing buffer.
+            Some(anchor) if self.is_legacy() => anchor.get_or_insert(source),
+            _ => &self.first_direction,
+        };
+        let (anchor_lon, anchor_lat) = anchor.as_angles();
         let shift = [longitude - anchor_lon, latitude - anchor_lat];
         self.last_shift = Some((key, shift));
         Ok(shift)

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Observe a legacy FTMachine moving direction at a visibility epoch.
 
+use std::sync::Arc;
+
 use casa_measures_data::PlanetaryTable;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
@@ -10,6 +12,12 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::position::MPosition;
 
 use super::invalid;
+
+#[derive(Clone)]
+pub(super) struct MovingSourceAnchor {
+    pub(super) source: Arc<ObservedSource>,
+    pub(super) frame: MeasFrame,
+}
 
 pub(crate) struct ObservedSource {
     model: MDirection,
@@ -59,7 +67,7 @@ impl ObservedSource {
 pub(super) fn first_tracking_frame(
     ms: &MeasurementSet,
     selection: &ResolvedMsSelection,
-    location: Option<MPosition>,
+    location: MPosition,
 ) -> MsResult<MeasFrame> {
     let arrays = ms.main_table().column_accessor("ARRAY_ID")?;
     let mut first = None;
@@ -82,8 +90,5 @@ pub(super) fn first_tracking_frame(
     let (_, field, _, epoch) = first.ok_or_else(|| invalid("moving source needs selected data"))?;
     let engine = MsCalEngine::new(ms)?;
     let frame = engine.spectral_frame_observatory(epoch, field as usize)?;
-    Ok(match location {
-        Some(position) => frame.with_position(position),
-        None => frame,
-    })
+    Ok(frame.with_position(location))
 }

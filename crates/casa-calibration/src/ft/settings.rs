@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The effective Fourier transform options for legacy imager prediction.
 
-use std::sync::Arc;
-
 use casa_imaging_operator::{GridPrecision, WPlaneCount};
-use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::position::MPosition;
 
-use super::moving_source::ObservedSource;
 use super::voltage_pattern::PreparedVoltagePattern;
 
 /// Convolution selected for the legacy imager's Fourier transform.
@@ -102,7 +98,6 @@ pub(super) struct PredictionGeometry {
     pub(super) settings: ImagerTransformOptions,
     pub(super) facets: usize,
     pub(super) tangent: Option<MDirection>,
-    pub(super) moving_source: Option<(Arc<ObservedSource>, MeasFrame)>,
     pub(super) phase_centre_time: Option<f64>,
     pub(super) frequency_frame_valid: bool,
     pub(super) voltage_pattern: Option<PreparedVoltagePattern>,
@@ -117,6 +112,5 @@ impl PredictionGeometry {
             ..ImagerTransformOptions::default()
         };
         self.frequency_frame_valid = false;
-        self.moving_source = None;
     }
 }

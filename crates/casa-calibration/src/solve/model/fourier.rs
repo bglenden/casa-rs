@@ -43,6 +43,7 @@ pub(super) struct FourierModel {
 struct FourierCache {
     grids: Option<Arc<PreparedModelGrids>>,
     layouts: BTreeMap<Option<i32>, BTreeMap<Vec<i32>, PreparedFourierModel>>,
+    virtual_anchor: Option<MDirection>,
 }
 
 pub(super) enum FourierMerge<'a> {
@@ -105,7 +106,11 @@ impl FourierModel {
             .prepared
             .lock()
             .expect("solve model is single consumer");
-        let FourierCache { grids, layouts } = &mut *prepared;
+        let FourierCache {
+            grids,
+            layouts,
+            virtual_anchor,
+        } = &mut *prepared;
         let layouts = layouts
             .entry(self.mosaic.then_some(row.row.data_spw_id))
             .or_default();
@@ -117,7 +122,7 @@ impl FourierModel {
         layouts
             .get_mut(row.correlations)
             .expect("correlation layout was prepared")
-            .predict(row, output, merge)
+            .predict(row, output, merge, virtual_anchor)
     }
 }
 
@@ -280,13 +285,23 @@ impl PreparedFourierModel {
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
         merge: FourierMerge<'_>,
+        virtual_anchor: &mut Option<MDirection>,
     ) -> Result<(), GainSolveError> {
-        let shift = self
+        let legacy_tracking = self
+            .tracking
+            .as_ref()
+            .is_some_and(tracking::Tracking::is_legacy);
+        let reinitialize = matches!(merge, FourierMerge::VirtualSum).then_some(virtual_anchor);
+        let observed = self
             .tracking
             .as_mut()
-            .map(|tracking| tracking.shift(&row))
-            .transpose()?
-            .unwrap_or([0.; 2]);
+            .map(|tracking| tracking.observe(&row, reinitialize))
+            .transpose()?;
+        let projection_frame = observed
+            .as_ref()
+            .filter(|_| legacy_tracking)
+            .map_or(row.frame, |(frame, _)| frame);
+        let shift = observed.as_ref().map_or([0.; 2], |(_, shift)| *shift);
         let tracked_centre = self
             .tracking
             .as_ref()
@@ -309,29 +324,22 @@ impl PreparedFourierModel {
             row.field
         };
         let (projection, pointing_offset_rad, antenna_types) = match &mut self.mosaic {
-            Some(layout)
-                if self
-                    .tracking
-                    .as_ref()
-                    .is_some_and(tracking::Tracking::is_legacy) =>
-            {
-                (
-                    GridFtProjection::legacy_tracked_mosaic_with_frame(
-                        field,
-                        &self.phase_centre,
-                        shift.map(|angle| -angle),
-                        row.frame,
-                    ),
-                    layout.pointing_offset(&row, [0.; 2])?,
-                    layout.antenna_types(&row)?,
-                )
-            }
+            Some(layout) if legacy_tracking => (
+                GridFtProjection::legacy_tracked_mosaic_with_frame(
+                    field,
+                    &self.phase_centre,
+                    shift.map(|angle| -angle),
+                    projection_frame,
+                ),
+                layout.pointing_offset(&row, [0.; 2])?,
+                layout.antenna_types(&row)?,
+            ),
             Some(layout) => (
                 GridFtProjection::tracked_mosaic_with_frame(
                     field,
                     &self.phase_centre,
                     shift,
-                    row.frame,
+                    projection_frame,
                 ),
                 layout.pointing_offset(&row, shift)?,
                 layout.antenna_types(&row)?,
@@ -340,13 +348,17 @@ impl PreparedFourierModel {
                 GridFtProjection::faceted_between_directions_with_frame(
                     field,
                     phase_centre,
-                    row.frame,
+                    projection_frame,
                 ),
                 Some([0.0; 2]),
                 [0; 2],
             ),
             None => (
-                GridFtProjection::between_directions_with_frame(field, phase_centre, row.frame),
+                GridFtProjection::between_directions_with_frame(
+                    field,
+                    phase_centre,
+                    projection_frame,
+                ),
                 Some([0.0; 2]),
                 [0; 2],
             ),
@@ -430,9 +442,16 @@ impl PreparedFourierModel {
                 flags.fill(outside || raw.iter().any(|flag| *flag));
             }
         }
+        // A one-plane legacy FT matches channels in the converted frame,
+        // then uses VisBuffer::frequency directly for its Fourier phase.
+        let wavelength_scale = if self.legacy_flags && self.continuum_axis.is_some() {
+            ratio.recip()
+        } else {
+            1.0
+        };
         let native = NativeRow {
-            uvw_m,
-            phase_shift_m,
+            uvw_m: uvw_m.map(|coordinate| coordinate * wavelength_scale),
+            phase_shift_m: phase_shift_m * wavelength_scale,
             pointing_offset_rad,
             frequencies_hz: &self.frequencies,
             values: &self.data,
