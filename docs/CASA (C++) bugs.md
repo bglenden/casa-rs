@@ -21,6 +21,7 @@ CASA behaviours casa-rs follows for parity:
 CASA behaviours casa-rs does not follow:
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
+[reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
 [FITS import of an empty primary HDU](#fits-import-can-abort-on-an-empty-primary-hdu),
 [restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
@@ -7412,6 +7413,21 @@ and call `rename()` on the first tool. CASA can move the table, then raise
 the old name and can abort while closing that stale handle. casa-rs refuses
 the move before changing either path while another tool holds the image.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## `calcmask` can crash on decisive Boolean validity
+
+In CASA 6.7.6.14, create `source.im` as a float image with values
+`[[1, 2], [3, 4]]` and default mask `"source.im" > 2`. On another
+image of shape `[2, 2]`, `calcmask('mask(("source.im" > 0) || T)')`
+and `calcmask('mask(("source.im" > 0) && F)')` terminate Python with
+SIGSEGV. Reversing the operands also crashes. An unmasked image predicate
+can trigger the same failure, for example
+`mask(("source.im" > 2) || (value("source.im") <= 2))`.
+
+casa-rs evaluates validity per pixel. A known true operand makes OR valid,
+and a known false operand makes AND valid. Where neither operand determines
+the result, both operands must be valid. The resulting validity mask is
+all true in these reproductions. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
 
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 

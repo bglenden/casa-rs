@@ -33,13 +33,14 @@ use crate::temp_image::TempImage;
 use super::{
     BinaryExprFn, ImageExprBinaryOp, ImageExprBuilder, ImageExprCompareOp, ImageExprMeta,
     ImageExprUnaryOp, ImageExprValue, MaskExprBuilder, MaskExprNode, MaskLogicalOp,
-    NumericExprNode, ReductionOp, clamp_cursor_shape, thread_parallelism, validate_slice_request,
-    work_balanced_cursor_shape, write_chunk_into_array,
+    NumericExprNode, ReductionOp, SectionSource, clamp_cursor_shape, thread_parallelism,
+    validate_slice_request, work_balanced_cursor_shape, write_chunk_into_array,
 };
 
 #[derive(Clone)]
 enum CompiledImageSourceKind<T: ImageExprValue> {
     Snapshot(Arc<ArrayD<T>>),
+    Sections(SectionSource<T>),
     Paged {
         path: Arc<PathBuf>,
         cache_bytes: usize,
@@ -65,7 +66,7 @@ impl<T: ImageExprValue> CompiledImageArena<T> {
     fn has_paged_sources(&self) -> bool {
         self.sources
             .iter()
-            .any(|source| matches!(source.kind, CompiledImageSourceKind::Paged { .. }))
+            .any(|source| !matches!(source.kind, CompiledImageSourceKind::Snapshot(_)))
     }
 
     fn repeated_source_count(&self) -> usize {
@@ -80,6 +81,8 @@ struct CompiledEvalContext<T: ImageExprValue> {
     opened_sources: Vec<Option<PagedImage<T>>>,
     opened_tiled_sources: Vec<Option<TiledArrayStorage>>,
     cached_source_slices: Vec<Option<CachedSourceSlice<T>>>,
+    numeric_scalars: std::collections::HashMap<usize, T>,
+    boolean_scalars: std::collections::HashMap<usize, bool>,
 }
 
 struct CachedSourceSlice<T: ImageExprValue> {
@@ -95,6 +98,8 @@ impl<T: ImageExprValue> CompiledEvalContext<T> {
             opened_sources: std::iter::repeat_with(|| None).take(source_count).collect(),
             opened_tiled_sources: std::iter::repeat_with(|| None).take(source_count).collect(),
             cached_source_slices: std::iter::repeat_with(|| None).take(source_count).collect(),
+            numeric_scalars: Default::default(),
+            boolean_scalars: Default::default(),
         }
     }
 
@@ -174,6 +179,8 @@ impl<T: ImageExprValue> CompiledImageSource<T> {
             CompiledImageSourceKind::Snapshot(data) => {
                 slice_array_owned(data.as_ref(), start, shape, stride)
             }
+            CompiledImageSourceKind::Sections(source) => (source.read)(start, shape, stride)
+                .map_err(|error| LatticeError::Table(error.to_string())),
             CompiledImageSourceKind::Paged { .. } if stride.iter().all(|&step| step == 1) => ctx
                 .source_tiled_io_mut(arena, source_id)?
                 .get_slice::<T>(start, shape)
@@ -231,6 +238,10 @@ impl<T: ImageExprValue> CompiledImageSource<T> {
         }
         if let Some(mask) = &self.mask_snapshot {
             return slice_array_owned(mask.as_ref(), start, shape, stride).map(Some);
+        }
+        if let CompiledImageSourceKind::Sections(source) = &self.kind {
+            return source.mask.as_ref().expect("source advertises a mask")(start, shape, stride)
+                .map_err(|error| LatticeError::Table(error.to_string()));
         }
         ctx.source_image_mut(arena, source_id)?
             .get_mask_slice(start, shape, stride)
@@ -298,7 +309,7 @@ enum CompiledNumericExprNode<T: ImageExprValue> {
         primary_shape: Vec<usize>,
         replacement: Box<Self>,
         replacement_shape: Vec<usize>,
-        mask: Arc<ArrayD<bool>>,
+        mask: Option<Arc<ArrayD<bool>>>,
     },
     StripMask {
         child: Box<Self>,
@@ -358,6 +369,12 @@ enum CompiledMaskExprNode<T: ImageExprValue> {
     },
     IsNan {
         child: Box<CompiledNumericExprNode<T>>,
+    },
+    Validity {
+        child: Box<CompiledNumericExprNode<T>>,
+    },
+    BooleanValidity {
+        child: Box<Self>,
     },
     ConstantMask {
         mask: Arc<ArrayD<bool>>,
@@ -438,6 +455,19 @@ impl<T: ImageExprValue> CompileCtx<T> {
     ) -> Result<usize, ImageError> {
         let source_key = image as *const dyn ImageInterface<T> as *const () as usize;
         if let Some(any) = image.as_any() {
+            if let Some(expression) = any.downcast_ref::<ImageExpression<T>>()
+                && let CompiledNumericExprNode::Source(source_id) = expression.node
+                && let CompiledImageSourceKind::Sections(sections) =
+                    &expression.arena.sources[source_id].kind
+            {
+                if let Some(&source_id) = self.transient_source_ids.get(&source_key) {
+                    self.sources[source_id].reference_count += 1;
+                    return Ok(source_id);
+                }
+                let source_id = self.register_section_source(sections.clone());
+                self.transient_source_ids.insert(source_key, source_id);
+                return Ok(source_id);
+            }
             if let Some(paged) = any.downcast_ref::<PagedImage<T>>()
                 && let Some(path) = paged.name()
             {
@@ -502,12 +532,28 @@ impl<T: ImageExprValue> CompileCtx<T> {
         Ok(source_id)
     }
 
+    fn register_section_source(&mut self, source: SectionSource<T>) -> usize {
+        let source_id = self.sources.len();
+        self.sources.push(CompiledImageSource {
+            shape: source.shape.clone(),
+            has_mask: source.mask.is_some(),
+            mask_snapshot: None,
+            tile_shape: None,
+            kind: CompiledImageSourceKind::Sections(source),
+            reference_count: 1,
+        });
+        source_id
+    }
+
     fn compile_numeric(
         &mut self,
         node: &NumericExprNode<'_, T>,
         node_shape: &[usize],
     ) -> Result<CompiledNumericExprNode<T>, ImageError> {
         Ok(match node {
+            NumericExprNode::Sections(source) => {
+                CompiledNumericExprNode::Source(self.register_section_source(source.clone()))
+            }
             NumericExprNode::Source(image) => {
                 CompiledNumericExprNode::Source(self.register_image_source(*image)?)
             }
@@ -619,18 +665,14 @@ impl<T: ImageExprValue> CompileCtx<T> {
                     primary_shape,
                     replacement: Box::new(self.compile_numeric(replacement, &replacement_shape)?),
                     replacement_shape,
-                    mask: Arc::new(mask.clone()),
+                    mask: mask.clone().map(Arc::new),
                 }
             }
-            NumericExprNode::TypeBridge { eval_fn, mask_fn } => {
+            NumericExprNode::TypeBridge { eval_fn } => {
                 let start = vec![0; node_shape.len()];
                 let stride = vec![1; node_shape.len()];
-                let mask = match mask_fn {
-                    Some(eval) => eval(&start, node_shape)?,
-                    None => None,
-                };
                 let data = eval_fn(&start, node_shape, &stride)?;
-                let source_id = self.register_snapshot_source(data, mask.map(Arc::new));
+                let source_id = self.register_snapshot_source(data, None);
                 CompiledNumericExprNode::Source(source_id)
             }
             NumericExprNode::StripMask { child } => CompiledNumericExprNode::StripMask {
@@ -732,6 +774,12 @@ impl<T: ImageExprValue> CompileCtx<T> {
                     child,
                     &child.try_shape().unwrap_or_else(|| node_shape.to_vec()),
                 )?),
+            },
+            MaskExprNode::Validity { child } => CompiledMaskExprNode::Validity {
+                child: Box::new(self.compile_numeric(child, node_shape)?),
+            },
+            MaskExprNode::BooleanValidity { child } => CompiledMaskExprNode::BooleanValidity {
+                child: Box::new(self.compile_mask(child, node_shape)?),
             },
             MaskExprNode::ConstantMask { mask } => CompiledMaskExprNode::ConstantMask {
                 mask: Arc::new(mask.clone()),
@@ -885,6 +933,10 @@ impl<T: ImageExprValue> std::fmt::Debug for MaskExpression<T> {
 }
 
 impl<T: ImageExprValue> ImageExpression<T> {
+    pub(super) fn may_have_mask(&self) -> bool {
+        self.node.may_have_mask(&self.arena)
+    }
+
     /// Overrides the execution policy used by [`get`](Self::get),
     /// [`get_slice`](Self::get_slice), and [`save_as`](Self::save_as).
     ///
@@ -1262,6 +1314,15 @@ impl<T: ImageExprValue> ImageExpression<T> {
 }
 
 impl<T: ImageExprValue> MaskExpression<T> {
+    pub(crate) fn is_shape_polymorphic(&self) -> bool {
+        self.node.is_shape_polymorphic()
+    }
+
+    pub(crate) fn get_in_sections(&self) -> Result<ArrayD<bool>, ImageError> {
+        let cursor = bounded_read_cursor(self.shape.clone())?;
+        self.get_slice_with_max_cursor_shape(&vec![0; self.ndim()], &self.shape, &cursor)
+    }
+
     /// Overrides the execution policy used by [`get`](Self::get) and
     /// [`get_slice`](Self::get_slice).
     pub fn set_execution_policy(&mut self, policy: ExecutionPolicy) {
@@ -1296,6 +1357,15 @@ impl<T: ImageExprValue> MaskExpression<T> {
     }
 
     pub fn get_slice(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<bool>, ImageError> {
+        self.get_slice_with_max_cursor_shape(start, shape, shape)
+    }
+
+    fn get_slice_with_max_cursor_shape(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        max_cursor_shape: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
         validate_slice_request(&self.shape, start, shape, &vec![1; self.ndim()])?;
         if shape.is_empty() {
             let mut ctx = CompiledEvalContext::new(self.arena.sources.len());
@@ -1305,7 +1375,7 @@ impl<T: ImageExprValue> MaskExpression<T> {
                 .map_err(Into::into);
         }
 
-        let cursor_shape = clamp_cursor_shape(
+        let mut cursor_shape = clamp_cursor_shape(
             &self.node.preferred_cursor_shape(
                 shape,
                 &self.arena,
@@ -1313,6 +1383,9 @@ impl<T: ImageExprValue> MaskExpression<T> {
             )?,
             shape,
         );
+        for (extent, &maximum) in cursor_shape.iter_mut().zip(max_cursor_shape) {
+            *extent = (*extent).min(maximum);
+        }
         let strategy = compiled_map_strategy::<T>(CompiledMapInputs {
             policy: self.execution_policy,
             full_shape: shape,
@@ -1437,8 +1510,19 @@ fn eval_child_slice_broadcast<T: ImageExprValue>(
     stride: &[usize],
 ) -> Result<ArrayD<T>, LatticeError> {
     if child_shape.is_empty() {
-        let scalar = child.eval_slice(arena, ctx, &[], &[], &[])?;
-        return broadcast_lattice_array(scalar, shape);
+        // The compiled node stays at this address for the evaluation. Cache
+        // reductions across cursor reads, but recompute on a later evaluation.
+        let key = std::ptr::from_ref(child) as usize;
+        let value = match ctx.numeric_scalars.get(&key) {
+            Some(&value) => value,
+            None => {
+                let scalar = child.eval_slice(arena, ctx, &[], &[], &[])?;
+                let value = scalar[IxDyn(&[])];
+                ctx.numeric_scalars.insert(key, value);
+                value
+            }
+        };
+        return Ok(ArrayD::from_elem(IxDyn(shape), value));
     }
     if child_shape.len() == start.len() && !child_shape.contains(&1) {
         return child.eval_slice(arena, ctx, start, shape, stride);
@@ -1483,8 +1567,17 @@ fn eval_bool_slice_broadcast<T: ImageExprValue>(
         return child.eval_slice(arena, ctx, start, shape, stride);
     }
     if child_shape.is_empty() {
-        let scalar = child.eval_slice(arena, ctx, &[], &[], &[])?;
-        return broadcast_lattice_array(scalar, shape);
+        let key = std::ptr::from_ref(child) as usize;
+        let value = match ctx.boolean_scalars.get(&key) {
+            Some(&value) => value,
+            None => {
+                let scalar = child.eval_slice(arena, ctx, &[], &[], &[])?;
+                let value = scalar[IxDyn(&[])];
+                ctx.boolean_scalars.insert(key, value);
+                value
+            }
+        };
+        return Ok(ArrayD::from_elem(IxDyn(shape), value));
     }
     if child_shape.len() == start.len() && !child_shape.contains(&1) {
         return child.eval_slice(arena, ctx, start, shape, stride);
@@ -2068,7 +2161,7 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
                 primary_shape,
                 replacement,
                 replacement_shape,
-                mask.as_ref(),
+                mask.as_deref(),
                 arena,
                 ctx,
                 start,
@@ -2110,15 +2203,26 @@ fn eval_replace_slice<T: ImageExprValue>(
     primary_shape: &[usize],
     replacement: &CompiledNumericExprNode<T>,
     replacement_shape: &[usize],
-    mask: &ArrayD<bool>,
+    mask: Option<&ArrayD<bool>>,
     arena: &CompiledImageArena<T>,
     ctx: &mut CompiledEvalContext<T>,
     start: &[usize],
     shape: &[usize],
     stride: &[usize],
 ) -> Result<ArrayD<T>, LatticeError> {
-    let mask_data = slice_array_owned(mask, start, shape, stride)?;
-    if mask_chunk_all(&mask_data) {
+    let mask_data = match mask {
+        Some(mask) => Some(slice_array_owned(mask, start, shape, stride)?),
+        None => eval_child_mask_slice_broadcast(
+            primary,
+            primary_shape,
+            arena,
+            ctx,
+            start,
+            shape,
+            stride,
+        )?,
+    };
+    let Some(mask_data) = mask_data.filter(|mask| !mask_chunk_all(mask)) else {
         return eval_child_slice_broadcast(
             primary,
             primary_shape,
@@ -2128,7 +2232,7 @@ fn eval_replace_slice<T: ImageExprValue>(
             shape,
             stride,
         );
-    }
+    };
     if mask_chunk_none(&mask_data) {
         return eval_child_slice_broadcast(
             replacement,
@@ -2166,7 +2270,7 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
     fn is_shape_polymorphic(&self) -> bool {
         match self {
             Self::IndexIn { .. } => true,
-            Self::Not { child } => child.is_shape_polymorphic(),
+            Self::Not { child } | Self::BooleanValidity { child } => child.is_shape_polymorphic(),
             Self::Logical { lhs, rhs, .. } => {
                 lhs.is_shape_polymorphic() || rhs.is_shape_polymorphic()
             }
@@ -2187,6 +2291,8 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
             }
             Self::Not { child } => child.may_be_partially_invalid(arena),
             Self::ConstantMask { .. }
+            | Self::Validity { .. }
+            | Self::BooleanValidity { .. }
             | Self::AllReduce { .. }
             | Self::AnyReduce { .. }
             | Self::IndexIn { .. } => false,
@@ -2224,20 +2330,51 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
                 Ok(combine_slice_masks(lhs_mask, rhs_mask))
             }
             Self::Logical {
+                op,
                 lhs,
                 lhs_shape,
                 rhs,
                 rhs_shape,
-                ..
             } => {
                 let lhs_valid =
                     eval_bool_validity_broadcast(lhs, lhs_shape, arena, ctx, start, shape, stride)?;
                 let rhs_valid =
                     eval_bool_validity_broadcast(rhs, rhs_shape, arena, ctx, start, shape, stride)?;
-                Ok(combine_slice_masks(lhs_valid, rhs_valid))
+                if lhs_valid.is_none() && rhs_valid.is_none() {
+                    return Ok(None);
+                }
+                let lhs_values = rhs_valid
+                    .as_ref()
+                    .map(|_| {
+                        eval_bool_slice_broadcast(lhs, lhs_shape, arena, ctx, start, shape, stride)
+                    })
+                    .transpose()?;
+                let rhs_values = lhs_valid
+                    .as_ref()
+                    .map(|_| {
+                        eval_bool_slice_broadcast(rhs, rhs_shape, arena, ctx, start, shape, stride)
+                    })
+                    .transpose()?;
+                let decisive = matches!(op, MaskLogicalOp::Or);
+                let valid = ArrayD::from_shape_fn(IxDyn(shape), |index| {
+                    let lhs_known = lhs_valid.as_ref().is_none_or(|mask| mask[&index]);
+                    let rhs_known = rhs_valid.as_ref().is_none_or(|mask| mask[&index]);
+                    (lhs_known && rhs_known)
+                        || (lhs_known
+                            && lhs_values
+                                .as_ref()
+                                .is_some_and(|values| values[&index] == decisive))
+                        || (rhs_known
+                            && rhs_values
+                                .as_ref()
+                                .is_some_and(|values| values[&index] == decisive))
+                });
+                Ok(Some(valid))
             }
             Self::Not { child } => child.eval_validity_slice(arena, ctx, start, shape, stride),
             Self::ConstantMask { .. }
+            | Self::Validity { .. }
+            | Self::BooleanValidity { .. }
             | Self::AllReduce { .. }
             | Self::AnyReduce { .. }
             | Self::IndexIn { .. } => Ok(None),
@@ -2251,7 +2388,9 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
         worker_limit: usize,
     ) -> Result<Vec<usize>, ImageError> {
         Ok(match self {
-            Self::CompareScalar { expr, .. } | Self::IsNan { child: expr } => {
+            Self::CompareScalar { expr, .. }
+            | Self::IsNan { child: expr }
+            | Self::Validity { child: expr } => {
                 return expr.preferred_cursor_shape(full_shape, arena, worker_limit);
             }
             Self::CompareExpr {
@@ -2278,7 +2417,10 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
                 }
                 return lhs.preferred_cursor_shape(full_shape, arena, worker_limit);
             }
-            Self::Not { child } | Self::AllReduce { child, .. } | Self::AnyReduce { child, .. } => {
+            Self::Not { child }
+            | Self::BooleanValidity { child }
+            | Self::AllReduce { child, .. }
+            | Self::AnyReduce { child, .. } => {
                 return child.preferred_cursor_shape(full_shape, arena, worker_limit);
             }
             Self::ConstantMask { .. } | Self::IndexIn { .. } => {
@@ -2366,6 +2508,12 @@ impl<T: ImageExprValue> CompiledMaskExprNode<T> {
                 let data = child.eval_slice(arena, ctx, start, shape, stride)?;
                 Ok(data.mapv(|value| value.expr_isnan()))
             }
+            Self::Validity { child } => Ok(child
+                .eval_mask_slice(arena, ctx, start, shape, stride)?
+                .unwrap_or_else(|| ArrayD::from_elem(IxDyn(shape), true))),
+            Self::BooleanValidity { child } => Ok(child
+                .eval_validity_slice(arena, ctx, start, shape, stride)?
+                .unwrap_or_else(|| ArrayD::from_elem(IxDyn(shape), true))),
             Self::ConstantMask { mask } => slice_array_owned(mask.as_ref(), start, shape, stride),
             Self::AllReduce { child, child_shape } => {
                 let mut result = true;
@@ -2654,6 +2802,11 @@ fn compiled_map_strategy<T: ImageExprValue>(
     })
 }
 
+fn bounded_read_cursor(shape: Vec<usize>) -> Result<Vec<usize>, LatticeError> {
+    let element_bytes = std::mem::size_of::<casa_types::Complex64>();
+    Ok(TiledShape::new(shape, element_bytes)?.tile_shape().to_vec())
+}
+
 fn for_each_compiled_numeric_and_mask_chunk<T: ImageExprValue>(
     node: &CompiledNumericExprNode<T>,
     full_shape: &[usize],
@@ -2666,12 +2819,12 @@ fn for_each_compiled_numeric_and_mask_chunk<T: ImageExprValue>(
         let mask = node.eval_mask_slice(arena, &mut ctx, &[], &[], &[])?;
         return f(&vals, mask.as_ref());
     }
-    let cursor_shape = clamp_cursor_shape(
+    let cursor_shape = bounded_read_cursor(clamp_cursor_shape(
         &node
             .preferred_cursor_shape(full_shape, arena, thread_parallelism())
             .map_err(|error| LatticeError::InvalidTraversal(error.to_string()))?,
         full_shape,
-    );
+    ))?;
     let mut ctx = CompiledEvalContext::new(arena.sources.len());
     let check_mask = node.may_have_mask(arena);
     for cursor in TraversalCursorIter::new(
@@ -2931,12 +3084,12 @@ fn for_each_compiled_mask_chunk<T: ImageExprValue>(
         let empty = node.eval_slice(arena, &mut ctx, &[], &[], &[])?;
         return f(&empty);
     }
-    let cursor_shape = clamp_cursor_shape(
+    let cursor_shape = bounded_read_cursor(clamp_cursor_shape(
         &node
             .preferred_cursor_shape(full_shape, arena, thread_parallelism())
             .map_err(|error| LatticeError::InvalidTraversal(error.to_string()))?,
         full_shape,
-    );
+    ))?;
     let mut ctx = CompiledEvalContext::new(arena.sources.len());
     for cursor in TraversalCursorIter::new(
         full_shape.to_vec(),
@@ -3177,6 +3330,65 @@ fn slice_array_owned<T: Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn converted_mask_reads_only_bounded_source_sections() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let pixels_read = Arc::new(AtomicUsize::new(0));
+        let source_reads = Arc::clone(&pixels_read);
+        let mut metadata = ImageExprBuilder::scalar(0.0f32).meta;
+        metadata.shape = vec![1025, 1025];
+        let pixels = metadata.shape.iter().product::<usize>();
+        let limit: usize = bounded_read_cursor(metadata.shape.clone())
+            .unwrap()
+            .iter()
+            .product();
+        let source = ImageExprBuilder::from_section_readers(
+            metadata,
+            Arc::new(move |_, shape, _| {
+                let count = shape.iter().product::<usize>();
+                assert!(count <= limit);
+                source_reads.fetch_add(count, Ordering::Relaxed);
+                Ok(ArrayD::from_elem(IxDyn(shape), 1.0f32))
+            }),
+            None,
+        )
+        .map_pixel_type(f64::from)
+        .unwrap()
+        .compile()
+        .unwrap();
+        let primary = ImageExprBuilder::from_image(&source).unwrap();
+        let mut mask = primary
+            .clone()
+            .compare_expr(primary.mean_reduce(), ImageExprCompareOp::GreaterThan)
+            .unwrap()
+            .compile()
+            .unwrap();
+        mask.set_execution_policy(ExecutionPolicy::Serial);
+        assert_eq!(pixels_read.load(Ordering::Relaxed), 0);
+        assert!(mask.get_in_sections().unwrap().iter().all(|&value| !value));
+        assert_eq!(pixels_read.load(Ordering::Relaxed), 2 * pixels);
+    }
+
+    #[test]
+    fn replace_reads_validity_on_demand_and_reports_read_error() {
+        let mut metadata = ImageExprBuilder::scalar(0.0f32).meta;
+        metadata.shape = vec![4, 3];
+        let expression = ImageExprBuilder::from_section_readers(
+            metadata,
+            Arc::new(|_, shape, _| Ok(ArrayD::from_elem(IxDyn(shape), 1.0f32))),
+            Some(Arc::new(|_, _, _| {
+                Err(ImageError::Io("mask read failed".into()))
+            })),
+        )
+        .replace_invalid(ImageExprBuilder::scalar(0.0))
+        .unwrap()
+        .compile()
+        .unwrap();
+        let error = expression.get_slice(&[0, 0], &[1, 2]).unwrap_err();
+        assert!(error.to_string().contains("mask read failed"));
+    }
     use crate::ImageInterface;
     use casa_lattices::{ExecutionPolicy, Lattice};
     use ndarray::IxDyn;
