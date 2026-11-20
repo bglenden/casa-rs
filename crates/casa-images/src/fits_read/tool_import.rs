@@ -7,6 +7,7 @@ use casa_coordinates::{
     CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
     fits::coordinate_util::from_fits_header_with_axis_order,
 };
+use casa_lattices::{Lattice, LatticeError};
 use casa_types::measures::{
     EpochRef, MEpoch, MPosition,
     direction::{DirectionRef, MDirection},
@@ -25,7 +26,9 @@ use super::{
     PrimaryHdu, brightness_unit, history::history_from_cards, image_info_from_fits_header,
     read_fits_axis_shape,
 };
-use crate::{ImageError, MutableImageInterface, image::ImageHistoryRow};
+use crate::{
+    ImageError, ImageInfo, ImageInterface, MutableImageInterface, TempImage, image::ImageHistoryRow,
+};
 
 /// A selected FITS image ready to copy into a CASA image.
 ///
@@ -373,6 +376,98 @@ impl FitsSectionReader {
     ) -> Result<ArrayD<f32>, ImageError> {
         let mut file = self.file.lock().map_err(fits_error)?;
         read_section(&mut file, &self.shape, self.bitpix, start, count, stride)
+    }
+}
+
+/// Borrow FITS metadata and a lazy section reader as a read-only image.
+pub fn fits_section_image<'a>(
+    shape: &'a [usize],
+    metadata: &'a TempImage<f32>,
+    path: &'a Path,
+    read: impl Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError> + 'a,
+) -> impl ImageInterface<f32> + 'a {
+    FitsSectionImage {
+        shape,
+        metadata,
+        path,
+        read,
+    }
+}
+
+struct FitsSectionImage<'a, F> {
+    shape: &'a [usize],
+    metadata: &'a TempImage<f32>,
+    path: &'a Path,
+    read: F,
+}
+
+impl<F> Lattice<f32> for FitsSectionImage<'_, F>
+where
+    F: Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError>,
+{
+    fn shape(&self) -> &[usize] {
+        self.shape
+    }
+
+    fn is_writable(&self) -> bool {
+        false
+    }
+
+    fn get_at(&self, position: &[usize]) -> Result<f32, LatticeError> {
+        let ones = vec![1; self.ndim()];
+        let data = self.get_slice(position, &ones, &ones)?;
+        Ok(*data.first().expect("read one FITS pixel"))
+    }
+
+    fn get_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<f32>, LatticeError> {
+        (self.read)(start, shape, stride).map_err(|error| LatticeError::Table(error.to_string()))
+    }
+}
+
+impl<F> ImageInterface<f32> for FitsSectionImage<'_, F>
+where
+    F: Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<f32>, ImageError>,
+{
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+
+    fn coordinates(&self) -> &CoordinateSystem {
+        self.metadata.coordinates()
+    }
+
+    fn units(&self) -> &str {
+        self.metadata.units()
+    }
+
+    fn misc_info(&self) -> RecordValue {
+        self.metadata.misc_info()
+    }
+
+    fn image_info(&self) -> Result<ImageInfo, ImageError> {
+        self.metadata.image_info()
+    }
+
+    fn name(&self) -> Option<&Path> {
+        Some(self.path)
+    }
+
+    fn get_mask_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        let pixels = (self.read)(start, shape, stride)?;
+        Ok(pixels
+            .iter()
+            .any(|value| value.is_nan())
+            .then(|| pixels.mapv(|value| !value.is_nan())))
     }
 }
 

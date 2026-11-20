@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, FitsKeyword, FitsValue, ProjectionType,
+    CoordinateModel, CoordinateSystem, FitsKeyword, FitsValue, ProjectionType, StokesCoordinate,
     fits::{coordinate_util::fits_stokes_axis, try_to_fits_header},
 };
 use casa_types::measures::direction::DirectionRef;
@@ -13,7 +13,7 @@ use casa_types::quanta::format::{FITS, format_time};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::image::ImageHistoryEntry;
-use crate::{ImageError, ImageInfo, ImageInterface, ImageType};
+use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel, ImageType};
 
 use super::{ExportAxisPlan, build_export_keywords, split_axis_keyword, visit_history_cards};
 
@@ -39,17 +39,17 @@ pub fn image_fits_header(
     history: &[ImageHistoryEntry],
 ) -> Result<ImageFitsHeader, ImageError> {
     let coords = image.coordinates();
-    let plan = ExportAxisPlan::build(coords, shape, false, false, false)?;
+    let plan = ExportAxisPlan::build(coords, shape, false, false, false, false, false)?;
     let standard_wcs = || {
         let base = try_to_fits_header(coords, shape)?;
-        let mut wcs = build_export_keywords(coords, &base, &plan, true, true)?
+        let mut wcs = build_export_keywords(coords, &base, &plan, true, true, None)?
             .into_iter()
             .collect();
         normalize_wcs(coords, &mut wcs)?;
         Ok::<_, ImageError>(wcs)
     };
     let (mut wcs, projection) = match standard_wcs() {
-        Ok(wcs) => (wcs, Some(projection_parameters(coords))),
+        Ok(wcs) => (wcs, Some(projection_parameters(coords, Some))),
         Err(_) => (linear_fallback(coords, shape.len())?, None),
     };
     let mut header = ImageFitsHeader(Vec::new());
@@ -130,6 +130,65 @@ pub fn image_fits_header(
     Ok(header)
 }
 
+pub(super) fn image_export_cards<T: ImagePixel>(
+    image: &dyn ImageInterface<T>,
+    info: &ImageInfo,
+    wcs: &[(String, FitsValue)],
+) -> Result<Vec<String>, ImageError> {
+    let mut header = ImageFitsHeader(Vec::new());
+    header.image_metadata(image.units(), info)?;
+    header.0.retain(|card| match card.keyword.name.as_str() {
+        "BMAJ" | "BMIN" | "BPA" => false,
+        "BUNIT" => image.units().is_empty(),
+        "OBJECT" => info.object_name.is_empty(),
+        _ => true,
+    });
+    header.observation(image, &mut BTreeMap::new())?;
+    let mut misc = ImageFitsHeader(Vec::new());
+    misc.extend_misc(image.misc_info())?;
+    let keep_misc = |name: &str| {
+        !matches!(
+            name,
+            "SIMPLE"
+                | "BITPIX"
+                | "NAXIS"
+                | "EXTEND"
+                | "EXTNAME"
+                | "END"
+                | "BSCALE"
+                | "BZERO"
+                | "BLANK"
+                | "DATAMIN"
+                | "DATAMAX"
+                | "BMAJ"
+                | "BMIN"
+                | "BPA"
+                | "CASAMBM"
+                | "BTYPE"
+                | "BUNIT"
+                | "OBJECT"
+                | "DATE"
+                | "ORIGIN"
+        ) && !(name.starts_with("NAXIS") && name[5..].bytes().all(|byte| byte.is_ascii_digit()))
+            && !wcs.iter().any(|(key, _)| key == name)
+    };
+    header.0.extend(
+        misc.0
+            .into_iter()
+            .filter(|card| keep_misc(&card.keyword.name)),
+    );
+    header.text(
+        "DATE",
+        format_time(ImageHistoryEntry::current_time()? / 86_400.0, FITS, 12),
+    );
+    header.text("ORIGIN", "casa-rs");
+    Ok(header
+        .0
+        .iter()
+        .map(|card| render_card(&card.keyword))
+        .collect())
+}
+
 impl ImageFitsHeader {
     fn add(&mut self, name: impl Into<String>, value: FitsValue, comment: Option<&str>) {
         let name = name.into();
@@ -156,12 +215,7 @@ impl ImageFitsHeader {
         if let Some(beam) = info.beam_set.single_beam().filter(|beam| !beam.is_null()) {
             self.add("BMAJ", FitsValue::Float(beam.major_in("deg")?), None);
             self.add("BMIN", FitsValue::Float(beam.minor_in("deg")?), None);
-            let mut angle = beam.position_angle_in("deg")? % 180.0;
-            if angle > 90.0 {
-                angle -= 180.0;
-            } else if angle <= -90.0 {
-                angle += 180.0;
-            }
+            let angle = wrapped_beam_position_angle(beam.position_angle_in("deg")?);
             self.add("BPA", FitsValue::Float(angle), None);
         }
         let image_type = if info.image_type == ImageType::Undefined {
@@ -222,9 +276,9 @@ impl ImageFitsHeader {
         }
     }
 
-    fn observation(
+    fn observation<T: ImagePixel>(
         &mut self,
-        image: &dyn ImageInterface<f32>,
+        image: &dyn ImageInterface<T>,
         wcs: &mut BTreeMap<String, FitsValue>,
     ) -> Result<(), ImageError> {
         for keyword in ["TELESCOP", "OBSERVER", "DATE-OBS", "TIMESYS"] {
@@ -439,11 +493,7 @@ fn normalize_wcs(
                 }
             }
             CoordinateModel::Stokes(stokes) => {
-                let (reference, increment) =
-                    fits_stokes_axis(stokes.stokes()).ok_or_else(header_creation_error)?;
-                wcs.insert(format!("CRVAL{axis}"), FitsValue::Float(reference));
-                wcs.insert(format!("CDELT{axis}"), FitsValue::Float(increment));
-                wcs.insert(format!("CRPIX{axis}"), FitsValue::Float(1.0));
+                wcs.extend(stokes_axis_keywords(stokes, axis)?);
             }
             _ => {}
         }
@@ -459,12 +509,41 @@ fn normalize_wcs(
     Ok(())
 }
 
-fn projection_parameters(coords: &CoordinateSystem) -> Vec<(String, FitsValue)> {
+pub(super) fn wrapped_beam_position_angle(angle: f64) -> f64 {
+    let angle = angle % 180.0;
+    if angle > 90.0 {
+        angle - 180.0
+    } else if angle <= -90.0 {
+        angle + 180.0
+    } else {
+        angle
+    }
+}
+
+pub(super) fn stokes_axis_keywords(
+    stokes: &StokesCoordinate,
+    axis: usize,
+) -> Result<[(String, FitsValue); 3], ImageError> {
+    let (reference, increment) =
+        fits_stokes_axis(stokes.stokes()).ok_or_else(header_creation_error)?;
+    Ok([
+        (format!("CRVAL{axis}"), FitsValue::Float(reference)),
+        (format!("CDELT{axis}"), FitsValue::Float(increment)),
+        (format!("CRPIX{axis}"), FitsValue::Float(1.0)),
+    ])
+}
+
+pub(super) fn projection_parameters(
+    coords: &CoordinateSystem,
+    output_axis: impl Fn(usize) -> Option<usize>,
+) -> Vec<(String, FitsValue)> {
     let mut result = Vec::new();
     let mut offset = 0;
     for index in 0..coords.n_coordinates() {
         let axis = coords.coordinate(index);
-        if let CoordinateModel::Direction(direction) = axis {
+        if let CoordinateModel::Direction(direction) = axis
+            && let Some(latitude_axis) = output_axis(offset + 2)
+        {
             let projection = direction.projection();
             let params = projection.parameters();
             let count = if projection.projection_type() == ProjectionType::SIN {
@@ -474,7 +553,7 @@ fn projection_parameters(coords: &CoordinateSystem) -> Vec<(String, FitsValue)> 
             };
             for index in 0..count {
                 result.push((
-                    format!("PV{}_{}", offset + 2, index + 1),
+                    format!("PV{}_{}", latitude_axis, index + 1),
                     FitsValue::Float(params.get(index).copied().unwrap_or(0.0)),
                 ));
             }

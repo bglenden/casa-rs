@@ -77,6 +77,10 @@ restoring beams, `ia.restoringbeam()` reads the beam quantities and
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
+Use `ia.tofits("example.fits")` to write FITS from an attached float image.
+It accepts region and mask selection, scaled integer pixels with `bitpix=16`,
+spectral velocity or wavelength axes, and export axis ordering controls.
+Pass `history=False` to omit the image log from the output.
 
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits on this attachment last until `ia.done()`.

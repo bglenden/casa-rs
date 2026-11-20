@@ -8,6 +8,7 @@ mod beam_edit;
 mod beams;
 mod create;
 mod default_record;
+mod fits_export;
 mod fits_header;
 mod fits_import;
 mod handle;

@@ -60,6 +60,7 @@ IMPLEMENTED["image"] = {
     "getchunk", "history", "isopen", "ispersistent", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
     "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
+    "tofits",
 }
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",

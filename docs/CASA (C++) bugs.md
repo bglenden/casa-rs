@@ -7411,3 +7411,22 @@ channels 0–1 and 5–6. It averages visibility samples from original
 channels 0–1 and 2 and 5, in the order of its compressed channel
 buffer. casa-rs preserves the paired text coordinates and sample
 values so existing PlotMS diagnostics can be compared directly (#1526).
+
+## FITS export can change axis lengths or abort while removing axes
+
+With CASA 6.7.6.14, export a float image of shape `[3, 4, 2, 1]` with a
+two-plane Stokes axis and one spectral channel using `image.tofits` with
+`deglast=True` and `stokeslast=True`. The output declares two spectral
+channels and two Stokes planes even though the source has only 24 pixels.
+The degenerate-axis pass uses the input extents after the Stokes pass has
+already changed their order. casa-rs writes `[3, 4, 1, 2]` and preserves
+all pixel values and their coordinates.
+
+CASA also raises `Unknown error copying image to FITS file` when moving a
+leading singleton axis in a linear image of shape `[1, 4, 2]` with
+`deglast=True`. casa-rs writes `[4, 2, 1]` with the data in the matching
+axis order, readable in CASA.
+
+On the pinned Linux build, `dropdeg=True` on a `[1, 1, 1, 1]` float image
+can terminate Python with SIGFPE. casa-rs raises `RuntimeError` because no
+image axes would remain. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
