@@ -351,6 +351,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
                 if completion.message == "no flagdata summary report for the selected correlations":
                     raise KeyError("nreport") from error
+            if completion.message == f"argument _{completion.parameter} must be a string":
+                raise TypeError(completion.message) from error
             if completion.parameter in ("channelavg", "chanbin", "timeavg", "outfile"):
                 raise RuntimeError(completion.message) from error
             if completion.parameter == "outfile.not_found":
@@ -494,7 +496,6 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
-    vector_selectors = []
     correlation_vector = None
     for parameter in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         if parameter not in values:
@@ -505,7 +506,8 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
         elif value is None:
             errors[parameter] = ["null value not allowed"] * 3
         elif _flagdata_string_vector(value):
-            vector_selectors.append(parameter)
+            values[parameter] = ([str(value.item())] if isinstance(value, np.ndarray) and value.ndim == 0
+                                 else [str(item) for item in value])
         else:
             errors[parameter] = ["must be of cStr type", "must be of cStrVec type"]
     if "correlation" in values:
@@ -599,10 +601,6 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
             errors["clipminmax"] = [str(error)]
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
-    if vector_selectors and not correlation_vector and values.get("action") not in ("", "none"):
-        raise TypeError(f"argument _{vector_selectors[0]} must be a string")
-    for parameter in vector_selectors:
-        del values[parameter]
     return correlation_vector
 
 
