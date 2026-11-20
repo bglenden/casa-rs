@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["format_latitude_dms","format_longitude_hours","format_stream_value","format_world_display"]};
+window.SIDEBAR_ITEMS = {"fn":["format_latitude_dms","format_latitude_dms_with_precision","format_longitude_hours","format_longitude_hours_with_precision","format_stream_value","format_stream_value_with_precision","format_world_display"]};

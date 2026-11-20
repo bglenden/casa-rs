@@ -93,43 +93,46 @@
 <a href=#93 id=93 data-nosnippet>93</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
 <a href=#94 id=94 data-nosnippet>94</a>            };
 <a href=#95 id=95 data-nosnippet>95</a>            <span class="kw">let </span><span class="kw-2">mut </span>image = image.lock();
-<a href=#96 id=96 data-nosnippet>96</a>            <span class="kw">let </span>coordinates = CoordinateSystem::from_record(<span class="kw-2">&amp;</span>record).map_err(raised)<span class="question-mark">?</span>;
-<a href=#97 id=97 data-nosnippet>97</a>            <span class="kw">if </span>coordinates.n_pixel_axes() != image.shape().len() {
-<a href=#98 id=98 data-nosnippet>98</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#99 id=99 data-nosnippet>99</a>                    <span class="string">"Exception: Supplied CoordinateSystem and image shape are inconsistent"</span>,
-<a href=#100 id=100 data-nosnippet>100</a>                ));
-<a href=#101 id=101 data-nosnippet>101</a>            }
-<a href=#102 id=102 data-nosnippet>102</a>            image.set_coordinate_record(record)<span class="question-mark">?</span>;
-<a href=#103 id=103 data-nosnippet>103</a>            <span class="kw">if </span>history {
-<a href=#104 id=104 data-nosnippet>104</a>                image.record_history(<span class="string">"setcoordsys"</span>, <span class="string">"ia.setcoordsys(csys={...})"</span>.into())<span class="question-mark">?</span>;
-<a href=#105 id=105 data-nosnippet>105</a>            }
-<a href=#106 id=106 data-nosnippet>106</a>            image.save().map_err(raised)<span class="question-mark">?</span>;
-<a href=#107 id=107 data-nosnippet>107</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
-<a href=#108 id=108 data-nosnippet>108</a>        })
-<a href=#109 id=109 data-nosnippet>109</a>    }
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="attr">#[pyo3(signature = (list=<span class="bool-val">true</span>), text_signature = <span class="string">"($self, list=True)"</span>)]
-<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">fn </span>history(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, list: bool) -&gt; PyResult&lt;Vec&lt;String&gt;&gt; {
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">let </span>entries = py.detach(|| {
-<a href=#114 id=114 data-nosnippet>114</a>            <span class="kw">let </span>state = <span class="self">self</span>.state();
-<a href=#115 id=115 data-nosnippet>115</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(image) = state.image.as_ref() <span class="kw">else </span>{
-<a href=#116 id=116 data-nosnippet>116</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
-<a href=#117 id=117 data-nosnippet>117</a>            };
-<a href=#118 id=118 data-nosnippet>118</a>            <span class="macro">with_pixels!</span>(<span class="kw-2">&amp;*</span>image.lock(), storage =&gt; <span class="macro">with_storage!</span>(storage, image =&gt; image.history()))
-<a href=#119 id=119 data-nosnippet>119</a>                .map_err(raised)
-<a href=#120 id=120 data-nosnippet>120</a>        })<span class="question-mark">?</span>;
-<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">if </span>list {
-<a href=#122 id=122 data-nosnippet>122</a>            <span class="kw">crate</span>::tools::emit(
-<a href=#123 id=123 data-nosnippet>123</a>                py,
-<a href=#124 id=124 data-nosnippet>124</a>                <span class="string">"casars.tools.image"</span>,
-<a href=#125 id=125 data-nosnippet>125</a>                <span class="kw-2">&amp;</span>entries
-<a href=#126 id=126 data-nosnippet>126</a>                    .iter()
-<a href=#127 id=127 data-nosnippet>127</a>                    .cloned()
-<a href=#128 id=128 data-nosnippet>128</a>                    .map(<span class="kw">crate</span>::tools::LogLine::info)
-<a href=#129 id=129 data-nosnippet>129</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#130 id=130 data-nosnippet>130</a>            )<span class="question-mark">?</span>;
-<a href=#131 id=131 data-nosnippet>131</a>        }
-<a href=#132 id=132 data-nosnippet>132</a>        <span class="prelude-val">Ok</span>(entries)
-<a href=#133 id=133 data-nosnippet>133</a>    }
-<a href=#134 id=134 data-nosnippet>134</a>}
+<a href=#96 id=96 data-nosnippet>96</a>            <span class="kw">if </span>record.is_empty() {
+<a href=#97 id=97 data-nosnippet>97</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Exception: Record is empty."</span>));
+<a href=#98 id=98 data-nosnippet>98</a>            }
+<a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">let </span>coordinates = CoordinateSystem::from_record(<span class="kw-2">&amp;</span>record).map_err(raised)<span class="question-mark">?</span>;
+<a href=#100 id=100 data-nosnippet>100</a>            <span class="kw">if </span>coordinates.n_pixel_axes() != image.shape().len() {
+<a href=#101 id=101 data-nosnippet>101</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#102 id=102 data-nosnippet>102</a>                    <span class="string">"Exception: Supplied CoordinateSystem and image shape are inconsistent"</span>,
+<a href=#103 id=103 data-nosnippet>103</a>                ));
+<a href=#104 id=104 data-nosnippet>104</a>            }
+<a href=#105 id=105 data-nosnippet>105</a>            image.set_coordinate_record(record)<span class="question-mark">?</span>;
+<a href=#106 id=106 data-nosnippet>106</a>            <span class="kw">if </span>history {
+<a href=#107 id=107 data-nosnippet>107</a>                image.record_history(<span class="string">"setcoordsys"</span>, <span class="string">"ia.setcoordsys(csys={...})"</span>.into())<span class="question-mark">?</span>;
+<a href=#108 id=108 data-nosnippet>108</a>            }
+<a href=#109 id=109 data-nosnippet>109</a>            image.save().map_err(raised)<span class="question-mark">?</span>;
+<a href=#110 id=110 data-nosnippet>110</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+<a href=#111 id=111 data-nosnippet>111</a>        })
+<a href=#112 id=112 data-nosnippet>112</a>    }
+<a href=#113 id=113 data-nosnippet>113</a>
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="attr">#[pyo3(signature = (list=<span class="bool-val">true</span>), text_signature = <span class="string">"($self, list=True)"</span>)]
+<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">fn </span>history(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, list: bool) -&gt; PyResult&lt;Vec&lt;String&gt;&gt; {
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">let </span>entries = py.detach(|| {
+<a href=#117 id=117 data-nosnippet>117</a>            <span class="kw">let </span>state = <span class="self">self</span>.state();
+<a href=#118 id=118 data-nosnippet>118</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(image) = state.image.as_ref() <span class="kw">else </span>{
+<a href=#119 id=119 data-nosnippet>119</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
+<a href=#120 id=120 data-nosnippet>120</a>            };
+<a href=#121 id=121 data-nosnippet>121</a>            <span class="macro">with_pixels!</span>(<span class="kw-2">&amp;*</span>image.lock(), storage =&gt; <span class="macro">with_storage!</span>(storage, image =&gt; image.history()))
+<a href=#122 id=122 data-nosnippet>122</a>                .map_err(raised)
+<a href=#123 id=123 data-nosnippet>123</a>        })<span class="question-mark">?</span>;
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">if </span>list {
+<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">crate</span>::tools::emit(
+<a href=#126 id=126 data-nosnippet>126</a>                py,
+<a href=#127 id=127 data-nosnippet>127</a>                <span class="string">"casars.tools.image"</span>,
+<a href=#128 id=128 data-nosnippet>128</a>                <span class="kw-2">&amp;</span>entries
+<a href=#129 id=129 data-nosnippet>129</a>                    .iter()
+<a href=#130 id=130 data-nosnippet>130</a>                    .cloned()
+<a href=#131 id=131 data-nosnippet>131</a>                    .map(<span class="kw">crate</span>::tools::LogLine::info)
+<a href=#132 id=132 data-nosnippet>132</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#133 id=133 data-nosnippet>133</a>            )<span class="question-mark">?</span>;
+<a href=#134 id=134 data-nosnippet>134</a>        }
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="prelude-val">Ok</span>(entries)
+<a href=#136 id=136 data-nosnippet>136</a>    }
+<a href=#137 id=137 data-nosnippet>137</a>}
 </code></pre></div></section></main></body></html>

@@ -929,6 +929,10 @@ persist the edits to the image.</p>
 Use <code>cs.setnames(values)</code> to replace the world-axis labels in order, or
 pass <code>type</code> to replace one coordinate's labels. <code>cs.setstokes(values)</code>
 sets the polarization labels in pixel order.</p>
+<p>Use <code>cs.referencevalue()</code> and <code>cs.increment()</code> to read the world-axis
+reference values and spacing. Pass <code>type</code> to select a coordinate, or combine
+<code>n</code>, <code>q</code>, <code>s</code>, and <code>m</code> in <code>format</code> to request numbers, quantities, display
+strings, and CASA measures.</p>
 <p>To build a coordinate system without an image, call
 <code>tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])</code>.
 Use <code>addcoordinate</code> to append axes and <code>fromrecord</code> to restore a coordinate
@@ -953,13 +957,20 @@ restoring beams, <code>ia.restoringbeam()</code> reads the beam quantities and
 Use <code>ia.fitsheader()</code> to inspect the FITS header for a float image without
 exporting the pixels. Pass <code>exclude="HISTORY"</code> to omit the log from the returned
 dictionary. Use <code>retstr=True</code> to return the complete string of 80-byte cards.</p>
-<p>Use <code>ia.fromfits("example.im", "example.fits")</code> to import a FITS image as a
-native CASA image. <code>whichhdu</code> selects the image HDU and <code>whichrep</code> selects the
-coordinate representation. <code>zeroblanks=True</code> writes zero at blank pixels
+<p>Use <code>ia.open("example.fits")</code> to read pixels and their validity mask directly
+from a FITS file. Metadata edits on this attachment last until <code>ia.done()</code>.
+Use <code>ia.fromfits("example.im", "example.fits")</code> to import a FITS image as a
+writable native CASA image for pixel edits and <code>ia.subimage(...)</code>. <code>whichhdu</code>
+selects the image HDU and <code>whichrep</code> selects the coordinate representation.
+<code>zeroblanks=True</code> writes zero at blank pixels
 while preserving their invalid mask values. <code>ia.newimagefromfits(...)</code> returns
 a separate image tool. The remaining
 CASA image and coordinate operations are tracked in
 <a href="https://github.com/bglenden/casa-rs/issues/1027">#1027</a>.</p>
+<p>Use <code>ia.maketestimage()</code> to load <code>demo/Images/imagetestimage.fits</code> as a
+temporary image. Pass <code>outfile</code> to write a native image. The tool searches
+the working directory, <code>CASA_RS_MEASURESPATH</code>, and the CASA installation's
+<code>data</code> directory when <code>CASAPATH</code> or <code>AIPSPATH</code> identifies it.</p>
 <h3 id="extract-a-subimage">Extract a subimage<a class="headerlink" href="#extract-a-subimage" title="Permanent link">&para;</a></h3>
 <p>Use <code>ia.subimage(outfile="cutout.im", region=region)</code> to copy a selection
 to a native CASA image. The method returns a separate image tool. Leave

@@ -2590,6 +2590,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#flagdata-can-choose-the-wrong-samples-when-float_data-is-present" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagdata can choose the wrong samples when FLOAT_DATA is present
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4779,6 +4790,7 @@ Flagging behaviours casa-rs does not follow:
 <a href="#flagmanager-gives-the-version-a-save-renames-the-new-comment">a re-saved version's comment</a>,
 <a href="#flagmanager-can-overwrite-a-saved-version-through-an-alias">re-saving a flag version through an alias</a>,
 <a href="#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice">an unrecognized flag merge choice</a>,
+<a href="#flagdata-can-choose-the-wrong-samples-when-float_data-is-present">the choice of samples to clip</a>,
 <a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name">a summary of correlations it cannot name</a>.
 Coordinate behaviours casa-rs does not follow:
 <a href="#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table">a tabular coordinate's subimage</a>,
@@ -8154,6 +8166,18 @@ that were set after the version was saved. The
 for both <code>FLAG</code> and <code>FLAG_ROW</code>. It also verifies <code>replace</code>, <code>or</code>, and
 <code>and</code> against independent flag patterns. casa-rs raises <code>ValueError</code> for
 an unrecognized choice and preserves the working flags.</p>
+<h2 id="flagdata-can-choose-the-wrong-samples-when-float_data-is-present"><code>flagdata</code> can choose the wrong samples when FLOAT_DATA is present<a class="headerlink" href="#flagdata-can-choose-the-wrong-samples-when-float_data-is-present" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 can evaluate the magnitude of <code>FLOAT_DATA</code> when
+<code>flagdata(mode="clip", datacolumn="DATA")</code> opens an MS containing both
+physical columns. The paired fixture holds complex DATA within the requested
+range and puts signed floats outside it. CASA flags the samples from the
+float column. casa-rs computes the range from the requested complex DATA.</p>
+<p>With <code>datacolumn="FLOAT_DATA", clipzeros=True</code>, CASA also flags finite
+negative values outside the zero tolerance. casa-rs applies the zero
+tolerance to the magnitude of each sample. An explicit inside or outside
+range on FLOAT_DATA uses the signed values, as CASA does. The
+<code>tools/casa-compat/flagdata_clip_range_oracle.py</code> comparison verifies both
+choices with independent expected flags.</p>
 <h2 id="flagdatas-summary-aborts-on-a-correlation-it-cannot-name"><code>flagdata</code>'s summary aborts on a correlation it cannot name<a class="headerlink" href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-29</li>

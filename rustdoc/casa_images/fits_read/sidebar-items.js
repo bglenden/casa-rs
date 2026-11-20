@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["fits_image_shape","read_fits_image"],"struct":["FitsImage","FitsToolImport"]};
+window.SIDEBAR_ITEMS = {"fn":["fits_image_shape","read_fits_image"],"struct":["FitsImage","FitsSectionReader","FitsToolImport"]};

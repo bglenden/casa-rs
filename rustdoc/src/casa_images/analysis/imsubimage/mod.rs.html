@@ -54,7 +54,7 @@
 <a href=#54 id=54 data-nosnippet>54</a>    </span><span class="kw">pub </span>coordinates: casa_coordinates::CoordinateSystem,
 <a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// Native coordinate representation when it differs from the typed model.
 <a href=#56 id=56 data-nosnippet>56</a>    </span><span class="kw">pub </span>coordinate_record: <span class="prelude-ty">Option</span>&lt;RecordValue&gt;,
-<a href=#57 id=57 data-nosnippet>57</a>    image_info: ImageInfo,
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::analysis) image_info: ImageInfo,
 <a href=#58 id=58 data-nosnippet>58</a>}
 <a href=#59 id=59 data-nosnippet>59</a>
 <a href=#60 id=60 data-nosnippet>60</a><span class="kw">impl </span>SubimagePlan {
@@ -87,7 +87,7 @@
 <a href=#87 id=87 data-nosnippet>87</a>        )
 <a href=#88 id=88 data-nosnippet>88</a>    }
 <a href=#89 id=89 data-nosnippet>89</a>
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">fn </span>from_selection&lt;T: ImagePixel&gt;(
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::analysis) <span class="kw">fn </span>from_selection&lt;T: ImagePixel&gt;(
 <a href=#91 id=91 data-nosnippet>91</a>        image: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ImageInterface&lt;T&gt;,
 <a href=#92 id=92 data-nosnippet>92</a>        native_coordinates: <span class="prelude-ty">Option</span>&lt;RecordValue&gt;,
 <a href=#93 id=93 data-nosnippet>93</a>        selection: SubimageSelection,

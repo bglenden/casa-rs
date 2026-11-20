@@ -1748,7 +1748,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 809</li>
+<li>Concepts: 810</li>
 <li>Surfaces: 45 (45 task, 0 session)</li>
 <li>Surface bindings: 1089</li>
 </ul>
@@ -1959,10 +1959,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-impbcor">Primary Beam Correction</a><br><code>impbcor</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>image_analysis</code></td>
 <td style="text-align: right;">12</td>
-<td>Apply primary-beam correction to a CASA image</td>
+<td>Apply primary-beam correction to a CASA or FITS image</td>
 </tr>
 <tr>
 <td><a href="#surface-impv">Position Velocity</a><br><code>impv</code></td>
@@ -8331,7 +8331,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>array&lt;float&gt;</code></td>
 <td><code>[]</code>; optional</td>
 <td>Clip</td>
-<td>Range of data values that clip mode keeps; values outside it are flagged.</td>
+<td>Two values define the closed clipping range. Other lengths leave the range unset.</td>
 </tr>
 <tr>
 <td><code>datacolumn</code></td>
@@ -8344,10 +8344,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><code>clipoutside</code></td>
 <td><code>flagdata.clipoutside@r1</code></td>
-<td><code>bool</code></td>
+<td><code>variant</code></td>
 <td><code>true</code>; optional</td>
 <td>Clip</td>
-<td>Clip outside clipminmax's range rather than inside it.</td>
+<td>Flag samples outside the closed clip range when true, or inside it when false.</td>
 </tr>
 <tr>
 <td><code>channelavg</code></td>
@@ -8874,10 +8874,10 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="primary-beam-correction-impbcor">Primary Beam Correction (<code>impbcor</code>)<a class="headerlink" href="#primary-beam-correction-impbcor" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
-<li>Summary: Apply primary-beam correction to a CASA image</li>
+<li>Summary: Apply primary-beam correction to a CASA or FITS image</li>
 </ul>
 <table>
 <thead>
@@ -8901,11 +8901,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>pbimage</code></td>
-<td><code>parameter.pbimage@r2</code></td>
-<td><code>array&lt;path (image)&gt;</code></td>
+<td><code>parameter.pbimage@r3</code></td>
+<td><code>variant</code></td>
 <td><code>[]</code>; required</td>
 <td>Input</td>
-<td>Primary-beam CASA image path; CASA's [] default means it must be given</td>
+<td>Primary-beam image name or floating-point pixel array</td>
 </tr>
 <tr>
 <td><code>outfile</code></td>
@@ -8933,11 +8933,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>region</code></td>
-<td><code>image.selection.region@r1</code></td>
-<td><code>string</code></td>
+<td><code>impbcor.region@r1</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Region file or expression.</td>
+<td>CRTF text, region file, or casacore region record.</td>
 </tr>
 <tr>
 <td><code>chans</code></td>
@@ -8965,19 +8965,19 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>mode</code></td>
-<td><code>impbcor.mode@r1</code></td>
-<td><code>choice (2 values)</code></td>
+<td><code>impbcor.mode@r2</code></td>
+<td><code>string</code></td>
 <td><code>"divide"</code>; optional</td>
 <td>Correction</td>
 <td>Correction mode</td>
 </tr>
 <tr>
 <td><code>cutoff</code></td>
-<td><code>parameter.cutoff@r1</code></td>
-<td><code>float</code></td>
+<td><code>parameter.cutoff@r2</code></td>
+<td><code>variant</code></td>
 <td><code>-1.0</code>; optional</td>
 <td>Correction</td>
-<td>Minimum PB value to keep; negative disables cutoff masking</td>
+<td>Primary-beam cutoff for division or multiplication</td>
 </tr>
 <tr>
 <td><code>stretch</code></td>

@@ -9,7 +9,7 @@
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">super</span>::axes::{legacy_subimage_coordinates_with_stokes, subimage_coordinates_with_stokes};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">super</span>::imsubimage::{SubimageRegion, coords::subset_beam_set, region::SubimageSelection};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use super</span>::{combined_moment_mask, patch_saved_coords_keyword};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use super</span>::{combined_selection_mask, patch_saved_coords_keyword};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use crate</span>::{
 <a href=#14 id=14 data-nosnippet>14</a>    ImageBeamSet, ImageError, ImagePixel, ImmomentsRequest, MomentImageSummary, MomentMapSummary,
 <a href=#15 id=15 data-nosnippet>15</a>    PagedImage, TempImage,
@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>    <span class="kw">let </span>axis = axis::resolve(image, request.axis.as_ref(), <span class="kw-2">&amp;</span>selection.shape)<span class="question-mark">?</span>;
 <a href=#39 id=39 data-nosnippet>39</a>    <span class="kw">let </span><span class="kw-2">mut </span>input = image.get_slice(<span class="kw-2">&amp;</span>selection.start, <span class="kw-2">&amp;</span>selection.shape)<span class="question-mark">?</span>;
 <a href=#40 id=40 data-nosnippet>40</a>    <span class="kw">let </span><span class="kw-2">mut </span>mask =
-<a href=#41 id=41 data-nosnippet>41</a>        combined_moment_mask(image, <span class="kw-2">&amp;</span>selection, request.mask.as_deref(), request.stretch)<span class="question-mark">?</span>;
+<a href=#41 id=41 data-nosnippet>41</a>        combined_selection_mask(image, <span class="kw-2">&amp;</span>selection, request.mask.as_deref(), request.stretch)<span class="question-mark">?</span>;
 <a href=#42 id=42 data-nosnippet>42</a>    selection.apply_selection_masks(<span class="kw-2">&amp;mut </span>mask);
 <a href=#43 id=43 data-nosnippet>43</a>    <span class="kw">let </span><span class="kw-2">mut </span>shape = selection.shape.clone();
 <a href=#44 id=44 data-nosnippet>44</a>    shape[axis] = <span class="number">1</span>;
