@@ -12,6 +12,7 @@ use crate::saved_region::map_world_region_axes;
 use crate::{AnyPagedImage, ImageError, PolygonRegion};
 
 mod compound;
+mod relative;
 
 use super::{ParsedRegion, SavedRegionMask, SpatialShape};
 
@@ -44,6 +45,9 @@ pub(super) fn parse_saved_region(
     };
 
     match class_name {
+        "WCPolygon" if relative::mode(rec).is_some() => {
+            relative::decode_polygon(region_name, rec, target_coords, full_shape)
+        }
         "WCPolygon" => polygon_region(
             region_name,
             PolygonRegion::from_record(region_name, rec, target_coords)?,
@@ -467,22 +471,39 @@ fn decode_wc_ellipsoid(
     let invalid =
         || ImageError::InvalidMetadata(format!("invalid direction-plane WCEllipsoid {name:?}"));
     let (axes, origin) = wc_pixel_axes(name, "WCEllipsoid", rec, coords)?;
-    if axes != plane
-        || !matches!(
-            rec.get("absrel"),
-            Some(Value::Scalar(ScalarValue::Int32(1)))
-        )
-    {
+    let mode = match rec.get("absrel") {
+        Some(Value::Scalar(ScalarValue::Int32(mode @ (1..=3)))) => f64::from(*mode),
+        _ => return Err(invalid()),
+    };
+    let [x, y] = plane;
+    let reversed = mode != 1.0 && axes == [y, x];
+    if axes != plane && !reversed {
         return Err(invalid());
     }
-    let [x, y] = plane;
     let center = read_quantum_list(rec.get("center"))?;
     let [first, second] = center.as_slice() else {
         return Err(invalid());
     };
     let rad = Unit::new("rad").expect("radians are a built-in unit");
     let in_radians = |quantity: &Quantity| quantity.get_value_in(&rad).map_err(|_| invalid());
-    let [cx, cy] = if matches!(first.unit().name(), "pix" | "frac")
+    let [cx, cy] = if mode != 1.0 {
+        // Casacore indexes the world center and radii by lattice axis. It
+        // applies pixel overrides in the record's order before returning the plane.
+        let mapped = if reversed { [y, x] } else { plane };
+        let mut projected = relative::project_points(
+            coords,
+            shape,
+            plane,
+            mapped,
+            [first.unit().name(), second.unit().name()],
+            [[first.value(), second.value()]],
+            &vec![mode; coords.n_world_axes()],
+        )?[0];
+        if reversed {
+            projected.reverse();
+        }
+        projected
+    } else if matches!(first.unit().name(), "pix" | "frac")
         && matches!(second.unit().name(), "pix" | "frac")
     {
         let pixel = |q: &Quantity, axis: usize| match q.unit().name() {
@@ -638,7 +659,8 @@ fn wc_box_corner(
         }
     }
     if has_world_bounds && modes.iter().any(|&mode| mode != 1.0) {
-        make_wc_box_world_absolute(coords, shape, modes, &reference, &mut world)?;
+        // WCBox passes its stored mode positions directly after mapping quantities.
+        make_region_world_absolute(coords, shape, modes, &reference, &mut world)?;
     }
     let converted = coords.to_pixel(&world)?;
     let mut result = shape
@@ -677,15 +699,13 @@ fn wc_box_corner(
     Ok(result)
 }
 
-fn make_wc_box_world_absolute(
+fn make_region_world_absolute(
     coords: &CoordinateSystem,
     shape: &[usize],
     modes: &[f64],
     reference: &[f64],
     world: &mut [f64],
 ) -> Result<(), ImageError> {
-    // WCBox maps the quantities to the target world axes, then passes the modes
-    // to WCRegion as stored. The mode positions are not remapped with the axes.
     let offsets = world
         .iter()
         .enumerate()

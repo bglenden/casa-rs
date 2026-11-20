@@ -34,6 +34,7 @@ mod mask_expression;
 mod masks;
 mod metadata;
 mod modify;
+mod pixel_edit;
 mod pixels;
 mod point;
 mod put_region;

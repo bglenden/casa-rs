@@ -64,7 +64,9 @@
 mod geometry;
 mod record;
 
-pub(crate) use record::{compound_children, map_world_region_axes, native_region_kind};
+pub(crate) use record::{
+    compound_children, map_world_region_axes, native_region_kind, parse_quantum_vector_field,
+};
 
 use casa_coordinates::CoordinateSystem;
 use casa_lattices::StatsElement;
@@ -438,6 +440,18 @@ fn statistics_of(mut values: Vec<f64>, unit: &str) -> Option<RegionStatistics> {
 pub(crate) struct PolygonPixelPlane {
     pub(crate) start: [usize; 2],
     pub(crate) mask: Array2<bool>,
+}
+
+impl PolygonPixelPlane {
+    pub(crate) fn section(&self, shape: &[usize], [x, y]: [usize; 2]) -> (Vec<usize>, Vec<usize>) {
+        let mut start = vec![0; shape.len()];
+        start[x] = self.start[0];
+        start[y] = self.start[1];
+        let mut shape = shape.to_vec();
+        shape[x] = self.mask.nrows();
+        shape[y] = self.mask.ncols();
+        (start, shape)
+    }
 }
 
 pub(crate) fn polygon_pixel_plane(

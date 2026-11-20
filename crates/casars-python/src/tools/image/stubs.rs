@@ -584,18 +584,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels = None, pixelmask = None, region = None, list = None), text_signature = "($self, pixels=[], pixelmask=-1, region={}, list=False)")]
-    fn set(
-        &self,
-        pixels: Option<&Bound<'_, PyAny>>,
-        pixelmask: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("set")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, order = None), text_signature = "($self, outfile='', order=[])")]
     fn transpose(
         &self,

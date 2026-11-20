@@ -54,7 +54,12 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             ));
         }
     };
-    let request = flagdata_request(task)?;
+    let request = flagdata_request(task).or_else(|error| {
+        if error.parameter.as_deref() == Some("datacolumn") {
+            backup_before_failed_apply(task, &action)?;
+        }
+        Err(error)
+    })?;
     let path = task.path("vis")?;
     // The CASA task derives persistence from action, including when the
     // caller supplied its hidden writeflags argument explicitly.
@@ -72,6 +77,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     .map_err(|error| match error {
         FlaggingError::MissingCorrelationSummary => {
             TaskFailure::execution(error.to_string()).at("correlation")
+        }
+        FlaggingError::MissingClipColumn => {
+            TaskFailure::validation(error.to_string()).at("datacolumn")
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
@@ -92,15 +100,7 @@ fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result
         {
             // CASA accepts a string vector at parameter validation. A default
             // apply saves the original flags before calling .upper() on it.
-            if action == "apply"
-                && task.required_text("mode")? != "summary"
-                && task.flag("flagbackup")?
-            {
-                let ms = MeasurementSet::open(task.path("vis")?)
-                    .map_err(|error| TaskFailure::execution(error.to_string()))?;
-                save_next_flag_backup(&ms, "flagdata")
-                    .map_err(|error| TaskFailure::execution(error.to_string()))?;
-            }
+            backup_before_failed_apply(task, action)?;
             Err(TaskFailure::execution("'list' object has no attribute 'upper'").at("correlation"))
         }
         _ => Err(
@@ -108,6 +108,16 @@ fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result
                 .at("correlation"),
         ),
     }
+}
+
+fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
+    if action == "apply" && task.required_text("mode")? != "summary" && task.flag("flagbackup")? {
+        let ms = MeasurementSet::open(task.path("vis")?)
+            .map_err(|error| TaskFailure::execution(error.to_string()))?;
+        save_next_flag_backup(&ms, "flagdata")
+            .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    }
+    Ok(())
 }
 
 /// The resolved run as a [`FlagDataRequest`]; the parameters the surface
@@ -265,16 +275,23 @@ fn mode(text: &str) -> Result<(FlagDataMode, FlagDataAction), TaskFailure> {
     }
 }
 
-/// CASA's `datacolumn`, which CASA reads in any case: casa-rs flags on
-/// `DATA` and `CORRECTED` (also spelled `CORRECTED_DATA`); CASA's other
-/// columns are #978.
+/// The visibility or weight source for the active flagging agent.
 fn data_column(text: &str, mode: FlagDataMode) -> Result<FlagDataColumn, TaskFailure> {
     match text.to_ascii_uppercase().as_str() {
         "DATA" => Ok(FlagDataColumn::Data),
         "CORRECTED" | "CORRECTED_DATA" => Ok(FlagDataColumn::CorrectedData),
         "FLOAT_DATA" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::FloatData),
+        "MODEL" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::ModelData),
+        "RESIDUAL" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::Residual),
+        "RESIDUAL_DATA" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::ResidualData),
+        "WEIGHT" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::Weight),
+        "WEIGHT_SPECTRUM" if mode == FlagDataMode::Clip => Ok(FlagDataColumn::WeightSpectrum),
         "MODEL" | "RESIDUAL" | "RESIDUAL_DATA" | "FLOAT_DATA" | "WEIGHT_SPECTRUM" | "WEIGHT"
         | "FPARAM" | "CPARAM" | "PARAMERR" | "SNR" => Err(not_yet("datacolumn", text)),
+        _ if mode == FlagDataMode::Clip => Err(TaskFailure::validation(
+            "Failed to parse parameters for mode clip",
+        )
+        .at("datacolumn")),
         _ => Err(unknown("datacolumn", text, "'DATA' or 'CORRECTED'")),
     }
 }

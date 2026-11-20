@@ -31,9 +31,9 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::{
-    MaskReplacementOptions, MaskReplacementOutcome, SubimageOptions, SubimagePlan, SubimageRegion,
-    ensure_outfile_does_not_alias_input, put_image_region, replace_masked_complex_pixels,
-    replace_masked_real_pixels,
+    ImagePixelSelection, MaskReplacementOptions, MaskReplacementOutcome, SubimageOptions,
+    SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input, put_image_region,
+    replace_masked_complex_pixels, replace_masked_real_pixels,
 };
 mod list_log;
 mod planes;
@@ -58,6 +58,7 @@ pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
 pub use self::lel_mask::{
     ImageToolExpressionInputs, compile_image_tool_expression, evaluate_image_tool_mask,
+    evaluate_pixel_expression,
 };
 pub use crate::expr_parser::ImageToolPixelExpression;
 mod lel_pixels;
