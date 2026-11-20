@@ -61,6 +61,7 @@
 
 pub mod analysis;
 pub mod beam;
+pub mod concatenate;
 mod casa_return;
 pub mod convolve2d;
 pub mod error;
