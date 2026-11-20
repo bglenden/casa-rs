@@ -6,14 +6,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::CString;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, FitsValue,
     fits::try_to_fits_header,
 };
-use casa_types::{ArrayD, quanta::time::MvTime};
+use casa_types::{ArrayD, RecordValue, quanta::time::MvTime};
 use fitsio::{
     FitsFile,
     hdu::FitsHdu,
@@ -23,10 +22,19 @@ use fitsio::{
 use ndarray::IxDyn;
 
 use super::{FitsExportSummary, SPEED_OF_LIGHT_M_S, import_fits_for_reading};
-use crate::image::image_history_entries;
-use crate::{AnyPagedImage, ImageError, ImageInterface, ImagePixel, PagedImage};
+use crate::image::{ImageHistoryEntry, image_history_entries};
+use crate::{AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage};
 
+mod publication;
+mod tool_export;
 mod tool_header;
+
+use publication::StagedFitsFile;
+use tool_export::Wavelength;
+
+pub use tool_export::{
+    ImageFitsExportOptions, export_attached_fits, validate_attached_fits_target,
+};
 
 pub use tool_header::{ImageFitsHeader, image_fits_header, image_fits_header_with_beams};
 
@@ -70,51 +78,6 @@ impl ExportFitsPixel for f64 {
 
     fn fits_blank() -> Self {
         Self::NAN
-    }
-}
-
-static STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
-
-/// RAII staging guard ensuring FITS output is written cleanly in the destination directory
-/// without CFITSIO `!`-clobber or extended-filename parsing, and replaces any existing target
-/// atomically only after all header, history, pixel, and `BEAMS` writes succeed.
-struct StagedFitsFile {
-    path: PathBuf,
-    committed: bool,
-}
-
-impl StagedFitsFile {
-    fn new_sibling(target: &Path) -> Result<Self, ImageError> {
-        let parent = match target.parent() {
-            Some(p) if !p.as_os_str().is_empty() => p,
-            _ => Path::new("."),
-        };
-        let canonical_parent =
-            fs::canonicalize(parent).map_err(|error| ImageError::Io(error.to_string()))?;
-        let seq = STAGING_SEQ.fetch_add(1, Ordering::Relaxed);
-        let staging_name = format!(".exportfits.{}.{seq}.tmp.fits", std::process::id());
-        Ok(Self {
-            path: canonical_parent.join(staging_name),
-            committed: false,
-        })
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn persist_to(mut self, target: &Path) -> Result<(), ImageError> {
-        fs::rename(&self.path, target).map_err(|error| ImageError::Io(error.to_string()))?;
-        self.committed = true;
-        Ok(())
-    }
-}
-
-impl Drop for StagedFitsFile {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = fs::remove_file(&self.path);
-        }
     }
 }
 
@@ -170,7 +133,6 @@ fn validate_output_target(request: &super::ExportFitsRequest) -> Result<(), Imag
 /// Entry point for CASA `exportfits`.
 pub(super) fn run(request: &super::ExportFitsRequest) -> Result<FitsExportSummary, ImageError> {
     validate_output_target(request)?;
-    let _ = StagedFitsFile::new_sibling(&request.fitsimage)?;
 
     let imported = import_fits_for_reading(&request.imagename)?;
     let open_path = imported.as_ref().map_or_else(
@@ -179,52 +141,119 @@ pub(super) fn run(request: &super::ExportFitsRequest) -> Result<FitsExportSummar
     );
     let image = AnyPagedImage::open(open_path)?;
     match &image {
-        AnyPagedImage::Float32(image) => export_fits_typed(request, image),
-        AnyPagedImage::Float64(image) => export_fits_typed(request, image),
+        AnyPagedImage::Float32(image) => export_paged(request, image),
+        AnyPagedImage::Float64(image) => export_paged(request, image),
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
             ImageError::InvalidMetadata("exportfits supports only real-valued images".to_string()),
         ),
     }
 }
 
-fn export_fits_typed<T: ExportFitsPixel>(
+fn export_paged<T: ExportFitsPixel>(
     request: &super::ExportFitsRequest,
     image: &PagedImage<T>,
 ) -> Result<FitsExportSummary, ImageError> {
-    validate_output_target(request)?;
+    let history_entries = if request.history {
+        image_history_entries(&request.imagename)?
+    } else {
+        Vec::new()
+    };
+    let stored_bpa = if image
+        .image_info()?
+        .beam_set
+        .single_beam()
+        .is_some_and(|beam| !beam.is_null())
+    {
+        image
+            .stored_restoring_beam()?
+            .map(|stored| {
+                let wrapped = stored.wrapped_position_angle()?;
+                let degrees = casa_types::quanta::Unit::new("deg").expect("built-in degrees");
+                casa_types::quanta::casacore::get_conformant_value(&wrapped, &degrees)
+                    .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    export_fits_typed(
+        request,
+        image,
+        &history_entries,
+        stored_bpa,
+        FitsWriteOptions::default(),
+    )
+}
 
+#[derive(Default)]
+struct FitsWriteOptions<'a> {
+    deglast: bool,
+    wavelength: Option<Wavelength>,
+    tool_metadata: bool,
+    beam_record: Option<&'a RecordValue>,
+}
+
+fn export_fits_typed<T: ExportFitsPixel>(
+    request: &super::ExportFitsRequest,
+    image: &dyn ImageInterface<T>,
+    history_entries: &[ImageHistoryEntry],
+    stored_bpa: Option<f64>,
+    options: FitsWriteOptions<'_>,
+) -> Result<FitsExportSummary, ImageError> {
+    validate_output_target(request)?;
     let plan = ExportAxisPlan::build(
         image.coordinates(),
         image.shape(),
         request.dropdeg,
         request.dropstokes,
         request.stokeslast,
+        options.deglast,
+        options.tool_metadata,
     )?;
     let base_header = try_to_fits_header(image.coordinates(), image.shape())?;
-    let header_items = build_export_keywords(
+    let mut header_items = build_export_keywords(
         image.coordinates(),
         &base_header,
         &plan,
         request.velocity,
         request.optical,
+        options.wavelength,
     )?;
-
-    let history_entries = if request.history {
-        image_history_entries(&request.imagename)?
+    let mut info = image.image_info()?;
+    if let Some(record) = options.beam_record {
+        info.beam_set = ImageInfo::from_record(record)?.beam_set;
+    }
+    let extra_cards = if options.tool_metadata {
+        let coordinates = image.coordinates();
+        let output_axis = |axis| plan.old_to_new.get(axis - 1).copied().flatten();
+        header_items.extend(tool_header::projection_parameters(coordinates, output_axis));
+        let mut original_axis = 1;
+        for index in 0..coordinates.n_coordinates() {
+            let coordinate = coordinates.coordinate(index);
+            if let CoordinateModel::Stokes(stokes) = coordinate
+                && let Some(axis) = output_axis(original_axis)
+            {
+                for (key, value) in tool_header::stokes_axis_keywords(stokes, axis)? {
+                    if let Some((_, existing)) =
+                        header_items.iter_mut().find(|(name, _)| *name == key)
+                    {
+                        *existing = value;
+                    } else {
+                        header_items.push((key, value));
+                    }
+                }
+            }
+            original_axis += coordinate.n_pixel_axes();
+        }
+        tool_header::image_export_cards(image, &info, &header_items)?
     } else {
         Vec::new()
     };
-
-    let info = image.image_info()?;
-    let bpa_deg = if let Some(beam) = info.beam_set.single_beam()
-        && !beam.is_null()
-    {
-        Some(match image.stored_restoring_beam()? {
-            Some(stored) => {
-                let wrapped = stored.wrapped_position_angle()?;
-                let degrees = casa_types::quanta::Unit::new("deg").expect("built-in degrees");
-                casa_types::quanta::casacore::get_conformant_value(&wrapped, &degrees)
-                    .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?
+    let bpa_deg = if let Some(beam) = info.beam_set.single_beam().filter(|beam| !beam.is_null()) {
+        Some(match stored_bpa {
+            Some(angle) => angle,
+            None if options.tool_metadata => {
+                tool_header::wrapped_beam_position_angle(beam.position_angle_in("deg")?)
             }
             None => beam.position_angle_in("deg")?,
         })
@@ -251,14 +280,16 @@ fn export_fits_typed<T: ExportFitsPixel>(
         &fits_dimensions,
         &encoded,
         &header_items,
+        &extra_cards,
         image.units(),
         &info,
         bpa_deg,
-        request.history.then_some(history_entries.as_slice()),
+        options.tool_metadata,
+        request.history.then_some(history_entries),
     )?;
 
     validate_output_target(request)?;
-    staged.persist_to(&request.fitsimage)?;
+    staged.persist_to(&request.fitsimage, request.overwrite)?;
 
     Ok(FitsExportSummary {
         imagename: request.imagename.display().to_string(),
@@ -274,9 +305,11 @@ fn write_staged_fits<T: ExportFitsPixel>(
     fits_dimensions: &[usize],
     encoded: &PreparedPixels<T>,
     header_items: &[(String, FitsValue)],
+    extra_cards: &[String],
     units: &str,
     info: &crate::ImageInfo,
     bpa_deg: Option<f64>,
+    wrap_per_plane_pa: bool,
     history_entries: Option<&[crate::image::ImageHistoryEntry]>,
 ) -> Result<(), ImageError> {
     let description = ImageDescription {
@@ -348,6 +381,15 @@ fn write_staged_fits<T: ExportFitsPixel>(
         )?;
     }
 
+    for card in extra_cards {
+        let card = CString::new(card.as_str())
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+        let mut status = 0;
+        // SAFETY: the primary HDU is writable and the supplied card is NUL-terminated.
+        unsafe { fitsio::sys::ffprec(fits.as_raw(), card.as_ptr(), &mut status) };
+        fitsio::errors::check_status(status).map_err(|error| ImageError::Io(error.to_string()))?;
+    }
+
     if let Some(entries) = history_entries
         && !entries.is_empty()
     {
@@ -376,9 +418,13 @@ fn write_staged_fits<T: ExportFitsPixel>(
     }
 
     if info.beam_set.is_multi() {
-        write_beams_extension(&mut fits, &info.beam_set)?;
+        write_beams_extension(&mut fits, &info.beam_set, wrap_per_plane_pa)?;
     }
-    Ok(())
+    let mut status = 0;
+    // SAFETY: Flush the writable handle and report any buffered I/O error before publication.
+    unsafe { fitsio::sys::ffflus(fits.as_raw(), &mut status) };
+    fitsio::errors::check_status(status)
+        .map_err(|error| ImageError::Io(format!("finalizing staged FITS output: {error}")))
 }
 
 struct ExportAxisPlan {
@@ -401,6 +447,8 @@ impl ExportAxisPlan {
         dropdeg: bool,
         dropstokes: bool,
         stokeslast: bool,
+        deglast: bool,
+        tool_order: bool,
     ) -> Result<Self, ImageError> {
         let ndim = image_shape.len();
         let mut orig_types = Vec::with_capacity(ndim);
@@ -425,6 +473,7 @@ impl ExportAxisPlan {
                 if dropstokes
                     && orig_types[axis] == CoordinateType::Stokes
                     && image_shape[axis] == 1
+                    && (!tool_order || coordinates.n_coordinates() > 1)
                 {
                     return false;
                 }
@@ -438,18 +487,25 @@ impl ExportAxisPlan {
             ));
         }
 
-        if stokeslast {
-            let mut non_stokes = Vec::with_capacity(kept.len());
-            let mut stokes = Vec::new();
-            for axis in kept {
-                if orig_types[axis] == CoordinateType::Stokes {
-                    stokes.push(axis);
-                } else {
-                    non_stokes.push(axis);
-                }
+        let non_stokes_end = if stokeslast && tool_order {
+            if let Some(index) = kept
+                .iter()
+                .position(|&axis| orig_types[axis] == CoordinateType::Stokes)
+            {
+                let last = kept.len() - 1;
+                kept.swap(index, last);
+                last
+            } else {
+                kept.len()
             }
-            non_stokes.extend(stokes);
-            kept = non_stokes;
+        } else {
+            if stokeslast {
+                kept.sort_by_key(|&axis| orig_types[axis] == CoordinateType::Stokes);
+            }
+            kept.len()
+        };
+        if deglast {
+            kept[..non_stokes_end].sort_by_key(|&axis| image_shape[axis] == 1);
         }
 
         let mut old_to_new = vec![None; ndim];
@@ -671,18 +727,12 @@ fn collect_reordered_fortran<A: Copy>(
         return Ok(out);
     }
 
-    // General fallback for non-Fortran ndarray layouts.
-    let mut orig_idx = vec![0usize; orig_shape.len()];
-    for _ in 0..total {
-        out.push(arr[IxDyn(&orig_idx)]);
-        for &orig_ax in kept_orig_axes {
-            orig_idx[orig_ax] += 1;
-            if orig_idx[orig_ax] < orig_shape[orig_ax] {
-                break;
-            }
-            orig_idx[orig_ax] = 0;
-        }
-    }
+    // ndarray iterates a view in row-major order. Reverse the requested
+    // axes to walk the FITS order without reconstructing an index per pixel.
+    // Omitted axes are singletons and do not change the iteration order.
+    let mut axes: Vec<_> = kept_orig_axes.iter().copied().rev().collect();
+    axes.extend((0..orig_shape.len()).filter(|axis| !kept_orig_axes.contains(axis)));
+    out.extend(arr.view().permuted_axes(IxDyn(&axes)).iter().copied());
     Ok(out)
 }
 
@@ -873,12 +923,15 @@ fn build_export_keywords(
     plan: &ExportAxisPlan,
     velocity: bool,
     optical: bool,
+    wavelength: Option<Wavelength>,
 ) -> Result<Vec<(String, FitsValue)>, ImageError> {
     let has_spectral = plan.output_spectral_axis.is_some();
     let has_direction = plan.kept_types.contains(&CoordinateType::Direction);
     let spec_info = plan
         .output_spectral_axis
-        .map(|spec_axis| spectral_export_overrides(coordinates, spec_axis, velocity, optical))
+        .map(|spec_axis| {
+            spectral_export_overrides(coordinates, spec_axis, velocity, optical, wavelength)
+        })
         .transpose()?;
     let (has_restfreq, spectral_overrides) = match spec_info {
         Some((rest_ok, map)) => (rest_ok, map),
@@ -990,14 +1043,26 @@ fn spectral_export_overrides(
     output_axis: usize,
     velocity: bool,
     optical: bool,
+    wavelength: Option<Wavelength>,
 ) -> Result<(bool, BTreeMap<String, FitsValue>), ImageError> {
     for ci in 0..coordinates.n_coordinates() {
         if let CoordinateModel::Spectral(spectral) = coordinates.coordinate(ci) {
             let rest_frequency = spectral.rest_frequency_hz()?;
-            if rest_frequency <= 0.0 {
+            if wavelength.is_none() && rest_frequency <= 0.0 {
                 return Ok((false, BTreeMap::new()));
             }
             let (crpix_0, crval_hz, cdelt_hz) = spectral.fits_linearized_axis_hz()?;
+            if let Some(wavelength) = wavelength {
+                if velocity {
+                    return Err(ImageError::InvalidMetadata(
+                        "Cannot export spectral axis for velocity AND wavelength. You have to choose one.".into(),
+                    ));
+                }
+                return Ok((
+                    rest_frequency > 0.0,
+                    wavelength.cards(output_axis, crval_hz, cdelt_hz)?,
+                ));
+            }
             let crpix_1 = crpix_0 + 1.0;
             let v_rad = |freq_hz: f64| SPEED_OF_LIGHT_M_S * (1.0 - freq_hz / rest_frequency);
             let v_opt = |freq_hz: f64| SPEED_OF_LIGHT_M_S * (rest_frequency / freq_hz - 1.0);
@@ -1242,6 +1307,7 @@ fn format_utc_history_timestamp(mjd_seconds: f64) -> String {
 fn write_beams_extension(
     fits: &mut FitsFile,
     beam_set: &crate::ImageBeamSet,
+    wrap_pa: bool,
 ) -> Result<(), ImageError> {
     let nchan = beam_set.nchan();
     let npol = beam_set.nstokes();
@@ -1294,7 +1360,13 @@ fn write_beams_extension(
             let beam = beam_set.beam(c, p);
             bmaj.push(beam.major_in("arcsec")? as f32);
             bmin.push(beam.minor_in("arcsec")? as f32);
-            bpa.push(beam.position_angle_in("deg")? as f32);
+            let angle = beam.position_angle_in("deg")?;
+            let angle = if wrap_pa {
+                tool_header::wrapped_beam_position_angle(angle)
+            } else {
+                angle
+            };
+            bpa.push(angle as f32);
             chan.push(c as i32);
             pol.push(p as i32);
         }
@@ -1343,12 +1415,20 @@ mod tests {
             372.0e9,
         ));
 
-        let plan =
-            ExportAxisPlan::build(&coordinates, &[10, 11, 1, 7], false, false, true).unwrap();
+        let plan = ExportAxisPlan::build(
+            &coordinates,
+            &[10, 11, 1, 7],
+            false,
+            false,
+            true,
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(plan.kept_orig_axes, vec![0, 1, 3, 2]);
         assert_eq!(plan.output_shape, vec![10, 11, 7, 1]);
         let base_header = try_to_fits_header(&coordinates, &[10, 11, 1, 7]).unwrap();
-        let keywords = build_export_keywords(&coordinates, &base_header, &plan, false, false)
+        let keywords = build_export_keywords(&coordinates, &base_header, &plan, false, false, None)
             .unwrap()
             .into_iter()
             .collect::<HashMap<_, _>>();

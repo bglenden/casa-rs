@@ -11,14 +11,16 @@ use std::sync::{Arc, Mutex};
 
 use casa_coordinates::CoordinateSystem;
 use casa_types::{ArrayD, Complex32, Complex64};
+use ndarray::{IxDyn, Slice};
 
+use crate::analysis::axes::StridedSection;
 use crate::analysis::mask_error_wording;
 use crate::expr_parser::{
     HashMapResolver, ImageToolPixelExpression, ReplacementPixels, compile_image_tool_pixels,
     evaluate_replacement, parse_image_tool_mask, parse_subimage_mask_expr, referenced_images,
 };
 use crate::fits_read::{FitsToolImport, SharedFitsSectionReader};
-use crate::image_expr::{ImageExprMeta, ImageExprValue};
+use crate::image_expr::{ImageExprMeta, ImageExprValue, bounded_read_cursor};
 use crate::image_expr_lel::broadcast_array;
 use crate::{
     AnyPagedImage, ImageError, ImageExprBuilder, ImageExpression, ImageInterface, ImagePixel,
@@ -260,6 +262,41 @@ pub(super) fn evaluate_mask(
     stretch: bool,
     window: (&[usize], &[usize]),
 ) -> Result<Option<ArrayD<bool>>, ImageError> {
+    evaluate_mask_section(
+        mask_expr,
+        target_shape,
+        target_coordinates,
+        stretch,
+        window,
+        None,
+    )
+}
+
+pub(super) fn evaluate_strided_mask(
+    mask_expr: Option<&str>,
+    target_shape: &[usize],
+    target_coordinates: &CoordinateSystem,
+    stretch: bool,
+    section: &StridedSection<'_>,
+) -> Result<Option<ArrayD<bool>>, ImageError> {
+    evaluate_mask_section(
+        mask_expr,
+        target_shape,
+        target_coordinates,
+        stretch,
+        (section.start, section.shape),
+        Some(section.stride),
+    )
+}
+
+fn evaluate_mask_section(
+    mask_expr: Option<&str>,
+    target_shape: &[usize],
+    target_coordinates: &CoordinateSystem,
+    stretch: bool,
+    window: (&[usize], &[usize]),
+    stride: Option<&[usize]>,
+) -> Result<Option<ArrayD<bool>>, ImageError> {
     let Some(raw) = mask_expr.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
@@ -273,6 +310,7 @@ pub(super) fn evaluate_mask(
         target_coordinates,
         stretch,
         window,
+        stride,
         &opened,
     )
 }
@@ -305,12 +343,13 @@ fn evaluate(
     target_coordinates: &CoordinateSystem,
     stretch: bool,
     window: (&[usize], &[usize]),
+    stride: Option<&[usize]>,
     opened: &[(String, Operand)],
 ) -> Result<Option<ArrayD<bool>>, ImageError> {
     let (real, complex) = operand_resolvers(opened);
     let parsed = parse_subimage_mask_expr(expr, &real, &complex).map_err(mask_parse_error)?;
     let mask_shape = parsed.shape();
-    if mask_shape != target_shape && !mask_shape.is_empty() {
+    let mapped_axes = if mask_shape != target_shape && !mask_shape.is_empty() {
         if !stretch {
             return Err(ImageError::CasaSelection(format!(
                 "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) \
@@ -318,33 +357,66 @@ fn evaluate(
                  so the mask cannot be applied to the (sub)image"
             )));
         }
-        let source = opened
+        opened
             .iter()
             .map(|(_, image)| image.geometry())
-            .find(|(shape, _)| *shape == mask_shape);
-        if let Some((_, coordinates)) = source {
-            let axes = stretch_axes(coordinates, target_coordinates, mask_shape, target_shape)?;
-            if axes.iter().copied().ne(0..axes.len()) {
-                let mut start = Vec::with_capacity(axes.len());
-                let mut shape = Vec::with_capacity(axes.len());
-                for (i, &axis) in axes.iter().enumerate() {
-                    let single = mask_shape[i] == 1;
-                    start.push(if single { 0 } else { window.0[axis] });
-                    shape.push(if single { 1 } else { window.1[axis] });
-                }
-                let mut data = parsed.get_slice(&start, &shape)?;
-                for axis in 0..target_shape.len() {
-                    if !axes.contains(&axis) {
-                        data = data.insert_axis(ndarray::Axis(axis));
-                    }
-                }
-                return broadcast_array(data, window.1).map(Some);
+            .find(|(shape, _)| *shape == mask_shape)
+            .map(|(_, coordinates)| {
+                stretch_axes(coordinates, target_coordinates, mask_shape, target_shape)
+            })
+            .transpose()?
+            .filter(|axes| axes.iter().copied().ne(0..axes.len()))
+    } else {
+        None
+    };
+
+    let evaluate_window =
+        |origin: &[usize], extent: &[usize]| -> Result<ArrayD<bool>, ImageError> {
+            let Some(axes) = &mapped_axes else {
+                return parsed.eval_window_for_shape(origin, extent, target_shape);
+            };
+            let mut start = Vec::with_capacity(axes.len());
+            let mut shape = Vec::with_capacity(axes.len());
+            for (i, &axis) in axes.iter().enumerate() {
+                let single = mask_shape[i] == 1;
+                start.push(if single { 0 } else { origin[axis] });
+                shape.push(if single { 1 } else { extent[axis] });
             }
-        }
+            let mut data = parsed.get_slice(&start, &shape)?;
+            for axis in 0..target_shape.len() {
+                if !axes.contains(&axis) {
+                    data = data.insert_axis(ndarray::Axis(axis));
+                }
+            }
+            broadcast_array(data, extent)
+        };
+
+    let Some(stride) = stride else {
+        return evaluate_window(window.0, window.1).map(Some);
+    };
+    let section = StridedSection {
+        start: window.0,
+        shape: window.1,
+        stride,
+    };
+    let dense_cursor = bounded_read_cursor(section.dense_shape(section.shape))?;
+    let mut mask = ArrayD::from_elem(IxDyn(section.shape), true);
+    for cursor in section.cursors(dense_cursor) {
+        let cursor = cursor?;
+        let extent = section.dense_shape(&cursor.shape);
+        let dense = evaluate_window(&section.source_start(&cursor.position), &extent)?;
+        let selected = dense.slice_each_axis(|axis| {
+            let index = axis.axis.index();
+            Slice::new(0, None, stride[index].min(extent[index]) as isize)
+        });
+        mask.slice_each_axis_mut(|axis| {
+            let index = axis.axis.index();
+            let start = cursor.position[index];
+            Slice::from(start..start + cursor.shape[index])
+        })
+        .assign(&selected);
     }
-    parsed
-        .eval_window_for_shape(window.0, window.1, target_shape)
-        .map(Some)
+    Ok(Some(mask))
 }
 
 fn stretch_axes(

@@ -7836,3 +7836,32 @@ after the original cache is removed from its path. Both readers refuse
 the incomplete pinned recipe before subtracting a visibility model.
 [`imager_legacy_pbw_oracle.py`](../tools/casa-compat/imager_legacy_pbw_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## FITS export can change axis lengths or abort while removing axes
+
+With CASA 6.7.6.14, export a float image of shape `[3, 4, 2, 1]` with a
+two-plane Stokes axis and one spectral channel using `image.tofits` with
+`deglast=True` and `stokeslast=True`. The output declares two spectral
+channels and two Stokes planes even though the source has only 24 pixels.
+The degenerate-axis pass uses the input extents after the Stokes pass has
+already changed their order. casa-rs writes `[3, 4, 1, 2]` and preserves
+all pixel values and their coordinates.
+
+CASA also raises `Unknown error copying image to FITS file` when moving a
+leading singleton axis in a linear image of shape `[1, 4, 2]` with
+`deglast=True`. casa-rs writes `[4, 2, 1]` with the data in the matching
+axis order, readable in CASA.
+
+On the pinned Linux build, `dropdeg=True` on a `[1, 1, 1, 1]` float image
+can terminate Python with SIGFPE. casa-rs raises `RuntimeError` because no
+image axes would remain. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Image region collapse can select the first pixel or abort
+
+With a 5×4×2 image whose coordinate is linear, CASA 6.7.6.14
+`image.getregion(axes=[0])` can return shape `(1, 1, 2)` with the first
+two input pixels. With the standard coordinates and double-complex
+pixels, the same call can terminate the process.
+
+casa-rs averages valid pixels over the requested axes and retains all
+other axes, for every supported image pixel type (#1627).

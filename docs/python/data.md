@@ -118,6 +118,10 @@ masks using `mask("image.im:maskname")` where CASA accepts that source type.
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
+Use `ia.tofits("example.fits")` to write FITS from an attached float image.
+It accepts region and mask selection, scaled integer pixels with `bitpix=16`,
+spectral velocity or wavelength axes, and export axis ordering controls.
+Pass `history=False` to omit the image log from the output.
 
 For a native image, `ia.haslock()` reports its read and write locks in that
 order. Use `ia.lock(writelock=True, nattempts=1)` to try for a write lock
@@ -147,6 +151,10 @@ with its coordinates, active pixel mask, metadata and history. Use
 An absolute CASA `LCSlicer` region selects a pixel box and its stride. The
 copy retains the selected frequencies and restoring beams. Additional region
 forms are tracked in #1625.
+
+Use `ia.getregion(region=...)` to read that same selection. Pass
+`getmask=True` to read validity, `mask` to apply a lattice expression,
+or `axes` to average the valid pixels along selected axes.
 
 The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).

@@ -59,6 +59,7 @@ pub(super) fn decode(
         shapes: Vec::new(),
         saved_bounds: Some((region.start, shape)),
         saved_mask: Some(SavedRegionMask::Cropped(mask)),
+        stride: None,
     })
 }
 

@@ -397,21 +397,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (region = None, axes = None, mask = None, list = None, dropdeg = None, getmask = None, stretch = None), text_signature = "($self, region={}, axes=[-1], mask='', list=False, dropdeg=False, getmask=False, stretch=False)")]
-    fn getregion(
-        &self,
-        region: Option<&Bound<'_, PyAny>>,
-        axes: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        getmask: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getregion")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (x, y, axes = None, coord = None, npts = None, method = None), text_signature = "($self, x, y, axes=[0, 1], coord=[-1], npts=0, method='linear')")]
     fn getslice(
         &self,
@@ -699,31 +684,6 @@ impl PyImageTool {
         niter: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("statistics")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, velocity = None, optical = None, bitpix = None, minpix = None, maxpix = None, region = None, mask = None, overwrite = None, dropdeg = None, deglast = None, dropstokes = None, stokeslast = None, wavelength = None, airwavelength = None, stretch = None, history = None), text_signature = "($self, outfile='', velocity=False, optical=True, bitpix=-32, minpix=1.0, maxpix=-1.0, region={}, mask='', overwrite=False, dropdeg=False, deglast=False, dropstokes=False, stokeslast=True, wavelength=False, airwavelength=False, stretch=False, history=True)")]
-    fn tofits(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        velocity: Option<&Bound<'_, PyAny>>,
-        optical: Option<&Bound<'_, PyAny>>,
-        bitpix: Option<&Bound<'_, PyAny>>,
-        minpix: Option<&Bound<'_, PyAny>>,
-        maxpix: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        deglast: Option<&Bound<'_, PyAny>>,
-        dropstokes: Option<&Bound<'_, PyAny>>,
-        stokeslast: Option<&Bound<'_, PyAny>>,
-        wavelength: Option<&Bound<'_, PyAny>>,
-        airwavelength: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        history: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("tofits")
     }
 
     /// Not yet implemented in casa-rs.
