@@ -5,6 +5,7 @@
 
 mod add_axes;
 mod attachment;
+mod beam_deconvolution;
 mod beam_edit;
 mod beam_rotate;
 mod beam_view;
@@ -38,6 +39,7 @@ mod records;
 mod region_read;
 mod replace_masked;
 mod serialization;
+mod statistics;
 mod stubs;
 mod subimage;
 mod summary;
