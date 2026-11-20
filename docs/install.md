@@ -111,7 +111,7 @@ export CASARS_SUITE_ROOT="$HOME/.local/opt/casa-rs/<version>"
 To run one task from another file, set its override variable, such as
 `CASARS_CALIBRATE_BIN` or `CASARS_IMAGER_BIN`. A wheel installed outside a
 suite, such as one from PyPI, needs `CASARS_SUITE_ROOT` (or the task's
-override) to run tasks; its in-process tools (`casars.data.Image`, `casars.tools`) need no executables.
+override) to run tasks; its in-process `casars.tools` classes need no executables.
 
 The Python executable lookup and protocol-compatibility rules are documented
 in [Python Compatibility](python/versioning.md).

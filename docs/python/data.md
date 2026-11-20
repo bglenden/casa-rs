@@ -1,13 +1,11 @@
 # Data API
 
-`casars.data` exposes persistent file-backed objects only.
+Use `casars.tools` to work with image and table files in process.
+`casars.data` provides data helpers and publishes the native object protocol.
 
-The module also publishes its canonical object-surface contract directly from
-Rust:
-
-- `protocol_info()` returns the stable object protocol descriptor
-- `schema_bundle()` returns the canonical schema bundle for `Image`
-  and the `casars.tools` classes
+- `protocol_info()` returns the stable object protocol descriptor.
+- `schema_bundle()` returns the canonical schema bundle for the
+  `casars.tools` classes.
 
 ## Images
 
@@ -151,27 +149,33 @@ references, and unit-stride boxes and polygon records.
 An existing entry inside the input image cannot be replaced, protecting
 the source's history and mask tables.
 
-### Access an existing image through the Data API
+### Migrate an existing image reader or writer
 
-`Image.open(path, writable=False)` provides the v1 slice and metadata API
-through `casars.tools.image`. It supports existing native CASA images.
+The former `casars.data.Image` and `casars.Image` exports have been retired.
+Create an `image()` tool, call `open(path)`, and call `done()` when finished.
 
-- metadata access through `shape`, `pixel_type`, `units`, `image_info`, `misc_info`, `mask_names`, and `default_mask_name`
-- pixel I/O through `get_slice`, `put_slice`, `get_plane`, and `get_mask_slice`
+| Previous operation | CASA image tool |
+| --- | --- |
+| `shape`, `pixel_type`, `units` | `shape()`, `pixeltype()`, `brightnessunit()` |
+| `coordinate_system`, `misc_info` | `coordsys().torecord()`, `miscinfo()` |
+| `image_info` | `torecord()["imageinfo"]`, or `restoringbeam()` for beam quantities |
+| `mask_names`, `default_mask_name` | `maskhandler("get")`, `maskhandler("default")` |
+| `get_slice(start, shape, stride=...)` | `getchunk(blc=start, trc=last, inc=stride)` |
+| `get_mask_slice(...)` | `getchunk(..., getmask=True)` |
+| `put_slice(pixels, start)` | `putchunk(pixels, blc=start)` |
 
-Read operations return NumPy arrays for numeric payloads. Writes accept NumPy-compatible inputs and materialize them into the image as owned copies.
+`blc` and `trc` are inclusive zero-based pixel coordinates.
+For each axis, calculate `last = start + (shape - 1) * stride`.
+To read a plane, give that axis the same start and end, and squeeze that
+axis from the resulting array. Use `casars.imexplore.data` for a plane with
+its native NumPy dtype, mask and WCS.
 
-### V1 write policy
-
-Image writes are part of the supported v1 API, but only in a narrow form:
-
-- supported: pixel-slice updates on existing persistent images via `put_slice`
-- supported: reads from the persisted default mask via `get_mask_slice`
-- not part of v1: image creation from Python
-- not part of v1: coordinate-system authoring or editing from Python
-- not part of v1: general metadata authoring beyond the persisted fields exposed for read access
-
-In other words, `casars.data.Image` is a stable read/write pixel-access surface for existing images, not a full Python image-construction or image-metadata editing API.
+Like CASA, `getchunk` returns real pixels as `float64` and complex pixels as
+`complex128`. Use the storage type from `pixeltype()` if your caller needs
+the original width. An unmasked chunk returns an all-true mask. Use
+`maskhandler("default")` if your caller distinguishes a missing default mask.
+CASA returns `[""]` for a missing default mask and `["T"]` when listing an
+unmasked image.
 
 ### Stitch independently CLEANed pointings
 

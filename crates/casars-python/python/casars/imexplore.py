@@ -9,7 +9,7 @@ from typing import Any, TypeAlias
 import numpy as np
 import numpy.typing as npt
 
-from .data import Image
+from ._native_image import NativeImageView
 
 StrPath: TypeAlias = str | PathLike[str]
 
@@ -50,7 +50,7 @@ def data(
 ) -> ImagePlaneData:
     """Read one image plane directly from casa-rs without a rendered image."""
 
-    image = Image.open(image_path)
+    image = NativeImageView.open(image_path)
     shape = image.shape
     if axis < 0 or axis >= len(shape):
         raise IndexError(f"axis {axis} is outside image rank {len(shape)}")
