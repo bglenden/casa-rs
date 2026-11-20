@@ -1,5 +1,6 @@
 """Public image.adddegaxes behavior and CASA 6.7.6.14 image interchange."""
 
+import os
 import select
 import subprocess
 import sys
@@ -17,6 +18,44 @@ def casa():
     module = pytest.importorskip("casatools")
     assert module.version_string().replace("-", ".") == "6.7.6.14"
     return module
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_adddegaxes_copies_beams_from_its_open_view(casa, tmp_path):
+    for backend in (casa, tools):
+        source = str(tmp_path / f"{backend.__name__}.im")
+        writer, reader = backend.image(), backend.image()
+        assert writer.fromshape(source, [3, 4])
+        assert writer.setrestoringbeam("4arcsec", "2arcsec", "12deg")
+        assert reader.open(source)
+        expected = reader.restoringbeam()
+        assert writer.setrestoringbeam("8arcsec", "4arcsec", "27deg")
+        assert reader.unlock()
+        result = reader.adddegaxes(spectral=True)
+        assert result.restoringbeam() == expected
+        np.testing.assert_array_equal(reader.haslock(), [True, False])
+        assert result.done() and reader.done() and writer.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_adddegaxes_reads_a_lazy_operand(casa, tmp_path):
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    for backend in (casa, tools):
+        path = str(tmp_path / f"{backend.__name__}.im")
+        source = backend.image()
+        assert source.fromarray(path, pixels)
+        assert source.calcmask(f'"{path}" > 4', name="valid")
+        assert source.done()
+        lazy = source.imagecalc(pixels=f'"{path}" + 1')
+        assert lazy.unlock()
+        if backend is tools:
+            with pytest.raises(RuntimeError, match="matches or contains input image"):
+                lazy.adddegaxes(path, spectral=True, overwrite=True)
+        result = lazy.adddegaxes(spectral=True)
+        np.testing.assert_array_equal(lazy.haslock(), [True, False])
+        np.testing.assert_array_equal(result.getchunk(), pixels[..., None] + 1)
+        assert result.getchunk(getmask=True).all()
+        assert result.done() and lazy.done()
 
 
 @pytest.mark.parametrize(

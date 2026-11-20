@@ -268,17 +268,23 @@ impl PyImageTool {
                 )));
             }
             publish_image_checked(outfile, overwrite, lock_replacement, |path| {
-                let original = attachment.lock();
-                if !outfile.is_empty()
-                    && let Some(source) = original.path()
-                {
-                    ensure_outfile_does_not_alias_input(Path::new(outfile), source)
-                        .map_err(raised)?;
+                let mut original = attachment.lock();
+                if !outfile.is_empty() {
+                    for source in original
+                        .path()
+                        .into_iter()
+                        .chain(attachment.operand_paths().iter().map(PathBuf::as_path))
+                    {
+                        ensure_outfile_does_not_alias_input(Path::new(outfile), source)
+                            .map_err(raised)?;
+                    }
                 }
+                attachment.require_pixel_read_lock(&mut original)?;
                 let mut record = original.coordinate_record();
                 let input_shape = original.shape();
                 let coordinates = request.coordinates(&mut record, input_shape.len())?;
-                let image_info = image_info_record(&original).cloned();
+                let mut image_info = image_info_record(&original).cloned().unwrap_or_default();
+                attachment.beam_view().apply_to(&mut image_info);
                 let mut shape = input_shape.to_vec();
                 shape.resize(coordinates.n_pixel_axes(), 1);
                 let target = if outfile.is_empty() {
@@ -328,9 +334,9 @@ impl PyImageTool {
                     )?),
                 };
                 copy.set_coordinate_record(record)?;
-                if let Some(info) = image_info {
+                if !image_info.is_empty() {
                     with_pixels!(&mut copy, storage => with_storage!(storage, image =>
-                        image.set_image_info_record(info)
+                        image.set_image_info_record(image_info)
                     ))
                     .map_err(raised)?;
                 }
