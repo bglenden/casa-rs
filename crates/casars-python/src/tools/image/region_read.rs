@@ -26,7 +26,11 @@ fn is_boolean_sequence(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(false)
 }
 
-fn region_argument(py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<RecordValue> {
+pub(super) fn region_argument(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+    method: &'static str,
+) -> PyResult<RecordValue> {
     let Some(value) = value else {
         return Ok(RecordValue::default());
     };
@@ -37,7 +41,7 @@ fn region_argument(py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult
         return if text.to_str()?.is_empty() {
             Ok(RecordValue::default())
         } else {
-            Err(stub("getregion").unwrap_err())
+            Err(stub(method).unwrap_err())
         };
     }
     if is_boolean_sequence(value)? {
@@ -81,7 +85,7 @@ impl PyImageTool {
         getmask: bool,
         stretch: bool,
     ) -> PyResult<Py<PyAny>> {
-        let region = region_argument(py, region);
+        let region = region_argument(py, region, "getregion");
         let mask = mask_argument(mask);
         let (value, log) = py.detach(|| {
             let state = self.state();

@@ -199,6 +199,8 @@ impl Default for ImagerTransformOptions {
 /// Configuration accepted by the legacy nPBWProjectFT predictor.
 #[derive(Clone, Debug)]
 pub struct ImagerLegacyPbWOptions {
+    /// Use the legacy PBMosaicFT prediction variant.
+    pub mosaic: bool,
     /// The convolution cache written by the CASA imager or EP solver.
     pub cache_directory: PathBuf,
     /// Requested W-plane count.

@@ -72,6 +72,10 @@ Use `ia.open("example.im")` to reopen the product. Use
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.beamforconvolvedsize(source, convolved)` to calculate the Gaussian
+beam needed to reach a target resolution. Use `ia.deconvolvefrombeam(source,
+beam)` to recover a fitted source size and see whether the source is resolved.
+Pass the major axis, minor axis and position angle as angular quantity strings.
 Use `ia.rotatebeam("15deg")` to rotate all stored restoring beams. On a
 directly opened FITS image, the rotation applies only to the open tool.
 Each open tool keeps its own view of the restoring beams. Reopen a native
@@ -161,6 +165,14 @@ Use `ia.getregion(region=...)` to read that same selection. Pass
 `getmask=True` to read validity, `mask` to apply a lattice expression,
 or `axes` to average the valid pixels along selected axes.
 
+`ia.statistics()` returns statistics over a real native CASA or
+temporary image. Pass `axes` for per-plane results, `region` or `mask` to
+select pixels, and `robust=True` for the median, quartiles, and median absolute
+deviation. The tool supports classical, biweight, Chauvenet, fit-to-half and
+hinges-and-fences statistics. FITS statistics, disk storage, logfile output,
+and flux for per-plane beams are tracked in
+[#1627](https://github.com/bglenden/casa-rs/issues/1627).
+
 The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
@@ -183,6 +195,13 @@ to keep in `keepaxes`. Region inputs include CRTF text and files, saved region
 references, and unit-stride boxes and polygon records.
 An existing entry inside the input image cannot be replaced, protecting
 the source's history and mask tables.
+
+Use `ia.adddegaxes(stokes="I", spectral=True)` to make a copy with new
+singleton axes. Pass `outfile` to save the copy as a native image. The copy
+preserves the source pixels, existing coordinates, named masks and history.
+Set `silent=True` to skip requested coordinate types that already exist.
+Sources with image attribute groups are tracked in
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
 ### Migrate an existing image reader or writer
 
