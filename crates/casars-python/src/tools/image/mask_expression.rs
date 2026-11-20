@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
-use casa_images::analysis::evaluate_image_tool_mask;
+use casa_images::analysis::{evaluate_image_tool_mask, open_fits_expression};
 use casa_images::{
     AnyPagedImage, ImageInterface,
     expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr, referenced_images},
@@ -164,15 +164,8 @@ pub(super) fn evaluate_mask(expression: &str, target: MaskTarget<'_>) -> PyResul
     for name in referenced_images(expression).map_err(raised)? {
         let path = Path::new(&name);
         if path.is_file() {
-            let ImageHandle::Float(Storage::Temp {
-                image,
-                fits: Some(fits),
-                ..
-            }) = ImageHandle::open(path).map_err(|_| unknown(&name))?
-            else {
-                return Err(unknown(&name));
-            };
-            fits_images.push((name, image, fits));
+            let image = open_fits_expression::<f32>(path, true).map_err(raised)?;
+            fits_images.push((name, image));
             continue;
         }
         #[cfg(unix)]
@@ -190,10 +183,6 @@ pub(super) fn evaluate_mask(expression: &str, target: MaskTarget<'_>) -> PyResul
         .iter()
         .all(|(_, image)| matches!(image, AnyPagedImage::Float32(_)))
     {
-        let views = fits_images
-            .iter()
-            .map(|(name, image, fits)| (name, fits.image_view(image)))
-            .collect::<Vec<_>>();
         let sources = images
             .iter()
             .filter_map(|(name, image)| match image {
@@ -203,9 +192,9 @@ pub(super) fn evaluate_mask(expression: &str, target: MaskTarget<'_>) -> PyResul
                 _ => None,
             })
             .chain(
-                views
+                fits_images
                     .iter()
-                    .map(|(name, view)| (name.to_string(), view as &dyn ImageInterface<f32>)),
+                    .map(|(name, image)| (name.clone(), image as &dyn ImageInterface<f32>)),
             )
             .collect();
         evaluate_typed(expression, sources, &target)

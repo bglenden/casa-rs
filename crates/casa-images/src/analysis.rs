@@ -60,7 +60,7 @@ pub use self::importfits::importfits;
 pub use self::imsubimage::ImageNoise;
 pub use self::lel_mask::{
     ImageToolExpressionInputs, compile_image_tool_expression, evaluate_image_tool_mask,
-    evaluate_pixel_expression,
+    evaluate_pixel_expression, open_fits_expression,
 };
 pub use crate::expr_parser::ImageToolPixelExpression;
 mod lel_pixels;

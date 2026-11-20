@@ -431,19 +431,15 @@ fn looks_like_four_ints(text: &str) -> bool {
 
 fn looks_like_inline_crtf(text: &str) -> bool {
     let lower = text.trim_start().to_ascii_lowercase();
-    [
-        "box",
-        "centerbox",
-        "rotbox",
-        "circle",
-        "ellipse",
-        "poly",
-        "#crtf",
-    ]
-    .iter()
-    .any(|kw| lower.starts_with(kw))
+    lower.starts_with("#crtf")
         || text.contains('\n')
-        || text.contains("[[")
+        || lower.split_once('[').is_some_and(|(shape, arguments)| {
+            let shape = shape.trim();
+            !shape.is_empty()
+                && shape.bytes().all(|byte| byte.is_ascii_alphabetic())
+                && arguments.contains(',')
+                && arguments.contains(']')
+        })
 }
 
 fn parse_single_box(

@@ -56,3 +56,35 @@ impl ImageRegionBounds {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+    use crate::fits_read::fits_section_image;
+    use crate::{PagedImage, TempImage, TempStoragePolicy};
+
+    #[test]
+    fn compound_geometry_does_not_allocate_cube_membership() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imsubimage");
+        let cube = PagedImage::<f32>::open(fixtures.join("cube.im")).unwrap();
+        let mask =
+            casa_tables::read_table_record_file(&fixtures.join("saved_compound_complement.rgn"))
+                .unwrap();
+        let metadata = TempImage::new(
+            cube.shape().to_vec(),
+            cube.coordinates().clone(),
+            TempStoragePolicy::Memory,
+        )
+        .unwrap();
+        let shape = [1024, 1024, 4, 1024];
+        let image = fits_section_image(&shape, &metadata, Path::new("logical.fits"), |_, _, _| {
+            panic!("bounding box read image pixels")
+        });
+        let bounds =
+            ImageRegionBounds::resolve(&image, Some(SubimageRegion::Record(&mask))).unwrap();
+        assert_eq!(bounds.lower, [0, 0, 0, 0]);
+        assert_eq!(bounds.sampled_shape, shape);
+    }
+}

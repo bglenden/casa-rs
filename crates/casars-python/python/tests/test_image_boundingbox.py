@@ -1,5 +1,8 @@
 """Pixel and world region bounds from the CASA 6.7.6.14 image tool."""
 
+from pathlib import Path
+from shutil import copytree
+
 import numpy as np
 import pytest
 
@@ -76,6 +79,36 @@ def test_compound_world_regions(casa):
     assert rust.done() and oracle.done()
 
 
+def test_reference_relative_polygon_as_record_and_file(casa, tmp_path):
+    fixtures = Path(__file__).resolve().parents[3] / "casa-images" / "tests" / "data" / "imsubimage"
+    table = tmp_path / "source.im"
+    copytree(fixtures / "cube.im", table)
+    region_file = str(fixtures / "saved_relative_polygon_ref.rgn")
+    record = casa.regionmanager().fromfiletorecord(region_file, verbose=False)
+    rust, oracle = tools.image(), casa.image()
+    for tool in (rust, oracle):
+        assert tool.open(str(table))
+    expected = oracle.boundingbox(region_file)
+    for tool in (rust, oracle):
+        _assert_value(tool.boundingbox(record), expected)
+        _assert_value(tool.boundingbox(region_file), expected)
+        assert tool.done()
+
+
+def test_galactic_fits_bounds_use_fixed_decimal_degrees(casa, tmp_path):
+    path = tmp_path / "galactic.fits"
+    path.write_bytes(
+        _hdu(True, [1, 2, 3, 4]).replace(b"RA---SIN", b"GLON-SIN").replace(b"DEC--SIN", b"GLAT-SIN")
+    )
+    rust, oracle = tools.image(), casa.image()
+    for tool in (rust, oracle):
+        assert tool.open(str(path))
+    bounds = rust.boundingbox()
+    _assert_value(bounds, oracle.boundingbox())
+    assert bounds["blcf"] == "5.000000deg, 6.000000deg"
+    assert rust.done() and oracle.done()
+
+
 def test_crtf_region_and_direct_fits_attachment(casa, tmp_path):
     path = tmp_path / "image.fits"
     content = _hdu(True, [1, -999, 3, 4])
@@ -99,11 +132,11 @@ def test_saved_region_strings(casa, tmp_path, monkeypatch, native_writer):
     rg = casa.regionmanager()
     selection = rg.box([1, 2, 0], [8, 9, 4], [3, 3, 3])
     assert rg.tofile("stride.rgn", selection)
-    assert rg.fromrecordtotable("source.im", "sample", selection) == "sample"
+    assert rg.fromrecordtotable("source.im", "box1", selection) == "box1"
     for tool in (rust, oracle):
         assert tool.open("source.im")
     expected = oracle.boundingbox(selection)
-    for value in ("stride.rgn", "sample", "source.im:sample"):
+    for value in ("stride.rgn", "box1", "source.im:box1"):
         _assert_value(oracle.boundingbox(value), expected)
         _assert_value(rust.boundingbox(value), expected)
     assert rust.done() and oracle.done()

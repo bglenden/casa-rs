@@ -5,7 +5,7 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use crate::{ImageError, ImageInterface, ImagePixel, PolygonRegion};
 
 use super::super::SubimageRegion;
-use super::{EMPTY_SECTION, SubimageSelection, empty_section, saved};
+use super::{EMPTY_SECTION, SubimageSelection, direction_plane_axes, empty_section, saved};
 
 pub(in crate::analysis::imsubimage) struct StridedSection {
     pub(in crate::analysis::imsubimage) start: Vec<usize>,
@@ -21,6 +21,11 @@ impl StridedSection {
         if let Some(SubimageRegion::Record(record)) = region {
             match record.get("name") {
                 Some(Value::Scalar(ScalarValue::String(name))) if name == "WCPolygon" => {
+                    if let Some(section) =
+                        saved::relative_polygon_section(record, image.coordinates(), image.shape())?
+                    {
+                        return Ok(section);
+                    }
                     let polygon =
                         PolygonRegion::from_record("region", record, image.coordinates())?;
                     let bounds = polygon
@@ -34,6 +39,23 @@ impl StridedSection {
                 }
                 Some(Value::Scalar(ScalarValue::String(name))) if name == "WCUnion" => {
                     return Self::union(image, record);
+                }
+                Some(Value::Scalar(ScalarValue::String(name)))
+                    if matches!(
+                        name.as_str(),
+                        "WCIntersection"
+                            | "WCDifference"
+                            | "WCComplement"
+                            | "WCExtension"
+                            | "WCConcatenation"
+                    ) =>
+                {
+                    return saved::compound_section(
+                        record,
+                        image.coordinates(),
+                        image.shape(),
+                        direction_plane_axes(image)?,
+                    );
                 }
                 _ => {}
             }

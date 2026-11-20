@@ -111,6 +111,26 @@ def test_statistics_on_attached_fits_matches_casa_and_excludes_blanks(casa, tmp_
     assert path.read_bytes() == content
 
 
+def test_fits_expression_preserves_blank_validity_on_an_unmasked_target(casa, tmp_path):
+    target = tmp_path / "unmasked.im"
+    input_path = tmp_path / "unmasked.fits"
+    operand = tmp_path / "mask.fits"
+    input_path.write_bytes(_hdu(True, [1, 2, 3, 4]))
+    operand.write_bytes(_hdu(True, [5, -999, 7, 8]))
+    writer = casa.image()
+    assert writer.fromfits(str(target), str(input_path)) and writer.done()
+    region = casa.regionmanager().box([0, 0], [1, 0])
+    rust, oracle = tools.image(), casa.image()
+    for tool in (rust, oracle):
+        assert tool.open(str(target))
+    arguments = {"mask": f'mask("{operand}")', "region": region}
+    result = rust.statistics(**arguments)
+    _assert_value(result, oracle.statistics(**arguments))
+    _assert_value(result["npts"], np.array([1.0]))
+    _assert_value(result["sum"], np.array([1.0]))
+    assert rust.done() and oracle.done()
+
+
 def test_statistics_strided_extrema_are_absolute_image_pixels(casa):
     image = tools.image()
     values = np.arange(24, dtype=np.float64).reshape(4, 3, 2)

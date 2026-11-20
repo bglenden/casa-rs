@@ -3,7 +3,8 @@
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, format_world_display};
 use casa_images::{ImageInterface, ImagePixel, analysis::statistics_flux_scale};
 use casa_lattices::{
-    FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm, StatsElement,
+    ExecutionPolicy, FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm,
+    StatsElement,
 };
 use casa_types::quanta::{Quantity, Unit};
 use ndarray::{ArrayD, Zip};
@@ -94,6 +95,7 @@ struct StatsOptions {
     expression: Option<ArrayD<bool>>,
     algorithm: StatisticsAlgorithm,
     single_precision: bool,
+    execution: ExecutionPolicy,
 }
 
 fn calculate<T: ImagePixel + StatsElement>(
@@ -132,6 +134,7 @@ fn calculate<T: ImagePixel + StatsElement>(
             &selection
         };
     let mut stats = LatticeStatistics::new(lattice);
+    stats.set_execution_policy(options.execution);
     if !global {
         stats.set_axes(options.axes.clone());
     }
@@ -421,6 +424,11 @@ impl PyImageTool {
                     expression,
                     algorithm,
                     single_precision,
+                    execution: if image.fits().is_some() {
+                        ExecutionPolicy::Serial
+                    } else {
+                        ExecutionPolicy::Auto
+                    },
                 };
                 match &*image {
                     ImageHandle::Float(Storage::Temp {

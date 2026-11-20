@@ -207,6 +207,37 @@ pub(super) fn lc_slicer_section(
     }))
 }
 
+pub(super) fn compound_section(
+    record: &RecordValue,
+    coords: &CoordinateSystem,
+    shape: &[usize],
+    plane: [usize; 2],
+) -> Result<StridedSection, ImageError> {
+    let (start, count) = compound::bounds("region", record, coords, shape, plane)?;
+    Ok(StridedSection {
+        start,
+        count,
+        stride: vec![1; shape.len()],
+    })
+}
+
+pub(super) fn relative_polygon_section(
+    record: &RecordValue,
+    coords: &CoordinateSystem,
+    shape: &[usize],
+) -> Result<Option<StridedSection>, ImageError> {
+    if relative::mode(record).is_none() {
+        return Ok(None);
+    }
+    let (axes, plane) = relative::polygon_plane("region", record, coords, shape)?;
+    let (start, count) = plane.section(shape, axes);
+    Ok(Some(StridedSection {
+        start,
+        count,
+        stride: vec![1; shape.len()],
+    }))
+}
+
 struct SlicerSection {
     lower: Vec<usize>,
     upper: Vec<usize>,
