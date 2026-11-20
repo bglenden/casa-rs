@@ -81,11 +81,8 @@ pub(super) fn apply(
             text
         };
         if let Some(text) = text.filter(|text| !text.is_empty()) {
-            // The CASA numeric row lexer stops at a non-ASCII byte
-            // following an otherwise complete expression.
             let text = if flagdata {
-                text.split_once(|character: char| !character.is_ascii())
-                    .map_or(text, |(prefix, _)| prefix)
+                numeric_lexer_prefix(text)
             } else {
                 text
             };
@@ -103,13 +100,31 @@ pub(super) fn flagdata_c_string(text: &str) -> &str {
     text.split_once('\0').map_or(text, |(prefix, _)| prefix)
 }
 
-pub(super) fn apply_transform_selectors(
+/// The numeric CASA row lexers stop at the first non-ASCII byte.
+fn numeric_lexer_prefix(text: &str) -> &str {
+    text.split_once(|character: char| !character.is_ascii())
+        .map_or(text, |(prefix, _)| prefix)
+}
+
+pub(super) fn apply_array_feed_uv(
     ms: &MeasurementSet,
     mut compiled: CompiledMsSelection,
     options: &ListObsOptions,
+    flagdata: bool,
 ) -> MsResult<CompiledMsSelection> {
-    if let Some(text) = options.array.as_deref().filter(|text| !text.is_empty()) {
-        let ranges = ArraySelection::parse(text)?.ranges;
+    let array = options.array.as_deref();
+    let array = if flagdata {
+        array.map(flagdata_c_string)
+    } else {
+        array
+    };
+    if let Some(text) = array.filter(|text| !text.is_empty()) {
+        let ranges = if flagdata {
+            // Flagging preserves the stored ARRAY_IDs and needs only their row predicate.
+            parse_numeric_row_id_ranges(numeric_lexer_prefix(text), "array")?
+        } else {
+            ArraySelection::parse(text)?.ranges
+        };
         compiled
             .casa_taql_exprs
             .push(row_ids_predicate("ARRAY_ID", &ranges));
@@ -120,7 +135,7 @@ pub(super) fn apply_transform_selectors(
         compiled.casa_taql_exprs.push(selection.to_taql());
         compiled.casa_feed = Some(selection);
     }
-    if let Some(text) = options.uvrange.as_deref().filter(|text| !text.is_empty()) {
+    if !flagdata && let Some(text) = options.uvrange.as_deref().filter(|text| !text.is_empty()) {
         let selection = UvDistanceSelection::parse(ms, text)?;
         compiled.casa_taql_exprs.push(selection.to_taql());
         compiled.casa_uv = Some(selection);

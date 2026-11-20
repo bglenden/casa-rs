@@ -171,6 +171,8 @@ fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFa
         antenna: selector("antenna")?,
         timerange: selector("timerange")?,
         observation: observation_text(task)?,
+        array: selector("array")?,
+        feed: selector("feed")?,
         ..MsSelection::default()
     };
     if !spw.is_empty() {

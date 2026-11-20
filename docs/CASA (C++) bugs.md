@@ -3904,6 +3904,10 @@ casa-rs reports the invalid whitespace with a readable task error.
 The paired check verifies that both calls leave flags and visibility
 data unchanged (#1617).
 
+A leading nonbreaking space in an ARRAY selector triggers the same
+decoding failure. The array oracle checks both the CASA failure and the
+readable native refusal, with flags and visibility data unchanged.
+
 ## `flagdata` can choose the wrong samples when FLOAT_DATA is present
 
 CASA 6.7.6.14 can evaluate the magnitude of `FLOAT_DATA` when
@@ -3928,6 +3932,28 @@ selector converts an ID to a signed 32-bit value without a range check.
 casa-rs refuses out-of-range observation IDs before writing flags. The
 paired oracle applies both selectors in CASA to verify which rows change
 and checks that casa-rs preserves the input flags. [Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+## An array selector can flag another subarray or terminate CASA
+
+CASA 6.7.6.14 reads the array ID in `flagdata(array="4294967298")` as
+subarray 2. The comparisons `>1002` and `>=1002` can also abort with a
+negative-shaped array while preparing an auxiliary list of IDs.
+
+casa-rs rejects the overflowing ID and applies comparisons directly to
+the stored ARRAY_ID values. The oracle verifies both aborts in separate
+processes and checks the flags for real rows with ARRAY_ID 1003.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
+## `flagdata` can flag other feeds when a feed is selected
+
+CASA 6.7.6.14's `flagdata` accepts a feed expression but does not apply it to
+the row selection. In a MeasurementSet containing same-feed and cross-feed
+rows, `flagdata(feed="0&2")` flags both kinds of row without a warning.
+
+casa-rs applies the feed selection before calculating or writing flags.
+The paired oracle reproduces the extra writes in CASA and verifies the
+native row selection against CASA `split` and the explicit feed pairs.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
 ## `flagdata`'s summary aborts on a correlation it cannot name
 
