@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from casars import tools
+from test_image_fits import _raw_fits
 
 
 @pytest.fixture
@@ -103,9 +104,10 @@ def test_native_products_reopen_in_casa_for_every_type(casa, tmp_path, kind):
             assert product.done()
 
 
-def test_spectral_order_and_separate_beam_planes(casa, tmp_path, monkeypatch):
+@pytest.mark.parametrize("collapse_equivalent", [False, True])
+def test_spectral_order_and_separate_beam_planes(casa, tmp_path, monkeypatch, collapse_equivalent):
     monkeypatch.chdir(tmp_path)
-    paths = [Path("plane01.im"), Path("plane02.im")]
+    paths = [Path(f"plane{index}.im") for index in range(3 if collapse_equivalent else 2)]
     for index, path in enumerate(paths):
         writer = casa.image()
         assert writer.fromshape(str(path), [3, 4, 1, 2])
@@ -116,28 +118,35 @@ def test_spectral_order_and_separate_beam_planes(casa, tmp_path, monkeypatch):
         spectral = next(value for name, value in record.items() if name.startswith("spectral"))
         spectral["wcs"]["crval"] += 2 * index * spectral["wcs"]["cdelt"]
         assert writer.setcoordsys(record)
-        if index == 0:
+        if collapse_equivalent:
+            assert writer.setrestoringbeam(["4arcmin", "240arcsec", "5arcmin"][index], "2arcsec", "12deg")
+        elif index == 0:
             assert writer.setrestoringbeam("4arcmin", "2arcsec", "12deg", channel=0)
             assert writer.setrestoringbeam("240arcsec", "2arcsec", "12deg", channel=1)
         else:
             assert writer.setrestoringbeam("5arcmin", "2arcsec", "12deg")
         assert writer.done()
-    files = [str(paths[1]), str(paths[0])]
+    files = [str(path) for path in reversed(paths)]
+    expected_pixels = [1, 1, 2, 2, 3, 3] if collapse_equivalent else [1, 1, 2, 2]
+    expected_widths = (
+        [(4, "arcmin")] * 4 + [(5, "arcmin")] * 2 if collapse_equivalent
+        else [(4, "arcmin"), (240, "arcsec"), (5, "arcmin"), (5, "arcmin")]
+    )
     for module in (tools, casa):
         factory = module.image()
         assert factory.dohistory(False)
         image = factory.imageconcat(infiles=files, reorder=True)
-        np.testing.assert_array_equal(image.shape(), [3, 4, 1, 4])
-        np.testing.assert_array_equal(image.getchunk()[0, 0, 0, :], [1, 1, 2, 2])
-        assert image.restoringbeam()["nChannels"] == 4
-        for channel, (width, unit) in enumerate([(4, "arcmin"), (240, "arcsec"), (5, "arcmin"), (5, "arcmin")]):
+        np.testing.assert_array_equal(image.shape(), [3, 4, 1, len(expected_pixels)])
+        np.testing.assert_array_equal(image.getchunk()[0, 0, 0, :], expected_pixels)
+        assert image.restoringbeam()["nChannels"] == len(expected_pixels)
+        for channel, (width, unit) in enumerate(expected_widths):
             beam = image.restoringbeam(channel=channel)
             assert beam["major"]["unit"] == unit
             assert beam["major"]["value"] == pytest.approx(width)
         assert not any("Ran ia.imageconcat" in row for row in image.history())
         assert image.done()
         wildcard = factory.imageconcat(infiles="plane*.im", reorder=True)
-        np.testing.assert_array_equal(wildcard.getchunk()[0, 0, 0, :], [1, 1, 2, 2])
+        np.testing.assert_array_equal(wildcard.getchunk()[0, 0, 0, :], expected_pixels)
         assert wildcard.done()
 
 
@@ -161,7 +170,8 @@ def test_strict_gap_rejected_and_relaxed_geometry_matches_casa(casa, tmp_path):
         np.testing.assert_equal(results[0][key], results[1][key])
 
 
-def test_relaxed_spectral_gap_uses_the_input_world_frequencies(casa, tmp_path):
+@pytest.mark.parametrize("repeat_first", [False, True])
+def test_relaxed_spectral_gap_uses_the_input_world_frequencies(casa, tmp_path, repeat_first):
     paths, saved = [], []
     for index in (0, 1):
         path = str(tmp_path / f"spectrum{index}.im")
@@ -177,6 +187,8 @@ def test_relaxed_spectral_gap_uses_the_input_world_frequencies(casa, tmp_path):
         saved.extend([base, base + spectral["wcs"]["cdelt"]])
         assert image.setcoordsys(record)
         assert image.done()
+    if repeat_first:
+        paths.append(paths[0])
     frequencies = []
     for module in (tools, casa):
         image = module.image().imageconcat(infiles=paths, relax=True)
@@ -185,6 +197,7 @@ def test_relaxed_spectral_gap_uses_the_input_world_frequencies(casa, tmp_path):
         assert cs.done()
         spectral = next(value for key, value in record.items() if key.startswith("spectral"))
         frequencies.append(spectral["tabular"]["worldvalues"])
+        assert image.shape()[-1] == 2 * len(paths)
         assert image.done()
     for actual in frequencies:
         np.testing.assert_allclose(actual, saved, rtol=1e-14, atol=0)
@@ -231,6 +244,33 @@ def test_fits_inputs_and_blanks(casa, tmp_path):
         np.testing.assert_array_equal(*rows)
 
 
+@pytest.mark.parametrize("matrix", ["PC", "CD"])
+def test_fits_concatenation_preserves_sheared_linear_world_coordinates(casa, tmp_path, matrix):
+    files = [tmp_path / f"part{index}.fits" for index in range(2)]
+    if matrix == "PC":
+        transform = [("CDELT1", 1.0), ("CDELT2", -2.0), ("PC2_1", 0.5)]
+        expected_matrix = [[1, 0.5], [0, 1]]
+        expected_world = [2, -6]
+    else:
+        transform = [("CD1_1", 1.0), ("CD2_1", 1.0), ("CD2_2", -2.0)]
+        expected_matrix = [[1, 1], [0, -2]]
+        expected_world = [2, -2]
+    for index, path in enumerate(files):
+        _raw_fits(path, (2, 2), [("CTYPE1", "LINEAR"), ("CTYPE2", "LINEAR"),
+                                ("CRVAL1", 2 * index), *transform])
+    for module in (tools, casa):
+        outfile = str(tmp_path / f"{module.__name__}.im")
+        output = module.image().imageconcat(outfile, list(map(str, files)), axis=0)
+        assert output.done()
+        reader = casa.image()
+        assert reader.open(outfile)
+        cs = reader.coordsys()
+        np.testing.assert_allclose(cs.torecord()["linear0"]["pc"], expected_matrix, atol=1e-13)
+        np.testing.assert_allclose(cs.toworld([1, 1])["numeric"], expected_world, atol=1e-13)
+        assert cs.done()
+        assert reader.done()
+
+
 def test_stokes_concatenation_extends_the_polarization_coordinate(casa, tmp_path):
     files = []
     for name, value in (("I", 1.0), ("Q", 2.0)):
@@ -243,17 +283,27 @@ def test_stokes_concatenation_extends_the_polarization_coordinate(casa, tmp_path
         assert cs.done()
         stokes = next(value for key, value in record.items() if key.startswith("stokes"))
         stokes["stokes"] = [name]
+        spectral = next(value for key, value in record.items() if key.startswith("spectral"))
+        spectral["nativeType"] = 1
+        spectral["velUnit"] = "m/s"
         assert image.setcoordsys(record)
         assert image.done()
         files.append(path)
     for module in (tools, casa):
-        output = module.image().imageconcat(infiles=files, axis=2)
+        path = str(tmp_path / f"{module.__name__}.im")
+        output = module.image().imageconcat(path, files, axis=2)
         np.testing.assert_array_equal(output.shape(), [3, 4, 2, 2])
         np.testing.assert_array_equal(output.getchunk()[0, 0, :, 0], [1, 2])
-        cs = output.coordsys()
-        assert cs.stokes() == ["I", "Q"]
-        assert cs.done()
         assert output.done()
+        reader = casa.image()
+        assert reader.open(path)
+        cs = reader.coordsys()
+        assert cs.stokes() == ["I", "Q"]
+        spectral = next(value for key, value in cs.torecord().items() if key.startswith("spectral"))
+        assert spectral["nativeType"] == 1
+        assert spectral["velUnit"] == "m/s"
+        assert cs.done()
+        assert reader.done()
 
 
 def test_argument_errors_and_existing_product(casa, tmp_path):
@@ -281,6 +331,27 @@ def test_argument_errors_and_existing_product(casa, tmp_path):
         assert factory.done()
 
 
+def test_filename_arrays_and_environment_expansion(casa, tmp_path, monkeypatch):
+    write_linear(casa, tmp_path / "first.im", 0.0, 1.0)
+    write_linear(casa, tmp_path / "second.im", 2.0, 2.0)
+    monkeypatch.setenv("IMAGECONCAT_INPUTS", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    forms = (
+        "$IMAGECONCAT_INPUTS/first.im,${IMAGECONCAT_INPUTS}/second.im",
+        [["first.im", "second.im"]],
+        np.array([["first.im", "second.im"]]),
+        np.array([[b"first.im"], [b"second.im"]]),
+    )
+    for module in (tools, casa):
+        for files in forms:
+            product = module.image().imageconcat(infiles=files, axis=0)
+            np.testing.assert_array_equal(product.getchunk()[:, 0], [1, 1, 2, 2])
+            assert product.done()
+        for unset in (np.array([True, False]), ["first.im", False]):
+            with pytest.raises(RuntimeError, match="at least two images"):
+                module.image().imageconcat(infiles=unset, axis=0)
+
+
 def test_paged_overwrite_replaces_an_output_and_preserves_an_aliased_input(casa, tmp_path):
     first, second = tmp_path / "first.im", tmp_path / "second.im"
     write_linear(casa, first, 0.0, 1.0)
@@ -299,3 +370,37 @@ def test_paged_overwrite_replaces_an_output_and_preserves_an_aliased_input(casa,
         np.testing.assert_array_equal(instance.shape(), [2, 3])
         np.testing.assert_array_equal(instance.getchunk(), 1.0)
         assert instance.done()
+
+
+def test_paged_overwrite_rejects_input_ancestors_and_existing_input_subtables(tmp_path):
+    parent = tmp_path / "parent.im"
+    source = parent / "source.im"
+    second = tmp_path / "second.im"
+    write_linear(tools, parent, 0.0, 9.0)
+    write_linear(tools, source, 0.0, 1.0, blank=True)
+    write_linear(tools, second, 2.0, 2.0)
+    files = [str(source), str(second)]
+    factory = tools.image()
+    with pytest.raises(RuntimeError, match="contains input image"):
+        factory.imageconcat(str(parent), files, axis=0, overwrite=True)
+    with pytest.raises(RuntimeError, match="is inside input image"):
+        factory.imageconcat(str(source / "input_mask"), files, axis=0, overwrite=True)
+    assert factory.open(str(source))
+    np.testing.assert_array_equal(factory.getchunk(), 1.0)
+    np.testing.assert_array_equal(factory.getchunk(getmask=True), False)
+    assert factory.done()
+    assert factory.open(str(parent))
+    np.testing.assert_array_equal(factory.getchunk(), 9.0)
+    assert factory.done()
+
+
+def test_paged_concat_can_create_a_new_nested_output(casa, tmp_path):
+    first, second = tmp_path / "first.im", tmp_path / "second.im"
+    write_linear(casa, first, 0.0, 1.0)
+    write_linear(casa, second, 2.0, 2.0)
+    files = [str(first), str(second)]
+    for module in (tools, casa):
+        path = first / f"new-{module.__name__}.im"
+        result = module.image().imageconcat(str(path), files, axis=0, overwrite=True)
+        np.testing.assert_array_equal(result.getchunk()[:, 0], [1, 1, 2, 2])
+        assert result.done()

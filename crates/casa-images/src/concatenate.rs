@@ -4,70 +4,15 @@
 use std::path::Path;
 
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, LinearCoordinate,
-    SpectralCoordinate, StokesCoordinate, TabularCoordinate,
+    CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate, StokesCoordinate,
+    TabularCoordinate,
 };
 
 use casa_lattices::{TraversalIter, TraversalSpec};
-use ndarray::Array2;
 
 use crate::{
     ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel, MutableImageInterface,
 };
-
-/// Group consecutive linear FITS axes as CASA's concatenation reader does.
-/// Keep the pixel order, linear transforms, and observation information.
-pub fn group_fits_linear_axes(input: &CoordinateSystem) -> Option<CoordinateSystem> {
-    let mut output = CoordinateSystem::new().with_obs_info(input.obs_info().clone());
-    let mut changed = false;
-    let mut index = 0;
-    while index < input.n_coordinates() {
-        let first = index;
-        let mut linear = Vec::new();
-        while index < input.n_coordinates() {
-            let CoordinateModel::Linear(axis) = input.coordinate(index) else {
-                break;
-            };
-            linear.push(axis);
-            index += 1;
-        }
-        if linear.len() < 2 {
-            output.add_coordinate(input.coordinate(first).clone());
-            index = first + 1;
-            continue;
-        }
-        changed = true;
-        let count = linear.iter().map(|axis| axis.n_pixel_axes()).sum();
-        let mut transform = Array2::zeros((count, count));
-        let mut start = 0;
-        for axis in &linear {
-            for ((row, column), value) in axis.pc_matrix().indexed_iter() {
-                transform[[start + row, start + column]] = *value;
-            }
-            start += axis.n_pixel_axes();
-        }
-        let names = linear.iter().flat_map(|axis| axis.axis_names()).collect();
-        let units = linear.iter().flat_map(|axis| axis.axis_units()).collect();
-        output.add_coordinate(
-            LinearCoordinate::new(count, names, units)
-                .with_reference_value(
-                    linear
-                        .iter()
-                        .flat_map(|axis| axis.reference_value())
-                        .collect(),
-                )
-                .with_reference_pixel(
-                    linear
-                        .iter()
-                        .flat_map(|axis| axis.reference_pixel())
-                        .collect(),
-                )
-                .with_increment(linear.iter().flat_map(|axis| axis.increment()).collect())
-                .with_pc_matrix(transform),
-        );
-    }
-    changed.then_some(output)
-}
 
 /// An input image's geometry and diagnostic name.
 pub struct ConcatInput<'a> {
@@ -93,10 +38,12 @@ pub struct ConcatenationPlan {
     pub shape: Vec<usize>,
     /// Coordinate system of the output.
     pub coordinates: CoordinateSystem,
-    /// Whether the operation rebuilt a coordinate on the combined axis.
-    pub coordinates_changed: bool,
+    /// The index of the rebuilt coordinate, if one changed.
+    pub changed_coordinate: Option<usize>,
     /// Image metadata from the first image and the combined restoring beams.
     pub image_info: ImageInfo,
+    /// Original beam source for each input after broadcast-equivalent beams are merged.
+    pub beam_sources: Vec<usize>,
     /// Diagnostics for accepted differences between source grids.
     pub warnings: Vec<String>,
 }
@@ -265,18 +212,19 @@ impl ConcatenationPlan {
             order,
             shape: first.shape.to_vec(),
             coordinates: first.coordinates.clone(),
-            coordinates_changed: false,
+            changed_coordinate: None,
             image_info: first.image_info.clone(),
+            beam_sources: (0..inputs.len()).collect(),
             warnings: Vec::new(),
         };
         let mut previous = output.order[0];
-        let mut contiguous = true;
+        let mut first_gap = None;
         let selected = &reference[axis];
         let mut stokes = match first.coordinates.coordinate(selected.coordinate) {
             CoordinateModel::Stokes(coordinate) => coordinate.stokes().to_vec(),
             _ => Vec::new(),
         };
-        for &index in &output.order[1..] {
+        for (position, &index) in output.order.iter().enumerate().skip(1) {
             let input = &inputs[index];
             let current = &bases[index];
             if input.shape.len() != first.shape.len() {
@@ -305,7 +253,7 @@ impl ConcatenationPlan {
                     "Coordinate types for concatenation axis are inconsistent".into(),
                 ));
             }
-            output.image_info.beam_set = combine_beams(
+            let combined = combine_beams(
                 &output.image_info.beam_set,
                 &input.image_info.beam_set,
                 selected.kind,
@@ -313,6 +261,17 @@ impl ConcatenationPlan {
                 relax,
                 &mut output.warnings,
             )?;
+            if !combined.is_empty()
+                && combined == output.image_info.beam_set
+                && match selected.kind {
+                    CoordinateType::Spectral => combined.n_channels() == 1,
+                    CoordinateType::Stokes => combined.n_stokes() == 1,
+                    _ => false,
+                }
+            {
+                output.beam_sources[index] = output.order[0];
+            }
+            output.image_info.beam_set = combined;
             if reference.iter().zip(current).any(|(a, b)| a.name != b.name) {
                 mismatch(&mut output.warnings, relax, "Image axis names differ")?;
             }
@@ -329,8 +288,8 @@ impl ConcatenationPlan {
                     ),
                 )?;
             }
-            if contiguous {
-                contiguous = if let CoordinateModel::Stokes(coordinate) =
+            if first_gap.is_none() {
+                let contiguous = if let CoordinateModel::Stokes(coordinate) =
                     input.coordinates.coordinate(current[axis].coordinate)
                 {
                     if coordinate
@@ -355,6 +314,7 @@ impl ConcatenationPlan {
                     (last - before).abs() <= 0.01 * bases[previous][axis].increment.abs()
                 };
                 if !contiguous {
+                    first_gap = Some(position);
                     mismatch(
                         &mut output.warnings,
                         relax,
@@ -396,13 +356,16 @@ impl ConcatenationPlan {
                 })?;
             previous = index;
         }
-        if contiguous && selected.kind == CoordinateType::Stokes {
+        if let CoordinateModel::Stokes(original) = first.coordinates.coordinate(selected.coordinate)
+            && stokes.len() > original.stokes().len()
+        {
             output
                 .coordinates
                 .replace_coordinate(selected.coordinate, StokesCoordinate::new(stokes));
-            output.coordinates_changed = true;
-        } else if !contiguous {
-            output.rebuild_axis(inputs, &bases, selected)?;
+            output.changed_coordinate = Some(selected.coordinate);
+        }
+        if let Some(first_gap) = first_gap {
+            output.rebuild_axis(inputs, &bases, selected, first_gap)?;
         }
         Ok(output)
     }
@@ -412,6 +375,7 @@ impl ConcatenationPlan {
         inputs: &[ConcatInput<'_>],
         bases: &[Vec<Axis>],
         axis: &Axis,
+        first_gap: usize,
     ) -> Result<(), ImageError> {
         let original = self.coordinates.coordinate(axis.coordinate);
         if original.n_pixel_axes() != 1 || original.n_world_axes() != 1 {
@@ -419,27 +383,33 @@ impl ConcatenationPlan {
                 .push("CoordinateSystem set to that of first image".into());
             return Ok(());
         }
-        let mut world = Vec::with_capacity(self.shape[self.axis]);
-        for &index in &self.order {
+        let mut world: Vec<f64> = Vec::with_capacity(self.shape[self.axis]);
+        let mut increment = None;
+        let mut usable = 0;
+        'inputs: for (position, &index) in self.order.iter().enumerate() {
             for pixel in 0..inputs[index].shape[self.axis] {
-                world.push(world_at(
-                    &inputs[index],
-                    &bases[index],
-                    self.axis,
-                    pixel as f64,
-                )?);
+                let value = world_at(&inputs[index], &bases[index], self.axis, pixel as f64)?;
+                if let Some(&previous) = world.last() {
+                    let step = value - previous;
+                    let first = *increment.get_or_insert(step);
+                    if (step * first).partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+                        self.warnings
+                            .push("CoordinateSystem set to that of first image".into());
+                        break 'inputs;
+                    }
+                }
+                world.push(value);
+            }
+            if position >= first_gap {
+                usable = world.len();
             }
         }
-        let inc = world[1] - world[0];
-        if inc == 0.0
-            || !world
-                .windows(2)
-                .all(|pair| ((pair[1] - pair[0]) * inc) > 0.0)
-        {
-            self.warnings
-                .push("CoordinateSystem set to that of first image".into());
+        if usable < 2 {
             return Ok(());
         }
+        // CASA keeps the most recent valid grid when a later input makes it nonmonotonic.
+        world.truncate(usable);
+        let inc = world[1] - world[0];
         let pixels = (0..world.len()).map(|i| i as f64).collect();
         let coordinate = if let CoordinateModel::Spectral(spectral) = original {
             CoordinateModel::from(SpectralCoordinate::from_tabular(
@@ -461,7 +431,7 @@ impl ConcatenationPlan {
         };
         self.coordinates
             .replace_coordinate(axis.coordinate, coordinate);
-        self.coordinates_changed = true;
+        self.changed_coordinate = Some(axis.coordinate);
         Ok(())
     }
 }

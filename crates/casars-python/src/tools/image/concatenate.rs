@@ -4,12 +4,12 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
-use casa_images::concatenate::{
-    ConcatInput, ConcatenationPlan, copy_concatenated_input, group_fits_linear_axes,
-};
+use casa_images::analysis::ensure_outfile_does_not_alias_input;
+use casa_images::concatenate::{ConcatInput, ConcatenationPlan, copy_concatenated_input};
 use casa_images::image::{ImageHistoryRow, image_history_rows};
 use casa_images::{ImageError, ImageInfo, ImagePixel, ImagePixelType};
 use casa_types::{RecordField, RecordValue, Value};
+use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
 
@@ -21,6 +21,48 @@ use super::attachment;
 use super::beams::{image_info, image_info_record, plane_axes, stored_beam_record};
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+
+fn filename_argument(value: Option<&Bound<'_, PyAny>>) -> PyResult<Variant> {
+    let Some(value) = value else {
+        return Ok(Variant::Empty);
+    };
+    if let Ok(array) = value.cast::<PyUntypedArray>() {
+        return match array.dtype().kind() {
+            b'b' | b'O' => Ok(Variant::Empty),
+            // The Unicode typemap supplies a filename vector only if at most one axis varies.
+            b'U' if array.shape().iter().filter(|&&length| length > 1).count() > 1 => {
+                Ok(Variant::Empty)
+            }
+            b'S' | b'U' => flatten_filenames(value),
+            _ => value.extract(),
+        };
+    }
+    let captured: Variant = value.extract()?;
+    if matches!(captured, Variant::Other(_))
+        && (value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>())
+    {
+        let array = value
+            .py()
+            .import("numpy")?
+            .call_method1("asarray", (value, "object"))?;
+        return flatten_filenames(&array);
+    }
+    Ok(captured)
+}
+
+fn flatten_filenames(array: &Bound<'_, PyAny>) -> PyResult<Variant> {
+    let flattened = array
+        .call_method1("ravel", ("F",))?
+        .call_method0("tolist")?;
+    let mut names = Vec::new();
+    for item in flattened.try_iter()? {
+        match item?.extract()? {
+            Variant::Text(name) => names.push(name),
+            _ => return Ok(Variant::Empty),
+        }
+    }
+    Ok(Variant::Texts(names))
+}
 
 fn filenames(py: Python<'_>, files: &Variant) -> PyResult<Vec<PathBuf>> {
     let names = match files {
@@ -39,6 +81,7 @@ fn filenames(py: Python<'_>, files: &Variant) -> PyResult<Vec<PathBuf>> {
     let path_module = py.import("os.path")?;
     let mut result = Vec::new();
     for name in names {
+        let name = path_module.call_method1("expandvars", (name,))?;
         let pattern: String = path_module.call_method1("expanduser", (name,))?.extract()?;
         if let Some(parent) = Path::new(&pattern)
             .parent()
@@ -81,15 +124,9 @@ struct Input<'a> {
 
 impl<'a> Input<'a> {
     fn open(path: &'a Path, tempclose: bool) -> PyResult<Self> {
-        let image = ImageHandle::open(path).map_err(raised)?;
-        let mut coordinate_record = image.coordinate_record();
-        let mut coordinates = CoordinateSystem::from_record(&coordinate_record).map_err(raised)?;
-        if image.fits().is_some()
-            && let Some(grouped) = group_fits_linear_axes(&coordinates)
-        {
-            coordinate_record = grouped.to_record();
-            coordinates = grouped;
-        }
+        let image = ImageHandle::open_for_concatenation(path).map_err(raised)?;
+        let coordinate_record = image.coordinate_record();
+        let coordinates = CoordinateSystem::from_record(&coordinate_record).map_err(raised)?;
         let (units, misc, has_mask) = with_pixels!(&image, storage => with_storage!(storage, image => (
             image.units().to_string(),
             image.misc_info(),
@@ -124,6 +161,26 @@ impl<'a> Input<'a> {
             brightness_unit: &self.units,
         }
     }
+}
+
+fn coordinate_record(first: &Input<'_>, plan: &ConcatenationPlan) -> PyResult<RecordValue> {
+    let mut record = first.coordinate_record.clone();
+    if let Some(index) = plan.changed_coordinate {
+        let coordinates = CoordinateSystem::record_coordinates(&record).map_err(raised)?;
+        let old = &coordinates[index].field;
+        let old_kind = old.trim_end_matches(|character: char| character.is_ascii_digit());
+        let replacement = plan.coordinates.to_record();
+        let coordinates = CoordinateSystem::record_coordinates(&replacement).map_err(raised)?;
+        let new = &coordinates[index].field;
+        let new_kind = new.trim_end_matches(|character: char| character.is_ascii_digit());
+        let value = replacement
+            .get(new)
+            .expect("replacement coordinate")
+            .clone();
+        record.remove(old);
+        record.upsert(format!("{new_kind}{}", &old[old_kind.len()..]), value);
+    }
+    Ok(record)
 }
 
 fn merge_misc(output: &mut RecordValue, source: &RecordValue) {
@@ -174,10 +231,10 @@ fn beam_records(plan: &ConcatenationPlan, sources: &[Input<'_>]) -> PyResult<Rec
     let beam = |channel, plane| {
         let (input, source_channel, source_plane) = if channel_concat {
             let (index, local) = origins[channel];
-            (Some(&sources[index]), local, plane)
+            (Some(&sources[plan.beam_sources[index]]), local, plane)
         } else if stokes_concat {
             let (index, local) = origins[plane];
-            (Some(&sources[index]), channel, local)
+            (Some(&sources[plan.beam_sources[index]]), channel, local)
         } else {
             (equivalent, channel, plane)
         };
@@ -282,12 +339,7 @@ impl Request<'_> {
             }
         }
         .map_err(raised)?;
-        let coords = if plan.coordinates_changed {
-            plan.coordinates.to_record()
-        } else {
-            first.coordinate_record.clone()
-        };
-        output.set_coordinate_record(coords)?;
+        output.set_coordinate_record(coordinate_record(first, &plan)?)?;
         let mut misc = RecordValue::default();
         let mut offset = 0;
         for &index in &plan.order {
@@ -384,18 +436,7 @@ impl PyImageTool {
         reorder: bool,
         mode: &str,
     ) -> PyResult<Py<PyImageTool>> {
-        let files = match infiles {
-            Some(value)
-                if (value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>())
-                    && value.try_iter()?.all(|item| {
-                        item.is_ok_and(|item| item.is_instance_of::<pyo3::types::PyBool>())
-                    }) =>
-            {
-                Variant::Empty
-            }
-            Some(value) => value.extract::<Variant>()?,
-            None => Variant::Empty,
-        };
+        let files = filename_argument(infiles)?;
         let paths = filenames(py, &files)?;
         if !outfile.is_empty() && Path::new(outfile).exists() && !overwrite {
             return Err(raised(format!(
@@ -410,19 +451,26 @@ impl PyImageTool {
                 ));
             }
             Some(b'n' | b'c' | b'm') => {
-                return not_yet_implemented_in("image", "imageconcat virtual mode", 1625);
+                return not_yet_implemented_in("image", "imageconcat virtual mode", 1749);
             }
             _ => return Err(raised(format!("Unsupported mode {mode}"))),
         }
-        if !outfile.is_empty() && Path::new(outfile).exists() {
-            let destination = attachment::key(Path::new(outfile))?;
+        if !outfile.is_empty() {
+            let destination = Path::new(outfile);
+            let existing = destination
+                .exists()
+                .then(|| attachment::key(destination))
+                .transpose()?;
             for path in &paths {
-                if attachment::key(path)? == destination {
+                if let Some(existing) = &existing
+                    && &attachment::key(path)? == existing
+                {
                     return Err(raised(format!(
                         "Invalid Table operation: SetupNewTable {} is already opened (is in the table cache)",
-                        destination.display()
+                        existing.display()
                     )));
                 }
+                ensure_outfile_does_not_alias_input(destination, path).map_err(raised)?;
             }
         }
         let mut logs = Vec::new();
