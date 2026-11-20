@@ -528,8 +528,6 @@ def split(
     """Create a selected MeasurementSet subset, equivalent to CASA split.
 
     CASA's ``split``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``.
     """
     return _call_casa(split, locals())
 

@@ -74,12 +74,29 @@ fn transform_request(
         selection: selection(task)?,
         keep_flags: task.flag("keepflags")?,
     };
+    let (keep_mms, retained_scan_span) = if task.surface() == "split" {
+        let keep_mms = task.flag("keepmms")?;
+        let combine_scan =
+            matches!(task.value("combine"), Some(ParameterValue::String(span)) if span == "scan");
+        let span = if keep_mms && combine_scan {
+            Quantity::read(&task.required_text("timebin")?)
+                .ok()
+                .map(|quantity| quantity.value())
+        } else {
+            None
+        };
+        (Some(keep_mms), span)
+    } else {
+        (None, None)
+    };
     let options = MsTransformTaskOptions {
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
         channel_widths,
         time_averaging: time_average_options(task)?,
         history: Some(task_history(task)),
         flag_command_widths: flag_command_widths(task),
+        keep_mms,
+        retained_scan_span,
     };
     Ok((request, options))
 }

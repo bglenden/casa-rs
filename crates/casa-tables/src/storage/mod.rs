@@ -30,6 +30,7 @@ pub use tiled_stman::{
     install_streamed_tiled_shape_primitive_column, install_undefined_tiled_shape_column,
     set_table_cache_budget_bytes, table_cache_budget_bytes,
 };
+mod concat_projection;
 pub(crate) mod virtual_bitflags;
 pub(crate) mod virtual_compress;
 pub(crate) mod virtual_engine;
@@ -1226,19 +1227,7 @@ impl CompositeStorage {
             TableDatResult::Ref(reference) => {
                 self.load_ref_table_projected(table_path, &reference, true)
             }
-            TableDatResult::Concat(_) => {
-                let mut snapshot = self.load(table_path)?;
-                snapshot.rows.clear();
-                if profile_open {
-                    tracing::debug!(target: TABLE_OPEN_PROFILE,
-                        "table_open_profile path={} stage=storage_load_metadata_only/full_loader_fallback rows={} elapsed_s={:.3}",
-                        table_path.display(),
-                        snapshot.row_count,
-                        load_started_at.elapsed().as_secs_f64(),
-                    );
-                }
-                Ok(snapshot)
-            }
+            TableDatResult::Concat(concat) => self.load_concat_metadata(table_path, &concat),
         }
     }
 
@@ -1287,7 +1276,10 @@ impl CompositeStorage {
                 row_hint,
                 Some(columns),
             ),
-            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+            TableDatResult::Concat(concat) => {
+                self.load_concat_named_scalars(table_path, &concat, columns)
+            }
+            TableDatResult::Ref(_) => {
                 let snapshot = self.load_with_row_hint(table_path, row_hint)?;
                 let mut scalar_columns = scalar_columns_from_snapshot(&snapshot);
                 scalar_columns
@@ -1342,7 +1334,10 @@ impl CompositeStorage {
             TableDatResult::Plain(table_dat) => {
                 self.load_plain_scalar_column(table_path, &table_dat, column, row_hint)
             }
-            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+            TableDatResult::Concat(concat) => {
+                self.load_concat_scalar_column(table_path, &concat, column)
+            }
+            TableDatResult::Ref(_) => {
                 let snapshot = self.load_with_row_hint(table_path, row_hint)?;
                 scalar_column_from_snapshot(&snapshot, column)
             }
@@ -1376,7 +1371,12 @@ impl CompositeStorage {
                 selected_rows,
                 row_hint,
             ),
-            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+            TableDatResult::Concat(concat) => {
+                self.load_concat_rows(table_path, &concat, selected_rows, |path, local| {
+                    self.load_scalar_column_rows_with_row_hint(path, column, local, None)
+                })
+            }
+            TableDatResult::Ref(_) => {
                 let snapshot = self.load_with_row_hint(table_path, row_hint)?;
                 let values = scalar_column_from_snapshot(&snapshot, column)?;
                 Ok(select_scalar_rows(&values, selected_rows))
@@ -1761,7 +1761,12 @@ impl CompositeStorage {
                 selected_rows,
                 row_hint,
             ),
-            TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+            TableDatResult::Concat(concat) => {
+                self.load_concat_rows(table_path, &concat, selected_rows, |path, local| {
+                    self.load_array_column_rows_with_row_hint(path, column, local, None)
+                })
+            }
+            TableDatResult::Ref(_) => {
                 let snapshot = self.load_with_row_hint(table_path, row_hint)?;
                 let values = array_column_from_snapshot(&snapshot, column)?;
                 Ok(select_array_rows(&values, selected_rows))
