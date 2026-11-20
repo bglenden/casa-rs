@@ -48,7 +48,7 @@ const METHODS: &[Method] = &[
             param("seeds", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "beamarea",
