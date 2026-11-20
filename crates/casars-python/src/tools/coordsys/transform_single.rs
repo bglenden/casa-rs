@@ -26,7 +26,7 @@ fn raised(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
-fn numeric_record_value(value: &Value) -> PyResult<Vec<f64>> {
+pub(super) fn numeric_record_value(value: &Value) -> PyResult<Vec<f64>> {
     match value {
         Value::Scalar(ScalarValue::Float64(value)) => Ok(vec![*value]),
         Value::Scalar(ScalarValue::Float32(value)) => Ok(vec![f64::from(*value)]),

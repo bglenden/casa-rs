@@ -428,7 +428,7 @@ const METHODS: &[Method] = &[
             param("isworld", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "toabsmany",
@@ -437,7 +437,7 @@ const METHODS: &[Method] = &[
             param("isworld", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
     method("topixelmany", &[param("value", K::Any, Empty)], R::Any, Yes),
@@ -449,7 +449,7 @@ const METHODS: &[Method] = &[
             param("isworld", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "torelmany",
@@ -458,7 +458,7 @@ const METHODS: &[Method] = &[
             param("isworld", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "toworld",

@@ -19,7 +19,7 @@ fn raised(message: impl Into<String>) -> PyErr {
 }
 
 #[derive(Clone, Copy)]
-enum Output {
+pub(super) enum Output {
     World,
     Pixel,
 }
@@ -47,7 +47,7 @@ impl Output {
     }
 }
 
-fn capture(
+pub(super) fn capture(
     py: Python<'_>,
     value: Option<&Bound<'_, PyAny>>,
     output: Output,
@@ -108,7 +108,7 @@ fn capture(
     }
 }
 
-fn world_scale(coordinates: &CoordinateSystem) -> PyResult<Vec<f64>> {
+pub(super) fn world_scale(coordinates: &CoordinateSystem) -> PyResult<Vec<f64>> {
     let mut result = Vec::with_capacity(coordinates.n_world_axes());
     for index in 0..coordinates.n_coordinates() {
         match coordinates.coordinate(index) {

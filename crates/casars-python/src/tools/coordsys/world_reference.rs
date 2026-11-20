@@ -496,6 +496,39 @@ pub(super) fn format_transformed_world(
     velocities: bool,
     coordinate_tags: bool,
 ) -> PyResult<CasaValue> {
+    format_world_at(state, world, format, true, velocities, coordinate_tags)
+}
+
+pub(super) fn format_world_offsets(
+    state: &CoordinateState,
+    world: &[f64],
+    format: &str,
+    absolute: bool,
+) -> PyResult<CasaValue> {
+    if !absolute && format.contains('m') {
+        for index in 0..state.coordinates.n_coordinates() {
+            let name = match state.coordinates.coordinate(index).coordinate_type() {
+                CoordinateType::Direction => "casacore::MDirection",
+                CoordinateType::Spectral => "MFrequency",
+                CoordinateType::Stokes => "Stokes",
+                _ => continue,
+            };
+            return Err(PyRuntimeError::new_err(format!(
+                "It is not possible to have a relative {name} measure"
+            )));
+        }
+    }
+    format_world_at(state, world, format, absolute, true, true)
+}
+
+fn format_world_at(
+    state: &CoordinateState,
+    world: &[f64],
+    format: &str,
+    absolute: bool,
+    velocities: bool,
+    coordinate_tags: bool,
+) -> PyResult<CasaValue> {
     let format = format.to_ascii_lowercase();
     let placements = if format.contains('s') || format.contains('m') {
         CoordinateSystem::record_coordinates(&state.record)
@@ -541,7 +574,14 @@ pub(super) fn format_transformed_world(
     let styles = values.iter().flat_map(|axis| {
         std::iter::repeat_n(scientific_coordinate(axis.coordinate), axis.native.len())
     });
-    format_world_record(&values, styles, &format, true, velocities, coordinate_tags)
+    format_world_record(
+        &values,
+        styles,
+        &format,
+        absolute,
+        velocities,
+        coordinate_tags,
+    )
 }
 
 fn format_world_record(
@@ -555,7 +595,10 @@ fn format_world_record(
     let mut record = Vec::new();
     if coordinate_tags {
         record.extend([
-            ("ar_type", CasaValue::Text("absolute".into())),
+            (
+                "ar_type",
+                CasaValue::Text(if absolute { "absolute" } else { "relative" }.into()),
+            ),
             ("pw_type", CasaValue::Text("world".into())),
         ]);
     }

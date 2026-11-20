@@ -22,6 +22,7 @@ CASA behaviours casa-rs does not follow:
 [a non-finite rest frequency](#coordsyssetrestfrequency-can-store-an-infinite-frequency),
 [a whitespace-only rest-frequency string](#coordsyssetrestfrequency-can-crash-on-a-whitespace-only-string),
 [a masked coordinate reference-location edit](#coordsyssetreferencelocation-can-crash-when-an-axis-is-masked),
+[an omitted or undersized coordinate offset](#coordsys-relative-conversions-can-abort-on-missing-values),
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
@@ -8107,3 +8108,12 @@ failure can occur with a Stokes axis because the method excludes Stokes
 from the edit. casa-rs changes both reference values on each enabled
 non-Stokes axis and preserves both values on the other axes. It publishes
 the updated coordinate state only after the complete edit succeeds.
+
+## Coordsys relative conversions can abort on missing values
+
+On a two-axis coordinate system, CASA 6.7.6.14 aborts for
+`cs.toabs(isworld=0)` and `cs.toabs(isworld=1)`. casa-rs interprets the
+omitted values as zero offsets and returns the reference position in the
+requested domain. CASA also aborts when `toabsmany` or `torelmany` receives
+a matrix with fewer rows than the number of coordinate axes. casa-rs
+raises `RuntimeError` for these matrices.

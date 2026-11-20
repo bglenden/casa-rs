@@ -86,6 +86,12 @@ World values use the units reported by `cs.units()`.
 NumPy `float32`, `float64`, `longdouble`, `longlong`, and `ulonglong`
 matrices are converted to double precision, as in CASA.
 
+Use `cs.torel(value, isworld=1)` for world offsets from the reference and
+`cs.toabs` to recover absolute positions. Use `isworld=0` for pixels, or
+pass the tagged record from a coordinate conversion. The corresponding
+`torelmany` and `toabsmany` methods take matrices with one coordinate per
+column.
+
 Use `ia.toworld(pixels, format="nqsm")` to convert one image position.
 Each format letter requests numeric values, quantities, strings, or
 measures. Pass `dovelocity=False` to omit spectral velocities from the
