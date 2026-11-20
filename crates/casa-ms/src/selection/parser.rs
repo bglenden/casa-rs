@@ -34,7 +34,7 @@ pub(crate) fn selection_from_options(
         selection = super::row_grammar::apply(ms, selection, options, flagdata)?;
     }
     if !full_row_grammar {
-        if let Some(spw) = options.spw.as_deref() {
+        if !flagdata && let Some(spw) = options.spw.as_deref() {
             selection = selection.spw_selector(spw)?;
         }
         if !flagdata && let Some(scan) = options.scan.as_deref() {

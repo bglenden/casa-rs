@@ -3961,6 +3961,14 @@ result meets the clipping criterion. The paired Stokes clip oracle
 reproduces the CASA flags and compares the native flags with independently
 calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Manual flagging can flag channels between requested stride steps
+
+In CASA 6.7.6.14, manual flagging with `spw='0:0~3^2'` changes all four
+channels of the window. Using the explicit list `spw='0:0;2'` selects
+channels 0 and 2. The `tools/casa-compat/flagdata_apply_backup_oracle.py`
+comparison reproduces the extra flags and checks that casa-rs retains the
+two requested channels. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## Clip channel averaging can abort on a strided selection
 
 In CASA 6.7.6.14, `flagdata(mode="clip", channelavg=True, chanbin=2,

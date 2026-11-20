@@ -5,9 +5,24 @@ use super::*;
 
 /// Save the MAIN flags to the next free `<task>_N` flag version.
 pub fn save_next_flag_backup(ms: &MeasurementSet, task: &str) -> Result<String, FlaggingError> {
+    save_next_flag_backup_with_comment(ms, task, &format!("{task} auto-backup"))
+}
+
+/// Back up the working flags with the timestamp recorded by the CASA task.
+pub fn save_next_casa_flag_backup(
+    ms: &MeasurementSet,
+    task: &str,
+) -> Result<String, FlaggingError> {
+    save_next_flag_backup_with_comment(ms, task, &autosave_comment())
+}
+
+fn save_next_flag_backup_with_comment(
+    ms: &MeasurementSet,
+    task: &str,
+    comment: &str,
+) -> Result<String, FlaggingError> {
     let name = next_version(ms_path(ms)?, task)?;
-    let comment = format!("{task} auto-backup");
-    save_flag_version(ms, &name, &comment, FlagMerge::Replace)?;
+    save_flag_version(ms, &name, comment, FlagMerge::Replace)?;
     Ok(name)
 }
 

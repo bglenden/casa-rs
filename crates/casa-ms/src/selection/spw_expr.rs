@@ -394,13 +394,23 @@ pub fn resolve_spw_selector(
     descriptions: &[DataDescriptionRow],
     text: &str,
 ) -> MsResult<SpwSelection> {
+    resolve_spw(windows, descriptions, text, false)
+}
+
+fn resolve_spw(
+    windows: &[SpectralWindowRow<'_>],
+    descriptions: &[DataDescriptionRow],
+    text: &str,
+    flagdata: bool,
+) -> MsResult<SpwSelection> {
     if text.is_empty() {
         return Ok(SpwSelection::all());
     }
     let refuse =
         |message: String| MsError::InvalidInput(format!("spw selection {text:?}: {message}"));
     let expression = grammar::parse(text).map_err(refuse)?;
-    let resolved = actions::resolve(&expression, windows, descriptions).map_err(refuse)?;
+    let resolved =
+        actions::resolve(&expression, windows, descriptions, flagdata).map_err(refuse)?;
     Ok(SpwSelection {
         selects_all: false,
         spw_ids: resolved.spw_ids.into_boxed_slice(),
@@ -434,6 +444,14 @@ impl MeasurementSet {
     ///
     /// An unreadable subtable, or any refusal of [`resolve_spw_selector`].
     pub fn resolve_spw_selector(&self, text: &str) -> MsResult<SpwSelection> {
+        self.resolve_spw(text, false)
+    }
+
+    pub(crate) fn resolve_flagdata_spw_selector(&self, text: &str) -> MsResult<SpwSelection> {
+        self.resolve_spw(text, true)
+    }
+
+    fn resolve_spw(&self, text: &str, flagdata: bool) -> MsResult<SpwSelection> {
         if text.is_empty() {
             return Ok(SpwSelection::all());
         }
@@ -470,6 +488,6 @@ impl MeasurementSet {
                 })
             })
             .collect::<MsResult<Vec<_>>>()?;
-        resolve_spw_selector(&windows, &descriptions, text)
+        resolve_spw(&windows, &descriptions, text, flagdata)
     }
 }

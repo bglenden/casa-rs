@@ -33,7 +33,7 @@ use crate::ms::MeasurementSet;
 use crate::schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
 use crate::selection::{
-    MsSelection, resolve_flagdata_row_indices_with_system_budget,
+    MsSelection, resolve_flagdata_selection_with_system_budget,
     resolve_row_indices_with_system_budget,
 };
 use crate::{
@@ -60,7 +60,9 @@ use clip_time::{TimeClip, time_bin_seconds};
 use correlation::{ClipProjection, CorrelationSelection};
 mod version_backup;
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
-pub use version_backup::{save_next_flag_backup, save_next_partition_flag_backup};
+pub use version_backup::{
+    save_next_casa_flag_backup, save_next_flag_backup, save_next_partition_flag_backup,
+};
 
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
@@ -416,22 +418,24 @@ fn flagdata_with_persistence(
         action = ?request.action,
         "flagdata started"
     );
-    let selected_rows = selected_rows(ms, request)?;
+    // The CASA controller saves the working flags before selection. Typed
+    // callers keep their existing selection-first backup behavior.
+    let early_backup = persist
+        && request.flagbackup
+        && request.casa_row_selection
+        && matches!(
+            request.mode,
+            FlagDataMode::Manual | FlagDataMode::Clip | FlagDataMode::Quack
+        );
+    let mut backup_version = early_backup
+        .then(|| save_next_casa_flag_backup(ms, "flagdata"))
+        .transpose()?;
+    let selection = selected_rows(ms, request)?;
+    let selected_rows = selection.rows;
     if selected_rows.is_empty() {
         tracing::warn!(path = %ms_path, mode = ?request.mode, "flagdata selected no rows");
     }
-    let channel_selections = request
-        .spw
-        .as_deref()
-        .map(parse_channel_selections)
-        .transpose()
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: ms_path.clone(),
-            reason: source.to_string(),
-        })?;
-    if let Some(selections) = &channel_selections {
-        check_channel_selections(ms, selections)?;
-    }
+    let channel_selections = flagging_channels(ms, request, selection.channel_ranges)?;
     let correlation = request
         .correlation
         .as_deref()
@@ -464,11 +468,9 @@ fn flagdata_with_persistence(
     } else {
         None
     };
-    let backup_version = if persist && request.flagbackup && !selected_rows.is_empty() {
-        Some(save_next_flag_backup(ms, "flagdata")?)
-    } else {
-        None
-    };
+    if persist && request.flagbackup && !early_backup && !selected_rows.is_empty() {
+        backup_version = Some(save_next_flag_backup(ms, "flagdata")?);
+    }
 
     let changes = match request.mode {
         FlagDataMode::Manual => set_selected_flags(
@@ -599,7 +601,7 @@ fn flagdata_with_persistence(
     let report = report_after(
         ms,
         request,
-        selected_rows.len(),
+        &selected_rows,
         changes,
         backup_version,
         thresholds,
@@ -649,21 +651,27 @@ fn flagdata_at_path(
 fn report_after(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
-    selected_row_count: usize,
+    rows: &[usize],
     changes: ChangeSet,
     backup_version: Option<String>,
     thresholds: Option<(f64, f64)>,
 ) -> Result<FlagDataReport, FlaggingError> {
     let summary = match changes.summary {
         Some(summary) => summary,
+        None if request.casa_row_selection
+            && request.selection.timerange.is_none()
+            && request.selection.msselect.is_none() =>
+        {
+            summarize_flags(ms, rows)?
+        }
         None => {
             let summary_rows = selected_rows(ms, request)?;
-            summarize_flags(ms, &summary_rows)?
+            summarize_flags(ms, &summary_rows.rows)?
         }
     };
     Ok(FlagDataReport {
         mode: request.mode,
-        selected_rows: selected_row_count,
+        selected_rows: rows.len(),
         changed_rows: changes.changed_rows,
         changed_samples: changes.changed_samples,
         flagged_samples: summary.flagged_samples,
@@ -675,26 +683,77 @@ fn report_after(
     })
 }
 
+struct SelectedFlagRows {
+    rows: Vec<usize>,
+    channel_ranges: BTreeMap<i32, ChannelSelection>,
+}
+
+fn flagging_channels(
+    ms: &MeasurementSet,
+    request: &FlagDataRequest,
+    resolved_ranges: BTreeMap<i32, ChannelSelection>,
+) -> Result<Option<BTreeMap<i32, ChannelSelection>>, FlaggingError> {
+    let Some(text) = request.spw.as_deref() else {
+        return Ok(None);
+    };
+    let ranges = if request.casa_row_selection && request.spw == request.selection.spw {
+        Ok(resolved_ranges)
+    } else if request.casa_row_selection {
+        ms.resolve_flagdata_spw_selector(text)
+            .and_then(|spw| crate::selection::flagdata_channel_ranges(ms, &spw))
+    } else {
+        parse_channel_selections(text)
+    }
+    .map_err(|source| FlaggingError::MutateFlags {
+        path: display_ms_path(ms),
+        reason: source.to_string(),
+    })?;
+    check_channel_selections(ms, &ranges)?;
+    Ok(Some(ranges))
+}
+
 fn selected_rows(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
-) -> Result<Vec<usize>, FlaggingError> {
+) -> Result<SelectedFlagRows, FlaggingError> {
     let selection_error = |source| FlaggingError::MutateFlags {
         path: display_ms_path(ms),
         reason: format!("select rows: {source}"),
     };
-    let resolve_rows = if request.casa_row_selection {
-        resolve_flagdata_row_indices_with_system_budget
+    let (rows, channel_ranges) = if request.casa_row_selection {
+        let resolved = resolve_flagdata_selection_with_system_budget(ms, &request.selection)
+            .map_err(selection_error)?;
+        (
+            resolved.row_indices().collect::<Vec<_>>(),
+            resolved.channel_selections,
+        )
     } else {
-        resolve_row_indices_with_system_budget
+        (
+            resolve_row_indices_with_system_budget(ms, &request.selection)
+                .map_err(selection_error)?,
+            BTreeMap::new(),
+        )
     };
-    let rows = resolve_rows(ms, &request.selection).map_err(selection_error)?;
     let field = request
         .selection
         .field
         .as_deref()
         .filter(|text| !text.trim().is_empty());
+    let explicit_spw_filter = rows.is_empty()
+        && request.casa_row_selection
+        && request
+            .selection
+            .spw
+            .as_deref()
+            .map(|text| {
+                ms.resolve_flagdata_spw_selector(text)
+                    .map(|spw| spw.rows_restricted())
+            })
+            .transpose()
+            .map_err(selection_error)?
+            .unwrap_or(false);
     let explicit_row_filter = field.is_some()
+        || explicit_spw_filter
         || (request.casa_row_selection
             && [
                 request.selection.scan.as_deref(),
@@ -720,7 +779,10 @@ fn selected_rows(
             reason: "MSSelectionNullSelection : The selected table has zero rows.".to_string(),
         });
     }
-    Ok(rows)
+    Ok(SelectedFlagRows {
+        rows,
+        channel_ranges,
+    })
 }
 
 fn clip_read_plan(
@@ -1336,9 +1398,8 @@ fn extend_autoflag_grouped(
     }
 }
 
-/// Resolve every requested window's channels before anything is written, so
-/// a refused selection leaves no flag backup behind; CASA's `flagdata`
-/// rejects the selection before it backs up (#931).
+/// Validate channel ranges before mutating flags. Public CASA-style calls
+/// have already saved any requested backup by this stage.
 fn check_channel_selections(
     ms: &MeasurementSet,
     selections: &BTreeMap<i32, ChannelSelection>,

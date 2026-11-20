@@ -38,6 +38,7 @@ mod feed_expr;
 mod intent;
 pub(crate) mod parser;
 mod row_grammar;
+pub(crate) use row_grammar::flagdata_channel_ranges;
 pub mod spw_expr;
 pub mod syntax;
 pub mod time_expr;
@@ -684,11 +685,11 @@ pub(crate) fn resolve_row_indices_with_system_budget(
     resolve_row_indices_with_grammar(ms, request, RowGrammar::Standard)
 }
 
-pub(crate) fn resolve_flagdata_row_indices_with_system_budget(
+pub(crate) fn resolve_flagdata_selection_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,
-) -> MsResult<Vec<usize>> {
-    resolve_row_indices_with_grammar(ms, request, RowGrammar::FlagData)
+) -> MsResult<ResolvedMsSelection> {
+    resolve_selection_with_grammar(ms, request, RowGrammar::FlagData)
 }
 
 fn resolve_row_indices_with_grammar(
@@ -696,6 +697,15 @@ fn resolve_row_indices_with_grammar(
     request: &MsSelection,
     grammar: RowGrammar,
 ) -> MsResult<Vec<usize>> {
+    resolve_selection_with_grammar(ms, request, grammar)
+        .map(|resolved| resolved.row_indices().collect())
+}
+
+fn resolve_selection_with_grammar(
+    ms: &MeasurementSet,
+    request: &MsSelection,
+    grammar: RowGrammar,
+) -> MsResult<ResolvedMsSelection> {
     let budget = MsSelectionIoBudget::from_system_memory(
         2,
         std::mem::size_of::<ResolvedMsSelectionRow>(),
@@ -703,7 +713,7 @@ fn resolve_row_indices_with_grammar(
     )
     .map_err(|error| MsError::InvalidInput(error.to_string()))?;
     ms.resolve_rows(request, budget, grammar)
-        .map(|(resolved, _)| resolved.row_indices().collect())
+        .map(|(resolved, _)| resolved)
         .map_err(|error| match error {
             MsSelectionError::Domain(error) => error,
             other => MsError::InvalidInput(other.to_string()),
