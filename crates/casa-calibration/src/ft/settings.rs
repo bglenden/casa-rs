@@ -32,7 +32,8 @@ pub struct ImagerTransformOptions {
     pub cache_size: i64,
     /// Scratch grid tile side.
     pub tile_size: i32,
-    /// Requested CPU thread count, or -1 to let the runtime choose.
+    /// Worker limit stored for CASA readers. Native FT currently uses
+    /// one worker per prediction.
     pub threads: i32,
     /// Override of the observatory position in ITRF spherical coordinates.
     pub observatory: Option<[f64; 3]>,
@@ -57,6 +58,5 @@ impl Default for ImagerTransformOptions {
 pub(super) struct PredictionGeometry {
     pub(super) settings: ImagerTransformOptions,
     pub(super) phase_centre_time: Option<f64>,
-    pub(super) distance_m: Option<f64>,
     pub(super) voltage_pattern: Option<PreparedVoltagePattern>,
 }

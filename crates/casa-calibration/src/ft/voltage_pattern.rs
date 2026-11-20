@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use casa_coordinates::DirectionCoordinate;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, voltage_pattern};
-use casa_numerics::PrimaryBeam;
+use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, SubtableId, voltage_pattern};
+use casa_numerics::{BeamPattern, PrimaryBeam};
+use casa_types::ScalarValue;
 use casa_types::measures::{MeasFrame, direction::MDirection};
 use ndarray::Array2;
 
@@ -15,15 +16,13 @@ use super::invalid;
 /// A radial voltage pattern selected for the imager's next prediction.
 #[derive(Clone, Debug, Default)]
 pub struct ImagerVoltagePattern {
-    /// Override the attached MeasurementSet's telescope name.
-    pub telescope: Option<String>,
     /// Custom pattern table. With no table, use the telescope's default.
     pub table: Option<PathBuf>,
 }
 
 #[derive(Clone)]
 pub(super) struct PreparedVoltagePattern {
-    pub(super) pattern: PrimaryBeam,
+    pub(super) pattern: BeamPattern,
     centre: MDirection,
     frame: MeasFrame,
 }
@@ -33,31 +32,58 @@ impl ImagerVoltagePattern {
         &self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
-        epoch: Option<f64>,
     ) -> MsResult<PreparedVoltagePattern> {
-        let first = &selected.selected_rows[0];
-        let telescope = match &self.telescope {
-            Some(telescope) => telescope.clone(),
-            None => ms.observation()?.string(0, "TELESCOPE_NAME")?,
+        let main = ms.main_table();
+        let mut first = None;
+        for row in &selected.selected_rows {
+            let ScalarValue::Int32(array) =
+                main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
+            else {
+                return Err(invalid("ARRAY_ID must be Int32"));
+            };
+            let key = (*array, row.field_id, row.data_desc_id, row.time_mjd_seconds);
+            if first.as_ref().is_none_or(|(previous, _)| key < *previous) {
+                first = Some((key, row));
+            }
+        }
+        let Some(((array, field, _, time), first)) = first else {
+            return Err(invalid("a voltage pattern needs a selected visibility"));
         };
+        let telescope = ms
+            .observation()?
+            .string(usize::try_from(array).map_err(invalid)?, "TELESCOPE_NAME")?;
         let pattern = if let Some(path) = &self.table {
             let table = voltage_pattern::VoltagePatternTable::open(path).map_err(invalid)?;
             let record = table
                 .default_record(&telescope)
                 .map_err(invalid)?
                 .ok_or_else(|| invalid(format!("no voltage pattern for {telescope}")))?;
-            voltage_pattern::radial_pattern(&record).map_err(invalid)?
+            voltage_pattern::radial_pattern(&record)
+                .map_err(invalid)?
+                .pattern()
         } else {
             let frequency = ms.spectral_window()?.ref_frequency(0)?;
-            PrimaryBeam::for_telescope(&telescope, frequency)
-                .ok_or_else(|| invalid(format!("no default voltage pattern for {telescope}")))?
+            match PrimaryBeam::for_telescope(&telescope, frequency) {
+                Some(pattern) => pattern.pattern(),
+                None => BeamPattern::for_dish_diameter(ms.antenna()?.dish_diameter(0)?)
+                    .ok_or_else(|| {
+                        invalid("no usable dish diameter for a default voltage pattern")
+                    })?,
+            }
         };
         let engine = MsCalEngine::new(ms)?;
-        let time = epoch
-            .filter(|time| *time > 0.)
-            .unwrap_or(first.time_mjd_seconds);
-        let field = usize::try_from(first.field_id).map_err(invalid)?;
-        let centre = engine.observation_direction_j2000(time, field)?;
+        let pointing = if ms.subtable(SubtableId::Pointing).is_some() {
+            // A homogeneous BeamSkyJones shares one entry for both antennas.
+            // Its update stores the second antenna's direction last.
+            ms.pointing()?.legacy_direction(first.antenna2_id, time)?
+        } else {
+            None
+        };
+        let centre = match pointing {
+            Some(centre) => centre,
+            None => engine
+                .observation_direction_j2000(time, usize::try_from(field).map_err(invalid)?)?,
+        };
         let frame = engine.spectral_frame_observatory_direction(time, centre.clone())?;
         Ok(PreparedVoltagePattern {
             pattern,

@@ -2516,6 +2516,13 @@ impl<T: ImagePixel> PagedImage<T> {
         &self.table
     }
 
+    /// Set the subtype of the image's on-disk table.
+    pub fn set_table_subtype(&mut self, subtype: impl Into<String>) {
+        let mut info = self.table.info().clone();
+        info.sub_type = subtype.into();
+        self.table.set_info(info);
+    }
+
     fn initialize_keywords(table: &mut Table, coords: &CoordinateSystem) {
         table
             .keywords_mut()

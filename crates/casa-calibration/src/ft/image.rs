@@ -31,7 +31,6 @@ use super::{channel_span, invalid, model_entry};
 /// finishes. The virtual model can keep it once its on-disk record is filed.
 pub(crate) struct ImageModel {
     pub(crate) entry: VirtualModelEntry,
-    pub(crate) starts_series: bool,
     backing: GridLifetime,
 }
 
@@ -57,11 +56,7 @@ impl ImageModel {
         } else {
             entry.container.upsert("diskimage", path);
         }
-        Ok(Self {
-            entry,
-            starts_series: self.starts_series,
-            backing,
-        })
+        Ok(Self { entry, backing })
     }
 
     pub(crate) fn retain(&mut self) {
@@ -151,11 +146,7 @@ pub(super) fn prepare_configured_image(
         None => record,
     };
     let entry = model_entry(ms, selected, VirtualModelKind::FtMachine, container)?;
-    Ok(Some(ImageModel {
-        entry,
-        starts_series: false,
-        backing,
-    }))
+    Ok(Some(ImageModel { entry, backing }))
 }
 
 struct ImageTransform {
@@ -166,6 +157,7 @@ struct ImageTransform {
     phase_center: [f64; 2],
     frame: String,
     options: PredictionGeometry,
+    distance_m: Option<f64>,
     w_record: Option<WRecord>,
 }
 
@@ -375,6 +367,12 @@ impl ImageTransform {
             kernels,
             options.settings.precision,
         );
+        let distance_m = match image.misc_info().get("distance") {
+            None => None,
+            Some(Value::Scalar(ScalarValue::Float64(distance))) => Some(*distance),
+            Some(Value::Scalar(ScalarValue::Float32(distance))) => Some(f64::from(*distance)),
+            Some(_) => return Err(invalid("model image distance must be a number in metres")),
+        };
         Ok(Self {
             operator,
             coordinates,
@@ -383,6 +381,7 @@ impl ImageTransform {
             phase_center,
             frame: direction.direction_ref().as_str().to_owned(),
             options,
+            distance_m,
             w_record,
         })
     }
@@ -402,10 +401,7 @@ impl ImageTransform {
                 let CoordinateModel::Direction(direction) = coords.coordinate(index) else {
                     unreachable!("direction coordinate");
                 };
-                Ok::<_, casa_ms::MsError>((
-                    beam.pattern.pattern(),
-                    beam.separations(direction, [nx, ny])?,
-                ))
+                Ok::<_, casa_ms::MsError>((&beam.pattern, beam.separations(direction, [nx, ny])?))
             })
             .transpose()?;
         let grid_pols = self.operator.polarization().grid_pols();
@@ -559,7 +555,7 @@ impl ImageTransform {
                 Value::Scalar(ScalarValue::Float64(epoch)),
             );
         }
-        if let Some(distance) = self.options.distance_m {
+        if let Some(distance) = self.distance_m {
             record.upsert("distance", Value::Scalar(ScalarValue::Float64(distance)));
         }
         if scratch && settings.frequency_interpolation != 0 {

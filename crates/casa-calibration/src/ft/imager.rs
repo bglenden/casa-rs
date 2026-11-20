@@ -6,8 +6,11 @@ use std::path::{Path, PathBuf};
 
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
-use casa_images::PagedImage;
-use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind};
+use casa_images::{ImageInfo, PagedImage};
+use casa_ms::{
+    MeasurementSet, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+};
+use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::{AttachmentError, CalibrationAttachment};
 
@@ -23,8 +26,8 @@ pub struct ImagerImageDefinition {
     pub shape: [usize; 4],
     /// The coordinates of a model image created by this imager.
     pub coordinates: CoordinateSystem,
-    /// Optional finite-distance focus in metres.
-    pub distance_m: Option<f64>,
+    /// Field whose name is used for a new image's object metadata.
+    pub field_id: usize,
 }
 
 /// Inputs to one imager prediction.
@@ -45,6 +48,17 @@ pub struct ImagerPrediction {
     options: ImagerTransformOptions,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
+    pending_publication: Option<PendingPublication>,
+}
+
+struct PendingPublication {
+    path: PathBuf,
+    selection: MsSelection,
+    images: Vec<PathBuf>,
+    components: Option<PathBuf>,
+    incremental: bool,
+    phase_centre_time: Option<f64>,
+    publication: VirtualFtPublication,
 }
 
 impl Default for ImagerPrediction {
@@ -54,6 +68,7 @@ impl Default for ImagerPrediction {
             options: ImagerTransformOptions::default(),
             taylor: (1, None),
             voltage_pattern: None,
+            pending_publication: None,
         }
     }
 }
@@ -93,21 +108,42 @@ impl ImagerPrediction {
     /// Predict and publish the model for one already-selected attachment.
     ///
     /// Returns false when an absent image needs an image definition.
+    /// Repeat the same request after an interrupted virtual publication to
+    /// finish cleanup using the already-prepared model.
     ///
     /// # Errors
     ///
     /// An attachment, model preparation, Fourier transform or table write
     /// fails.
     pub fn predict(
-        &self,
+        &mut self,
         attachment: &CalibrationAttachment,
         model: ImagerPredictionModel<'_>,
     ) -> Result<bool, AttachmentError> {
-        attachment.with_write(|ms, selection, lock| {
+        let mut pending = self.pending_publication.take();
+        let result = attachment.with_write(|ms, selection, lock| {
+            let scratch = attachment.options().use_scratch;
+            if let Some(previous) = pending.as_mut() {
+                if scratch
+                    || previous.path != attachment.path()
+                    || previous.selection != selection.request
+                    || previous.images != model.images
+                    || previous.components.as_deref() != model.components
+                    || previous.incremental != model.incremental
+                    || previous.phase_centre_time.map(f64::to_bits)
+                        != model.phase_centre_time.map(f64::to_bits)
+                {
+                    return Err(invalid(
+                        "retry the previous imager prediction to finish publishing it",
+                    )
+                    .into());
+                }
+                previous.publication.publish([(ms, lock)].into_iter())?;
+                return Ok(true);
+            }
             if selection.selected_rows.is_empty() {
                 return Ok(true);
             }
-            let scratch = attachment.options().use_scratch;
             let Some((mut components, images)) = self.prepare(ms, selection, &model, scratch)?
             else {
                 return Ok(false);
@@ -116,17 +152,31 @@ impl ImagerPrediction {
                 components.extend(images.iter().map(|image| image.entry.clone()));
                 write_model_scratch(ms, selection, &components, model.incremental, lock)?;
             } else {
-                VirtualFtPublication::new(
+                let publication = VirtualFtPublication::new(
                     [&*ms].into_iter(),
                     components,
                     images,
                     model.incremental,
                     false,
-                )?
-                .publish([(ms, lock)].into_iter())?;
+                )?;
+                let previous = pending.insert(PendingPublication {
+                    path: attachment.path().to_owned(),
+                    selection: selection.request.clone(),
+                    images: model.images.to_owned(),
+                    components: model.components.map(Path::to_owned),
+                    incremental: model.incremental,
+                    phase_centre_time: model.phase_centre_time,
+                    publication,
+                });
+                previous.publication.publish([(ms, lock)].into_iter())?;
             }
             Ok(true)
-        })
+        });
+        if result.is_err() {
+            self.pending_publication =
+                pending.filter(|previous| previous.publication.may_reference_models());
+        }
+        result
     }
 
     fn prepare(
@@ -162,6 +212,22 @@ impl ImagerPrediction {
                 )
                 .map_err(invalid)?;
                 image.set_units("Jy/pixel").map_err(invalid)?;
+                image
+                    .set_image_info(&ImageInfo {
+                        object_name: ms.field()?.name(definition.field_id)?,
+                        ..ImageInfo::default()
+                    })
+                    .map_err(invalid)?;
+                let mut misc = RecordValue::default();
+                misc.upsert(
+                    "INSTRUME",
+                    Value::Scalar(ScalarValue::String(
+                        ms.observation()?.string(0, "TELESCOPE_NAME")?,
+                    )),
+                );
+                misc.upsert("distance", Value::Scalar(ScalarValue::Float64(0.)));
+                image.set_misc_info(misc).map_err(invalid)?;
+                image.set_table_subtype("GENERIC");
                 image.save().map_err(invalid)?;
             }
         }
@@ -184,8 +250,8 @@ impl ImagerPrediction {
             )?);
         }
         let mut images = Vec::new();
-        match self.voltage_pattern.as_ref() {
-            Some(pattern) => {
+        match (self.voltage_pattern.as_ref(), scratch) {
+            (Some(pattern), true) => {
                 let mut fields = BTreeMap::<_, Vec<_>>::new();
                 for row in &selected.selected_rows {
                     fields.entry(row.field_id).or_default().push(row.clone());
@@ -193,19 +259,32 @@ impl ImagerPrediction {
                 let mut field = selected.clone();
                 for (_, rows) in fields {
                     field.selected_rows = rows;
-                    let voltage_pattern = pattern.prepare(ms, &field, model.phase_centre_time)?;
+                    let voltage_pattern = pattern.prepare(ms, &field)?;
                     images.extend(self.prepare_images(
                         ms,
                         &field,
                         model,
                         reference_hz,
-                        scratch,
+                        true,
                         Some(voltage_pattern),
                     )?);
                 }
             }
-            None => {
-                images = self.prepare_images(ms, selected, model, reference_hz, scratch, None)?
+            (pattern, _) => {
+                // CASA saves the first transformed beam under all selected
+                // virtual combinations. Its scratch iterator can change
+                // the beam as it advances to another field.
+                let voltage_pattern = pattern
+                    .map(|pattern| pattern.prepare(ms, selected))
+                    .transpose()?;
+                images = self.prepare_images(
+                    ms,
+                    selected,
+                    model,
+                    reference_hz,
+                    scratch,
+                    voltage_pattern,
+                )?;
             }
         }
         Ok(Some((components, images)))
@@ -225,10 +304,6 @@ impl ImagerPrediction {
             settings: self.options,
             phase_centre_time: model.phase_centre_time,
             voltage_pattern,
-            distance_m: self
-                .definition
-                .as_ref()
-                .and_then(|definition| definition.distance_m),
         };
         let mut images = Vec::new();
         for (index, path) in model.images.iter().enumerate() {
@@ -237,7 +312,7 @@ impl ImagerPrediction {
                 index: index as i32,
                 reference_hz,
             });
-            if let Some(mut image) = prepare_configured_image(
+            if let Some(image) = prepare_configured_image(
                 ms,
                 selected,
                 path,
@@ -246,7 +321,6 @@ impl ImagerPrediction {
                 scratch,
                 geometry.clone(),
             )? {
-                image.starts_series = images.is_empty();
                 images.push(image);
             }
         }

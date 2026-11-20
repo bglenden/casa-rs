@@ -18,6 +18,11 @@ from calibration_ft_oracle import coordinates
 from gaincal_oracle import relative_rms
 
 
+BEAM_CASES = {"vp", "all-vp", "no-vp", "pointing-vp", "dish-vp", "vpvirtual"}
+CLOSE_MODEL_CASES = BEAM_CASES | {"image-distance", "definition-distance"}
+VIRTUAL_CASES = ["wvirtual", "vpvirtual"]
+
+
 def write_model(path, direction, reference, flux, cell=70):
     ra, dec = direction
     pixels = np.zeros((32, 32, 1, 1), np.float32)
@@ -39,7 +44,7 @@ def write_model(path, direction, reference, flux, cell=70):
     tool.done()
 
 
-def configure_data(path, polynomial=False):
+def configure_data(path, case=""):
     source_data(path, stokes="XX XY YX YY")
     tb = table()
     assert tb.open(str(path), nomodify=False)
@@ -53,7 +58,7 @@ def configure_data(path, polynomial=False):
         times = tb.getcol("TIME")
     finally:
         tb.close()
-    if polynomial:
+    if case.startswith("phase-"):
         assert tb.open(str(path / "FIELD"), nomodify=False)
         try:
             tb.putcell("TIME", 0, float(np.min(times[fields == 0])))
@@ -63,10 +68,24 @@ def configure_data(path, polynomial=False):
                 tb.putcell(column, 0, np.column_stack((position, [2e-5, 0.])))
         finally:
             tb.close()
+    if case == "pointing-vp":
+        assert tb.open(str(path / "POINTING"), nomodify=False)
+        try:
+            directions = tb.getcol("DIRECTION")
+            directions[0, 0, :] += 0.000111963
+            tb.putcol("DIRECTION", directions)
+        finally:
+            tb.close()
+    if case == "dish-vp":
+        assert tb.open(str(path / "OBSERVATION"), nomodify=False)
+        try:
+            tb.putcell("TELESCOPE_NAME", 0, "CUSTOM_ARRAY")
+        finally:
+            tb.close()
 
 
 def prediction(path, images, reference, case):
-    cell = 2 if case in {"vp", "no-vp", "all-vp"} else 70
+    cell = 2 if case in CLOSE_MODEL_CASES else 70
     phase_time = -1.
     if case == "phase-time":
         tb = table()
@@ -76,11 +95,13 @@ def prediction(path, images, reference, case):
         finally:
             tb.close()
     tool = imager()
-    assert tool.open(str(path), usescratch=case != "wvirtual")
-    assert tool.selectvis(field="0,1" if case == "all-vp" else "0")
+    assert tool.open(str(path), usescratch=case not in VIRTUAL_CASES)
+    assert tool.selectvis(field="0,1" if case in {"all-vp", "vpvirtual"} else "0")
     assert tool.defineimage(nx=32, ny=32, cellx=f"{cell}arcsec", celly=f"{cell}arcsec",
-                            phasecenter=0, outframe="TOPO")
-    assert tool.setvp(dovp=case in {"vp", "all-vp"}, telescope="ALMA")
+                            phasecenter=0, outframe="TOPO",
+                            distance="10m" if case == "definition-distance" else "0m")
+    telescope = "THIS_IS_NOT_AN_OBSERVATORY" if case == "vp" else ""
+    assert tool.setvp(dovp=case in BEAM_CASES - {"no-vp"}, telescope=telescope)
     if case in {"wproject", "wvirtual"}:
         assert tool.setoptions(ftmachine="wproject", padding=1.4, wprojplanes=16, numthreads=1)
         assert tool.ft(model=images[:1])
@@ -94,27 +115,49 @@ def prediction(path, images, reference, case):
     assert tool.done()
 
 
-def samples(path, virtual=False, all_fields=False):
+def samples(path, column="MODEL_DATA", field=0):
     tb = table()
     assert tb.open(str(path))
     try:
         fields = tb.getcol("FIELD_ID")
-        selected = np.ones_like(fields, dtype=bool) if all_fields else fields == 0
-        if virtual:
-            return (tb.getcol("DATA") - tb.getcol("CORRECTED_DATA"))[:, :, selected]
-        return tb.getcol("MODEL_DATA")[:, :, selected]
+        selected = np.ones_like(fields, dtype=bool) if field is None else fields == field
+        return tb.getcol(column)[:, :, selected]
     finally:
         tb.close()
 
 
-def virtual_interchange(root, native_bin):
+def empty_image(path):
+    tool = image()
+    assert tool.open(str(path))
+    try:
+        assert not np.any(tool.getchunk())
+        metadata = {
+            "shape": tool.shape().tolist(),
+            "units": tool.brightnessunit(),
+            "misc": tool.miscinfo(),
+        }
+    finally:
+        tool.done()
+    tb = table()
+    assert tb.open(str(path))
+    try:
+        metadata["type"] = tb.info()["subType"]
+        metadata["image"] = tb.getkeyword("imageinfo")["objectname"]
+    finally:
+        tb.close()
+    return metadata
+
+
+def virtual_interchange(root, native_bin, case):
     expected = None
     evidence = {}
     for writer in ["casa", "native"]:
-        published = root / f"{writer}-wvirtual.ms"
+        published = root / f"{writer}-{case}.ms"
+        fields = [0, 1] if case == "vpvirtual" else [0]
         for reader in ["casa", "native"]:
-            destination = root / f"{writer}-{reader}-uvsub.ms"
+            destination = root / f"{case}-{writer}-{reader}-uvsub.ms"
             shutil.copytree(published, destination)
+            before = [samples(destination, "CORRECTED_DATA", field) for field in fields]
             if reader == "casa":
                 assert casatasks.uvsub(str(destination)) is None
             else:
@@ -123,27 +166,35 @@ def virtual_interchange(root, native_bin):
                      "--workspace", str(root), "--no-save-last"],
                     check=True,
                 )
-            actual = samples(destination, virtual=True)
+            actual = [value - samples(destination, "CORRECTED_DATA", field)
+                      for value, field in zip(before, fields, strict=True)]
             if expected is None:
-                assert np.max(np.abs(actual)) > 1.5
+                assert np.max(np.abs(actual[0])) > (1.5 if case == "wvirtual" else 1.)
+                if case == "vpvirtual":
+                    assert np.max(np.abs(actual[1])) > 1.
                 expected = actual
-            error = relative_rms(actual, expected)
+            errors = [relative_rms(value, reference)
+                      for value, reference in zip(actual, expected, strict=True)]
             evidence[f"{writer}-{reader}"] = {
-                "complex_samples": actual.size, "normalized_rms": error
+                "complex_samples": sum(value.size for value in actual),
+                "normalized_rms": max(errors),
             }
-            print(f"virtual {writer}-{reader}", evidence[f"{writer}-{reader}"], flush=True)
-            assert error < 1e-3, (writer, reader, error)
+            print(f"{case} {writer}-{reader}", evidence[f"{writer}-{reader}"], flush=True)
+            assert max(errors) < 1e-3, (case, writer, reader, errors)
     return evidence
 
 
 def run(root, native_test, native_bin):
     assert casatasks.version_string() == "6.7.6.14"
     root.mkdir(parents=True)
-    cases = ["wproject", "grid", "taylor", "changed", "vp", "all-vp", "no-vp", "phase-default", "phase-time"]
-    for case in [*cases, "wvirtual"]:
+    cases = ["wproject", "grid", "taylor", "changed", "vp", "all-vp", "pointing-vp",
+             "dish-vp", "no-vp", "phase-default", "phase-time", "image-distance",
+             "definition-distance"]
+    for case in [*cases, *VIRTUAL_CASES]:
         for engine in ["casa", "native"]:
-            configure_data(root / f"{engine}-{case}.ms", polynomial=case.startswith("phase-"))
+            configure_data(root / f"{engine}-{case}.ms", case)
     configure_data(root / "native-defineimage.ms")
+    configure_data(root / "casa-defineimage.ms")
     reference_ms = root / "casa-wproject.ms"
     tb = table()
     assert tb.open(str(reference_ms / "SPECTRAL_WINDOW"))
@@ -154,20 +205,31 @@ def run(root, native_test, native_bin):
         write_model(path, coordinates(reference_ms), reference, flux)
     beam_target = root / "beam-target.im"
     write_model(beam_target, coordinates(reference_ms), reference, 2., cell=2)
+    focused_image = root / "focus-target.im"
+    shutil.copytree(beam_target, focused_image)
+    tool = image()
+    assert tool.open(str(focused_image))
+    assert tool.setmiscinfo({"distance": 10.})
+    assert tool.done()
     images = [str(path) for path in paths]
-    for case in [*cases, "wvirtual"]:
-        models = [str(beam_target)] if case in {"vp", "no-vp", "all-vp"} else images
+    for case in [*cases, *VIRTUAL_CASES]:
+        if case == "image-distance":
+            models = [str(focused_image)]
+        elif case in CLOSE_MODEL_CASES:
+            models = [str(beam_target)]
+        else:
+            models = images
         prediction(root / f"casa-{case}.ms", models, reference, case)
+    prediction(root / "casa-defineimage.ms", [str(root / "new-casa.im")], reference,
+               "defineimage")
     subprocess.run(
         [str(native_test), "--ignored", "--exact", "installed_casa_prediction_settings"],
         env=dict(os.environ, CASARS_IMAGER_PREDICTION_WORK=str(root)),
         check=True,
     )
-    model = image()
-    assert model.open(str(root / "new-native.im"))
-    np.testing.assert_array_equal(model.shape(), [32, 32, 1, 1])
-    assert not np.any(model.getchunk())
-    model.done()
+    native_image = empty_image(root / "new-native.im")
+    casa_image = empty_image(root / "new-casa.im")
+    assert native_image == casa_image, (native_image, casa_image)
     assert relative_rms(samples(root / "casa-wproject.ms"),
                         samples(root / "casa-grid.ms")) > 1e-3
     assert not np.array_equal(samples(root / "casa-taylor.ms"),
@@ -175,11 +237,20 @@ def run(root, native_test, native_bin):
     assert relative_rms(samples(root / "casa-phase-time.ms"),
                         samples(root / "casa-phase-default.ms")) > 0.1
     assert 0.5 < np.max(np.abs(samples(root / "casa-vp.ms"))) < 1.5
+    assert relative_rms(samples(root / "casa-pointing-vp.ms"),
+                        samples(root / "casa-vp.ms")) > 0.1
+    assert relative_rms(samples(root / "casa-dish-vp.ms"),
+                        samples(root / "casa-vp.ms")) > 0.1
     assert np.max(np.abs(samples(root / "casa-no-vp.ms"))) > 1.9
+    np.testing.assert_array_equal(samples(root / "casa-definition-distance.ms"),
+                                  samples(root / "casa-no-vp.ms"))
+    assert relative_rms(samples(root / "casa-image-distance.ms"),
+                        samples(root / "casa-no-vp.ms")) > 0.1
     evidence = {}
     for case in cases:
-        expected = samples(root / f"casa-{case}.ms", all_fields=case == "all-vp")
-        actual = samples(root / f"native-{case}.ms", all_fields=case == "all-vp")
+        field = None if case == "all-vp" else 0
+        expected = samples(root / f"casa-{case}.ms", field=field)
+        actual = samples(root / f"native-{case}.ms", field=field)
         error = relative_rms(actual, expected)
         evidence[case] = {
             "complex_samples": actual.size,
@@ -188,7 +259,8 @@ def run(root, native_test, native_bin):
         }
         print(case, evidence[case], flush=True)
         assert error < 1e-3, (case, error)
-    evidence["virtual"] = virtual_interchange(root, native_bin)
+    for case in VIRTUAL_CASES:
+        evidence[case] = virtual_interchange(root, native_bin, case)
     return evidence
 
 

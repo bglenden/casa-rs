@@ -16,6 +16,10 @@ use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use super::*;
 use crate::ft::image::{TaylorTerm, prepare_image};
 use crate::session::resolve_casa_calibration_selection;
+use crate::{
+    AttachmentMode, AttachmentOptions, CalibrationAttachment, ImagerPrediction,
+    ImagerPredictionModel,
+};
 
 fn measures_available() -> bool {
     match casa_ms::open_measures_runtime() {
@@ -134,6 +138,68 @@ fn grids(path: &Path) -> Vec<PathBuf> {
             path
         })
         .collect()
+}
+
+#[test]
+#[cfg(unix)]
+fn imager_retries_a_published_increment_without_adding_it_again() {
+    if !measures_available() {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let path = fixture(temp.path());
+    let (mut ms, mut lock) = opened(&path);
+    drop(models(&ms, temp.path(), &[2.]));
+    lock.release().unwrap();
+    let attachment = CalibrationAttachment::attach(
+        &path,
+        AttachmentMode::Selection,
+        AttachmentOptions::default(),
+        MsSelection {
+            field: Some("0".into()),
+            ..MsSelection::default()
+        },
+    )
+    .unwrap();
+    let images = [temp.path().join("term-0.im")];
+    let mut imager = ImagerPrediction::default();
+    let request = |incremental| ImagerPredictionModel {
+        images: &images,
+        components: None,
+        incremental,
+        phase_centre_time: None,
+    };
+    assert!(imager.predict(&attachment, request(false)).unwrap());
+    assert_eq!(grids(&path).len(), 1);
+
+    (ms, lock) = opened(&path);
+    stale_main(&mut ms, &mut lock);
+    lock.release().unwrap();
+    let info = path.join("table.info");
+    let original = fs::metadata(&info).unwrap().permissions();
+    let mut readonly = original.clone();
+    readonly.set_readonly(true);
+    fs::set_permissions(&info, readonly).unwrap();
+    if fs::OpenOptions::new().write(true).open(&info).is_ok() {
+        fs::set_permissions(&info, original).unwrap();
+        eprintln!("skipping imager retry fault because this process can write read-only files");
+        return;
+    }
+    let first = imager.predict(&attachment, request(true));
+    fs::set_permissions(&info, original).unwrap();
+    assert!(
+        first.is_err(),
+        "MAIN metadata save should fail after SOURCE"
+    );
+    let written = grids(&path);
+    assert_eq!(written.len(), 2);
+    assert!(imager.predict(&attachment, request(false)).is_err());
+    assert!(imager.predict(&attachment, request(true)).unwrap());
+    assert_eq!(grids(&path), written);
+    let reopened = MeasurementSet::open(&path).unwrap();
+    assert!(reopened.main_table().keywords().get("model_0").is_none());
+    assert!(imager.predict(&attachment, request(true)).unwrap());
+    assert_eq!(grids(&path).len(), 3);
 }
 
 #[test]

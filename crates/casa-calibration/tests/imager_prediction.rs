@@ -33,7 +33,7 @@ fn definition(imager: &mut ImagerPrediction, path: &Path) -> f64 {
     imager.define_image(ImagerImageDefinition {
         shape: image.shape().try_into().unwrap(),
         coordinates: image.coordinates().clone(),
-        distance_m: None,
+        field_id: 0,
     });
     let coords = image.coordinates();
     let index = coords.find_coordinate(CoordinateType::Spectral).unwrap();
@@ -43,7 +43,7 @@ fn definition(imager: &mut ImagerPrediction, path: &Path) -> f64 {
     frequency.world_frequency_hz(0.).unwrap()
 }
 
-fn predict(imager: &ImagerPrediction, attachment: &CalibrationAttachment, images: &[PathBuf]) {
+fn predict(imager: &mut ImagerPrediction, attachment: &CalibrationAttachment, images: &[PathBuf]) {
     assert!(
         imager
             .predict(
@@ -72,9 +72,10 @@ fn installed_casa_prediction_settings() {
     imager.set_options(ImagerTransformOptions {
         gridder: ImagerGridder::WProject(WPlaneCount::Fixed(16)),
         padding: 1.4,
+        threads: 1,
         ..ImagerTransformOptions::default()
     });
-    predict(&imager, &wide, std::slice::from_ref(&point));
+    predict(&mut imager, &wide, std::slice::from_ref(&point));
     let virtual_target = CalibrationAttachment::attach(
         &root.join("native-wvirtual.ms"),
         AttachmentMode::Selection,
@@ -85,33 +86,32 @@ fn installed_casa_prediction_settings() {
         },
     )
     .unwrap();
-    predict(&imager, &virtual_target, std::slice::from_ref(&point));
+    predict(&mut imager, &virtual_target, std::slice::from_ref(&point));
 
     imager.set_options(ImagerTransformOptions {
         padding: 1.4,
         ..ImagerTransformOptions::default()
     });
     let control = attachment(&root.join("native-grid.ms"));
-    predict(&imager, &control, std::slice::from_ref(&point));
+    predict(&mut imager, &control, std::slice::from_ref(&point));
 
     imager.set_options(ImagerTransformOptions::default());
     imager.set_taylor_terms(2, Some(0.99 * reference)).unwrap();
     let taylor = attachment(&root.join("native-taylor.ms"));
-    predict(&imager, &taylor, &[point.clone(), term.clone()]);
+    predict(&mut imager, &taylor, &[point.clone(), term.clone()]);
 
     imager.set_taylor_terms(2, Some(0.98 * reference)).unwrap();
     let changed = attachment(&root.join("native-changed.ms"));
-    predict(&imager, &changed, &[point.clone(), term]);
+    predict(&mut imager, &changed, &[point.clone(), term]);
 
     let beam_model = root.join("beam-target.im");
     definition(&mut imager, &beam_model);
     imager.set_taylor_terms(1, None).unwrap();
-    imager.set_voltage_pattern(Some(ImagerVoltagePattern {
-        telescope: Some("ALMA".into()),
-        table: None,
-    }));
-    let beam = attachment(&root.join("native-vp.ms"));
-    predict(&imager, &beam, std::slice::from_ref(&beam_model));
+    imager.set_voltage_pattern(Some(ImagerVoltagePattern::default()));
+    for case in ["vp", "pointing-vp", "dish-vp"] {
+        let beam = attachment(&root.join(format!("native-{case}.ms")));
+        predict(&mut imager, &beam, std::slice::from_ref(&beam_model));
+    }
     let all_fields = CalibrationAttachment::attach(
         &root.join("native-all-vp.ms"),
         AttachmentMode::Selection,
@@ -122,14 +122,42 @@ fn installed_casa_prediction_settings() {
         MsSelection::default(),
     )
     .unwrap();
-    predict(&imager, &all_fields, std::slice::from_ref(&beam_model));
+    predict(&mut imager, &all_fields, std::slice::from_ref(&beam_model));
+    let virtual_beam = CalibrationAttachment::attach(
+        &root.join("native-vpvirtual.ms"),
+        AttachmentMode::Selection,
+        AttachmentOptions::default(),
+        MsSelection::default(),
+    )
+    .unwrap();
+    predict(
+        &mut imager,
+        &virtual_beam,
+        std::slice::from_ref(&beam_model),
+    );
     imager.set_voltage_pattern(None);
     let disabled = attachment(&root.join("native-no-vp.ms"));
-    predict(&imager, &disabled, std::slice::from_ref(&beam_model));
+    predict(&mut imager, &disabled, std::slice::from_ref(&beam_model));
+    let definition_distance = attachment(&root.join("native-definition-distance.ms"));
+    predict(
+        &mut imager,
+        &definition_distance,
+        std::slice::from_ref(&beam_model),
+    );
+    let image_distance = attachment(&root.join("native-image-distance.ms"));
+    predict(
+        &mut imager,
+        &image_distance,
+        &[root.join("focus-target.im")],
+    );
 
     definition(&mut imager, &point);
     let varying = root.join("native-phase-default.ms");
-    predict(&imager, &attachment(&varying), std::slice::from_ref(&point));
+    predict(
+        &mut imager,
+        &attachment(&varying),
+        std::slice::from_ref(&point),
+    );
     let fixed = root.join("native-phase-time.ms");
     let ms = MeasurementSet::open(&fixed).unwrap();
     let table = ms.main_table();
@@ -172,7 +200,7 @@ fn installed_casa_prediction_settings() {
     );
     assert!(!missing[0].exists());
     definition(&mut fresh, &point);
-    predict(&fresh, &create, &missing);
+    predict(&mut fresh, &create, &missing);
     let created = PagedImage::<f32>::open(&missing[0]).unwrap();
     assert_eq!(created.shape(), [32, 32, 1, 1]);
 }
