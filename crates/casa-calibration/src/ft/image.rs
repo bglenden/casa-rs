@@ -13,22 +13,26 @@ use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
     GridPrecision, ImageCorrection, ImageExtent, MOSAIC_OVERSAMPLING, MeasurementOperator,
-    ModelImages, ModelPlane, ModelPrescale, PaddingFactor, PolarizationRouting, SpectralAxis,
-    SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    ModelImages, ModelPlane, ModelPrescale, MosaicPb, PaddingFactor, PolarizationRouting,
+    SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{
-    FirstBuffer, GridFt, casa_spectral, legacy_mosaic, legacy_multi_term, set_grid_tangent,
+    FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
+    legacy_multi_term, set_grid_motion, set_grid_tangent,
 };
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     convert_frequency_to_frame_with_frame, virtual_model_image_path,
 };
 use casa_types::measures::frequency::FrequencyRef;
+use casa_types::measures::record::direction_from_record;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
 
+use super::moving_source::MovingSourceAnchor;
 use super::settings::{ImagerGridder, PredictionGeometry};
+use super::voltage_pattern::{legacy_mosaic_table, relocate_mosaic_table};
 use super::{channel_span, invalid, model_entry, spectral_with_runtime};
 
 /// An uncommitted Fourier image. The scratch path uses it until the write
@@ -40,6 +44,29 @@ pub(crate) struct ImageModel {
 }
 
 impl ImageModel {
+    pub(super) fn track(&mut self, tracking: &MovingSourceAnchor) -> MsResult<()> {
+        let record = &mut self.entry.container;
+        let Some(Value::Record(image)) = record.get("mimage_rec") else {
+            return Err(invalid("the Fourier grid has no image direction"));
+        };
+        let reference = direction_from_record(image).map_err(invalid)?.refer();
+        let anchor = tracking.source.direction(&tracking.frame, reference)?;
+        let location = tracking
+            .frame
+            .position()
+            .expect("moving-source frame has a location");
+        let set_motion = |record: &mut RecordValue| {
+            set_grid_motion(record, tracking.source.model(), &anchor, location);
+        };
+        if let Some(Value::Record(grid)) = record.get("subftm") {
+            let mut grid = grid.clone();
+            set_motion(&mut grid);
+            record.upsert("subftm", Value::Record(grid));
+        }
+        set_motion(record);
+        Ok(())
+    }
+
     pub(crate) fn copy_to(&self, target: &MeasurementSet) -> MsResult<Self> {
         let backing = GridLifetime {
             path: virtual_model_image_path(target)?,
@@ -60,6 +87,7 @@ impl ImageModel {
             entry.container.upsert("subftm", Value::Record(grid));
         } else {
             entry.container.upsert("diskimage", path);
+            relocate_mosaic_table(&mut entry.container, &self.backing.path, &backing.path)?;
         }
         Ok(Self {
             entry,
@@ -234,8 +262,20 @@ struct ImageTransform {
     options: PredictionGeometry,
     distance_m: Option<f64>,
     w_record: Option<WRecord>,
-    mosaic_stokes: Option<String>,
+    mosaic: Option<MosaicImage>,
     window: ModelWindow,
+}
+
+struct MosaicImage {
+    stokes: String,
+    beam: MosaicBeam,
+    sampling: u16,
+}
+
+enum MosaicBeam {
+    Array(i32),
+    Common(String),
+    Image(PathBuf),
 }
 
 struct WRecord {
@@ -571,6 +611,16 @@ impl ImageTransform {
                 .collect::<MsResult<_>>()?,
         ));
         coordinates.add_coordinate(spectral.clone());
+        let mosaic = matches!(options.settings.gridder, ImagerGridder::Mosaic)
+            .then(|| {
+                mosaic_image(
+                    ms,
+                    stokes,
+                    [nx, ny],
+                    options.mosaic_voltage_table.as_deref(),
+                )
+            })
+            .transpose()?;
         *coordinates.obs_info_mut() = ObsInfo::new("UNKNOWN").with_observer("UNKNOWN");
         let frequencies = (0..channels)
             .map(|index| spectral.world_frequency_hz(index as f64).map_err(invalid))
@@ -619,8 +669,7 @@ impl ImageTransform {
             increment,
             phase_center,
             frame: direction.direction_ref().as_str().to_owned(),
-            mosaic_stokes: matches!(options.settings.gridder, ImagerGridder::Mosaic)
-                .then(|| stokes.stokes().iter().map(|stokes| stokes.name()).collect()),
+            mosaic,
             options,
             distance_m,
             w_record,
@@ -636,9 +685,9 @@ impl ImageTransform {
         let [first_x, first_y] = self.window.origin;
         let [gx, gy] = self.operator.geometry().grid_shape();
         let mosaic = self
-            .mosaic_stokes
-            .is_some()
-            .then(|| ImageCorrection::mosaic_sinc([gx, gy], MOSAIC_OVERSAMPLING));
+            .mosaic
+            .as_ref()
+            .map(|mosaic| ImageCorrection::mosaic_sinc([gx, gy], mosaic.sampling));
         let beam = self
             .options
             .voltage_pattern
@@ -846,10 +895,28 @@ impl ImageTransform {
         if let Some(w_record) = &self.w_record {
             w_record.save(&mut record, scratch, self.operator.geometry());
         }
-        if let Some(stokes) = &self.mosaic_stokes {
-            let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
-            let beam_class = legacy_mosaic_beam_class(&telescope)?;
-            legacy_mosaic(&mut record, stokes, beam_class, MOSAIC_OVERSAMPLING);
+        if let Some(mosaic) = &self.mosaic {
+            match &mosaic.beam {
+                MosaicBeam::Array(class) => {
+                    legacy_mosaic(&mut record, &mosaic.stokes, *class, mosaic.sampling);
+                }
+                MosaicBeam::Common(telescope) => {
+                    legacy_common_mosaic(&mut record, &mosaic.stokes, telescope, mosaic.sampling);
+                }
+                MosaicBeam::Image(table) => {
+                    let table = if scratch {
+                        table.clone()
+                    } else {
+                        legacy_mosaic_table(table, path)?
+                    };
+                    legacy_image_mosaic(
+                        &mut record,
+                        &mosaic.stokes,
+                        &table.to_string_lossy(),
+                        mosaic.sampling,
+                    );
+                }
+            }
         }
         record.upsert(
             "spwchanselflag",
@@ -860,16 +927,45 @@ impl ImageTransform {
     }
 }
 
+fn mosaic_image(
+    ms: &MeasurementSet,
+    stokes: &StokesCoordinate,
+    shape: [usize; 2],
+    voltage_table: Option<&Path>,
+) -> MsResult<MosaicImage> {
+    let (beam, sampling) = if let Some(table) = voltage_table {
+        (MosaicBeam::Image(table.to_owned()), MOSAIC_OVERSAMPLING)
+    } else {
+        let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
+        if telescope == "VLA" {
+            (
+                MosaicBeam::Common(telescope),
+                MosaicPb::simple_oversampling(shape),
+            )
+        } else {
+            (
+                MosaicBeam::Array(legacy_mosaic_beam_class(&telescope)?),
+                MOSAIC_OVERSAMPLING,
+            )
+        }
+    };
+    Ok(MosaicImage {
+        stokes: stokes.stokes().iter().map(|stokes| stokes.name()).collect(),
+        beam,
+        sampling,
+    })
+}
+
 fn legacy_mosaic_beam_class(telescope: &str) -> MsResult<i32> {
     // CASA enumerates these names before selecting SimplePBConvFunc.
     match telescope {
         "EVLA" => Ok(1),
         "DEFAULT" | "ATCA_L1" | "ATCA_L2" | "ATCA_L3" | "ATCA_16" | "ATCA_S" | "ATCA_C"
         | "ATCA_C_RI" | "ATCA" | "ATCA_X" | "ATCA_K" | "ATCA_Q" | "ATCA_W" | "HATCREEK"
-        | "BIMA" | "NGVLA" | "VLA" | "VLA_INVERSE" | "VLA_NVSS" | "VLA_2NULL" | "VLA_4"
-        | "VLA_P" | "VLA_L" | "VLA_C" | "VLA_X" | "VLA_U" | "VLA_K" | "VLA_Q" | "WSRT"
-        | "WSRT_LOW" | "GBT" | "GMRT" | "NRAO12M" | "IRAMPDB" | "IRAM30M" | "NRAO140FT"
-        | "ALMASD" | "SMA" | "ATA" | "NONE" => Err(invalid(
+        | "BIMA" | "NGVLA" | "VLA_INVERSE" | "VLA_NVSS" | "VLA_2NULL" | "VLA_4" | "VLA_P"
+        | "VLA_L" | "VLA_C" | "VLA_X" | "VLA_U" | "VLA_K" | "VLA_Q" | "WSRT" | "WSRT_LOW"
+        | "GBT" | "GMRT" | "NRAO12M" | "IRAMPDB" | "IRAM30M" | "NRAO140FT" | "ALMASD" | "SMA"
+        | "ATA" | "NONE" => Err(invalid(
             "legacy mosaic common primary-beam convolution is pending in #1520",
         )),
         _ => Ok(2),

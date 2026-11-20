@@ -104,6 +104,31 @@ impl GridFtProjection {
         shift_rad: [f64; 2],
         frame: &MeasFrame,
     ) -> Result<Self, MeasureError> {
+        Self::tracked_mosaic(phase_centre, tangent_point, shift_rad, frame, false)
+    }
+
+    /// Legacy MosaicFT rotates both stages about the shifted correlator
+    /// direction. The offset is the initial minus current source direction.
+    ///
+    /// # Errors
+    ///
+    /// A direction conversion lacks required epoch or position context.
+    pub fn legacy_tracked_mosaic_with_frame(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        shift_rad: [f64; 2],
+        frame: &MeasFrame,
+    ) -> Result<Self, MeasureError> {
+        Self::tracked_mosaic(phase_centre, tangent_point, shift_rad, frame, true)
+    }
+
+    fn tracked_mosaic(
+        phase_centre: &MDirection,
+        tangent_point: &MDirection,
+        shift_rad: [f64; 2],
+        frame: &MeasFrame,
+        phase_on_shifted: bool,
+    ) -> Result<Self, MeasureError> {
         let in_field = phase_centre.convert_to(tangent_point.refer(), frame)?;
         let (lon, lat) = in_field.as_angles();
         let shifted =
@@ -111,7 +136,15 @@ impl GridFtProjection {
         Ok(Self {
             machine: Reprojection::Girar {
                 frame: UvwMachine::with_frame(&shifted, phase_centre, frame)?,
-                phase: UvwMachine::with_frame(tangent_point, &in_field, frame)?,
+                phase: UvwMachine::with_frame(
+                    tangent_point,
+                    if phase_on_shifted {
+                        &shifted
+                    } else {
+                        &in_field
+                    },
+                    frame,
+                )?,
             },
         })
     }

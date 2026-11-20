@@ -261,13 +261,23 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_plotweather(values, arguments)
     if name in ("split", "mstransform"):
         _validate_ms_transform_datacolumn(arguments["datacolumn"])
-        _coerce_ms_time_options(name, arguments, values)
+        _coerce_ms_task_options(name, arguments, values)
         _coerce_ms_transform_selectors(name, values)
         _coerce_ms_channel_width(name, values)
         try:
             return run(name, **values).value
+        except TaskExecutionError as error:
+            if name == "split" and error.completion.message == "Unable to continue with MMS processing":
+                raise Exception(error.completion.message) from error
+            raise
         except TaskParameterError as error:
             message = error.completion.message or ""
+            if error.completion.parameter == "outputvis":
+                if message.startswith("Output MS "):
+                    raise OSError(message) from error
+                if message.startswith("input and output MeasurementSet paths must differ: "):
+                    path = arguments["outputvis"]
+                    raise OSError(f"Output MS {path} already exists - will not overwrite it.") from error
             if error.completion.parameter == "spw" and message.startswith("invalid spectral-window selection "):
                 raise RuntimeError(message) from error
             if error.completion.parameter == "datacolumn" and message.startswith("unsupported datacolumn "):
@@ -709,6 +719,28 @@ def _call_initweights(values: dict[str, Any]) -> Any:
 
 
 def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
+    import numpy as np
+
+    for name in ("field", "spw", "scan", "antenna", "timerange"):
+        if name not in values or isinstance(values[name], str):
+            continue
+        original = values[name]
+        candidate = original
+        if not isinstance(original, np.ndarray):
+            try:
+                candidate = list(original)
+            except TypeError:
+                pass
+        converted, record_type = _ms_transform_selector_variant(name, candidate)
+        # Preserve scalar NumPy provenance even for a value whose tool
+        # record CASA omits, or whose split selector is read as text.
+        scalar_array = isinstance(original, np.ndarray) and original.ndim == 0
+        values[name] = original if record_type is None or scalar_array else converted
+        if not (task == "split" and name != "timerange") and record_type is not None:
+            raise RuntimeError(
+                "RecordRep::get_pointer - incorrect data type String   "
+                f"used for field {name} with type {record_type:<8}"
+            )
     if "correlation" in values:
         values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
     for name in ("observation", "intent", "array", "uvrange", "feed"):
@@ -721,8 +753,10 @@ def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
         if name == "observation" or (task == "split" and name in ("array", "feed")):
             values[name] = converted
         elif record_type is None:
-            # CASA's tool record conversion omits this scalar variant.
-            del values[name]
+            # The Rust tool omits NumPy integer selectors where CASA
+            # does. Keep their values available for provenance.
+            if name == "intent":
+                del values[name]
         else:
             raise RuntimeError(
                 "RecordRep::get_pointer - incorrect data type String   "
@@ -744,7 +778,6 @@ def _coerce_ms_channel_width(task: str, values: dict[str, Any]) -> None:
     if isinstance(value, integers):
         return
     if name == "width" and isinstance(value, str):
-        values[name] = int(value) if value.isdigit() else 1
         return
     if not isinstance(value, (str, bytes)):
         try:
@@ -806,7 +839,7 @@ def _ms_transform_selector_variant(name: str, value: Any) -> tuple[Any, str | No
     raise AssertionError(str({name: [f"must be of {kind} type" for kind in types]}))
 
 
-def _coerce_ms_time_options(
+def _coerce_ms_task_options(
     task: str, arguments: Mapping[str, Any], values: dict[str, Any]
 ) -> None:
     import numpy as np
@@ -822,7 +855,11 @@ def _coerce_ms_time_options(
     span = "combine" if task == "split" else "timespan"
     if span in values:
         values[span] = _ms_transform_string_or_vector(span, values[span])
-    if task == "mstransform":
+    if task == "split":
+        keep_mms = check("keepmms", (bool, np.bool_), "cBool")
+        if "keepmms" in values:
+            values["keepmms"] = bool(keep_mms)
+    else:
         active = check("timeaverage", (bool, np.bool_), "cBool")
         distance = check("maxuvwdistance", (float, int, np.float32, np.float64, np.int32, np.int64),
                          "cFloat")

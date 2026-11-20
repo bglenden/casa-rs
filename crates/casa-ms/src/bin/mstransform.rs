@@ -8,10 +8,12 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     MsTransformError, MsTransformRequest, MsTransformTaskOptions, TimeAverageOptions,
-    TransformDataColumn, ms_task_success, mstransform_task, mstransform_task_schema_bundle,
-    task_selection_text,
+    TransformDataColumn, TransformTaskHistory, ms_task_success, mstransform_task,
+    mstransform_task_schema_bundle, task_selection_text,
 };
-use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue, python_repr};
+use casa_provider_contracts::{
+    CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr,
+};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -66,18 +68,121 @@ fn transform_request(
     let request = MsTransformRequest {
         input_ms: task.path("vis")?,
         output_ms: task.path("outputvis")?,
-        spw: task_selection_text(task, "spw")?,
+        spw: variant_selector(task, "spw")?.unwrap_or_default(),
         width,
         data_column: data_column(&task.required_text("datacolumn")?)?,
         selection: selection(task)?,
         keep_flags: task.flag("keepflags")?,
     };
+    let (keep_mms, retained_scan_span) = if task.surface() == "split" {
+        let keep_mms = task.flag("keepmms")?;
+        let combine_scan =
+            matches!(task.value("combine"), Some(ParameterValue::String(span)) if span == "scan");
+        let span = if keep_mms && combine_scan {
+            Quantity::read(&task.required_text("timebin")?)
+                .ok()
+                .map(|quantity| quantity.value())
+        } else {
+            None
+        };
+        (Some(keep_mms), span)
+    } else {
+        (None, None)
+    };
     let options = MsTransformTaskOptions {
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
         channel_widths,
         time_averaging: time_average_options(task)?,
+        history: Some(task_history(task)),
+        flag_command_widths: flag_command_widths(task),
+        keep_mms,
+        retained_scan_span,
     };
     Ok((request, options))
+}
+
+fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
+    let mut bindings = task
+        .session()
+        .bundle()
+        .surface
+        .bindings()
+        .iter()
+        .filter(|binding| {
+            binding
+                .projections
+                .python
+                .as_ref()
+                .is_some_and(|python| !python.keyword_only)
+        })
+        .collect::<Vec<_>>();
+    bindings.sort_by_key(|binding| binding.order);
+    let parameters = bindings
+        .into_iter()
+        .filter_map(|binding| {
+            let value = task
+                .session()
+                .states()
+                .get(&binding.name)
+                .and_then(|state| state.value.as_ref())
+                .or(match &binding.default {
+                    DefaultSpec::Literal { value } => Some(value),
+                    DefaultSpec::Conditional { fallback, .. } => Some(fallback),
+                    DefaultSpec::Required => None,
+                })?;
+            let value = if matches!(binding.name.as_str(), "vis" | "outputvis")
+                && let ParameterValue::Array(paths) = value
+                && let [path] = paths.as_slice()
+            {
+                path
+            } else {
+                value
+            };
+            let printable = match value {
+                ParameterValue::String(value)
+                    if value == "none"
+                        && matches!(
+                            binding.name.as_str(),
+                            "field" | "spw" | "scan" | "antenna" | "timerange"
+                        ) =>
+                {
+                    r#""""#.into()
+                }
+                ParameterValue::String(value) => format!("\"{value}\""),
+                ParameterValue::Array(values)
+                    if task.surface() == "split" && binding.name == "correlation" =>
+                {
+                    let labels = values
+                        .iter()
+                        .filter_map(|label| match label {
+                            ParameterValue::String(text) => Some(text.to_uppercase()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    format!("\"{}\"", labels.join(", "))
+                }
+                ParameterValue::ScalarArray(value)
+                    if matches!(
+                        binding.name.as_str(),
+                        "field" | "spw" | "scan" | "antenna" | "timerange"
+                    ) =>
+                {
+                    match value.as_ref() {
+                        ParameterValue::String(text) => text.clone(),
+                        value => python_repr(value),
+                    }
+                }
+                ParameterValue::NumpyScalar { value, .. } => python_repr(value),
+                ParameterValue::EmptyArray { .. } => "[]".into(),
+                value => python_repr(value),
+            };
+            Some((binding.name.clone(), printable))
+        })
+        .collect();
+    TransformTaskHistory {
+        task: task.surface().to_string(),
+        parameters,
+    }
 }
 
 fn time_average_options(
@@ -212,6 +317,15 @@ fn channel_width(task: &TaskInvocation<'_>) -> Result<(usize, Option<Vec<usize>>
     }
 }
 
+fn flag_command_widths(task: &TaskInvocation<'_>) -> Option<Vec<i64>> {
+    let value = task.value(channel_parameter(task))?;
+    match value {
+        ParameterValue::Array(widths) => widths.iter().map(channel_integer).collect(),
+        value if task.surface() == "mstransform" => channel_integer(value).map(|width| vec![width]),
+        _ => None,
+    }
+}
+
 fn channel_integer(value: &ParameterValue) -> Option<i64> {
     match value {
         ParameterValue::Integer(value) => Some(*value),
@@ -238,10 +352,10 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         "taql"
     };
     let mut selection = MsSelection {
-        field: selector("field")?,
-        scan: selector("scan")?,
-        antenna: selector("antenna")?,
-        timerange: selector("timerange")?,
+        field: variant_selector(task, "field")?,
+        scan: variant_selector(task, "scan")?,
+        antenna: variant_selector(task, "antenna")?,
+        timerange: variant_selector(task, "timerange")?,
         observation: task.value("observation").and_then(variant_selector_text),
         intent: task.text("intent")?.filter(|text| !text.is_empty()),
         correlation: variant_selector(task, "correlation")?,
@@ -264,7 +378,24 @@ fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<Stri
     let Some(value) = task.value(name) else {
         return Ok(None);
     };
-    if task.surface() == "split" && matches!(name, "array" | "feed") {
+    if let ParameterValue::String(raw) = value {
+        if matches!(name, "field" | "spw" | "scan" | "antenna" | "timerange") {
+            let text = task_selection_text(task, name)?;
+            let present = if name == "spw" {
+                !text.is_empty()
+            } else {
+                !text.trim().is_empty()
+            };
+            return Ok(present.then_some(text));
+        }
+        return Ok((!raw.is_empty()).then(|| raw.clone()));
+    }
+    if task.surface() == "split"
+        && matches!(
+            name,
+            "array" | "feed" | "field" | "spw" | "scan" | "antenna"
+        )
+    {
         return Ok(variant_selector_text(value));
     }
     if task.surface() == "split" && name == "correlation" {
@@ -285,7 +416,6 @@ fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<Stri
         }
     }
     let record_type = match value {
-        ParameterValue::String(text) => return Ok((!text.is_empty()).then(|| text.clone())),
         ParameterValue::NumpyScalar {
             dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
             ..
