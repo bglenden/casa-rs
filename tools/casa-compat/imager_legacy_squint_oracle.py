@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from casars.tools import imager, ms
-from casatools import image, imager as casa_imager, ms as casa_ms
+from casatools import image, imager as casa_imager, ms as casa_ms, table
 import numpy as np
 
 from imager_legacy_pbw_oracle import corrected_or_data, data, make_input, recipe, relative_rms
@@ -43,9 +43,25 @@ def consume(factory, dataset):
     prior = corrected_or_data(dataset)
     tool = factory()
     assert tool.open(str(dataset), nomodify=False)
-    assert tool.msselect({'field': '0', 'spw': '0:0'})
     assert tool.uvsub() and tool.done()
     return prior - data(dataset, 'CORRECTED_DATA')
+
+
+def receptor_control(root, source, model, baseline):
+    results = []
+    for engine, factory in (('pinned', casa_imager), ('native', imager)):
+        dataset = root / f'{engine}-rotated-receptors.ms'
+        make_input(source, dataset, scratch=True)
+        feed = table()
+        assert feed.open(str(dataset / 'FEED'), nomodify=False)
+        angles = feed.getcol('RECEPTOR_ANGLE')
+        angles[0, :] += .4
+        assert feed.putcol('RECEPTOR_ANGLE', angles) and feed.done()
+        predict(factory, dataset, model, True)
+        results.append(data(dataset, 'MODEL_DATA')[:, 0, :])
+    expected, actual = results
+    assert relative_rms(expected, baseline) > 1.e-4
+    compare('rotated feed receptors', actual, expected)
 
 
 def main():
@@ -65,10 +81,10 @@ def main():
                 make_input(args.dataset, target, scratch=True)
                 predict(factory, target, model, squint, stokes=stokes)
                 result[engine, stokes, squint] = data(target, 'MODEL_DATA')
-        target = args.work / f'{engine}-saved.ms'
-        make_input(args.dataset, target, scratch=False)
-        predict(factory, target, args.model, True, scratch=False)
-        saved[engine] = target
+            target = args.work / f'{engine}-saved-{squint}.ms'
+            make_input(args.dataset, target, scratch=False)
+            predict(factory, target, args.model, squint, scratch=False)
+            saved[engine, squint] = target
     for stokes in ('IQUV', 'I'):
         for squint in (False, True):
             expected, actual = (result[engine, stokes, squint] for engine in ('pinned', 'native'))
@@ -77,18 +93,26 @@ def main():
             compare(f'{stokes}, squint={squint}', actual[:, 0, :], expected[:, 0, :])
     for engine in ('pinned', 'native'):
         radial, shifted = (result[engine, 'IQUV', squint][:, 0, :] for squint in (False, True))
-        assert relative_rms(shifted[[0, 3]], radial[[0, 3]]) > 5.e-4
-        np.testing.assert_allclose(shifted[[1, 2]], radial[[1, 2]], atol=2.e-7, rtol=2.e-6)
+        assert relative_rms(shifted, radial) > 5.e-4
         np.testing.assert_array_equal(result[engine, 'I', True], result[engine, 'I', False])
-    compare('saved Fourier grid', fourier_grid(saved['native']), fourier_grid(saved['pinned']))
+        radial, shifted = (fourier_grid(saved[engine, squint]) for squint in (False, True))
+        assert relative_rms(shifted[:, :, [0, 3]], radial[:, :, [0, 3]]) > 5.e-4
+        np.testing.assert_allclose(shifted[:, :, [1, 2]], radial[:, :, [1, 2]],
+                                   atol=2.e-7, rtol=2.e-6)
+    for squint in (False, True):
+        compare(f'saved Fourier grid, squint={squint}', fourier_grid(saved['native', squint]),
+                fourier_grid(saved['pinned', squint]))
     expected = result['pinned', 'IQUV', True]
-    for writer, serialized in saved.items():
+    for (writer, squint), serialized in saved.items():
+        if not squint:
+            continue
         for reader, factory in (('pinned', casa_ms), ('native', ms)):
             target = args.work / f'{writer}-to-{reader}.ms'
             make_input(serialized, target, scratch=False)
             actual = consume(factory, target)
             assert not np.any(actual[:, 1:, :])
             compare(f'saved {writer} to {reader}', actual[:, 0, :], expected[:, 0, :])
+    receptor_control(args.work, args.dataset, args.model, expected[:, 0, :])
 
 
 if __name__ == '__main__':

@@ -336,11 +336,7 @@ impl PyImager {
         let parallactic = angle(&parangleinc, 360.)?;
         let threshold = angle(&skyposthreshold, 180.)?;
         if dovp && (parallactic, threshold) != (360., 180.) {
-            return not_yet_implemented_in(
-                "imager",
-                "setvp for varying or squinted voltage patterns",
-                1520,
-            );
+            return not_yet_implemented_in("imager", "setvp for varying voltage patterns", 1520);
         }
         // SkyEquation chooses its default pattern from the attached observation.
         let _ = telescope;
@@ -366,6 +362,14 @@ impl PyImager {
             } else {
                 format!("Using user defined voltage patterns in Table {vptable}")
             }));
+            if dosquint {
+                lines.push(LogLine::info(
+                    "Beam Squint will be included in the VP model",
+                ));
+                lines.push(LogLine::info(format!(
+                    "and the Parallactic Angle increment is {parallactic} degrees"
+                )));
+            }
         }
         emit(py, LOGGER, &lines)?;
         Ok(true)
