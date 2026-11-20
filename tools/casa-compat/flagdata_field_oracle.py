@@ -27,6 +27,7 @@ def compare_apply():
         ("0~5", {0, 1}, {}),
         (">0", {1}, {}),
         ("  ", {0, 1}, {}),
+        (" \u00a0 ", {0, 1}, {}),
         ("*", {0, 1}, {}),
         (np.str_("FLUX"), {0}, {}),
         ("FLUX,PHASE", {0}, {"scan": "1"}),
@@ -66,11 +67,16 @@ def compare_read_only():
 
 def compare_refusals():
     original, auxiliary = snapshot("data.ms"), auxiliary_content("data.ms")
-    for field, kind in (
+    cases = (
         ("flux", RuntimeError),
         ("FLUX,bogus", RuntimeError),
         ("99", RuntimeError),
         ("0~", RuntimeError),
+        ("\t", RuntimeError),
+        ("\n", RuntimeError),
+        (" \t ", RuntimeError),
+        ("none", RuntimeError),
+        ("auto", RuntimeError),
         ("FLUX", RuntimeError),
         (["FLUX"], TypeError),
         ([], TypeError),
@@ -80,7 +86,8 @@ def compare_refusals():
         ([0], AssertionError),
         (np.array("FLUX", dtype=object), AssertionError),
         (None, AssertionError),
-    ):
+    )
+    for field, kind in cases:
         options = {"scan": "2"} if isinstance(field, str) and field == "FLUX" else {}
         errors = []
         for module in (casatasks, tasks):
@@ -96,7 +103,38 @@ def compare_refusals():
         elif options:
             for message in errors:
                 assert "The selected table has zero rows" in message
-    return 13
+        elif isinstance(field, str) and field == "99":
+            assert "Field Expression" in errors[0]
+            assert "field selector" in errors[1]
+            assert all("zero rows" not in message for message in errors)
+    return len(cases)
+
+
+def compare_invalid_unicode():
+    original, auxiliary = snapshot("data.ms"), auxiliary_content("data.ms")
+    # The pinned binder cannot decode the first byte of this invalid FIELD
+    # token in its diagnostic. The native task returns a readable error.
+    for module, kind in ((casatasks, UnicodeDecodeError), (tasks, RuntimeError)):
+        try:
+            module.flagdata(vis="data.ms", field="\u00a0", flagbackup=False)
+        except kind:
+            assert_preserved("data.ms", original, auxiliary)
+        else:
+            raise AssertionError(f"{module.__name__} accepted a bare nonbreaking space")
+
+
+def compare_literal_names():
+    vis = "literal-names.ms"
+    copytree("data.ms", vis)
+    with table(f"{vis}/FIELD", readonly=False, ack=False) as fields:
+        fields.putcol("NAME", ["none", "auto"])
+    original, auxiliary = snapshot(vis), auxiliary_content(vis)
+    for field in ("none", "auto"):
+        args = {"vis": vis, "mode": "summary", "field": field}
+        expected = casatasks.flagdata(**args)
+        assert set(expected["field"]) == {field}
+        assert tasks.flagdata(**args) == expected
+        assert_preserved(vis, original, auxiliary)
 
 
 def compare_backup():
@@ -117,10 +155,12 @@ def main():
         make_fixture("data.ms")
         products = compare_apply()
         compare_read_only()
+        compare_literal_names()
         refusals = compare_refusals()
+        compare_invalid_unicode()
         compare_backup()
-    print(f"{products} field-selected products, five summaries, four inactive calls and {refusals} refusals matched CASA")
-    print("CASA restored the native backup to the original flags")
+    print(f"{products} field-selected products, seven summaries, four inactive calls and {refusals} refusals matched CASA")
+    print("Invalid UTF-8 diagnostics left flags unchanged. CASA restored the native backup to the original flags.")
 
 
 if __name__ == "__main__":

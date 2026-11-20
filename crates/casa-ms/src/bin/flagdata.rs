@@ -146,6 +146,20 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
 /// The row selection of `spw`, `field`, `scan` and `antenna`.
 fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFailure> {
     let field = task_selection_text(task, "field")?;
+    if !field.is_empty() && field.trim().is_empty() {
+        // The CASA lexer accepts a space token, even when followed by an
+        // unrecognized non-ASCII byte. Other whitespace alone is an error.
+        let prefix = field
+            .split(|character: char| !character.is_ascii())
+            .next()
+            .unwrap_or_default();
+        if prefix.is_empty() || !prefix.bytes().all(|byte| byte == b' ') {
+            return Err(TaskFailure::execution(format!(
+                "Field Expression: invalid whitespace selector {field:?}"
+            ))
+            .at("field"));
+        }
+    }
     let mut selection = MsSelection {
         field: (!field.is_empty()).then_some(field),
         ..MsSelection::default()

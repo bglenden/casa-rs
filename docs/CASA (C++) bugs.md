@@ -7109,3 +7109,14 @@ casa-rs validates the antenna blocks before publishing a listing. The
 same input raises a recoverable error and leaves the destination absent.
 Complete integrations retain their original order, even when two have
 the same time and field (#1526).
+
+## `flagdata` can fail to decode an invalid FIELD diagnostic
+
+CASA 6.7.6.14 rejects a FIELD selector consisting of a bare nonbreaking
+space, but its Python binding raises `UnicodeDecodeError` while decoding
+the parser diagnostic. The first UTF-8 byte of the invalid token is
+reported on its own.
+
+casa-rs reports the invalid whitespace with a readable task error.
+The paired check verifies that both calls leave flags and visibility
+data unchanged (#1617).
