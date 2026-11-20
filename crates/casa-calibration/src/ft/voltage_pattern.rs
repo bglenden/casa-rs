@@ -301,20 +301,26 @@ fn voltage_planning_bytes(ms: &MeasurementSet, buffers: usize, local_pointings: 
     let feeds = ms.feed().map_or(0, |feed| feed.row_count()) as u64;
     let antennas = ms.antenna().map_or(0, |antennas| antennas.row_count()) as u64;
     let fields = ms.field().map_or(0, |fields| fields.row_count()) as u64;
-    let pointings = if local_pointings {
-        ms.pointing().map_or(0, |pointing| pointing.row_count()) as u64
-    } else {
-        0
-    };
-    // FEED hash buckets and per-key vector capacity, the engine's antenna
-    // and field state, and geometric caches for both antennas per buffer.
-    // The local pointing lookup can collect every timestamp for one antenna.
-    (128_u64 << 10)
+    // The Measures provider can load its catalogs on the first angle.
+    // Include FEED hash buckets and vector capacity, the engine's antenna
+    // and field state, and caches for both antennas per visibility buffer.
+    (casa_ms::MEASURES_RUNTIME_BYTES as u64)
+        .saturating_add(128_u64 << 10)
         .saturating_add(feeds.saturating_mul(256))
         .saturating_add(antennas.saturating_mul(256))
         .saturating_add(fields.saturating_mul(512))
         .saturating_add((buffers as u64).saturating_mul(1024))
-        .saturating_add(pointings.saturating_mul(96))
+        .saturating_add(if local_pointings {
+            voltage_pointing_bytes(ms)
+        } else {
+            0
+        })
+}
+
+fn voltage_pointing_bytes(ms: &MeasurementSet) -> u64 {
+    // A local pointing lookup can collect every timestamp for one antenna.
+    let rows = ms.pointing().map_or(0, |pointing| pointing.row_count()) as u64;
+    rows.saturating_mul(96)
 }
 
 struct HeldVoltageState {
@@ -747,6 +753,12 @@ mod tests {
             pointing.table_mut().add_row(record).unwrap();
         }
         let _ = HostResources::detect().unwrap();
+        let pointing = ms.pointing().unwrap();
+        let baseline = reset_peak();
+        let _ = pointing.legacy_direction(row.antenna2_id, first).unwrap();
+        let pointing_peak = peak_since(baseline);
+        assert!(pointing_peak > 128 << 10);
+        assert!(pointing_peak <= voltage_pointing_bytes(&ms));
         let reservations = ReservationWindow::open();
         let baseline = reset_peak();
         let mut batches = scratch_voltage_batches(&ms, &selection, 0., true).unwrap();
@@ -754,7 +766,6 @@ mod tests {
         assert!(batches.next().is_none());
         let peak = peak_since(baseline);
         let charge = reservations.close();
-        assert!(peak > voltage_order_bytes(1) + voltage_planning_bytes(&ms, 1, false));
         assert!(peak <= charge, "{peak} bytes used over {charge}");
     }
 }
