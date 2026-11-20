@@ -45,8 +45,11 @@ use crate::{
 };
 use casa_numerics::solve_weighted_least_squares;
 
+mod correlation;
 mod extend;
 mod summary;
+
+use correlation::CorrelationSelection;
 mod version_backup;
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{save_next_flag_backup, save_next_partition_flag_backup};
@@ -140,6 +143,8 @@ pub struct FlagDataRequest {
     pub casa_row_selection: bool,
     /// CASA-style SPW/channel selector.
     pub spw: Option<String>,
+    /// CASA agent correlation selection for manual and quack edits and summaries.
+    pub correlation: Option<String>,
     /// Mode to execute.
     pub mode: FlagDataMode,
     /// Manual action.
@@ -204,6 +209,7 @@ impl Default for FlagDataRequest {
             selection: MsSelection::new(),
             casa_row_selection: false,
             spw: None,
+            correlation: None,
             mode: FlagDataMode::Manual,
             action: FlagDataAction::Flag,
             autocorr: false,
@@ -312,6 +318,10 @@ pub enum FlaggingError {
         reason: String,
     },
 
+    /// The correlation selector resolved to no polarization setup for a summary.
+    #[error("no flagdata summary report for the selected correlations")]
+    MissingCorrelationSummary,
+
     /// Flag-version management failed.
     #[error("failed to manage flag version for {path}: {reason}")]
     FlagVersion {
@@ -381,12 +391,17 @@ fn flagdata_with_persistence(
     if let Some(selections) = &channel_selections {
         check_channel_selections(ms, selections)?;
     }
+    let correlations = match request.correlation.as_deref() {
+        Some(expression) => CorrelationSelection::read(ms, request.mode, expression)?,
+        None => None,
+    };
 
     if request.mode == FlagDataMode::Summary {
         return summary::report(
             ms,
             &selected_rows,
             channel_selections.as_ref(),
+            correlations.as_ref(),
             request.summary_options,
         );
     }
@@ -412,15 +427,24 @@ fn flagdata_with_persistence(
             ms,
             autocorrelation_rows.as_deref().unwrap_or(&selected_rows),
             channel_selections.as_ref(),
+            correlations.as_ref(),
             request.action.value(),
-            SelectedFlagRowPolicy::ChangedSamples,
+            if correlations.is_some() {
+                SelectedFlagRowPolicy::Preserve
+            } else {
+                SelectedFlagRowPolicy::ChangedSamples
+            },
         )?,
         FlagDataMode::Clip => {
             apply_clip_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
-        FlagDataMode::Quack => {
-            apply_quack_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
-        }
+        FlagDataMode::Quack => apply_quack_flags(
+            ms,
+            &selected_rows,
+            channel_selections.as_ref(),
+            correlations.as_ref(),
+            request,
+        )?,
         FlagDataMode::Tfcrop => {
             apply_tfcrop_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
         }
@@ -900,6 +924,7 @@ fn apply_quack_flags(
     ms: &mut MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    correlations: Option<&CorrelationSelection>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
     let from_start = match request.quackmode {
@@ -952,12 +977,19 @@ fn apply_quack_flags(
     }
     // CASA updates FLAG_ROW at selected scan times only when the call
     // leaves SPW unspecified, even for an explicitly selected full window.
-    let row_policy = if channel_selections.is_some() {
+    let row_policy = if channel_selections.is_some() || correlations.is_some() {
         SelectedFlagRowPolicy::Preserve
     } else {
         SelectedFlagRowPolicy::AllSelectedRows
     };
-    set_selected_flags(ms, &quack_rows, channel_selections, true, row_policy)
+    set_selected_flags(
+        ms,
+        &quack_rows,
+        channel_selections,
+        correlations,
+        true,
+        row_policy,
+    )
 }
 
 fn apply_tfcrop_flags(
@@ -972,6 +1004,7 @@ fn apply_tfcrop_flags(
         selected_rows,
         channel_selections,
         Some(request.data_column),
+        None,
     )?;
     let samples = loaded.samples;
     let loaded_ms = started.elapsed().as_millis();
@@ -1051,6 +1084,7 @@ fn apply_rflag_flags(
         selected_rows,
         channel_selections,
         Some(request.data_column),
+        None,
     )?;
     let samples = loaded.samples;
     let loaded_ms = started.elapsed().as_millis();
@@ -1118,7 +1152,7 @@ fn apply_extend_flags(
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
     // CASA's extension agent reads flags only: no data column.
-    let loaded = load_samples(ms, selected_rows, channel_selections, None)?;
+    let loaded = load_samples(ms, selected_rows, channel_selections, None, None)?;
     let grown = extend::grow(&loaded.samples, request);
     apply_flag_mask_with_preloaded(&loaded.samples, &grown, loaded.flags_by_row, ms)
 }
@@ -1208,10 +1242,11 @@ fn set_selected_flags(
     ms: &mut MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    correlations: Option<&CorrelationSelection>,
     flag: bool,
     row_policy: SelectedFlagRowPolicy,
 ) -> Result<ChangeSet, FlaggingError> {
-    let loaded = load_samples(ms, selected_rows, channel_selections, None)?;
+    let loaded = load_samples(ms, selected_rows, channel_selections, None, correlations)?;
     let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
     let mut touched_rows = std::collections::BTreeSet::new();
@@ -1438,6 +1473,7 @@ fn load_samples(
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     data_column: Option<FlagDataColumn>,
+    flag_correlations: Option<&CorrelationSelection>,
 ) -> Result<LoadedSamples, FlaggingError> {
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
@@ -1535,7 +1571,13 @@ fn load_samples(
                 column,
                 &mut samples,
             )?,
-            None => push_flag_samples(&flags, &channels, metadata, &mut samples),
+            None => push_flag_samples(
+                &flags,
+                &channels,
+                flag_correlations.map(|selection| selection.planes(ddid)),
+                metadata,
+                &mut samples,
+            ),
         }
         flags_by_row.insert(row, flags);
     }
@@ -1578,10 +1620,14 @@ fn checked_row_data<'a>(
 fn push_flag_samples(
     flags: &ArrayD<bool>,
     channels: &[usize],
+    planes: Option<&[usize]>,
     metadata: RowSampleMetadata,
     samples: &mut Vec<Sample>,
 ) {
     for corr in 0..flags.shape()[0] {
+        if planes.is_some_and(|indices| indices.binary_search(&corr).is_err()) {
+            continue;
+        }
         for &chan in channels {
             push_sample(samples, metadata, corr, chan, 0.0, 0.0, flags[[corr, chan]]);
         }

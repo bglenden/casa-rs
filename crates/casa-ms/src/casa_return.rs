@@ -56,27 +56,35 @@ fn flagdata_summary_fields(
                 .map(|(key, counts)| (key.clone(), counts_record(*counts))),
         )
     };
-    let mut fields = vec![("antenna", axis(&summary.antenna))];
+    let populated = summary.overall.total != 0;
+    let mut fields = Vec::new();
+    if populated {
+        fields.push(("antenna", axis(&summary.antenna)));
+    }
     if let Some(counts) = &summary.antenna_scan {
         fields.push(("antenna:scan", axis(counts)));
     }
-    fields.push(("array", axis(&summary.array)));
-    if let Some(counts) = &summary.baseline {
-        fields.push(("baseline", axis(counts)));
+    if populated {
+        fields.push(("array", axis(&summary.array)));
+        if let Some(counts) = &summary.baseline {
+            fields.push(("baseline", axis(counts)));
+        }
+        fields.extend([
+            ("correlation", axis(&summary.correlation)),
+            ("field", axis(&summary.field)),
+        ]);
     }
-    fields.extend([
-        ("correlation", axis(&summary.correlation)),
-        ("field", axis(&summary.field)),
-        ("flagged", CasaValue::float(summary.overall.flagged as f64)),
-    ]);
+    fields.push(("flagged", CasaValue::float(summary.overall.flagged as f64)));
     if let Some(name) = name {
         fields.push(("name", CasaValue::string(name)));
     }
-    fields.extend([
-        ("observation", axis(&summary.observation)),
-        ("scan", axis(&summary.scan)),
-        ("spw", axis(&summary.spw)),
-    ]);
+    if populated {
+        fields.extend([
+            ("observation", axis(&summary.observation)),
+            ("scan", axis(&summary.scan)),
+            ("spw", axis(&summary.spw)),
+        ]);
+    }
     if let Some(counts) = &summary.spw_channel {
         fields.push(("spw:channel", axis(counts)));
     }
