@@ -14,8 +14,8 @@ pub fn flagdata_model(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
 ) -> Result<Box<dyn FlagDataModelPredictor>, FlaggingError> {
-    let models = VisibilityModels::with_deferred_refusals(ms, rows)
-        .map_err(|error| model_error(ms, error))?;
+    let models =
+        VisibilityModels::for_flagdata(ms, rows).map_err(|error| model_error(ms, error))?;
     Ok(Box::new(models))
 }
 

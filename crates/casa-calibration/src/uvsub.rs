@@ -107,7 +107,7 @@ pub fn subtract_visibility_model_selected(
     } else {
         &resolved.selected_rows
     };
-    let models = VisibilityModels::with_deferred_refusals(ms, rows_with_models).map_err(invalid)?;
+    let models = VisibilityModels::for_uvsub(ms, rows_with_models).map_err(invalid)?;
     let polarizations = ms.polarization()?;
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))

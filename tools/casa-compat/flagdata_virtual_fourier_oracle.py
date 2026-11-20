@@ -77,12 +77,34 @@ def compare_models():
     return len(cases)
 
 
+def compare_overlapping_scans():
+    paths = [f"overlap-{name}.ms" for name in ("casa", "native")]
+    for path, task in zip(paths, (casatasks.flagdata, tasks.flagdata), strict=True):
+        copytree("virtual.ms", path)
+        with table(path, readonly=False, ack=False) as ms:
+            scans = ms.getcol("SCAN_NUMBER")
+            scans[1::2] += 10
+            ms.putcol("SCAN_NUMBER", scans)
+        assert task(vis=path, field="0", mode="clip", datacolumn="MODEL",
+                    correlation="REAL_XX", clipminmax=[0.99, 1.01],
+                    clipoutside=False, flagbackup=False) == {}
+        with table(path, ack=False) as ms, casa_table(path) as casa:
+            flags = ms.getcol("FLAG")
+            expected = np.zeros_like(flags)
+            expected[ms.getcol("SCAN_NUMBER") == 11, :, 0] = True
+            assert expected.sum() == 40
+            np.testing.assert_array_equal(flags, expected)
+            np.testing.assert_array_equal(casa.getcol("FLAG").transpose(2, 1, 0), expected)
+            assert not ms.getcol("FLAG_ROW").any()
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="flagdata-virtual-fourier-") as directory, chdir(directory):
         prepare_models()
         products = compare_models()
-    print(f"{products} clipping products agree with both CASA virtual and scratch predictions")
+        compare_overlapping_scans()
+    print(f"{products} clipping products agree with CASA virtual and scratch models, plus simultaneous scans")
 
 
 if __name__ == "__main__":
