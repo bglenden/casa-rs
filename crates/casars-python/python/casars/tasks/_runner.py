@@ -299,6 +299,17 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
+    field_vector = False
+    if "field" in values:
+        field = values["field"]
+        if isinstance(field, str):
+            values["field"] = str(field)
+        elif field is None:
+            errors["field"] = ["null value not allowed"] * 3
+        elif _flagdata_string_vector(field):
+            field_vector = True
+        else:
+            errors["field"] = ["must be of cStr type", "must be of cStrVec type"]
     for parameter, default in (("clipoutside", True), ("quackincrement", False)):
         if parameter not in values:
             continue
@@ -353,6 +364,18 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
             errors["clipminmax"] = [str(error)]
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
+    if field_vector:
+        if values.get("action") not in ("", "none"):
+            raise TypeError("argument _field must be a string")
+        del values["field"]
+
+
+def _flagdata_string_vector(value: Any) -> bool:
+    import numpy as np
+
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        return value.dtype.type is np.str_
+    return isinstance(value, Iterable) and all(isinstance(item, str) for item in value)
 
 
 def _flagdata_bool_option(value: Any, *, numpy_default: bool) -> bool | list[bool] | None:
