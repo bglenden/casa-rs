@@ -611,15 +611,7 @@ impl ImageTransform {
         let mosaic = matches!(options.settings.gridder, ImagerGridder::Mosaic)
             .then(|| mosaic_image(ms, stokes, [nx, ny]))
             .transpose()?;
-        *coordinates.obs_info_mut() = match &mosaic {
-            // SimplePBConvFunc selects the location for pointing conversion
-            // from the telescope on the image.
-            Some(MosaicImage {
-                beam: MosaicBeam::Common(_),
-                ..
-            }) => coords.obs_info().clone(),
-            _ => ObsInfo::new("UNKNOWN").with_observer("UNKNOWN"),
-        };
+        *coordinates.obs_info_mut() = ObsInfo::new("UNKNOWN").with_observer("UNKNOWN");
         let frequencies = (0..channels)
             .map(|index| spectral.world_frequency_hz(index as f64).map_err(invalid))
             .collect::<MsResult<Vec<_>>>()?;

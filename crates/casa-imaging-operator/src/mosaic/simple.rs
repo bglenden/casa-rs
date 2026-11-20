@@ -120,6 +120,18 @@ impl MosaicPb {
         pattern: &casa_numerics::BeamPattern,
         windows: &[MosaicWindow],
     ) -> Result<SimpleMosaicScreens, OperatorError> {
+        Self::simple_shifted_pattern_screens(geometry, polarization, pattern, windows, [0.; 2])
+    }
+
+    /// Construct the common-beam screens with the beam displaced from the
+    /// Fourier screen centre along the image's two axes, in degrees.
+    pub fn simple_shifted_pattern_screens(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        pattern: &casa_numerics::BeamPattern,
+        windows: &[MosaicWindow],
+        offset_deg: [f64; 2],
+    ) -> Result<SimpleMosaicScreens, OperatorError> {
         Self::simple_sampled_screens(
             geometry,
             polarization,
@@ -128,9 +140,11 @@ impl MosaicPb {
                 let at = pattern.at_frequency(last);
                 let centre = side / 2;
                 for y in 0..side {
-                    let ry = ((y as f64 - centre as f64) * increments[1]).powi(2) as f32;
+                    let ry =
+                        ((y as f64 - centre as f64) * increments[1] - offset_deg[1]).powi(2) as f32;
                     for x in 0..side {
-                        let rx = ((x as f64 - centre as f64) * increments[0]).powi(2) as f32;
+                        let rx = ((x as f64 - centre as f64) * increments[0] - offset_deg[0])
+                            .powi(2) as f32;
                         let radius = (f64::from((rx + ry).sqrt()) * 60. * last / 1e9) as f32;
                         let power = at.power(f64::from(radius));
                         plane[y * side + x] =

@@ -4,14 +4,14 @@
 mod image_beam;
 mod saved;
 
-use casa_coordinates::DirectionCoordinate;
+use casa_coordinates::{Coordinate, DirectionCoordinate};
 use casa_imaging_operator::{
     AiryDish, ConvolutionFunctionSet, GridGeometry, MosaicBufferBand, MosaicPb, MosaicRules,
     MosaicWindow, PolarizationRouting, SavedMosaicPlanes,
 };
-use casa_ms::{convert_frequency_to_frame, voltage_pattern};
+use casa_ms::{SubtableId, convert_frequency_to_frame, voltage_pattern};
 use casa_numerics::PrimaryBeam;
-use casa_types::measures::direction::MDirection;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, Complex32, RecordValue, Value};
 
@@ -61,7 +61,15 @@ impl MosaicLayout {
         let (window, complete_window) =
             beam_window(row, convert_frequencies, legacy.then_some(record))?;
         let (kernels, antenna_classes) = if common {
-            common_kernels(record, row, geometry, polarization, &window, scratch)?
+            common_kernels(
+                record,
+                row,
+                (direction, vla_image),
+                geometry,
+                polarization,
+                &window,
+                scratch,
+            )?
         } else {
             array_kernels(
                 (record, beam),
@@ -110,21 +118,13 @@ impl MosaicLayout {
             {
                 direction.clone()
             } else {
-                let direction = if pointing.direction.refer() == reference {
-                    pointing.direction.clone()
-                } else {
-                    let frame = if self.vla_image {
-                        row.engine
-                            .spectral_frame_observatory_direction(pointing.epoch, row.field.clone())
-                    } else {
-                        row.engine.antenna_frame(pointing.epoch, pointing.antenna)
-                    }
-                    .map_err(model_error)?;
-                    pointing
-                        .direction
-                        .convert_to(reference, &frame)
-                        .map_err(model_error)?
-                };
+                let direction = beam_direction(
+                    row,
+                    &pointing.direction,
+                    (pointing.epoch, pointing.antenna),
+                    reference,
+                    self.vla_image,
+                )?;
                 self.converted_pointing = Some((pointing.buffer, direction.clone()));
                 direction
             }
@@ -239,6 +239,7 @@ fn array_kernels(
 fn common_kernels(
     record: &RecordValue,
     row: &FourierRow<'_>,
+    (direction, vla_image): (&DirectionCoordinate, bool),
     geometry: &GridGeometry,
     polarization: &PolarizationRouting,
     window: &MosaicWindow,
@@ -257,12 +258,86 @@ fn common_kernels(
     };
     let beam = PrimaryBeam::for_telescope(telescope, frequency)
         .ok_or_else(|| model_error(format!("no legacy common mosaic beam for {telescope}")))?;
-    let kernels =
-        MosaicPb::simple_screens(geometry, polarization, beam, std::slice::from_ref(window))
-            .and_then(|screens| screens.finish())
-            .map_err(model_error)?;
+    let offset = common_beam_offset(row, direction, vla_image, telescope.contains("VLA"))?;
+    let kernels = MosaicPb::simple_shifted_pattern_screens(
+        geometry,
+        polarization,
+        &beam.pattern(),
+        std::slice::from_ref(window),
+        offset,
+    )
+    .and_then(|screens| screens.finish())
+    .map_err(model_error)?;
     let antennas = row.ms.antenna().map_err(model_error)?;
     Ok((kernels, vec![0; antennas.row_count()]))
+}
+
+fn common_beam_offset(
+    row: &FourierRow<'_>,
+    coordinates: &DirectionCoordinate,
+    vla_image: bool,
+    vla_telescope: bool,
+) -> Result<[f64; 2], GainSolveError> {
+    let Some(first) = row.legacy_mosaic_pointing else {
+        return Ok([0.; 2]);
+    };
+    let selected = if row.ms.subtable(SubtableId::Pointing).is_some() {
+        row.ms
+            .pointing()
+            .and_then(|pointing| pointing.legacy_direction(first.second_antenna, first.epoch))
+            .map_err(model_error)?
+    } else {
+        None
+    };
+    let second = match selected {
+        Some(direction) => direction,
+        None => super::super::field_direction(
+            row.ms,
+            row.engine,
+            row.row.field_id as usize,
+            first.epoch,
+        )
+        .map_err(model_error)?,
+    };
+    let reference = coordinates.conversion_direction_ref();
+    let buffer = (first.epoch, first.antenna);
+    let first = beam_direction(row, &first.direction, buffer, reference, vla_image)?;
+    // Both antennas share a single SkyJones beam index. Its painting
+    // direction comes from antenna two in the first buffer of the window.
+    let second = beam_direction(row, &second, buffer, reference, vla_telescope)?;
+    let (lon, lat) = first.as_angles();
+    let (beam_lon, beam_lat) = second.as_angles();
+    let local = coordinates
+        .clone()
+        .with_reference_value([lon, lat])
+        .with_reference_pixel([0.; 2]);
+    let pixel = local
+        .world_to_pixel([beam_lon, beam_lat])
+        .map_err(model_error)?;
+    let increment = local.increment();
+    Ok(std::array::from_fn(|axis| {
+        (pixel[axis] * increment[axis]).to_degrees()
+    }))
+}
+
+fn beam_direction(
+    row: &FourierRow<'_>,
+    direction: &MDirection,
+    (epoch, antenna): (f64, usize),
+    reference: DirectionRef,
+    observatory: bool,
+) -> Result<MDirection, GainSolveError> {
+    if direction.refer() == reference {
+        return Ok(direction.clone());
+    }
+    let frame = if observatory {
+        row.engine
+            .spectral_frame_observatory_direction(epoch, row.field.clone())
+    } else {
+        row.engine.antenna_frame(epoch, antenna)
+    }
+    .map_err(model_error)?;
+    direction.convert_to(reference, &frame).map_err(model_error)
 }
 
 fn restore(
