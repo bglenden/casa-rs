@@ -22,6 +22,7 @@ CASA behaviours casa-rs does not follow:
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
+[calculating an expression with a mixed-precision vector](#calc-can-crash-on-a-mixed-precision-vector),
 [FITS import of an empty primary HDU](#fits-import-can-abort-on-an-empty-primary-hdu),
 [restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
@@ -7637,6 +7638,17 @@ casa-rs evaluates validity per pixel. A known true operand makes OR valid,
 and a known false operand makes AND valid. Where neither operand determines
 the result, both operands must be valid. The resulting validity mask is
 all true in these reproductions. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+## `calc` can crash on a mixed-precision vector
+
+With a temporary float image of shape `[3]`, CASA 6.7.6.14 terminates Python
+with SIGSEGV when evaluating `calc("[1, 2.5, 4] + 1", False)` or
+`calc("[-1.25, -2e1, +3.2]", False)`. The inputs mix single and double
+precision scalars in an array literal.
+
+casa-rs promotes those elements using the expression's numeric types and
+stores the results `[2, 3.5, 5]` and `[-1.25, -20, 3.2]` as float pixels.
+[#1625](https://github.com/bglenden/casa-rs/issues/1625)
 
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 

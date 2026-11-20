@@ -8,6 +8,7 @@ mod beam_edit;
 mod beam_rotate;
 mod beam_view;
 mod beams;
+mod calc;
 mod concatenate;
 mod conformance;
 mod convertflux;

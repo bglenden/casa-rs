@@ -43,7 +43,7 @@ use ndarray::IxDyn;
 use crate::error::ImageError;
 use crate::image::{
     ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface,
-    PagedImage, assign_mask_slice, validate_mask_slice_write,
+    PagedImage, assign_mask_slice, slice_mask_array, validate_mask_slice_write,
 };
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
@@ -708,6 +708,21 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         TempImage::get_named_mask(self, name)
     }
 
+    fn get_named_mask_slice(
+        &self,
+        name: &str,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        let (_, mask) = self
+            .masks
+            .iter()
+            .find(|(stored, _)| stored == name)
+            .ok_or_else(|| ImageError::MaskNotFound(name.to_owned()))?;
+        slice_mask_array(mask, start, shape, stride)
+    }
+
     fn history(&self) -> Result<Vec<String>, ImageError> {
         TempImage::history(self)
     }
@@ -930,6 +945,12 @@ mod tests {
         img.put_mask("quality", &modified).unwrap();
         let read = img.get_named_mask("quality").unwrap();
         assert!(!read[[0, 0]]);
+        let slice = img
+            .get_named_mask_slice("quality", &[0, 0], &[2, 1], &[2, 1])
+            .unwrap();
+        assert_eq!(slice.shape(), &[2, 1]);
+        assert!(!slice[[0, 0]]);
+        assert!(slice[[1, 0]]);
 
         // Remove mask.
         img.remove_mask("quality").unwrap();
