@@ -323,6 +323,14 @@ pub fn flagdata(
     ms: &mut MeasurementSet,
     request: &FlagDataRequest,
 ) -> Result<FlagDataReport, FlaggingError> {
+    flagdata_with_persistence(ms, request, true)
+}
+
+fn flagdata_with_persistence(
+    ms: &mut MeasurementSet,
+    request: &FlagDataRequest,
+    persist: bool,
+) -> Result<FlagDataReport, FlaggingError> {
     let ms_path = display_ms_path(ms);
     tracing::info!(
         path = %ms_path,
@@ -356,7 +364,7 @@ pub fn flagdata(
         );
     }
 
-    let backup_version = if request.flagbackup && !selected_rows.is_empty() {
+    let backup_version = if persist && request.flagbackup && !selected_rows.is_empty() {
         Some(save_next_flag_backup(ms, "flagdata")?)
     } else {
         None
@@ -387,7 +395,7 @@ pub fn flagdata(
         FlagDataMode::Summary => ChangeSet::default(),
     };
 
-    if !changes.changed_row_indices.is_empty() {
+    if persist && !changes.changed_row_indices.is_empty() {
         let mut maximum_flag_bytes = 0usize;
         for &row in &changes.changed_row_indices {
             maximum_flag_bytes = maximum_flag_bytes.max(clone_flag_matrix(ms, row)?.len());
@@ -498,14 +506,30 @@ pub fn flagdata_path(
     ms_path: impl AsRef<Path>,
     request: &FlagDataRequest,
 ) -> Result<FlagDataReport, FlaggingError> {
-    let path = ms_path.as_ref();
+    flagdata_at_path(ms_path.as_ref(), request, true)
+}
+
+/// Calculate candidate flags from a privately opened MS and discard the
+/// in-memory edits after building the report.
+pub fn calculate_flagdata_path(
+    ms_path: impl AsRef<Path>,
+    request: &FlagDataRequest,
+) -> Result<FlagDataReport, FlaggingError> {
+    flagdata_at_path(ms_path.as_ref(), request, false)
+}
+
+fn flagdata_at_path(
+    path: &Path,
+    request: &FlagDataRequest,
+    persist: bool,
+) -> Result<FlagDataReport, FlaggingError> {
     tracing::info!(path = %path.display(), "opening MeasurementSet for flagdata");
     let mut ms =
         MeasurementSet::open(path).map_err(|source| FlaggingError::OpenMeasurementSet {
             path: path.display().to_string(),
             source,
         })?;
-    flagdata(&mut ms, request)
+    flagdata_with_persistence(&mut ms, request, persist)
 }
 
 fn report_after(
