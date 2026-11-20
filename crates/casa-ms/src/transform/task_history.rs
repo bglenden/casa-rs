@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Provenance rows for the public split and mstransform tasks.
+//! Provenance rows for public MeasurementSet tasks.
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,7 +11,7 @@ use crate::SubtableId;
 
 use super::{MsTransformError, open_staged_subtable_for_write};
 
-/// Resolved arguments recorded in the output MeasurementSet's HISTORY.
+/// Resolved task arguments recorded in a MeasurementSet's HISTORY.
 #[derive(Debug, Clone)]
 pub struct TransformTaskHistory {
     /// CASA task name recorded as the HISTORY origin.
@@ -20,7 +20,9 @@ pub struct TransformTaskHistory {
     pub parameters: Vec<(String, String)>,
 }
 
-pub(super) fn append_task_history(
+/// Append the task heading, CASA-style argument messages and native version
+/// to the target's HISTORY subtable under its normal write lock.
+pub fn append_task_history(
     output: &Path,
     history: &TransformTaskHistory,
 ) -> Result<(), MsTransformError> {

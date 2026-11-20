@@ -30,8 +30,9 @@ pub fn project_provider_invocation(
 }
 
 /// Project a session whose caller also retains original explicit values.
-/// Proven required-path spellings and inactive applycal spwmap shapes retain
-/// their originals when they normalize to the resolved value.
+/// Proven required-path spellings, flagdata provenance parameters and
+/// inactive applycal spwmap shapes retain their originals when they normalize
+/// to the resolved value.
 pub fn project_provider_invocation_with_originals(
     session: &ParameterSession,
     originals: &BTreeMap<String, ParameterValue>,
@@ -60,12 +61,16 @@ pub fn project_provider_invocation_with_originals(
                 session.bundle().surface.id() == "applycal" && name == "spwmap"
                     && session.states().get("docallib").and_then(|state| state.value.as_ref()) == Some(&ParameterValue::Bool(true))
             });
+            let flagdata_history = original.filter(|_| {
+                session.bundle().surface.id() == "flagdata"
+                    && matches!(name.as_str(), "vis" | "chanbin" | "outfile")
+            });
             let sent = given.filter(|_| is_quantity(session, name))
                 .map(|given| match given {
                     ParameterValue::ScalarArray(value) | ParameterValue::NumpyScalar { value, .. } => value.as_ref(),
                     other => other,
                 })
-                .or(path_original).or(inactive_map).unwrap_or(value);
+                .or(path_original).or(inactive_map).or(flagdata_history).unwrap_or(value);
             Some((name.clone(), sent.clone()))
         })
         .collect::<BTreeMap<_, _>>();

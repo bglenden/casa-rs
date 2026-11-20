@@ -9,11 +9,12 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
-    FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, calculate_flagdata_path,
-    flagdata_empty_record, flagdata_named_summary_record, flagdata_path,
-    flagdata_task_schema_bundle, ms_task_success, save_next_flag_backup, task_selection_text,
+    FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
+    append_task_history, calculate_flagdata_path, flagdata_empty_record,
+    flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
+    save_next_flag_backup, task_selection_text,
 };
-use casa_provider_contracts::{NumpyScalarType, ParameterValue, python_repr};
+use casa_provider_contracts::{DefaultSpec, NumpyScalarType, ParameterValue, python_repr};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -73,9 +74,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         ) {
             return Err(not_yet("action", &action));
         }
-        calculate_flagdata_path(path, &request)
+        calculate_flagdata_path(&path, &request)
     } else {
-        flagdata_path(path, &request)
+        flagdata_path(&path, &request)
     }
     .map_err(|error| match error {
         FlaggingError::MissingCorrelationSummary => {
@@ -89,11 +90,68 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
+    if !calculate
+        && request.mode != FlagDataMode::Summary
+        && let Err(error) = append_task_history(&path, &flagdata_history(task))
+    {
+        tracing::error!(%error, "updating flagdata HISTORY");
+    }
     let value = match &report.summary {
         Some(summary) => flagdata_named_summary_record(summary, &task.required_text("name")?),
         None => flagdata_empty_record(),
     };
     ms_task_success(value, &Some(report))
+}
+
+fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
+    let mut bindings = task
+        .session()
+        .bundle()
+        .surface
+        .bindings()
+        .iter()
+        .filter(|binding| binding.projections.python.is_some())
+        .collect::<Vec<_>>();
+    bindings.sort_by_key(|binding| binding.order);
+    let parameters = bindings
+        .into_iter()
+        .filter_map(|binding| {
+            let name = binding.name.as_str();
+            let default = match &binding.default {
+                DefaultSpec::Literal { value } => Some(value),
+                DefaultSpec::Conditional { fallback, .. } => Some(fallback),
+                DefaultSpec::Required => None,
+            };
+            let given = task.session().given(name);
+            let value = if matches!(name, "vis" | "chanbin" | "outfile") {
+                given.or(default).or_else(|| task.value(name))
+            } else {
+                task.value(name).or(default)
+            }?;
+            let text = match (name, value) {
+                ("writeflags", _) => "True".to_string(),
+                ("flagbackup", _) => "False".to_string(),
+                ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
+                    "\"\"".to_string()
+                }
+                ("vis", ParameterValue::Array(paths))
+                    if let [ParameterValue::String(path)] = paths.as_slice() =>
+                {
+                    format!("\"{path}\"")
+                }
+                ("mode", ParameterValue::String(value)) if value == "manualflag" => {
+                    "\"manual\"".to_string()
+                }
+                (_, ParameterValue::String(value)) => format!("\"{value}\""),
+                (_, value) => python_repr(value),
+            };
+            Some((binding.name.clone(), text))
+        })
+        .collect();
+    TransformTaskHistory {
+        task: "flagdata".to_string(),
+        parameters,
+    }
 }
 
 fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
