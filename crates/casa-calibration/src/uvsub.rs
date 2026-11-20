@@ -85,7 +85,6 @@ pub fn subtract_visibility_model_selected(
     let mut subtraction = Subtraction {
         selection,
         reverse,
-        initializing: create,
         refusal: None,
     };
     let input = if create {
@@ -112,7 +111,7 @@ pub fn subtract_visibility_model_selected(
     } else {
         &resolved.selected_rows
     };
-    let models = VisibilityModels::new(ms, rows_with_models).map_err(invalid)?;
+    let models = VisibilityModels::for_uvsub(ms, rows_with_models).map_err(invalid)?;
     let polarizations = ms.polarization()?;
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
@@ -152,7 +151,6 @@ pub fn subtract_visibility_model_selected(
 struct Subtraction<'a> {
     selection: Option<&'a [usize]>,
     reverse: bool,
-    initializing: bool,
     refusal: Option<MsError>,
 }
 
@@ -228,12 +226,9 @@ fn subtract_batch(
                 add_or_subtract(&mut data, model, codes, subtraction.reverse)
             })();
             if let Err(error) = result {
-                if !subtraction.initializing {
-                    return Err(error);
-                }
-                // CASA initializes a new corrected column before prediction.
-                // Keep earlier subtractions and write observed values from the
-                // refused row onward before returning the original error.
+                // Commit earlier buffers and leave the refused and later
+                // rows at their input values. A new column uses observed data
+                // as that baseline and an existing column keeps its values.
                 subtraction.refusal = Some(error);
             }
         }

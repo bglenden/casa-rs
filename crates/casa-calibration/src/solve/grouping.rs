@@ -373,14 +373,32 @@ impl VisibilityModels {
         ms: &MeasurementSet,
         rows: &[ResolvedMsSelectionRow],
     ) -> Result<Self, GainSolveError> {
+        Self::from_ms(ms, rows, false)
+    }
+
+    pub(crate) fn for_uvsub(
+        ms: &MeasurementSet,
+        rows: &[ResolvedMsSelectionRow],
+    ) -> Result<Self, GainSolveError> {
+        Self::from_ms(ms, rows, true)
+    }
+
+    fn from_ms(
+        ms: &MeasurementSet,
+        rows: &[ResolvedMsSelectionRow],
+        defer_refusals: bool,
+    ) -> Result<Self, GainSolveError> {
         let virtual_fields = scratch_columns::virtual_model_fields(ms);
         let rows = rows
             .iter()
             .filter(|row| virtual_fields.contains(&row.field_id))
             .map(|row| selected_solve_row(ms, row, None))
             .collect::<Result<Vec<_>, _>>()?;
-        let models =
-            super::model::ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?;
+        let models = if defer_refusals {
+            super::model::ModelInputs::for_uvsub(ms, &rows)?
+        } else {
+            super::model::ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?
+        };
         Self::with_models(ms, rows, models)
     }
 
