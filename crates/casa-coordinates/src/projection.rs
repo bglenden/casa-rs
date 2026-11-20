@@ -14,7 +14,7 @@
 //! | SIN  | Slant orthographic | `-SIN` |
 //! | AZP  | Zenithal perspective with a tilted plane | `-AZP` |
 //! | SZP  | Slant zenithal perspective with tclean parameters | `-SZP` |
-//! | AIR  | Airy with zero or the default reference latitude | `-AIR` |
+//! | AIR  | Airy's zenithal projection | `-AIR` |
 //! | TAN  | Gnomonic (tangent plane) | `-TAN` |
 //! | ARC  | Zenithal equidistant | `-ARC` |
 //! | CAR  | Plate carree (cylindrical equidistant) | `-CAR` |
@@ -59,7 +59,7 @@ pub enum ProjectionType {
     AZP,
     /// Slant zenithal perspective with tclean's `[0, 0, 90]` parameters.
     SZP,
-    /// Airy projection with zero or the default 90-degree latitude.
+    /// Airy's zenithal projection.
     AIR,
     /// Gnomonic (tangent-plane) projection.
     TAN,
@@ -94,6 +94,17 @@ pub enum ProjectionType {
 }
 
 impl ProjectionType {
+    /// Defaults for the latitude-axis `PV` parameters supported by the
+    /// FITS reader and writer, in one-based parameter order.
+    #[must_use]
+    pub fn fits_parameter_defaults(self) -> &'static [f64] {
+        match self {
+            Self::AZP => &[0.0, 0.0],
+            Self::AIR => &[90.0],
+            _ => &[],
+        }
+    }
+
     /// Parses a projection name (case-insensitive) to a [`ProjectionType`].
     ///
     /// Returns `None` if the name is not recognised.
@@ -284,8 +295,8 @@ impl Projection {
     /// Confirm that the supported transform can use the stated parameters.
     ///
     /// AZP reads the perspective distance and the plane tilt in degrees.
-    /// Casacore pads missing SZP parameters with `[0, 0, 90]`. AIR defaults
-    /// to 90° and also supports the explicit zero latitude written by tclean.
+    /// Casacore pads missing SZP parameters with `[0, 0, 90]`. AIR uses a
+    /// reference latitude in degrees, defaulting to 90°.
     /// Surplus parameters are stored but have no effect on these projections.
     pub fn validate_conversion_parameters(&self) -> Result<(), CoordinateError> {
         let required = match self.projection_type {
@@ -309,12 +320,23 @@ impl Projection {
     }
 
     fn airy_coefficient(&self) -> Result<f64, CoordinateError> {
-        match self.parameters.first().copied().unwrap_or(90.0) {
-            0.0 => Ok(LN_2),
-            90.0 => Ok(1.0),
-            _ => Err(CoordinateError::ConversionFailed(
-                "AIR requires zero or the default 90-degree latitude (#977)".into(),
-            )),
+        let latitude = self.parameters.first().copied().unwrap_or(90.0);
+        let half_angle = (((90.0 - latitude) / 2.0) % 360.0).abs();
+        let half_angle = half_angle.min(360.0 - half_angle);
+        if !latitude.is_finite() || latitude <= -90.0 || half_angle > 90.0 {
+            return Err(CoordinateError::ConversionFailed(
+                "AIR requires a finite reference latitude above -90 degrees and a real coefficient"
+                    .into(),
+            ));
+        }
+        match half_angle {
+            0.0 => Ok(1.0),
+            45.0 => Ok(LN_2),
+            90.0 => Ok(0.0),
+            _ => {
+                let tangent = (half_angle * DEG_TO_RAD).tan();
+                Ok(airy_logarithmic_factor(tangent * tangent))
+            }
         }
     }
 }
@@ -474,8 +496,12 @@ fn project_air(phi: f64, theta: f64, coefficient: f64) -> Result<(f64, f64), Coo
     Ok((radius * phi.sin(), -radius * phi.cos()))
 }
 
-/// Invert the monotone radius in t. The logarithm bounds t between
-/// radius/(1 + k) and radius/k, which bracket the Newton steps.
+fn airy_logarithmic_factor(squared: f64) -> f64 {
+    squared.ln_1p() / squared
+}
+
+/// Invert the radius in t. A small coefficient can give several
+/// intersections, where the solution follows WCSLIB's branch selection.
 fn deproject_air(x: f64, y: f64, coefficient: f64) -> Result<(f64, f64), CoordinateError> {
     let radius = x.hypot(y);
     if radius == 0.0 {
@@ -486,12 +512,17 @@ fn deproject_air(x: f64, y: f64, coefficient: f64) -> Result<(f64, f64), Coordin
     if linear < AIR_LINEAR_LIMIT {
         return Ok((phi, FRAC_PI_2 - 2.0 * linear));
     }
+    if coefficient < LN_2 {
+        return air_inverse_with_wcslib_branch(radius, coefficient)
+            .map(|half_zenith| (phi, FRAC_PI_2 - 2.0 * half_zenith));
+    }
 
+    // In this range the radius is monotone, with ln(1+t²)/t² in [0, 1].
     let (mut low, mut high) = (linear, radius / coefficient);
     let mut tangent = low;
     for _ in 0..32 {
         let squared = tangent * tangent;
-        let logarithmic_factor = squared.ln_1p() / squared;
+        let logarithmic_factor = airy_logarithmic_factor(squared);
         let error = tangent * (coefficient + logarithmic_factor) - radius;
         if error.abs() <= 4.0 * f64::EPSILON * radius {
             return Ok((phi, FRAC_PI_2 - 2.0 * tangent.atan()));
@@ -511,6 +542,44 @@ fn deproject_air(x: f64, y: f64, coefficient: f64) -> Result<(f64, f64), Coordin
     }
     Err(CoordinateError::ConversionFailed(
         "AIR deproject: no finite inverse radius".into(),
+    ))
+}
+
+fn air_inverse_with_wcslib_branch(radius: f64, coefficient: f64) -> Result<f64, CoordinateError> {
+    let radius_at = |cosine: f64| {
+        let tangent = (1.0 - cosine * cosine).sqrt() / cosine;
+        -2.0 * cosine.ln() / tangent + coefficient * tangent
+    };
+    // Several roots can share the first bracket. Follow WCSLIB's weighted
+    // division of the cosine interval to select the same intersection.
+    let (mut near_cosine, mut near_radius) = (1.0, 0.0);
+    let (mut far_cosine, mut far_radius) = (1.0, 0.0);
+    for _ in 0..30 {
+        far_cosine = near_cosine * 0.5;
+        far_radius = radius_at(far_cosine);
+        if far_radius >= radius {
+            break;
+        }
+        (near_cosine, near_radius) = (far_cosine, far_radius);
+    }
+    if far_radius >= radius {
+        for _ in 0..100 {
+            let fraction = ((far_radius - radius) / (far_radius - near_radius)).clamp(0.1, 0.9);
+            let cosine = far_cosine + fraction * (near_cosine - far_cosine);
+            let trial_radius = radius_at(cosine);
+            // WCSLIB tests against 1e-12 in units of half the radius.
+            if (trial_radius - radius).abs() < 2e-12 {
+                return Ok(cosine.acos());
+            }
+            if trial_radius < radius {
+                (near_cosine, near_radius) = (cosine, trial_radius);
+            } else {
+                (far_cosine, far_radius) = (cosine, trial_radius);
+            }
+        }
+    }
+    Err(CoordinateError::ConversionFailed(
+        "AIR deproject: pixel outside the projected region".into(),
     ))
 }
 
@@ -968,8 +1037,8 @@ mod tests {
             (ProjectionType::AZP, vec![0.0, 90.0]),
             (ProjectionType::SZP, vec![1.0, 0.0, 90.0]),
             (ProjectionType::SZP, vec![0.0, 0.0, 45.0]),
-            (ProjectionType::AIR, vec![45.0]),
             (ProjectionType::AIR, vec![-90.0]),
+            (ProjectionType::AIR, vec![300.0]),
         ] {
             let projection = Projection::with_parameters(kind, parameters);
             assert!(projection.project(0.4, 1.2).is_err(), "{kind:?}");
@@ -1035,6 +1104,44 @@ mod tests {
             assert!((x - (LN_2 + 1.0)).abs() < TOL);
             assert!(y.abs() < TOL);
             roundtrip(&projection, FRAC_PI_2, 0.0);
+        }
+    }
+
+    #[test]
+    fn airy_reference_latitudes_match_wcslib() {
+        // WCSLIB via Astropy's Airy transform, with all angles in degrees.
+        for (latitude, phi, theta, x, y) in [
+            (45.0, 29.0, 36.0, 25.645147655021365, -46.26507106064551),
+            (-82.0, -68.0, 45.0, -20.881351402380602, -8.436613597441491),
+            (-82.0, 37.0, -87.0, 40.86830631740053, -54.23407426690307),
+            (-45.0, -110.0, -28.0, -72.46483019384043, 26.37504122171267),
+        ] {
+            let projection = Projection::with_parameters(ProjectionType::AIR, vec![latitude]);
+            let expected = [x * DEG_TO_RAD, y * DEG_TO_RAD];
+            let actual = projection
+                .project(phi * DEG_TO_RAD, theta * DEG_TO_RAD)
+                .unwrap();
+            assert!((actual.0 - expected[0]).abs() < TOL);
+            assert!((actual.1 - expected[1]).abs() < TOL);
+            let (actual_phi, actual_theta) =
+                projection.deproject(expected[0], expected[1]).unwrap();
+            assert!((actual_phi - phi * DEG_TO_RAD).abs() < TOL);
+            assert!((actual_theta - theta * DEG_TO_RAD).abs() < TOL);
+        }
+    }
+
+    #[test]
+    fn airy_uses_wcslib_branch_when_the_radius_has_several_solutions() {
+        for (reference, plane, expected) in [
+            (-85.0, -35.91553840292542, 12.844743211493224),
+            (-76.48329678302335, 54.352917860275376, -60.7625099804296),
+        ] {
+            let projection = Projection::with_parameters(ProjectionType::AIR, vec![reference]);
+            let (_, latitude) = projection.deproject(0.0, plane * DEG_TO_RAD).unwrap();
+            assert!(
+                (latitude - expected * DEG_TO_RAD).abs() < 1e-9,
+                "{latitude}"
+            );
         }
     }
 

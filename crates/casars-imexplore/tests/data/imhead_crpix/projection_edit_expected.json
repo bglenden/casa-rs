@@ -900,6 +900,85 @@
           0.9997091126550155
         ]
       ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"SIN\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        1.23456789,
+        -1.23e-06
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0006838725677167013,
+          -0.0006838724077994187
+        ],
+        [
+          6.2830143390565025,
+          -0.00034193623117342186
+        ]
+      ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"AZP\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "../imhead_projection/slant",
+      "initial": "AZP",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        1.23456789,
+        -1.23e-06
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0006838725677167013,
+          -0.0006838724077994187
+        ],
+        [
+          6.2830143390565025,
+          -0.00034193623117342186
+        ]
+      ]
+    },
+    {
+      "get": "AIR",
+      "history": [
+        "Modified projection from \"SIN\" to \"AIR\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"projection\", hdvalue=\"AIR\", verbose=False)"
+      ],
+      "image": "projection_high_slant",
+      "key": "projection",
+      "latpole": 0.0,
+      "parameters": [
+        120.0,
+        0.0
+      ],
+      "value": "AIR",
+      "world": [
+        [
+          0.0005919182972869636,
+          -0.0005919181935925917
+        ],
+        [
+          6.283037327616493,
+          -0.0002959591164652507
+        ]
+      ]
     }
   ]
 }

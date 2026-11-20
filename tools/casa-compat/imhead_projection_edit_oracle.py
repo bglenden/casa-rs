@@ -21,6 +21,15 @@ def main():
     for lock in pointing.rglob('table.lock'): lock.unlink()
     for info in pointing.rglob('table.info'):
         info.write_text('\n'.join(line.rstrip() for line in info.read_text().splitlines()).rstrip() + '\n')
+    high_slant = root / 'projection_high_slant.im'
+    if high_slant.exists(): shutil.rmtree(high_slant)
+    shutil.copytree(root / 'normal.im', high_slant)
+    ia = image(); ia.open(str(high_slant)); cs = ia.coordsys()
+    cs.setprojection(type='SIN', parameters=[120.0, 0.0])
+    ia.setcoordsys(cs.torecord()); cs.done(); ia.done()
+    for lock in high_slant.rglob('table.lock'): lock.unlink()
+    for info in high_slant.rglob('table.info'):
+        info.write_text('\n'.join(line.rstrip() for line in info.read_text().splitlines()).rstrip() + '\n')
     cases = [(source, 'projection', value) for source in ('normal', 'transposed') for value in ('SIN', 'TAN', 'ARC', 'ZEA', 'STG', 'tan')]
     cases += [('projection_pointing', 'projection', value) for value in ('TAN', 'ARC', 'ZEA', 'STG')]
     cases += [('normal', 'PROJECTION', 'ARC'), ('normal', 'projection', 'NCP'), ('normal', 'projection', 'bad'), ('normal', 'projection', 'T'), ('car', 'projection', 'CAR')]
@@ -33,6 +42,9 @@ def main():
     cases += [('car', 'projection', target, 'AIR') for target in ('SIN', 'AZP')]
     cases += [(source, 'projection', 'AZP', None)
               for source in ('../imhead_projection/slant', '../imhead_projection/ncp')]
+    cases += [('../imhead_projection/slant', 'projection', 'AIR', initial)
+              for initial in (None, 'AZP')]
+    cases += [('projection_high_slant', 'projection', 'AIR', None)]
     expected = {'casa_version': version_string(), 'cases': []}
     with tempfile.TemporaryDirectory(prefix='imhead-projection-') as temp:
         for index, (source, key, value, initial) in enumerate(cases):
