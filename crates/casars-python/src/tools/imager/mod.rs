@@ -28,6 +28,7 @@ struct ImagerState {
     attachments: ImagerAttachments,
     prediction: ImagerPrediction,
     valid: bool,
+    uses_scratch: bool,
     model_in_sky_equation: bool,
 }
 
@@ -112,6 +113,7 @@ impl PyImager {
                 )
                 .map_err(runtime_error)?;
             state.valid = true;
+            state.uses_scratch = usescratch;
             Ok(true)
         })
     }
@@ -166,40 +168,46 @@ impl PyImager {
             start: start.values("start", 0)?,
             step: step.values("step", 1)?,
         };
-        let result =
-            self.with_state(py, |state| {
-                let path = (!vis.is_empty()).then(|| Path::new(vis));
-                if path.is_some()
-                    && datainmemory
-                    && state.attachments.inputs().first().is_none_or(|input| {
-                        input.mode() == casa_calibration::AttachmentMode::Selection
-                    })
-                {
-                    // The pinned Multi-MS memory path fails before it can attach an MS.
+        let result = self.with_state(py, |state| {
+            let path = (!vis.is_empty()).then(|| Path::new(vis));
+            let explicit_open = state
+                .attachments
+                .inputs()
+                .first()
+                .is_some_and(|input| input.mode() == casa_calibration::AttachmentMode::Open);
+            if !explicit_open && let Some(path) = path {
+                state.uses_scratch = usescratch && !datainmemory;
+                if datainmemory {
+                    // The pinned Multi-MS memory path fails before attaching.
                     return Err(runtime_error(
                         "NullTable::getColumn - Table object is empty",
                     ));
                 }
-                let options = AttachmentOptions {
-                    write_access: writeaccess,
-                    use_scratch: usescratch,
-                };
-                let selected =
-                    state
-                        .attachments
-                        .select_channels(path, options, selection, Some(channels));
-                match selected {
-                    Err(AttachmentError::Unattached) => Ok(None),
-                    result => {
-                        let selected = result.map_err(runtime_error)?;
-                        state.valid = selected;
-                        if selected {
-                            state.model_in_sky_equation = false;
-                        }
-                        Ok(Some(selected))
-                    }
+                if !path.join("table.dat").is_file() {
+                    state.valid = false;
+                    return Ok(Some(false));
                 }
-            })?;
+            }
+            let options = AttachmentOptions {
+                write_access: writeaccess,
+                use_scratch: usescratch,
+            };
+            let selected =
+                state
+                    .attachments
+                    .select_channels(path, options, selection, Some(channels));
+            match selected {
+                Err(AttachmentError::Unattached) => Ok(None),
+                result => {
+                    let selected = result.map_err(runtime_error)?;
+                    state.valid = selected;
+                    if selected {
+                        state.model_in_sky_equation = false;
+                    }
+                    Ok(Some(selected))
+                }
+            }
+        })?;
         if let Some(selected) = result {
             return Ok(selected);
         }
@@ -260,7 +268,10 @@ impl PyImager {
                 incremental,
                 phase_centre_time: (phasecentertime >= 0.).then_some(phasecentertime),
             };
-            match state.prediction.predict_attached(&state.attachments, model) {
+            match state
+                .prediction
+                .predict_attached(&state.attachments, model, state.uses_scratch)
+            {
                 Ok(true) => {
                     state.model_in_sky_equation |= has_model;
                     Ok(true)

@@ -7,11 +7,13 @@ use std::path::{Path, PathBuf};
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
 use casa_images::{ImageInfo, PagedImage};
+use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
 use casa_ms::{
     MeasurementSet, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
 use casa_types::{RecordValue, ScalarValue, Value};
 
+use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
 use super::image::{ImageModel, TaylorTerm, prepare_configured_image, reference_frequency};
@@ -51,6 +53,7 @@ pub struct ImagerPrediction {
     voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
+    ambiguous_scratch_write: bool,
 }
 
 struct PendingPublication {
@@ -63,6 +66,7 @@ struct PendingPublication {
 struct PartialBatch {
     inputs: Vec<CalibrationAttachment>,
     model: PredictionInputs,
+    scratch: bool,
     completed: usize,
 }
 
@@ -100,6 +104,7 @@ impl Default for ImagerPrediction {
             voltage_pattern: None,
             pending_publication: None,
             partial_batch: None,
+            ambiguous_scratch_write: false,
         }
     }
 }
@@ -132,6 +137,13 @@ impl ImagerPrediction {
                 "imager needs at least one Taylor term and a positive reference frequency",
             ));
         }
+        if (self.partial_batch.is_some() || self.pending_publication.is_some())
+            && self.taylor != (terms, reference_hz)
+        {
+            return Err(invalid(
+                "finish publishing the previous imager prediction before changing Taylor terms",
+            ));
+        }
         self.taylor = (terms, reference_hz);
         Ok(())
     }
@@ -147,10 +159,17 @@ impl ImagerPrediction {
         &mut self,
         attachments: &ImagerAttachments,
         model: ImagerPredictionModel<'_>,
+        scratch: bool,
     ) -> Result<bool, AttachmentError> {
         let inputs = attachments.writable_inputs()?;
         let first = match &self.partial_batch {
-            Some(batch) if batch.inputs == inputs && batch.model.matches(model) => batch.completed,
+            Some(batch)
+                if batch.inputs == inputs
+                    && batch.scratch == scratch
+                    && batch.model.matches(model) =>
+            {
+                batch.completed
+            }
             Some(_) => {
                 return Err(invalid(
                     "retry the previous imager prediction to finish publishing it",
@@ -159,13 +178,28 @@ impl ImagerPrediction {
             }
             None => 0,
         };
+        if scratch {
+            // CASA uses the last enrollment's destination for the whole
+            // iterator. Reject a missing column before any group member is
+            // changed. The legacy iterator can crash on this input.
+            for input in inputs
+                .iter()
+                .skip(first)
+                .filter(|input| !input.options().use_scratch)
+            {
+                if !has_column(&MeasurementSet::open(input.path())?, ModelData) {
+                    return Ok(false);
+                }
+            }
+        }
         for (index, input) in inputs.iter().enumerate().skip(first) {
-            let result = self.predict(input, model);
+            let result = self.predict_to(input, model, scratch);
             if !matches!(result, Ok(true)) {
                 if index > 0 {
                     self.partial_batch = Some(PartialBatch {
                         inputs: inputs.to_vec(),
                         model: PredictionInputs::new(model),
+                        scratch,
                         completed: index,
                     });
                 }
@@ -191,9 +225,23 @@ impl ImagerPrediction {
         attachment: &CalibrationAttachment,
         model: ImagerPredictionModel<'_>,
     ) -> Result<bool, AttachmentError> {
+        self.predict_to(attachment, model, attachment.options().use_scratch)
+    }
+
+    fn predict_to(
+        &mut self,
+        attachment: &CalibrationAttachment,
+        model: ImagerPredictionModel<'_>,
+        scratch: bool,
+    ) -> Result<bool, AttachmentError> {
+        if self.ambiguous_scratch_write {
+            return Err(invalid(
+                "the previous scratch prediction may be partially written. Reopen the imager before a replacement prediction",
+            ).into());
+        }
         let mut pending = self.pending_publication.take();
+        let mut writing_scratch = false;
         let result = attachment.with_write(|ms, selection, lock| {
-            let scratch = attachment.options().use_scratch;
             if let Some(previous) = pending.as_mut() {
                 if scratch
                     || previous.path != attachment.path()
@@ -213,6 +261,9 @@ impl ImagerPrediction {
             {
                 return Ok(true);
             }
+            if scratch && !has_column(ms, ModelData) {
+                return Ok(false);
+            }
             let Some((mut components, images)) = self
                 .prepare(ms, selection, &model, scratch)
                 .map_err(AttachmentError::PredictionPreparation)?
@@ -221,7 +272,10 @@ impl ImagerPrediction {
             };
             if scratch {
                 components.extend(images.iter().map(|image| image.entry.clone()));
-                write_model_scratch(ms, selection, &components, model.incremental, lock)?;
+                // Virtual cleanup belongs to scratch attachment. An earlier
+                // virtual input in this iterator can still own recipes.
+                writing_scratch = !components.is_empty();
+                write_model_scratch(ms, selection, &components, model.incremental, false, lock)?;
             } else {
                 let publication = VirtualFtPublication::new(
                     [&*ms].into_iter(),
@@ -241,6 +295,7 @@ impl ImagerPrediction {
             Ok(true)
         });
         if result.is_err() {
+            self.ambiguous_scratch_write = writing_scratch;
             self.pending_publication =
                 pending.filter(|previous| previous.publication.may_reference_models());
         }

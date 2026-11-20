@@ -191,7 +191,10 @@ impl CalibrationAttachment {
         } else {
             let ms = MeasurementSet::open(&attachment.path)?;
             if mode == AttachmentMode::Selection {
-                if options.use_scratch && !has_column(&ms, VisibilityDataColumn::ModelData) {
+                if attachment.imager_channels.is_some()
+                    && options.use_scratch
+                    && !has_column(&ms, VisibilityDataColumn::ModelData)
+                {
                     return Err(casa_ms::MsError::InvalidInput(format!(
                         "Invalid Table operation: Table::addColumn; table {} is not writable",
                         attachment.path.display(),
@@ -450,15 +453,14 @@ fn imager_selection<'a>(
         if !(0..total).contains(&start) {
             return Ok(std::borrow::Cow::Borrowed(selection));
         }
-        let available = (total - start) / step;
+        // Keep a valid first channel when the stride runs past the end of
+        // the window. This boundary can abort the legacy iterator.
+        let available = ((total - start) / step).max(1);
         let count = if count <= 0 {
             available
         } else {
             count.min(available)
         };
-        if count == 0 {
-            return Ok(std::borrow::Cow::Borrowed(selection));
-        }
         let end = start + (count - 1) * step;
         ranges.push(format!("{id}:{start}~{end}^{step}"));
     }

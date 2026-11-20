@@ -260,6 +260,172 @@ def virtual_interchange(root, seed, point):
     return reports
 
 
+def mixed_destinations(root, seed, point):
+    for scratch in (False, True):
+        after = []
+        for label, factory in (("casa", reference), ("native", native)):
+            tool = factory()
+            paths = [root / f"mix-{scratch}-{label}-{field}.ms" for field in (0, 1)]
+            prepare(seed, paths[0], model=True, virtual=scratch)
+            prepare(seed, paths[1], model=True)
+            before = [state(path) for path in paths]
+            assert tool.selectvis(str(paths[0]), field=0, usescratch=not scratch)
+            assert tool.selectvis(str(paths[1]), field=1, usescratch=scratch)
+            assert tool.ft(complist=str(point))
+            assert tool.done()
+            snapshots = [state(path) for path in paths]
+            for field, (original, predicted) in enumerate(zip(before, snapshots, strict=True)):
+                if scratch:
+                    assert np.count_nonzero(predicted[0]["MODEL_DATA"] != original[0]["MODEL_DATA"]) == 2880
+                    np.testing.assert_equal(predicted[1], original[1])
+                else:
+                    np.testing.assert_array_equal(predicted[0]["MODEL_DATA"], original[0]["MODEL_DATA"])
+                    assert f"definedmodel_field_{field}" in predicted[1][1]
+            after.append(snapshots)
+        for expected, actual in zip(*after, strict=True):
+            compare_outputs(expected, actual)
+
+    # CASA's iterator crashes when scratch is selected for a group containing
+    # an earlier input without MODEL_DATA. Refuse before writing either input.
+    first, last = (root / f"missing-model-{label}.ms" for label in ("first", "last"))
+    prepare(seed, first, virtual=True)
+    prepare(seed, last, model=True)
+    tool = native()
+    assert tool.selectvis(str(first), field=0)
+    assert tool.selectvis(str(last), field=1, usescratch=True)
+    before = [state(path) for path in (first, last)]
+    assert not tool.ft(complist=str(point))
+    assert tool.done()
+    for path, original in zip((first, last), before, strict=True):
+        compare_outputs(state(path), original)
+    return 3
+
+
+def failed_enrollments(root, seed, point):
+    for label, factory in (("casa", reference), ("native", native)):
+        first, other = (root / f"enrollment-{label}-{which}.ms" for which in ("first", "other"))
+        prepare(seed, first, model=True)
+        prepare(seed, other, model=True)
+        tool = factory()
+        assert tool.selectvis(str(first), field=0, usescratch=True)
+        before = state(first)
+        assert not tool.selectvis(str(root / "missing-enrollment.ms"), usescratch=True)
+        assert not tool.ft(complist=str(point))
+        compare_outputs(state(first), before)
+        assert tool.close() and tool.selectvis(str(first), field=0, usescratch=True)
+        reject(lambda: tool.selectvis(str(other), usescratch=True, datainmemory=True), "NullTable::getColumn")
+        assert tool.ft(complist=str(point))
+        assert tool.done()
+        current = state(first)
+        np.testing.assert_equal(current[0], before[0])
+        assert "definedmodel_field_0" in current[1][1]
+    return 2
+
+
+def boundary_channel(root, seed, point):
+    # CASA can crash on an oversized stride after a valid last channel.
+    path = root / "final-channel.ms"
+    prepare(seed, path, model=True)
+    tool = native()
+    assert tool.open(str(path), usescratch=True)
+    assert tool.selectvis(field=0, spw=0, nchan=1, start=11, step=2)
+    assert tool.ft(complist=str(point))
+    assert tool.done()
+    changed = np.any(state(path)[0]["MODEL_DATA"] != 13. + 7.j, axis=(0, 2))
+    np.testing.assert_array_equal(np.flatnonzero(changed), [11])
+    return int(np.count_nonzero(changed))
+
+
+def batch_retry(root, seed):
+    first, last, relocated = (root / f"batch-{suffix}.ms" for suffix in ("first", "last", "relocated"))
+    for path in (first, last):
+        prepare(seed, path, model=True)
+    models = [str(root / f"taylor-native-term{term}.im") for term in (0, 1)]
+    tool = native()
+    assert tool.selectvis(str(first), field=0, usescratch=True)
+    assert tool.selectvis(str(last), field=0, usescratch=True)
+    assert tool.settaylorterms(2, 95e9)
+    before = state(first)
+    last.rename(relocated)
+    try:
+        reject(lambda: tool.ft(models, incremental=True), "batch-last.ms")
+    finally:
+        relocated.rename(last)
+    completed = state(first)
+    assert np.any(completed[0]["MODEL_DATA"] != before[0]["MODEL_DATA"])
+    compare_outputs(state(last), before)
+    reject(lambda: tool.settaylorterms(2, 105e9), "before changing Taylor terms")
+    assert tool.ft(models, incremental=True)
+    assert tool.done()
+    compare_outputs(state(first), completed)
+    compare_outputs(state(last), completed)
+    return 2
+
+
+def partial_scratch_write(root):
+    path = root / "partial-scratch-write.ms"
+    shutil.copytree(root / "image-predict-taylor-native.ms", path)
+    # An unused fine-resolution window makes the bounded writer split even
+    # this small MeasurementSet into batches.
+    tool = table()
+    for subtable in ("SPECTRAL_WINDOW", "DATA_DESCRIPTION"):
+        assert tool.open(str(path / subtable), nomodify=False)
+        try:
+            row = {name: tool.getcell(name, 0) for name in tool.colnames()
+                   if tool.iscelldefined(name, 0)}
+            count = tool.nrows()
+            assert tool.addrows(1)
+            if subtable == "SPECTRAL_WINDOW":
+                row["NAME"] = "FINE"
+                row["NUM_CHAN"] = 1_000_000
+                for name in ("CHAN_FREQ", "CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+                    row[name] = np.full(row["NUM_CHAN"], row[name][0], dtype=np.float64)
+                row["TOTAL_BANDWIDTH"] = float(np.sum(row["CHAN_WIDTH"]))
+            else:
+                row["SPECTRAL_WINDOW_ID"] = 1
+            for name, value in row.items():
+                tool.putcell(name, count, value)
+        finally:
+            tool.close()
+
+    assert tool.open(str(path), nomodify=False)
+    try:
+        descriptor = tool.getcoldesc("MODEL_DATA")
+        tool.removecols("MODEL_DATA")
+        descriptor.update(option=0, dataManagerType="StandardStMan", dataManagerGroup="FlexibleModel")
+        descriptor.pop("shape", None)
+        assert tool.addcols({"MODEL_DATA": descriptor})
+        shape = tool.getcell("DATA", 0).shape
+        blank = np.zeros(shape, dtype=np.complex64)
+        rows = tool.nrows()
+        for index in range(rows):
+            tool.putcell("MODEL_DATA", index, blank)
+        tool.putcell("MODEL_DATA", rows - 1, blank[:, :5].copy())
+    finally:
+        tool.close()
+
+    model = str(root / "taylor-native-term0.im")
+    im = native()
+    assert im.open(str(path), usescratch=True)
+    reject(lambda: im.ft(model, incremental=True), "MODEL_DATA")
+    assert tool.open(str(path), nomodify=False)
+    try:
+        tool.putcell("MODEL_DATA", rows - 1, blank)
+        before_retry = tool.getcol("MODEL_DATA")
+    finally:
+        tool.close()
+    written = np.count_nonzero(np.any(np.abs(before_retry) > 1e-6, axis=(0, 1)))
+    assert 0 < written < rows
+    reject(lambda: im.ft(model, incremental=True), "previous scratch prediction may be partially written")
+    np.testing.assert_array_equal(state(path)[0]["MODEL_DATA"], before_retry)
+    assert im.close() and im.open(str(path), usescratch=True)
+    assert im.ft(model) and im.done()
+    recovered = state(path)[0]["MODEL_DATA"]
+    np.testing.assert_allclose(recovered[..., 0], before_retry[..., 0], rtol=1e-6, atol=1e-6)
+    assert np.max(np.abs(recovered[..., -1])) > 1.5
+    return int(written)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -278,6 +444,11 @@ def main():
         "reopened_selection_samples": access_and_reopen(root, seed, point),
         "multi_input_samples": multi_input(root, seed, point),
         "virtual_interchange": virtual_interchange(root, seed, point),
+        "mixed_destination_cases": mixed_destinations(root, seed, point),
+        "failed_enrollment_cases": failed_enrollments(root, seed, point),
+        "preserved_boundary_channels": boundary_channel(root, seed, point),
+        "scratch_batch_retry_inputs": batch_retry(root, seed),
+        "scratch_rows_protected_from_replay": partial_scratch_write(root),
     }
     (root / "results.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
