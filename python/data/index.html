@@ -579,6 +579,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#extract-a-subimage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extract a subimage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#access-an-existing-image-through-the-data-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -804,6 +815,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#extract-a-subimage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extract a subimage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#access-an-existing-image-through-the-data-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -935,6 +957,18 @@ while preserving their invalid mask values. <code>ia.newimagefromfits(...)</code
 a separate image tool. The remaining
 CASA image and coordinate operations are tracked in
 <a href="https://github.com/bglenden/casa-rs/issues/1027">#1027</a>.</p>
+<h3 id="extract-a-subimage">Extract a subimage<a class="headerlink" href="#extract-a-subimage" title="Permanent link">&para;</a></h3>
+<p>Use <code>ia.subimage(outfile="cutout.im", region=region)</code> to copy a selection
+to a native CASA image. The method returns a separate image tool. Leave
+<code>outfile</code> empty for a temporary image, or set <code>wantreturn=False</code> to write the
+file and return <code>None</code>. The copy shifts its reference pixels, keeps the
+applicable restoring beams and input history, and combines the region with
+the input's validity mask and any supplied <code>mask</code> expression.</p>
+<p>Use <code>dropdeg=True</code> to drop singleton axes. List the singleton axes you want
+to keep in <code>keepaxes</code>. Region inputs include CRTF text and files, saved region
+references, and unit-stride boxes and polygon records.
+An existing entry inside the input image cannot be replaced, protecting
+the source's history and mask tables.</p>
 <h3 id="access-an-existing-image-through-the-data-api">Access an existing image through the Data API<a class="headerlink" href="#access-an-existing-image-through-the-data-api" title="Permanent link">&para;</a></h3>
 <p>Use <code>Image.open(path, writable=False)</code> to open an existing CASA-compatible image. The v1 surface is intentionally narrow:</p>
 <ul>
