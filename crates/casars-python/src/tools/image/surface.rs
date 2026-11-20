@@ -902,7 +902,7 @@ const METHODS: &[Method] = &[
             param("replicate", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "pv",

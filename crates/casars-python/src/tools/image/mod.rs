@@ -39,6 +39,7 @@ mod noise;
 mod pixel_edit;
 mod pixels;
 mod point;
+mod put_region;
 mod records;
 mod region_read;
 mod replace_masked;

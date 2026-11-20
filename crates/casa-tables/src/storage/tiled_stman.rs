@@ -10131,17 +10131,7 @@ impl TiledFileIO {
         let header_path = table_path
             .join(format!("table.f{}", layout.dm_seq_nr))
             .into_boxed_path();
-        {
-            let file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&tsm_path)?;
-            let bytes = checked_layout_mul(layout.tile_count, layout.file_tile_bytes)?;
-            file.set_len(u64::try_from(bytes).map_err(|_| {
-                StorageError::FormatMismatch("typed array file length exceeds u64".into())
-            })?)?;
-        }
+        layout.write_new_data_file(&tsm_path, 0)?;
         std::fs::write(&header_path, &layout.header)?;
         let cache = if layout.use_lru {
             let file = OpenOptions::new().read(true).write(true).open(&tsm_path)?;
@@ -11921,6 +11911,29 @@ pub struct TiledArrayStorageLayout {
 }
 
 impl TiledArrayStorageLayout {
+    fn write_new_data_file(&self, path: &Path, byte: u8) -> Result<(), StorageError> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        let bytes = checked_layout_mul(self.tile_count, self.file_tile_bytes)?;
+        if byte == 0 {
+            file.set_len(u64::try_from(bytes).map_err(|_| {
+                StorageError::FormatMismatch("typed array file length exceeds u64".into())
+            })?)?;
+        } else {
+            let buffer = vec![byte; bytes.min(64 * 1024)];
+            let mut remaining = bytes;
+            while remaining > 0 {
+                let count = remaining.min(buffer.len());
+                file.write_all(&buffer[..count])?;
+                remaining -= count;
+            }
+        }
+        Ok(())
+    }
+
     /// Prepare an exact array shape, physical tile shape and explicit cache.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -12220,14 +12233,52 @@ impl TiledArrayStorage {
         table_path: &Path,
         layout: &TiledArrayStorageLayout,
     ) -> Result<Self, StorageError> {
-        std::fs::create_dir_all(table_path)?;
-        std::fs::write(table_path.join("table.dat"), &layout.control)?;
-        std::fs::write(table_path.join("table.info"), &layout.info)?;
+        Self::write_new_table_metadata(table_path, layout)?;
         let inner = TiledFileIO::create_planned(table_path, layout)?;
         Ok(Self {
             inner,
             cache_budget_bytes: layout.cache_budget_bytes,
         })
+    }
+
+    /// Materialize a new one-column CASA boolean table with a uniform value.
+    ///
+    /// The caller owns the destination and handles publication. Every physical
+    /// tile, including its padding, is initialized without a tile cache or an
+    /// unpacked image-sized array.
+    pub fn create_filled_bool_table(
+        table_path: &Path,
+        layout: &TiledArrayStorageLayout,
+        value: bool,
+    ) -> Result<(), StorageError> {
+        if layout.pixel_type != PrimitiveType::Bool {
+            return Err(StorageError::FormatMismatch(
+                "uniform boolean table requires a boolean layout".into(),
+            ));
+        }
+        Self::write_new_table_metadata(table_path, layout)?;
+        let data_path = tsm_data_path(table_path, layout.dm_seq_nr, 0);
+        let header_path = table_path.join(format!("table.f{}", layout.dm_seq_nr));
+        // casacore packs boolean tiles LSB first, padding to a byte boundary.
+        // A one-pixel tile is also read as one unpacked Rust bool.
+        let fill = match (value, layout.tile_elements) {
+            (false, _) => 0,
+            (true, 1) => 1,
+            (true, _) => u8::MAX,
+        };
+        layout.write_new_data_file(&data_path, fill)?;
+        std::fs::write(header_path, &layout.header)?;
+        Ok(())
+    }
+
+    fn write_new_table_metadata(
+        table_path: &Path,
+        layout: &TiledArrayStorageLayout,
+    ) -> Result<(), StorageError> {
+        std::fs::create_dir_all(table_path)?;
+        std::fs::write(table_path.join("table.dat"), &layout.control)?;
+        std::fs::write(table_path.join("table.info"), &layout.info)?;
+        Ok(())
     }
 
     /// Complete allocated heap owned by this direct handle, excluding allocator bookkeeping.
@@ -14161,6 +14212,50 @@ mod tests {
         let all = io.get_all::<bool>().unwrap();
         let expected: Vec<bool> = first_tile.into_iter().chain(second_tile).collect();
         assert_eq!(all.iter().copied().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn uniform_boolean_table_initializes_padded_tiles() {
+        let dir = tempdir().unwrap();
+        let layout = TiledArrayStorageLayout::new(
+            &[5, 7],
+            &[3, 5],
+            PrimitiveType::Bool,
+            false,
+            0,
+            "values",
+            64,
+        )
+        .unwrap();
+        for value in [false, true] {
+            let path = dir.path().join(value.to_string());
+            TiledArrayStorage::create_filled_bool_table(&path, &layout, value).unwrap();
+            let mut storage = TiledArrayStorage::open::<bool>(&path, 0).unwrap();
+            let data = storage.get_slice::<bool>(&[0, 0], &[5, 7]).unwrap();
+            assert!(data.iter().all(|&pixel| pixel == value));
+            storage
+                .put_slice_fortran(&[!value], &[4, 6], &[1, 1])
+                .unwrap();
+            storage.flush().unwrap();
+            let mut reopened = TiledArrayStorage::open::<bool>(&path, 0).unwrap();
+            let mut expected = ArrayD::from_elem(IxDyn(&[5, 7]), value);
+            expected[[4, 6]] = !value;
+            assert_eq!(
+                reopened.get_slice::<bool>(&[0, 0], &[5, 7]).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn uniform_boolean_table_uses_canonical_values_for_single_pixel_tiles() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mask");
+        let layout =
+            TiledArrayStorageLayout::new(&[3], &[1], PrimitiveType::Bool, false, 0, "values", 4)
+                .unwrap();
+        TiledArrayStorage::create_filled_bool_table(&path, &layout, true).unwrap();
+        assert_eq!(std::fs::read(tsm_data_path(&path, 0, 0)).unwrap(), [1; 3]);
     }
 
     #[test]
