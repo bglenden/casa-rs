@@ -41,6 +41,26 @@ def test_fitsheader_matches_casa_dictionary(casa, shape, linear):
     _assert_value(output[1], output[0])
 
 
+@pytest.mark.parametrize(
+    "mjd,expected",
+    [
+        (61364.60953093624, "2026-11-20T14:37:43.472892"),
+        (61364.60953093631, "2026-11-20T14:37:43.472896"),
+    ],
+)
+def test_fitsheader_matches_casa_at_date_obs_rounding_boundaries(casa, mjd, expected):
+    for factory in (casa.image, tools.image):
+        image = factory()
+        assert image.fromshape(shape=[5, 6])
+        coords = image.coordsys()
+        record = coords.torecord()
+        assert coords.done()
+        record["obsdate"]["m0"]["value"] = mjd
+        assert image.setcoordsys(record)
+        assert image.fitsheader()["DATE-OBS"] == expected
+        assert image.done()
+
+
 def test_fitsheader_raw_cards_and_native_name(casa, tmp_path):
     path = str(tmp_path / ("native-" + "x" * 75 + ".im"))
     creator = tools.image()
