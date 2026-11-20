@@ -14,8 +14,11 @@ use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
     GridPrecision, ImageCorrection, ImageExtent, MOSAIC_OVERSAMPLING, MeasurementOperator,
     ModelImages, ModelPlane, ModelPrescale, MosaicPb, PaddingFactor, PolarizationRouting,
-    SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    PreparedModelGrids, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes, grid_planning_bytes,
 };
+use casa_imaging_runtime::pass::WorkerTeam;
+use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{
     FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
@@ -730,62 +733,107 @@ impl ImageTransform {
             cache_bytes,
         )
         .map_err(invalid)?;
+        let image_bytes = nx
+            .saturating_mul(ny)
+            .saturating_mul(npol)
+            .saturating_mul(2 * size_of::<f32>());
+        let grid_bytes = gx
+            .saturating_mul(gy)
+            .saturating_mul(grid_pols + 1)
+            .saturating_mul(2 * size_of::<f64>());
+        let work_bytes = (image_bytes.saturating_add(grid_bytes) as u64)
+            .saturating_add(grid_planning_bytes(gx.saturating_mul(gy)));
+        let (workers, _reservation) = model_workers(settings.threads, channels, work_bytes);
+        let team = WorkerTeam::new(workers).map_err(invalid)?;
+        tracing::debug!(
+            requested = settings.threads,
+            workers = team.workers(),
+            channels,
+            "preparing imager Fourier model planes"
+        );
         let mut nonzero = false;
-        for plane in 0..channels {
-            let values = image
-                .get_slice(&[first_x, first_y, 0, plane], &[nx, ny, npol, 1])
-                .map_err(invalid)?;
-            nonzero |= values.iter().any(|value| *value != 0.0);
-            let frequency = self.frequencies[plane];
-            let beam = beam
-                .as_ref()
-                .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
-            let images = (0..npol)
-                .map(|pol| {
-                    Array2::from_shape_fn((ny, nx), |(y, x)| {
-                        let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
-                            let radius = separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
-                            pattern.power(radius)
-                        });
-                        values[[x, y, pol, 0]] * scale
-                    })
-                })
-                .collect();
-            let model = ModelImages {
-                first_plane: plane as u32,
-                planes: vec![ModelPlane { images }],
-            };
-            let grid = match &mosaic {
-                Some(correction) => self.operator.prepare_model_with_correction(
-                    &model,
-                    ModelPrescale::Unit,
-                    correction,
-                ),
-                None => self.operator.prepare_model(&model, ModelPrescale::Unit),
-            }
-            .map_err(invalid)?;
-            for pol in 0..grid_pols {
-                let shape = IxDyn(&[gx, gy, 1, 1]).f();
-                let values = match self.operator.precision() {
-                    GridPrecision::F32 => {
-                        let cells = grid.block::<f32>(0, pol, 0);
-                        ArrayD::from_shape_fn(shape, |index| cells[index[1] * gx + index[0]])
-                    }
-                    GridPrecision::F64 => {
-                        let cells = grid.block::<f64>(0, pol, 0);
-                        ArrayD::from_shape_fn(shape, |index| {
-                            let cell = cells[index[1] * gx + index[0]];
-                            Complex32::new(cell.re as f32, cell.im as f32)
-                        })
-                    }
-                };
-                output
-                    .put_slice(&values, &[0, 0, pol, plane])
+        for first_plane in (0..channels).step_by(workers) {
+            let end = (first_plane + workers).min(channels);
+            let mut planes = Vec::with_capacity(end - first_plane);
+            for plane in first_plane..end {
+                let values = image
+                    .get_slice(&[first_x, first_y, 0, plane], &[nx, ny, npol, 1])
                     .map_err(invalid)?;
+                nonzero |= values.iter().any(|value| *value != 0.0);
+                planes.push((values, None));
+            }
+            team.for_each_mut(&mut planes, |index, (values, grid)| {
+                let plane = first_plane + index;
+                let frequency = self.frequencies[plane];
+                let beam = beam
+                    .as_ref()
+                    .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
+                let images = (0..npol)
+                    .map(|pol| {
+                        Array2::from_shape_fn((ny, nx), |(y, x)| {
+                            let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
+                                let radius =
+                                    separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
+                                pattern.power(radius)
+                            });
+                            values[[x, y, pol, 0]] * scale
+                        })
+                    })
+                    .collect();
+                let model = ModelImages {
+                    first_plane: plane as u32,
+                    planes: vec![ModelPlane { images }],
+                };
+                *grid = Some(match &mosaic {
+                    Some(correction) => self.operator.prepare_model_with_correction(
+                        &model,
+                        ModelPrescale::Unit,
+                        correction,
+                    ),
+                    None => self.operator.prepare_model(&model, ModelPrescale::Unit),
+                }?);
+                Ok::<_, casa_imaging_operator::OperatorError>(())
+            })
+            .map_err(invalid)?;
+            for (index, (_, grid)) in planes.into_iter().enumerate() {
+                self.write_plane(
+                    &mut output,
+                    &grid.expect("the Fourier plane was prepared"),
+                    first_plane + index,
+                )?;
             }
         }
         output.save().map_err(invalid)?;
         Ok(nonzero)
+    }
+
+    fn write_plane(
+        &self,
+        output: &mut PagedImage<Complex32>,
+        grid: &PreparedModelGrids,
+        plane: usize,
+    ) -> MsResult<()> {
+        let [gx, gy] = self.operator.geometry().grid_shape();
+        for pol in 0..self.operator.polarization().grid_pols() {
+            let shape = IxDyn(&[gx, gy, 1, 1]).f();
+            let values = match self.operator.precision() {
+                GridPrecision::F32 => {
+                    let cells = grid.block::<f32>(0, pol, 0);
+                    ArrayD::from_shape_fn(shape, |index| cells[index[1] * gx + index[0]])
+                }
+                GridPrecision::F64 => {
+                    let cells = grid.block::<f64>(0, pol, 0);
+                    ArrayD::from_shape_fn(shape, |index| {
+                        let cell = cells[index[1] * gx + index[0]];
+                        Complex32::new(cell.re as f32, cell.im as f32)
+                    })
+                }
+            };
+            output
+                .put_slice(&values, &[0, 0, pol, plane])
+                .map_err(invalid)?;
+        }
+        Ok(())
     }
 
     fn record(
@@ -924,6 +972,32 @@ impl ImageTransform {
         );
         record_selection(&mut record, ms, selected, axis, self.frequencies.len())?;
         Ok(record)
+    }
+}
+
+fn model_workers(threads: i32, planes: usize, work_bytes: u64) -> (usize, Option<Reservation>) {
+    if threads == 1 || planes <= 1 {
+        return (1, None);
+    }
+    let Ok(host) = HostResources::detect() else {
+        return (1, None);
+    };
+    let requested = usize::try_from(threads)
+        .ok()
+        .filter(|count| *count > 0)
+        .unwrap_or(host.threads);
+    let workers = requested.min(host.threads).min(planes);
+    if workers <= 1 {
+        return (1, None);
+    }
+    let policy = ResourcePolicy::Balanced;
+    let demand = Demand {
+        phase: "legacy imager model planes",
+        memory: work_bytes.saturating_mul(workers as u64),
+    };
+    match admit(&host, &policy, &demand) {
+        Ok(reservation) => (workers, Some(reservation)),
+        Err(_) => (1, None),
     }
 }
 
