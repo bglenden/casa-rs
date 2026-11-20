@@ -551,6 +551,7 @@ fn image_spectral_axis(
             _ => None,
         })
         .ok_or_else(|| model_error("virtual grid image has no spectral coordinate"))?;
+    let spectral = crate::ft::spectral_with_runtime(spectral).map_err(model_error)?;
     let frequency = |channel| {
         spectral
             .world_frequency_hz(channel as f64)

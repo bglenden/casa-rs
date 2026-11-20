@@ -73,7 +73,8 @@ mod writer;
 
 pub use ft::settings::{ImagerGridder, ImagerTransformOptions};
 pub use ft::{
-    ImagerImageDefinition, ImagerPrediction, ImagerPredictionModel, ImagerVoltagePattern,
+    ImagerDefinitionRequest, ImagerImageDefinition, ImagerPhaseCentre, ImagerPrediction,
+    ImagerPredictionModel, ImagerSpectralAxis, ImagerVoltagePattern,
 };
 pub use statwt::{
     StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,

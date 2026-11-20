@@ -3,16 +3,20 @@
 
 pub(crate) mod image;
 mod imager;
+mod imager_definition;
 pub(crate) mod settings;
 pub(crate) mod virtual_publication;
 mod voltage_pattern;
 
 pub use imager::{ImagerImageDefinition, ImagerPrediction, ImagerPredictionModel};
+pub use imager_definition::{ImagerDefinitionRequest, ImagerPhaseCentre, ImagerSpectralAxis};
 pub use voltage_pattern::ImagerVoltagePattern;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use casa_coordinates::SpectralCoordinate;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::selected_model_combinations;
 use casa_ms::write_session::{
@@ -30,6 +34,26 @@ use crate::model_columns::{ScratchDestination, scratch_write_plan};
 use crate::solve::grouping::VisibilityModels;
 
 const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
+
+/// Restore the measures provider after reading a saved conversion frame.
+/// The CASA record carries the epoch, direction, and observatory only.
+pub(crate) fn spectral_with_runtime(
+    spectral: &SpectralCoordinate,
+) -> MsResult<Cow<'_, SpectralCoordinate>> {
+    match (
+        spectral.conversion_frequency_ref(),
+        spectral.conversion_frame(),
+    ) {
+        (Some(target), Some(frame)) if target != spectral.frequency_ref() => {
+            let measures = casa_ms::open_measures_runtime().map_err(invalid)?;
+            Ok(Cow::Owned(spectral.clone().with_conversion(
+                target,
+                frame.clone().with_measures(measures),
+            )))
+        }
+        _ => Ok(Cow::Borrowed(spectral)),
+    }
+}
 
 pub(crate) fn model_entry(
     ms: &MeasurementSet,

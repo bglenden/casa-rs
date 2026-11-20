@@ -140,17 +140,20 @@ def test_calibrater_method_returns_before_open() -> None:
 
 
 IMAGER_CALIBRATION = {"open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft"}
+IMAGER_SETTINGS = {"defineimage", "setoptions", "setvp"}
 
 
 def test_imager_calibration_signatures() -> None:
     recorded = casa_signatures("imager")
     assert_casa_signatures(tools.imager, {
         **recorded,
-        "methods": {name: recorded["methods"][name] for name in IMAGER_CALIBRATION},
+        "methods": {name: recorded["methods"][name] for name in IMAGER_CALIBRATION | IMAGER_SETTINGS},
     })
-    assert_bundle_describes(tools.imager, "imager", {"implemented": IMAGER_CALIBRATION})
+    assert_bundle_describes(tools.imager, "imager", {
+        "implemented": IMAGER_CALIBRATION, "partial": IMAGER_SETTINGS,
+    })
 
 
 def test_imager_calibration_signatures_match_live_casa() -> None:
     casatools = pytest.importorskip("casatools")
-    assert_live_signatures(tools.imager, casatools.imager, methods=IMAGER_CALIBRATION)
+    assert_live_signatures(tools.imager, casatools.imager, methods=IMAGER_CALIBRATION | IMAGER_SETTINGS)
