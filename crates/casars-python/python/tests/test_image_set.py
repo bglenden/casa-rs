@@ -122,6 +122,8 @@ def test_set_distinguishes_empty_masked_reductions_from_valid_zero(casa, tmp_pat
             with pytest.raises(RuntimeError, match="scalar pixels expression is invalid"):
                 image.set(expression)
             np.testing.assert_array_equal(image.getchunk(), np.full((3, 4), 11))
+        assert image.calc(f'mean("{source}") + 2', verbose=False)
+        np.testing.assert_array_equal(image.getchunk(), np.full((3, 4), 2))
         assert image.set(f'sum("{source}")')
         np.testing.assert_array_equal(image.getchunk(), np.zeros((3, 4)))
         assert image.set(f'real(complex(mean("{partial}"),3))')
