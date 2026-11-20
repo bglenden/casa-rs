@@ -6955,8 +6955,12 @@ first partition removes that image. A subsequent `uvsub` on the other
 partition fails to open the image its record names.
 
 casa-rs gives independent SOURCE or MAIN records their own Fourier grids.
-Replacing one record deletes the old grid that record owned. The other
-partition's recipe still opens in CASA and casa-rs. The standalone
+Replacing one record leaves the other partition's grid and recipe
+readable in CASA and casa-rs. Replacement also preserves retired grids
+in SOURCE. SOURCE does not identify every MAIN that can still name an
+older grid, including a MAIN with stale metadata after a failed write.
+A replacement can remove a retired grid in its own MAIN directory after
+checking the current model records. The standalone
 `calibration_ft_oracle.py` fixture exercises the replacement sequence.
 
 ## TaQL derived geometry treats an ephemeris field offset as a direction

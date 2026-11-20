@@ -142,6 +142,91 @@ fn a_model_is_filed_under_source_as_casa_files_it() {
     assert_eq!(found.record, record);
 }
 
+#[cfg(unix)]
+fn shared_source(root: &Path) -> (PathBuf, PathBuf) {
+    let left_root = root.join("left");
+    let right_root = root.join("right");
+    std::fs::create_dir(&left_root).expect("left directory");
+    std::fs::create_dir(&right_root).expect("right directory");
+    let left = with_source(&left_root);
+    let right = with_source(&right_root);
+    std::fs::remove_dir_all(right.join("SOURCE")).expect("remove independent SOURCE");
+    std::os::unix::fs::symlink(left.join("SOURCE"), right.join("SOURCE")).expect("share SOURCE");
+    (left, right)
+}
+
+/// The second writer opened its distinct MAIN before the first writer
+/// published to their common SOURCE. It must append to the current record.
+#[cfg(unix)]
+#[test]
+fn stale_attachments_merge_under_the_shared_source_lock() {
+    let root = tempfile::tempdir().expect("root");
+    let (left, right) = shared_source(root.path());
+    let mut left_ms = MeasurementSet::open(&left).expect("open first MAIN");
+    let mut right_ms = MeasurementSet::open(&right).expect("open second MAIN");
+    let mut left_lock = TableWriteLock::acquire_to_reread(&left, 1).expect("lock first MAIN");
+    let mut right_lock = TableWriteLock::acquire_to_reread(&right, 1).expect("lock second MAIN");
+
+    let first = entry(&[[0, 0, 1, -1]], "first");
+    let second = entry(&[[0, 0, 1, -1]], "second");
+    put_virtual_model_holding(&mut left_ms, &first, true, &mut left_lock).expect("publish first");
+    put_virtual_model_holding(&mut right_ms, &second, true, &mut right_lock)
+        .expect("append under shared SOURCE lock");
+    left_lock.release().expect("release first MAIN");
+    right_lock.release().expect("release second MAIN");
+
+    let reopened = MeasurementSet::open(&left).expect("read shared SOURCE");
+    let record = virtual_model(&reopened, 0)
+        .expect("read")
+        .expect("a model")
+        .record;
+    assert_eq!(label(&record, "ft_0"), "first");
+    assert_eq!(label(&record, "ft_1"), "second");
+}
+
+/// Another MAIN can still name a retired grid through an older keyword
+/// while its shared SOURCE already has the replacement model.
+#[cfg(unix)]
+#[test]
+fn replacing_a_shared_source_model_keeps_a_grid_named_by_another_main() {
+    let root = tempfile::tempdir().expect("root");
+    let (left, right) = shared_source(root.path());
+    let grid = left.join("SOURCE").join("FT_MODEL_shared");
+    std::fs::create_dir(&grid).unwrap();
+    std::fs::write(grid.join("table.dat"), b"old grid").unwrap();
+
+    let mut a = MeasurementSet::open(&left).unwrap();
+    let mut old = entry(&[[0, 0, 1, -1]], "old");
+    old.container
+        .upsert("diskimage", text(grid.to_str().unwrap()));
+    put_virtual_model(&mut a, &old, false).unwrap();
+    let record = virtual_model(&a, 0).unwrap().unwrap().record;
+
+    let b_lock = TableWriteLock::acquire_to_reread(&right, 1).unwrap();
+    let mut b = MeasurementSet::open(&right).unwrap();
+    let main = b.main_table_mut();
+    main.keywords_mut().upsert(pointer(0), text("model_0"));
+    main.keywords_mut()
+        .upsert("model_0", Value::Record(record.clone()));
+    main.save_metadata_only(TableOptions::new(&right)).unwrap();
+    b_lock.release().unwrap();
+
+    put_virtual_model(&mut a, &entry(&[[0, 0, 1, -1]], "new"), false).unwrap();
+    let b = MeasurementSet::open(right).unwrap();
+    assert_eq!(
+        b.main_table().keywords().get("model_0"),
+        Some(&Value::Record(record))
+    );
+    assert_eq!(
+        label(&virtual_model(&b, 0).unwrap().unwrap().record, "ft_0"),
+        "new"
+    );
+    assert!(
+        grid.join("table.dat").is_file(),
+        "the old MAIN still names the old grid"
+    );
+}
+
 /// Without SOURCE rows the record and its pointer are MAIN keywords.
 #[test]
 fn a_model_without_source_rows_is_filed_in_main() {
