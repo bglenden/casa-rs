@@ -100,12 +100,8 @@ impl ImageArguments<'_> {
                 .ok_or_else(|| runtime_error("Could not interprete phasecenter parameter"))?,
             ),
         };
-        if self.facets > 1 || !empty(self.moving) {
-            return not_yet_implemented_in(
-                "imager",
-                "defineimage with facets or movingsource",
-                1520,
-            );
+        if !empty(self.moving) {
+            return not_yet_implemented_in("imager", "defineimage with movingsource", 1520);
         }
         let frame = (!self.frame.is_empty())
             .then(|| frequency_reference(self.frame))
@@ -131,6 +127,7 @@ impl ImageArguments<'_> {
         )?;
         Ok(ImagerDefinitionRequest {
             shape: [nx, ny],
+            facets: usize::try_from(self.facets.max(1)).map_err(runtime_error)?,
             cell_rad: [-x, y],
             stokes,
             centre,

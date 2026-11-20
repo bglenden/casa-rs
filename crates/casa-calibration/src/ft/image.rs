@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, SpectralCoordinate,
-    StokesCoordinate, StokesType,
+    Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
+    SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
 use casa_imaging_model::PolarizationCoordinate;
@@ -18,7 +18,7 @@ use casa_imaging_operator::{
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{
-    FirstBuffer, GridFt, casa_spectral, legacy_mosaic, legacy_multi_term,
+    FirstBuffer, GridFt, casa_spectral, legacy_mosaic, legacy_multi_term, set_grid_tangent,
 };
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
@@ -107,7 +107,7 @@ pub(crate) fn prepare_image(
     keep_zero: bool,
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
-    prepare_configured_image(
+    prepare_configured_images(
         ms,
         selected,
         path,
@@ -116,9 +116,10 @@ pub(crate) fn prepare_image(
         scratch,
         PredictionGeometry::default(),
     )
+    .map(|images| images.into_iter().next())
 }
 
-pub(super) fn prepare_configured_image(
+pub(super) fn prepare_configured_images(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     path: &Path,
@@ -126,9 +127,52 @@ pub(super) fn prepare_configured_image(
     keep_zero: bool,
     scratch: bool,
     options: PredictionGeometry,
-) -> MsResult<Option<ImageModel>> {
+) -> MsResult<Vec<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
-    let layout = ImageTransform::new(ms, selected, &image, scratch, options)?;
+    let [nx, ny, _, _] = *image.shape() else {
+        return Err(invalid(
+            "ft requires four direction, Stokes and spectral image axes",
+        ));
+    };
+    let facets = options.facets.max(1);
+    let shape = [nx / facets, ny / facets];
+    if shape.contains(&0) {
+        return Err(invalid(
+            "the facet count exceeds the model image width or height",
+        ));
+    }
+    let mut outputs = Vec::new();
+    for y in 0..facets {
+        for x in 0..facets {
+            let window = ModelWindow {
+                origin: [x * shape[0], y * shape[1]],
+                shape,
+            };
+            let layout =
+                ImageTransform::new(ms, selected, &image, scratch, options.clone(), window)?;
+            outputs.extend(write_model_grid(
+                ms,
+                selected,
+                &image,
+                taylor,
+                keep_zero || facets > 1,
+                scratch,
+                layout,
+            )?);
+        }
+    }
+    Ok(outputs)
+}
+
+fn write_model_grid(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    image: &PagedImage<f32>,
+    taylor: Option<TaylorTerm>,
+    keep_zero: bool,
+    scratch: bool,
+    layout: ImageTransform,
+) -> MsResult<Option<ImageModel>> {
     let mut path = virtual_model_image_path(ms)?;
     if scratch {
         let name = path
@@ -141,7 +185,7 @@ pub(super) fn prepare_configured_image(
         path,
         retained: false,
     };
-    if !layout.grid(&image, &backing.path)? && !keep_zero {
+    if !layout.grid(image, &backing.path)? && !keep_zero {
         return Ok(None);
     }
     let record = layout.record(ms, selected, &backing.path, scratch)?;
@@ -151,6 +195,23 @@ pub(super) fn prepare_configured_image(
     };
     let entry = model_entry(ms, selected, VirtualModelKind::FtMachine, container)?;
     Ok(Some(ImageModel { entry, backing }))
+}
+
+#[derive(Clone, Copy)]
+struct ModelWindow {
+    origin: [usize; 2],
+    shape: [usize; 2],
+}
+
+impl ModelWindow {
+    fn direction(self, original: &DirectionCoordinate) -> DirectionCoordinate {
+        let reference = original.reference_pixel();
+        original
+            .clone()
+            .with_reference_pixel(std::array::from_fn(|axis| {
+                reference[axis] - self.origin[axis] as f64
+            }))
+    }
 }
 
 struct ImageTransform {
@@ -165,6 +226,7 @@ struct ImageTransform {
     distance_m: Option<f64>,
     w_record: Option<WRecord>,
     mosaic_stokes: Option<String>,
+    window: ModelWindow,
 }
 
 struct WRecord {
@@ -263,6 +325,9 @@ fn effective_padding(options: &PredictionGeometry) -> MsResult<GridPadding> {
     // another value.
     let factor = match options.settings.gridder {
         ImagerGridder::WProject(_) | ImagerGridder::AutoWProject => options.settings.padding,
+        ImagerGridder::Spheroidal | ImagerGridder::Boxcar if options.tangent.is_some() => {
+            options.settings.padding
+        }
         ImagerGridder::Spheroidal | ImagerGridder::Boxcar => 1.0,
         ImagerGridder::Mosaic => return Ok(GridPadding::None),
     };
@@ -394,8 +459,9 @@ impl ImageTransform {
         image: &PagedImage<f32>,
         scratch: bool,
         options: PredictionGeometry,
+        window: ModelWindow,
     ) -> MsResult<Self> {
-        let [nx, ny, npol, channels] = *image.shape() else {
+        let [_, _, npol, channels] = *image.shape() else {
             return Err(invalid(
                 "ft requires four direction, Stokes and spectral image axes",
             ));
@@ -407,6 +473,8 @@ impl ImageTransform {
         let CoordinateModel::Direction(direction) = coords.coordinate(direction) else {
             unreachable!()
         };
+        let direction = window.direction(direction);
+        let [nx, ny] = window.shape;
         let CoordinateModel::Stokes(stokes) = coords.coordinate(polarization) else {
             unreachable!()
         };
@@ -541,13 +609,16 @@ impl ImageTransform {
             options,
             distance_m,
             w_record,
+            window,
         })
     }
 
     fn grid(&self, image: &PagedImage<f32>, path: &Path) -> MsResult<bool> {
-        let [nx, ny, npol, channels] = *image.shape() else {
+        let [_, _, npol, channels] = *image.shape() else {
             unreachable!()
         };
+        let [nx, ny] = self.window.shape;
+        let [first_x, first_y] = self.window.origin;
         let [gx, gy] = self.operator.geometry().grid_shape();
         let mosaic = self
             .mosaic_stokes
@@ -563,7 +634,10 @@ impl ImageTransform {
                 let CoordinateModel::Direction(direction) = coords.coordinate(index) else {
                     unreachable!("direction coordinate");
                 };
-                Ok::<_, casa_ms::MsError>((&beam.pattern, beam.separations(direction, [nx, ny])?))
+                Ok::<_, casa_ms::MsError>((
+                    &beam.pattern,
+                    beam.separations(&self.window.direction(direction), [nx, ny])?,
+                ))
             })
             .transpose()?;
         let grid_pols = self.operator.polarization().grid_pols();
@@ -595,7 +669,7 @@ impl ImageTransform {
         let mut nonzero = false;
         for plane in 0..channels {
             let values = image
-                .get_slice(&[0, 0, 0, plane], &[nx, ny, npol, 1])
+                .get_slice(&[first_x, first_y, 0, plane], &[nx, ny, npol, 1])
                 .map_err(invalid)?;
             nonzero |= values.iter().any(|value| *value != 0.0);
             let frequency = self.frequencies[plane];
@@ -714,6 +788,9 @@ impl ImageTransform {
             frequency_frame_valid,
         }
         .record();
+        if let Some(tangent) = &self.options.tangent {
+            set_grid_tangent(&mut record, tangent);
+        }
         if let Some(frequencies) = &self.interpolation_frequencies {
             // This temporary record never leaves the active scratch writer.
             record.upsert("tovis", Value::Scalar(ScalarValue::Bool(false)));

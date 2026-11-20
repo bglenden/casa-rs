@@ -17,7 +17,7 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
-use super::image::{ImageModel, TaylorTerm, prepare_configured_image, reference_frequency};
+use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
 use super::imager_definition::ImagerDefinitionRequest;
 use super::settings::{ImagerGridder, ImagerTransformOptions, PredictionGeometry};
 use super::virtual_publication::VirtualFtPublication;
@@ -564,8 +564,16 @@ impl ImagerPrediction {
         voltage_pattern: Option<super::voltage_pattern::PreparedVoltagePattern>,
     ) -> MsResult<Vec<ImageModel>> {
         let terms = self.taylor.0;
-        let geometry = PredictionGeometry {
+        let (facets, tangent) = match &self.definition {
+            Some(ImageDefinition::Requested(definition)) => {
+                (definition.facets, definition.tangent_point(ms)?)
+            }
+            _ => (1, None),
+        };
+        let mut geometry = PredictionGeometry {
             settings: self.options,
+            facets,
+            tangent,
             phase_centre_time: model.phase_centre_time,
             frequency_frame_valid: self.frequency_frame_valid,
             voltage_pattern,
@@ -577,7 +585,7 @@ impl ImagerPrediction {
                 index: index as i32,
                 reference_hz,
             });
-            if let Some(image) = prepare_configured_image(
+            images.extend(prepare_configured_images(
                 ms,
                 selected,
                 path,
@@ -585,9 +593,9 @@ impl ImagerPrediction {
                 scratch && !model.incremental && model.components.is_none() && index == 0,
                 scratch,
                 geometry.clone(),
-            )? {
-                images.push(image);
-            }
+            )?);
+            // WFCleanImageSkyModel subdivides the first model image.
+            geometry.facets = 1;
         }
         Ok(images)
     }
