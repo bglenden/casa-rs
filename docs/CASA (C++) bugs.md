@@ -162,6 +162,7 @@ Calibration behaviours casa-rs does not follow:
 [component spectra in another frame](#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame).
 Flagging behaviours casa-rs does not follow:
 [a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
+[re-saving a flag version through an alias](#flagmanager-can-overwrite-a-saved-version-through-an-alias),
 [an unrecognized flag merge choice](#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice),
 [a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
 Coordinate behaviours casa-rs does not follow:
@@ -3773,6 +3774,17 @@ CASA 6.7.6.14 lists `{0: {'name': 'v1.old.1793292269', 'comment': 'second'},
 and then `'second'`; the first comment is lost. casa-rs renames the version
 the same way and keeps its own comment (`flagmanager`'s
 `keep_existing_version`).
+
+## `flagmanager` can overwrite a saved version through an alias
+
+In CASA 6.7.6.14, `flagmanager` can open a MeasurementSet through a symbolic
+link and write flag versions beside the link's target. The Python save
+preflight looks for the old version beside the alias. Re-saving the same
+version through the alias can therefore overwrite the saved flags and comment.
+The `tools/casa-compat/flagmanager_alias_oracle.py` comparison reproduces the
+loss. It verifies that casa-rs archives the previous flags and comment beside
+the target and can restore them. An existing alias-side catalog from an older
+casa-rs release remains directly accessible.
 
 ## `flagmanager` replaces working flags for an unrecognized merge choice
 
