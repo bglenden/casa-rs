@@ -69,6 +69,10 @@ Use `ia.open("example.im")` to reopen the product. Use
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.beamforconvolvedsize(source, convolved)` to calculate the Gaussian
+beam needed to reach a target resolution. Use `ia.deconvolvefrombeam(source,
+beam)` to recover a fitted source size and see whether the source is resolved.
+Pass the major axis, minor axis and position angle as angular quantity strings.
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
