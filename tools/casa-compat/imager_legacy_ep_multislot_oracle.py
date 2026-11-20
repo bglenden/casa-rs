@@ -43,6 +43,22 @@ def predict(root, label, factory, original, model, cache, offsets, machine):
     return data(output, 'MODEL_DATA')
 
 
+def flagged_buffer(root, original, model, cache, offsets, machine, native, reference, results):
+    flagged = root / 'flagged.ms'
+    make_input(original, flagged, scratch=True)
+    writer = table()
+    assert writer.open(str(flagged), nomodify=False)
+    _, groups = np.unique(writer.getcol('TIME'), return_inverse=True)
+    middle = groups == 1
+    assert writer.putcol('FLAG_ROW', writer.getcol('FLAG_ROW') | middle) and writer.done()
+    pinned = predict(root, 'flagged-casa', imager, flagged, model, cache, offsets, machine)
+    actual = predict(root, 'flagged-native', native, flagged, model, cache, offsets, machine)
+    assert np.any(reference[..., middle])
+    assert not np.any(pinned[..., middle]) and not np.any(actual[..., middle])
+    np.testing.assert_array_equal(pinned[..., ~middle], reference[..., ~middle])
+    check(f'{machine}-flagged-buffer', actual, pinned, results)
+
+
 def nearest_controls(root, original, model, cache, offsets, epochs, native, results):
     # An integral time array makes the midpoint tie exactly representable.
     rounded = root / 'rounded.EP'
@@ -102,6 +118,8 @@ def run(root, original, model, cached):
                 expected = predict(case, 'casa', imager, original, model, cache, offsets, machine)
                 actual = predict(case, 'native', native, original, model, cache, offsets, machine)
                 check(machine, actual, expected, results)
+                flagged_buffer(case, original, model, cache, offsets, machine, native, expected,
+                               results)
                 saved = case / 'saved.ms'
                 make_input(original, saved, scratch=False)
                 ft(native, saved, model, cache, scratch=False, machine=machine,
