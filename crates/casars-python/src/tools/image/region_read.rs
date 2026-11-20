@@ -130,7 +130,7 @@ impl PyImageTool {
                 },
                 expression,
             )?;
-            image.release_requested_lock()?;
+            attachment.release_requested_lock(&mut image)?;
             let lines = list.then(|| {
                 let end = chunk
                     .start

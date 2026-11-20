@@ -176,7 +176,7 @@ where
         Some(Value::Record(record)) => Some(record.clone()),
         _ => None,
     };
-    let plan = SubimagePlan::from_selection(image, coords, selection, false, &[])?;
+    let plan = SubimagePlan::from_selection(image, coords, selection, false, &[], None)?;
     let valid_pixels = valid.iter().filter(|&&good| good).count();
     let parent = destination.parent().ok_or(ImageError::NotPersistent)?;
     let stage = tempfile::tempdir_in(parent).map_err(output_error)?;
