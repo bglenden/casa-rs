@@ -37,7 +37,7 @@ struct PreparedEpModel {
 pub(crate) struct FirstBuffer {
     pub(crate) correlations: Vec<StokesType>,
     frequency_hz: f64,
-    angle_rad: f64,
+    pub(crate) angle_rad: f64,
 }
 
 impl LegacyEpSolver {

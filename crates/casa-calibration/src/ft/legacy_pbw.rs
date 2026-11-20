@@ -5,7 +5,7 @@ use std::path::Path;
 
 use casa_coordinates::{CoordinateModel, DirectionCoordinate};
 use casa_images::PagedImage;
-use casa_imaging_operator::LegacyEpConvolution;
+use casa_imaging_operator::{LegacyEpConvolution, LegacyPbWConvolution};
 use casa_imaging_runtime::HostResources;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral};
@@ -54,6 +54,16 @@ pub(super) fn prepare_model(
     let cache = EpCache::open(&options.cache_directory)?;
     let buffer = first_buffer(ms, selected)?;
     let products = convolution(&cache, 360., &host, &buffer, shape, increment, &coordinates)?;
+    let support = u16::try_from(products.support).map_err(invalid)?;
+    let sampling = u16::try_from(products.sampling).map_err(invalid)?;
+    LegacyPbWConvolution::validate_shape(
+        products.convolution.shape(),
+        sampling,
+        support,
+        buffer.correlations.len(),
+    )
+    .map_err(invalid)?;
+    let angle_rad = buffer.angle_rad;
     let cutoff = options
         .correct_primary_beam
         .then_some(options.primary_beam_limit as f32);
@@ -140,11 +150,15 @@ pub(super) fn prepare_model(
         );
         record.upsert(
             "casars_legacy_pbw_support",
-            Value::Scalar(ScalarValue::Int32(products.support as i32)),
+            Value::Scalar(ScalarValue::Int32(i32::from(support))),
         );
         record.upsert(
             "casars_legacy_pbw_sampling",
-            Value::Scalar(ScalarValue::Int32(products.sampling as i32)),
+            Value::Scalar(ScalarValue::Int32(i32::from(sampling))),
+        );
+        record.upsert(
+            "casars_legacy_pbw_angle",
+            Value::Scalar(ScalarValue::Float64(angle_rad)),
         );
         Ok((record, nonzero))
     })

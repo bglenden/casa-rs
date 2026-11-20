@@ -17,7 +17,7 @@ from gaincal_oracle import relative_rms
 
 
 def ft(factory, dataset, model, cache, *, scratch, spw='', correction=True, limit=.05,
-       interp='nearest'):
+       interp='nearest', accepts=True):
     tool = factory()
     assert tool.open(str(dataset), usescratch=scratch)
     assert tool.selectvis(field=0, spw=spw)
@@ -26,8 +26,9 @@ def ft(factory, dataset, model, cache, *, scratch, spw='', correction=True, limi
     assert tool.setoptions(ftmachine='pbwproject', wprojplanes=1, numthreads=1,
                            cfcachedirname=str(cache), applypointingoffsets=False,
                            dopbgriddingcorrections=correction, pblimit=limit, freqinterp=interp)
-    assert tool.ft(str(model))
-    (dataset.parent / f'{dataset.name}.complete').touch()
+    assert tool.ft(str(model)) is accepts
+    if accepts:
+        (dataset.parent / f'{dataset.name}.complete').touch()
     assert tool.done()
 
 
@@ -133,6 +134,83 @@ def setup_controls(root, dataset, model, cache, expected):
         assert error < 1.e-3
 
 
+def geometry_control(root, dataset, model, cache, *, pinned_only=False):
+    root.mkdir(parents=True, exist_ok=True)
+    pinned = root / 'geometry-pinned.ms'
+    ready = root / 'geometry-pinned.ms.complete'
+    times = data(dataset, 'TIME')
+    first, second, last = np.unique(times)
+    flags = data(dataset, 'FLAG')
+    usable = (~data(dataset, 'FLAG_ROW') & ~np.any(flags[:, 0, :], axis=0)
+              & (data(dataset, 'ANTENNA1') != data(dataset, 'ANTENNA2')))
+    boundary = np.flatnonzero(usable & (times == first))[:5]
+    rotation = np.flatnonzero(usable & (times == last))[0]
+    assert len(boundary) == 5
+    frequency = data(dataset / 'SPECTRAL_WINDOW', 'CHAN_FREQ')[0, 0]
+    cutoff_m = .25 * 299792458. / (frequency * np.radians(15. / 3600.))
+    if not ready.exists():
+        make_input(dataset, pinned, scratch=True)
+        writer = table()
+        assert writer.open(str(pinned), nomodify=False)
+        for column in ('TIME', 'TIME_CENTROID'):
+            epochs = writer.getcol(column)
+            epochs[times == second] += 1800.
+            epochs[times == last] += 3600.
+            assert writer.putcol(column, epochs)
+        for row, w in zip(boundary, (cutoff_m - 2., cutoff_m + 2., 100., -1000., 0.),
+                          strict=True):
+            assert writer.putcell('UVW', int(row), [0., 0., w])
+        assert writer.putcell('UVW', int(rotation), [0., 0., 0.])
+        assert writer.done()
+        subprocess.run([sys.executable, __file__, '--casa', str(pinned), str(model),
+                        str(cache)], check=True)
+    expected = data(pinned, 'MODEL_DATA')
+    assert np.all(np.abs(expected[:, 0, boundary[[0, 2, 4]]]) > 1.)
+    assert not np.any(expected[:, 0, boundary[[1, 3]]])
+    rotation_change = relative_rms(expected[:, 0, rotation], expected[:, 0, boundary[4]])
+    print('legacy PB/W W boundary', np.abs(expected[0, 0, boundary]),
+          'late-epoch rotation change', rotation_change, flush=True)
+    assert rotation_change > .001
+    if pinned_only:
+        return
+    from casars.tools import imager as native
+
+    for label, scratch in (('scratch', True), ('saved', False)):
+        target = root / f'geometry-{label}.ms'
+        make_input(pinned, target, scratch=scratch)
+        ft(native, target, model, cache, scratch=scratch)
+        actual = data(target, 'MODEL_DATA') if scratch else read_virtual(target)
+        assert not np.any(actual[:, 0, boundary[[1, 3]]])
+        errors = [relative_rms(actual, expected),
+                  relative_rms(actual[:, 0, rotation], expected[:, 0, rotation])]
+        print(label, 'legacy PB/W W and PA NRMS', errors, flush=True)
+        assert max(errors) < 1.e-3
+
+
+def invalid_cache_control(root, dataset, model, cache):
+    from casars.tools import imager as native
+
+    bad_cache = root / 'short-kernel-cache'
+    shutil.copytree(cache, bad_cache)
+    kernel = bad_cache / 'CF0_0'
+    reader = image()
+    assert reader.open(str(kernel))
+    cells = reader.getchunk()[:121, :121, :, :]
+    coordinates = reader.coordsys()
+    record = coordinates.torecord()
+    assert coordinates.done() and reader.done()
+    kernel.rename(bad_cache / 'original-kernel')
+    assert reader.fromarray(str(kernel), pixels=cells, csys=record) and reader.done()
+    scratch = root / 'short-kernel-scratch.ms'
+    make_input(dataset, scratch, scratch=True)
+    seed = imager()
+    assert seed.open(str(scratch), usescratch=True) and seed.done()
+    before = data(scratch, 'MODEL_DATA')
+    ft(native, scratch, model, bad_cache, scratch=True, accepts=False)
+    np.testing.assert_array_equal(data(scratch, 'MODEL_DATA'), before)
+    print('legacy PB/W rejected a short imported kernel without changing MODEL_DATA', flush=True)
+
+
 def run(root, dataset, model, cache):
     from casars.tools import imager as native, ms as native_ms
 
@@ -207,6 +285,8 @@ def main():
     parser.add_argument('--limit', type=float, default=.05)
     parser.add_argument('--interp', default='nearest')
     parser.add_argument('--casa-reject', nargs=2)
+    parser.add_argument('--geometry', choices=('both', 'pinned'))
+    parser.add_argument('--invalid-cache', action='store_true')
     args = parser.parse_args()
     if args.casa:
         ft(imager, *(Path(path) for path in args.casa), scratch=not args.saved,
@@ -216,6 +296,14 @@ def main():
 
         path, reason = args.casa_reject
         reject_recipe(ms, Path(path), reason)
+    elif args.geometry:
+        geometry_control(*(path.resolve() for path in (args.work, args.dataset, args.model,
+                                                      args.cache)),
+                         pinned_only=args.geometry == 'pinned')
+    elif args.invalid_cache:
+        args.work.mkdir(parents=True)
+        invalid_cache_control(*(path.resolve() for path in (args.work, args.dataset, args.model,
+                                                           args.cache)))
     else:
         run(*(path.resolve() for path in (args.work, args.dataset, args.model, args.cache)))
 
