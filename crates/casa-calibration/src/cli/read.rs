@@ -480,13 +480,7 @@ fn expand_aligned_values<T: Clone>(
 }
 
 pub(super) fn parse_gainfield_value(value: &str) -> Option<GainFieldSelector> {
-    if value.is_empty() {
-        return None;
-    }
-    if value == "nearest" {
-        return Some(GainFieldSelector::Nearest);
-    }
-    Some(GainFieldSelector::Expression(value.to_string()))
+    GainFieldSelector::parse_casa(value)
 }
 
 pub(super) fn parse_interp_value(value: &str) -> Result<ApplyInterpolationMode, String> {

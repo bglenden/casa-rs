@@ -93,6 +93,16 @@ pub enum GainFieldSelector {
     Nearest,
 }
 
+impl GainFieldSelector {
+    pub(crate) fn parse_casa(value: &str) -> Option<Self> {
+        match value {
+            "" => None,
+            "nearest" => Some(Self::Nearest),
+            expression => Some(Self::Expression(expression.to_owned())),
+        }
+    }
+}
+
 /// Optional per-table applicability selection, used by callibrary-style apply
 /// entries.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

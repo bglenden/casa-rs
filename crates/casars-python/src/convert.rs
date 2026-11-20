@@ -43,6 +43,8 @@ use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PyTypeError, PyValueErro
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
+pub(crate) mod integer_vector;
+
 /// The speed of light, m/s (casacore's `C::c`).
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 /// casacore's `C::circle / C::day`: radians of angle per second of time.
