@@ -14,7 +14,7 @@ use crate::{AnyPagedImage, ImageError, PolygonRegion};
 mod compound;
 mod relative;
 
-use super::{ParsedRegion, SavedRegionMask, SpatialShape};
+use super::{ParsedRegion, SavedRegionMask, SpatialShape, StridedSection};
 
 pub(super) fn load_saved_region(
     image_path: &Path,
@@ -179,6 +179,35 @@ fn polygon_region(
         saved_bounds: Some((min_pt, shape)),
         stride: None,
     })
+}
+
+pub(super) fn strided_lc_slicer(
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+    shape: &[usize],
+) -> Result<Option<StridedSection>, ImageError> {
+    if !matches!(
+        rec.get("name"),
+        Some(Value::Scalar(ScalarValue::String(name))) if name == "LCSlicer"
+    ) {
+        return Ok(None);
+    }
+    let section = decode_lc_slicer("region", rec, coords, shape)?;
+    if section.stride.iter().all(|&step| step == 1) {
+        return Ok(None);
+    }
+    let count = section
+        .lower
+        .iter()
+        .zip(&section.upper)
+        .zip(&section.stride)
+        .map(|((&first, &last), &step)| (last - first) / step + 1)
+        .collect();
+    Ok(Some(StridedSection {
+        start: section.lower,
+        count,
+        stride: section.stride,
+    }))
 }
 
 struct SlicerSection {

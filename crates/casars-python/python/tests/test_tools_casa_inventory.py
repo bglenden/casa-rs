@@ -59,6 +59,7 @@ IMPLEMENTED["coordsys"] = {
     "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
+    "addnoise",
     "coordmeasures", "topixel", "toworld",
     "adddegaxes",
     "statistics",

@@ -56,6 +56,7 @@ pub use self::exportfits::{
 };
 pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
+pub use self::imsubimage::ImageNoise;
 pub use self::lel_mask::{
     ImageToolExpressionInputs, compile_image_tool_expression, evaluate_image_tool_mask,
     evaluate_pixel_expression,
