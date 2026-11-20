@@ -8,9 +8,12 @@ use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Dimension;
 
+use crate::saved_region::map_world_region_axes;
 use crate::{AnyPagedImage, ImageError, PolygonRegion};
 
-use super::{ParsedRegion, SpatialShape};
+mod compound;
+
+use super::{ParsedRegion, SavedRegionMask, SpatialShape};
 
 pub(super) fn load_saved_region(
     image_path: &Path,
@@ -41,36 +44,25 @@ pub(super) fn parse_saved_region(
     };
 
     match class_name {
-        "WCPolygon" | "WCUnion" => {
-            let poly = PolygonRegion::from_record(region_name, rec, target_coords)?;
-            let mask = poly.mask(target_coords, full_shape)?;
-            let mut min_pt = full_shape.to_vec();
-            let mut max_pt = vec![0usize; full_shape.len()];
-            let mut any_true = false;
-            for (idx, &valid) in mask.indexed_iter() {
-                if valid {
-                    any_true = true;
-                    for (ax, &pos) in idx.slice().iter().enumerate() {
-                        min_pt[ax] = min_pt[ax].min(pos);
-                        max_pt[ax] = max_pt[ax].max(pos);
-                    }
+        "WCPolygon" => polygon_region(
+            region_name,
+            PolygonRegion::from_record(region_name, rec, target_coords)?,
+            target_coords,
+            full_shape,
+            false,
+        ),
+        "WCUnion" => {
+            // A same-axis polygon union shares a single traversal of the
+            // image planes. Mixed compounds combine their decoded children.
+            match PolygonRegion::from_record(region_name, rec, target_coords) {
+                Ok(polygon) => {
+                    polygon_region(region_name, polygon, target_coords, full_shape, true)
                 }
+                Err(_) => compound::decode(region_name, rec, target_coords, full_shape, plane),
             }
-            if !any_true {
-                return Err(ImageError::CasaSelection(format!(
-                    "saved region '{region_name}' selects no pixels in image"
-                )));
-            }
-            let shape: Vec<usize> = min_pt
-                .iter()
-                .zip(max_pt.iter())
-                .map(|(lo, hi)| hi - lo + 1)
-                .collect();
-            Ok(ParsedRegion {
-                shapes: Vec::new(),
-                saved_polygon_mask: Some(mask),
-                saved_bounds: Some((min_pt, shape)),
-            })
+        }
+        "WCIntersection" | "WCDifference" | "WCComplement" => {
+            compound::decode(region_name, rec, target_coords, full_shape, plane)
         }
         "LCSlicer" | "LCBox" => {
             let (blc, trc) = if class_name == "LCSlicer" {
@@ -100,8 +92,9 @@ pub(super) fn parse_saved_region(
                 .map(|(lo, hi)| hi - lo + 1)
                 .collect();
             Ok(ParsedRegion {
+                is_compound: false,
                 shapes,
-                saved_polygon_mask: None,
+                saved_mask: None,
                 saved_bounds: Some((blc, shape)),
             })
         }
@@ -121,22 +114,64 @@ pub(super) fn parse_saved_region(
                 .map(|(lo, hi)| hi - lo + 1)
                 .collect();
             Ok(ParsedRegion {
+                is_compound: false,
                 shapes,
-                saved_polygon_mask: None,
+                saved_mask: None,
                 saved_bounds: Some((blc, shape)),
             })
         }
-        "WCEllipsoid" => Ok(ParsedRegion {
-            shapes: vec![
-                decode_wc_ellipsoid(region_name, rec, target_coords, full_shape, plane)?.into(),
-            ],
-            saved_polygon_mask: None,
-            saved_bounds: None,
-        }),
+        "WCEllipsoid" => {
+            let ellipse = decode_wc_ellipsoid(region_name, rec, target_coords, full_shape, plane)?;
+            let bounds = ellipsoid_bounds(&ellipse, full_shape, plane)?;
+            Ok(ParsedRegion {
+                is_compound: false,
+                shapes: vec![ellipse.into()],
+                saved_mask: None,
+                saved_bounds: Some(bounds),
+            })
+        }
         other => Err(ImageError::InvalidMetadata(format!(
             "unsupported saved region '{region_name}' of class {other:?}"
         ))),
     }
+}
+
+fn polygon_region(
+    region_name: &str,
+    poly: PolygonRegion,
+    target_coords: &CoordinateSystem,
+    full_shape: &[usize],
+    is_compound: bool,
+) -> Result<ParsedRegion, ImageError> {
+    let mask = poly.mask(target_coords, full_shape)?;
+    let mut min_pt = full_shape.to_vec();
+    let mut max_pt = vec![0usize; full_shape.len()];
+    let mut any_true = false;
+    for (idx, &valid) in mask.indexed_iter() {
+        if valid {
+            any_true = true;
+            for (ax, &pos) in idx.slice().iter().enumerate() {
+                min_pt[ax] = min_pt[ax].min(pos);
+                max_pt[ax] = max_pt[ax].max(pos);
+            }
+        }
+    }
+    if !any_true {
+        return Err(ImageError::CasaSelection(format!(
+            "saved region '{region_name}' selects no pixels in image"
+        )));
+    }
+    let shape: Vec<usize> = min_pt
+        .iter()
+        .zip(max_pt.iter())
+        .map(|(lo, hi)| hi - lo + 1)
+        .collect();
+    Ok(ParsedRegion {
+        is_compound,
+        shapes: Vec::new(),
+        saved_mask: Some(SavedRegionMask::Whole(mask)),
+        saved_bounds: Some((min_pt, shape)),
+    })
 }
 
 pub(in crate::analysis::imsubimage) struct SlicerSection {
@@ -376,28 +411,18 @@ fn wc_pixel_axes(
         )));
     };
     let saved_coords = CoordinateSystem::from_record(source_record)?;
-    let names = |system: &CoordinateSystem| {
-        (0..system.n_coordinates())
-            .flat_map(|i| system.coordinate(i).axis_names())
-            .collect::<Vec<_>>()
-    };
-    let saved_names = names(&saved_coords);
-    let target_names = names(coords);
-    let axes = read_numeric_vec(rec.get("pixelAxes"))
+    let original_axes = read_numeric_vec(rec.get("pixelAxes"))
         .ok_or_else(|| ImageError::InvalidMetadata(format!("{class} has no pixelAxes")))?
         .into_iter()
         .map(|axis| {
-            (axis as usize)
-                .checked_sub(origin)
-                .and_then(|i| saved_names.get(i))
-                .and_then(|name| target_names.iter().position(|candidate| candidate == name))
-                .ok_or_else(|| {
-                    ImageError::InvalidMetadata(format!(
-                        "{class} {name:?} has an unmatched pixel axis {axis}"
-                    ))
-                })
+            (axis as usize).checked_sub(origin).ok_or_else(|| {
+                ImageError::InvalidMetadata(format!(
+                    "{class} {name:?} has invalid pixel axis {axis}"
+                ))
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let axes = map_world_region_axes(name, &saved_coords, coords, original_axes)?;
     Ok((axes, origin))
 }
 
@@ -498,6 +523,57 @@ fn decode_wc_ellipsoid(
         }
         _ => Err(invalid()),
     }
+}
+
+fn ellipsoid_bounds(
+    ellipse: &SpatialShape,
+    full_shape: &[usize],
+    plane: [usize; 2],
+) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
+    let (center, radii) = match *ellipse {
+        SpatialShape::Circle { cx, cy, rx, ry } => ([cx, cy], [rx, ry]),
+        SpatialShape::Ellipse {
+            cx,
+            cy,
+            semi_major,
+            semi_minor,
+            cos_pa,
+            sin_pa,
+        } => {
+            let radii = if sin_pa.abs() <= 1e-7 {
+                [semi_minor, semi_major]
+            } else if cos_pa.abs() <= 1e-7 {
+                [semi_major, semi_minor]
+            } else {
+                [semi_major.max(semi_minor); 2]
+            };
+            ([cx, cy], radii)
+        }
+        _ => unreachable!("WC ellipsoid decodes as a circle or ellipse"),
+    };
+    // LCEllipsoid sets its geometric box before rasterizing the mask, so the
+    // crop can include outer rows or columns with no selected pixel centers.
+    let mut start = vec![0; full_shape.len()];
+    let mut shape = full_shape.to_vec();
+    for ((axis, center), radius) in plane.into_iter().zip(center).zip(radii) {
+        let (center, radius) = (center as f32, radius as f32);
+        if !center.is_finite() || !radius.is_finite() || radius <= 0.0 {
+            return Err(ImageError::InvalidMetadata(
+                "invalid saved ellipsoid bounds".into(),
+            ));
+        }
+        let epsilon = 10.0f32.powi((2.0 * f64::from(radius)).log10() as i32 - 5);
+        let lo = ((center - radius + 1.0 - epsilon) as i64).max(0);
+        let hi = ((center + radius + epsilon) as i64).min((full_shape[axis] - 1) as i64);
+        if center + radius < 0.0 || center - radius > (full_shape[axis] - 1) as f32 || lo > hi {
+            return Err(ImageError::CasaSelection(
+                "saved ellipsoid does not contain pixels inside the image".into(),
+            ));
+        }
+        start[axis] = lo as usize;
+        shape[axis] = (hi - lo + 1) as usize;
+    }
+    Ok((start, shape))
 }
 
 fn wc_box_corner(
