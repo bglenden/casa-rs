@@ -185,7 +185,7 @@ impl PyImager {
         })
     }
 
-    #[pyo3(signature = (ftmachine = "ft", cache = -1, tile = 16, gridfunction = "SF", location = Variant::Empty, padding = 1.0, freqinterp = "nearest", wprojplanes = -1, epjtablename = "", applypointingoffsets = false, dopbgriddingcorrections = true, cfcachedirname = "", rotpastep = 5.0, pastep = 360.0, pblimit = 0.05, imagetilevol = 0, singleprecisiononly = false, numthreads = -1, psterm = true, aterm = true, mterm = true, wbawp = false, conjbeams = true), text_signature = "($self, ftmachine='ft', cache=-1, tile=16, gridfunction='SF', location=[], padding=1.0, freqinterp='nearest', wprojplanes=-1, epjtablename='', applypointingoffsets=False, dopbgriddingcorrections=True, cfcachedirname='', rotpastep=5.0, pastep=360.0, pblimit=0.05, imagetilevol=0, singleprecisiononly=False, numthreads=-1, psterm=True, aterm=True, mterm=True, wbawp=False, conjbeams=True)")]
+    #[pyo3(signature = (ftmachine = "ft", cache = -1, tile = 16, gridfunction = "SF", location = Variant::Empty, padding = 1.0, freqinterp = "nearest", wprojplanes = -1, epjtablename = "", applypointingoffsets = false, dopbgriddingcorrections = true, cfcachedirname = "", rotpastep = 5.0, pastep = 360.0, pblimit = 0.05, imagetilevol = options::ImageTileVolume::default(), singleprecisiononly = false, numthreads = -1, psterm = true, aterm = true, mterm = true, wbawp = false, conjbeams = true), text_signature = "($self, ftmachine='ft', cache=-1, tile=16, gridfunction='SF', location=[], padding=1.0, freqinterp='nearest', wprojplanes=-1, epjtablename='', applypointingoffsets=False, dopbgriddingcorrections=True, cfcachedirname='', rotpastep=5.0, pastep=360.0, pblimit=0.05, imagetilevol=0, singleprecisiononly=False, numthreads=-1, psterm=True, aterm=True, mterm=True, wbawp=False, conjbeams=True)")]
     #[allow(clippy::too_many_arguments)]
     fn setoptions(
         &self,
@@ -205,7 +205,7 @@ impl PyImager {
         rotpastep: f64,
         pastep: f64,
         pblimit: f64,
-        imagetilevol: i64,
+        imagetilevol: options::ImageTileVolume,
         singleprecisiononly: bool,
         numthreads: i32,
         psterm: bool,
@@ -216,7 +216,7 @@ impl PyImager {
     ) -> PyResult<bool> {
         // The A/W controls are consumed by their Fourier machines. Ordinary
         // GridFT and WProjectFT do not use them.
-        let _ = (imagetilevol, psterm, aterm, mterm, wbawp);
+        let _ = (psterm, aterm, mterm, wbawp);
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -270,6 +270,7 @@ impl PyImager {
                 state.prediction.configure_transform(settings)
             }
             .map_err(runtime_error)?;
+            state.prediction.set_image_tile_volume(imagetilevol.0);
             Ok(true)
         })
     }

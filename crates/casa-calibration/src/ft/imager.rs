@@ -20,7 +20,7 @@ use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
 use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
-use super::imager_definition::ImagerDefinitionRequest;
+use super::imager_definition::{ImagerDefinitionRequest, model_tile_shape};
 use super::legacy_pbw::pointing::LegacyEpOffsets;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
 use super::settings::{
@@ -63,6 +63,7 @@ pub struct ImagerPrediction {
     frequency_frame_valid: bool,
     ft_location: Option<MPosition>,
     options: ImagerTransformOptions,
+    image_tile_volume: i32,
     legacy_pbw: Option<(ImagerLegacyPbWOptions, Option<PathBuf>)>,
     legacy_ep: Option<(Option<PathBuf>, LegacyEpOffsets)>,
     legacy_aw: Option<ImagerLegacyAwOptions>,
@@ -130,6 +131,7 @@ impl Default for ImagerPrediction {
             frequency_frame_valid: false,
             ft_location: None,
             options: ImagerTransformOptions::default(),
+            image_tile_volume: 0,
             legacy_pbw: None,
             legacy_ep: None,
             legacy_aw: None,
@@ -184,6 +186,7 @@ impl ImagerPrediction {
     pub fn set_options(&mut self, options: ImagerTransformOptions) {
         self.ft_location = options.observatory_override();
         self.options = options;
+        self.image_tile_volume = 0;
         self.legacy_pbw = None;
         self.legacy_aw = None;
         self.reset_fourier_machine();
@@ -198,6 +201,11 @@ impl ImagerPrediction {
     /// The current settings, including prior buffer sizes retained by setoptions.
     pub fn transform_options(&self) -> ImagerTransformOptions {
         self.options
+    }
+
+    /// Set the tile volume used when the imager creates a model image.
+    pub fn set_image_tile_volume(&mut self, volume: i32) {
+        self.image_tile_volume = volume;
     }
 
     /// Select the legacy primary-beam and W projection prediction.
@@ -680,8 +688,9 @@ impl ImagerPrediction {
                 let Some(definition) = definition else {
                     return Ok(None);
                 };
-                let mut image = PagedImage::<f32>::create(
+                let mut image = PagedImage::<f32>::create_with_tile_shape(
                     definition.shape.to_vec(),
+                    model_tile_shape(definition.shape, self.image_tile_volume)?.to_vec(),
                     definition.coordinates.clone(),
                     path,
                 )
