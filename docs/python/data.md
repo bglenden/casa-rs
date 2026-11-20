@@ -69,6 +69,9 @@ Use `ia.open("example.im")` to reopen the product. Use
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.fitsheader()` to inspect the FITS header for a float image without
+exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
+dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
 
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
 native CASA image. `whichhdu` selects the image HDU and `whichrep` selects the
