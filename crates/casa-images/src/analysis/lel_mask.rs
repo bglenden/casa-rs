@@ -9,7 +9,7 @@ use casa_coordinates::CoordinateSystem;
 use casa_types::{ArrayD, Complex32, Complex64};
 
 use crate::analysis::mask_error_wording;
-use crate::expr_parser::{HashMapResolver, parse_mixed_mask_expr, referenced_images};
+use crate::expr_parser::{HashMapResolver, parse_subimage_mask_expr, referenced_images};
 use crate::image_expr_lel::broadcast_array;
 use crate::{
     AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage, TempImage,
@@ -64,8 +64,8 @@ pub(super) fn evaluate_mask(
 
     let mut expr = raw.to_string();
     if Path::new(raw).exists() {
-        // A clean-mask image name alone means its pixels at least 0.5.
-        expr = format!("\"{raw}\" >= 0.5");
+        // Quote bare file names that include spaces or punctuation.
+        expr = format!("\"{raw}\"");
     } else if let Some((left, _)) = raw.split_once(':')
         && !raw.contains([' ', '>', '<', '=', '!', '&', '|', '(', ')'])
         && Path::new(left).exists()
@@ -118,7 +118,7 @@ fn evaluate(
             }
         }
     }
-    let parsed = parse_mixed_mask_expr(expr, &HashMapResolver(real), &HashMapResolver(complex))
+    let parsed = parse_subimage_mask_expr(expr, &HashMapResolver(real), &HashMapResolver(complex))
         .map_err(mask_parse_error)?;
     let mask_shape = parsed.shape();
     if mask_shape != target_shape && !mask_shape.is_empty() {

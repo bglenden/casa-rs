@@ -965,9 +965,14 @@ const METHODS: &[Method] = &[
             param("verbose", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("removefile", &[param("file", K::Any, Required)], R::Any, No),
+    method(
+        "removefile",
+        &[param("file", K::Any, Required)],
+        R::Any,
+        Yes,
+    ),
     method(
         "rename",
         &[
@@ -975,7 +980,7 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "replacemaskedpixels",
@@ -1132,7 +1137,7 @@ const METHODS: &[Method] = &[
             param("keepaxes", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "summary",

@@ -15,9 +15,8 @@ use casa_types::quanta::Quantity;
 
 use crate::ft::image::{ImageModel, TaylorTerm, prepare_image, reference_frequency};
 use crate::ft::{model_entry, write_model_scratch};
-use crate::session::resolve_casa_calibration_selection;
 
-use super::multi_ms::OpenedMs;
+use crate::attachment::OpenedMs;
 
 const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
 
@@ -42,24 +41,23 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .at("usescratch"));
     }
     let path = task.input_path("vis")?;
-    let mut ms = OpenedMs::open(&path)?;
+    let mut ms = OpenedMs::open(&path).map_err(execution)?;
     let mut parts = super::multi_ms::partition_paths(&path)?
         .unwrap_or_default()
         .iter()
         .map(|path| {
-            let opened = OpenedMs::open(path)?;
+            let opened = OpenedMs::open(path).map_err(execution)?;
             if scratch {
-                opened.initialize(MODEL)
+                opened.initialize(MODEL).map_err(execution)
             } else {
                 Ok(opened)
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
     if scratch && parts.is_empty() {
-        ms = ms.initialize(MODEL)?;
+        ms = ms.initialize(MODEL).map_err(execution)?;
     }
-    let selected =
-        resolve_casa_calibration_selection(&ms.measurement_set, &selection).map_err(execution)?;
+    let selected = ms.resolve(&selection).map_err(execution)?;
     let request = read_model(task, scratch)?;
     if !selected.selected_rows.is_empty() && request.images_are_tables(task) {
         if parts.is_empty() || !scratch {
@@ -74,9 +72,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         }
     }
     for part in parts {
-        part.release()?;
+        part.release().map_err(execution)?;
     }
-    ms.release()?;
+    ms.release().map_err(execution)?;
     super::history::record_task(task, &path);
     TaskSuccess::new(CasaValue::None, &())
 }

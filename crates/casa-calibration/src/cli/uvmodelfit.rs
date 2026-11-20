@@ -10,21 +10,24 @@ use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use crate::session::resolve_casa_calibration_selection;
 use crate::{VisibilityFitRequest, VisibilityFitShape, fit_visibility_component};
 
-use super::multi_ms::{OpenedMs, partition_paths};
+use crate::attachment::OpenedMs;
+
+use super::multi_ms::partition_paths;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("vis")?;
-    let root = OpenedMs::open(&path)?;
+    let root = OpenedMs::open(&path).map_err(execution)?;
     let corrected = VisibilityDataColumn::CorrectedData;
     let parts = partition_paths(&path)?
         .unwrap_or_default()
         .iter()
         .map(|path| OpenedMs::open(path)?.initialize(corrected))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(execution)?;
     let root = if parts.is_empty() {
-        root.initialize(corrected)?
+        root.initialize(corrected).map_err(execution)?
     } else {
-        root.reload(&path)?
+        root.reload().map_err(execution)?
     };
     let ms = &root.measurement_set;
     let selected = resolve_casa_calibration_selection(ms, &selection(task)?).map_err(execution)?;
@@ -49,9 +52,9 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             .map_err(failed_fit)?;
     }
     for part in parts {
-        part.release()?;
+        part.release().map_err(execution)?;
     }
-    root.release()?;
+    root.release().map_err(execution)?;
     let mut report = TaskSuccess::new(CasaValue::None, &fitted.parameters)?
         .with_output_line("Formal errors assume the visibility weights are correctly scaled.");
     let labels = [

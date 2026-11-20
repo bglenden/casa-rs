@@ -8,7 +8,9 @@ use std::path::Path;
 use crate::ApplyCalibrationTableSpec;
 use crate::initweights::{Mode, initialize, initialize_tsys};
 
-use super::multi_ms::{OpenedMs, partition_paths};
+use crate::attachment::OpenedMs;
+
+use super::multi_ms::partition_paths;
 
 enum Weights {
     Ordinary(Mode),
@@ -41,7 +43,8 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
 }
 
 fn run_one(path: &Path, mode: &Weights, spectrum: bool) -> Result<(), TaskFailure> {
-    let mut state = OpenedMs::open(path).map_err(|error| error.at("vis"))?;
+    let mut state = OpenedMs::open(path)
+        .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))?;
     match mode {
         Weights::Ordinary(mode) => {
             initialize(&mut state.measurement_set, *mode, spectrum, &mut state.lock)
@@ -55,7 +58,9 @@ fn run_one(path: &Path, mode: &Weights, spectrum: bool) -> Result<(), TaskFailur
         ),
     }
     .map_err(|error| TaskFailure::execution(error.to_string()))?;
-    state.release().map_err(|error| error.at("vis"))
+    state
+        .release()
+        .map_err(|error| TaskFailure::execution(error.to_string()).at("vis"))
 }
 
 fn read_tsys(task: &TaskInvocation<'_>) -> Result<ApplyCalibrationTableSpec, TaskFailure> {

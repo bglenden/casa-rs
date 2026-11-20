@@ -8,7 +8,7 @@ mod output;
 use casa_provider_contracts::{ParameterValue, python_repr};
 
 use super::axes::{legacy_subimage_coordinates_with_stokes, subimage_coordinates_with_stokes};
-use super::imsubimage::{coords::subset_beam_set, region::SubimageSelection};
+use super::imsubimage::{SubimageRegion, coords::subset_beam_set, region::SubimageSelection};
 use super::{combined_moment_mask, patch_saved_coords_keyword};
 use crate::{
     ImageBeamSet, ImageError, ImagePixel, ImmomentsRequest, MomentImageSummary, MomentMapSummary,
@@ -31,7 +31,7 @@ where
     let selection = SubimageSelection::resolve(
         image,
         request.box_pixels.as_deref(),
-        request.region.as_deref(),
+        request.region.as_deref().map(SubimageRegion::Text),
         request.chans.as_deref(),
         request.stokes.as_deref(),
     )?;

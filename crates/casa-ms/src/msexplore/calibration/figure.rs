@@ -194,6 +194,50 @@ fn make_panel(
             )?);
         }
     }
+    if let Some(first) = panel.overlay.first() {
+        let mut bounds = [f64::INFINITY, f64::NEG_INFINITY];
+        for (overlay_id, series) in panel.overlay.iter().enumerate() {
+            let series_index = panel.series.len() + overlay_id;
+            let show_flagged = shows_flagged(ranges.flagged_symbols, series_index);
+            let points = series
+                .points
+                .iter()
+                .filter(|point| {
+                    point.x.is_finite() && point.y.is_finite() && (show_flagged || !point.flagged)
+                })
+                .collect::<Vec<_>>();
+            if points.is_empty() {
+                continue;
+            }
+            for point in &points {
+                bounds = [bounds[0].min(point.y), bounds[1].max(point.y)];
+            }
+            let mut curve = layer(
+                payload,
+                (index, series_index, "atmosphere", 0),
+                false,
+                series.y.label().to_string(),
+                points,
+                true,
+            )?;
+            curve.provenance_summary = "Atmospheric model over the selected channels".into();
+            if let Some(style) = &mut curve.style {
+                style.color = Some(
+                    if overlay_id == 0 {
+                        "#d88400"
+                    } else {
+                        "#b32673"
+                    }
+                    .into(),
+                );
+                style.marker = None;
+            }
+            layers.push(curve);
+        }
+        let mut overlay_axis = axis("atmosphere", first.y, None, bounds, [0.0; 2]);
+        overlay_axis.draws_on_trailing_edge = true;
+        axes.push(overlay_axis);
+    }
     let title = panels
         .axis_name()
         .map_or_else(String::new, |axis| format!("{axis} {}", panel.label));

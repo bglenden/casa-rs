@@ -24,7 +24,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
-| flagdata | flagdata | yes | 76 | 76 | 0 | 49 | 0 | 0 |
+| flagdata | flagdata | yes | 76 | 76 | 0 | 43 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
@@ -45,7 +45,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 37 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
-| plotms | plotms | yes | 102 | 102 | 0 | 17 | 0 | 0 |
+| plotms | plotms | yes | 102 | 102 | 0 | 14 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
@@ -362,7 +362,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `autocorr`, `inpfile`, `reason`, `tbuff`, `uvrange`, `timerange`, `correlation`, `intent`, `array`, `observation`, `feed`, `clipminmax`, `clipoutside`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `quackincrement`, `tolerance`, `addantenna`, `lowerlimit`, `upperlimit`, `ntime`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `growaround`, `flagneartime`, `flagnearfreq`, `minrel`, `maxrel`, `minabs`, `maxabs`, `basecnt`, `fieldcnt`, `display`, `savepars`, `cmdreason`, `outfile`, `overwrite`, `writeflags`
+- Accepted only at CASA's default until #978: `autocorr`, `inpfile`, `reason`, `tbuff`, `uvrange`, `timerange`, `correlation`, `intent`, `array`, `observation`, `feed`, `clipminmax`, `clipoutside`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `quackincrement`, `tolerance`, `addantenna`, `lowerlimit`, `upperlimit`, `ntime`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `growaround`, `flagneartime`, `flagnearfreq`, `display`, `savepars`, `cmdreason`, `outfile`, `overwrite`, `writeflags`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 76, in CASA's order: yes
 - Defaults that differ: none
@@ -1347,7 +1347,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
 - Accepted only at CASA's default until #1032: `rowindex`, `colindex`, `plotindex`, `xframe`, `xinterp`, `yframe`, `yinterp`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
-- Accepted only at CASA's default until #1526: `callib`, `showatm`, `showtsky`, `showimage`, `colorizeoverlay`
+- Accepted only at CASA's default until #1526: `callib`, `colorizeoverlay`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 102, in CASA's order: yes
 - Defaults that differ: none
@@ -1356,7 +1356,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 17, Implemented: 23, Not implemented: 11, Partial: 51, Unassessed: 0.
+Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 14, Implemented: 23, Not implemented: 11, Partial: 54, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1460,9 +1460,9 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `clearplots` | `True` | `True`; `clearplots` → `clearplots` | Default only | Remove any existing plots so new ones can replace them. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `callib` | `[]` | `[]`; `callib` → `callib` | Default only | Calibration library string or filename for on-the-fly calibration. [advanced](#plotms-behavior-advanced)<br>Catalog domain: list[`string`], length 0..many; scalar allowed; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
 | `headeritems` | `''` | `''`; `headeritems` → `headeritems` | Not implemented | Comma-separated list of pre-defined page header items. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
-| `showatm` | `False` | `False`; `showatm` → `showatm` | Default only | Compute and overlay the atmospheric transmission curve [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
-| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Default only | Compute and overlay the sky temperature curve [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
-| `showimage` | `False` | `False`; `showimage` → `showimage` | Default only | Compute and overlay the image sideband curve [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+| `showatm` | `False` | `False`; `showatm` → `showatm` | Partial | Overlay atmospheric transmission on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
+| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Partial | Overlay sky temperature on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
+| `showimage` | `False` | `False`; `showimage` → `showimage` | Partial | Overlay a receiver image sideband on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
 | `colorizeoverlay` | `False` | `False`; `colorizeoverlay` → `colorizeoverlay` | Default only | Colorize the curve overlay using coloraxis [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
 
 #### plotms interacting modes and task behavior
@@ -1533,11 +1533,11 @@ Evidence: [paired](#plotms-evidence-paired).
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
 
-**Not implemented** — Track calibration library, atmosphere, transformations and interactive flag controls.
+**Partial** — Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.
 
 The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.
 
-Evidence: [remaining](#plotms-evidence-remaining).
+Evidence: [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining).
 
 #### plotms deviations and unfinished work
 
@@ -1571,6 +1571,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **Remaining calibration PlotMS workflow comparisons — planned.** Requires additional native behavior and paired evidence. Advanced calibration table and MS plotting under #1526, #1032 and #215.
 
+
+<a id="plotms-evidence-atmosphere"></a>
+##### atmosphere
+
+**Same-input atmospheric overlays — passed.** 21 exports, 985 selected coordinates, one Python axis error and 19 rendered coordinates matched. Seven wide-band, weather and receiver overlay cases had a maximum normalized RMS of 0.00012. CASA 6.7.6.14 and casaplotms 2.9.1 on the same current-format bandpass and gain tables, with optional associated weather, water-vapour and receiver tables.
+
+- [tools/casa-compat/plotms_atmosphere_oracle.py](https://github.com/bglenden/casa-rs/blob/12d08ef332634591a6ad4611408f4cc178f601c5/tools/casa-compat/plotms_atmosphere_oracle.py)
+- Revision: `12d08ef332634591a6ad4611408f4cc178f601c5`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-atmosphere-20261119.json`.
 
 ### plotweather
 

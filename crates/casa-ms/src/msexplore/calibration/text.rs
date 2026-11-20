@@ -85,6 +85,14 @@ fn coordinate(axis: Axis, value: f64) -> String {
 
 // PlotMS uses the default significant-digit precision of a C++ stream.
 fn significant(value: f64) -> String {
+    if value.is_nan() {
+        return if value.is_sign_negative() {
+            "-nan"
+        } else {
+            "nan"
+        }
+        .into();
+    }
     if !value.is_finite() || value == 0.0 {
         return value.to_string();
     }

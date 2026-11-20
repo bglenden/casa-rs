@@ -19,6 +19,8 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
+[removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [FITS import of an empty primary HDU](#fits-import-can-abort-on-an-empty-primary-hdu),
 [restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
@@ -7168,6 +7170,19 @@ The check is in casacore's `AxesSpecifier::apply`. casa-rs returns an
 out-of-range error before creating or replacing the output image. With
 `dropdeg=False`, CASA and casa-rs ignore `keepaxes`.
 
+The same abort occurs with the image tool's `ia.subimage(dropdeg=True,
+keepaxes=[5])` on a three-axis image. The shared casa-rs selection returns a
+Python `RuntimeError` and leaves any existing output intact.
+
+## An image subimage can replace its source history table
+
+CASA 6.7.6.14 can replace the source image's `logtable` when that path is
+passed to `ia.subimage(overwrite=True)`. The source history then fails to
+read because the table lacks the `TIME` column. If the history table is
+already open, CASA reports that it is in the table cache. Casa-rs rejects
+overwriting existing entries inside the source image before staging the
+cutout.
+
 ## imsubimage permutes coordinate labels after dropping transposed axes
 
 In CASA 6.7.6.14, take a cube in RA, Dec, Stokes, frequency order and
@@ -7269,3 +7284,37 @@ Linux build.
 
 The native tasks keep the original visibility column and its weights in
 these sparse layouts (#1614).
+
+## Image removal can delete an open table through a symbolic link
+
+In CASA 6.7.6.14, open a native image by its table path with `table.open()`.
+`image.removefile()` refuses to delete that path while the table is open.
+Calling it with a symbolic link to the same path can succeed and remove both
+the link and the table. The open table handle then refers to a deleted table.
+
+casa-rs resolves aliases before checking whether the table is in use and
+preserves both names when it refuses removal. After the last handle closes,
+removing through the link deletes the link and table as CASA does. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+When `table.open()` holds the native image's `logtable`, CASA can also remove
+the parent image and its log. casa-rs checks live subtables before deleting
+the image.
+
+An external directory move can also leave an attached tool pointing at a
+pathname that now contains another image. CASA can delete that replacement
+image through `ia.remove()`. casa-rs checks the directory identity captured
+at open and refuses the removal if the pathname was rebound.
+
+When a symbolic link lies inside a read-only directory, CASA can delete the
+linked image and leave the link dangling. casa-rs checks that directory
+before deleting the image and preserves both entries when it refuses.
+
+## Image rename can move an open table before failing to reattach
+
+In CASA 6.7.6.14, open one native image in two image tools in the same process
+and call `rename()` on the first tool. CASA can move the table, then raise
+`RuntimeError` while reopening it under the new name. The second tool keeps
+the old name and can abort while closing that stale handle. casa-rs refuses
+the move before changing either path while another tool holds the image.
+See [#1625](https://github.com/bglenden/casa-rs/issues/1625).

@@ -34,6 +34,9 @@ pub(super) enum Axis {
     SwitchedPower,
     Tec,
     AntennaPosition,
+    AtmosphericTransmission,
+    SkyTemperature,
+    ImageSideband,
 }
 
 impl Axis {
@@ -107,6 +110,9 @@ impl Axis {
             SwitchedPower => "Switched Power",
             Tec => "TEC",
             AntennaPosition => "Antenna Position",
+            AtmosphericTransmission => "Atm Transmission",
+            SkyTemperature => "Tsky",
+            ImageSideband => "Image Sideband",
         }
     }
 
@@ -118,7 +124,8 @@ impl Axis {
             Self::Phase | Self::GainPhase => "deg",
             Self::Delay => "ns",
             Self::Rate => "ps/s",
-            Self::SystemTemperature => "K",
+            Self::SystemTemperature | Self::SkyTemperature => "K",
+            Self::AtmosphericTransmission => "%",
             Self::AntennaPosition => "m",
             _ => "",
         }
@@ -143,8 +150,19 @@ impl Axis {
             Phase | GainPhase => value.arg().to_degrees(),
             Imaginary | GainImaginary => value.im,
             SignalToNoise => snr,
-            Real | GainReal | Delay | Rate | DispersiveDelay | SystemTemperature | Opacity
-            | SwitchedPower | Tec | AntennaPosition => value.re,
+            Real
+            | GainReal
+            | Delay
+            | Rate
+            | DispersiveDelay
+            | SystemTemperature
+            | Opacity
+            | SwitchedPower
+            | Tec
+            | AntennaPosition
+            | AtmosphericTransmission
+            | SkyTemperature
+            | ImageSideband => value.re,
         }
     }
 }

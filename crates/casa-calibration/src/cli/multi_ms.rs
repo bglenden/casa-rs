@@ -3,58 +3,15 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::{
-    MeasurementSet, save_next_partition_flag_backup, schema::main_table::VisibilityDataColumn,
-};
+use casa_ms::{MeasurementSet, save_next_partition_flag_backup};
 use casa_provider_contracts::ParameterValue;
-use casa_tables::{Table, TableInfo, TableWriteLock, table_cache_name};
+use casa_tables::{Table, TableInfo, table_cache_name};
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use crate::model_columns::initialize_scratch_column;
 use crate::{
     ApplyExecutionReport, ApplyMultiMsReport, ApplyPartitionReport, CalibrationTaskRequest,
     ExecuteApplyTaskRequest,
 };
-
-pub(super) struct OpenedMs {
-    pub(super) measurement_set: MeasurementSet,
-    pub(super) lock: TableWriteLock,
-}
-
-impl OpenedMs {
-    pub(super) fn open(path: &Path) -> Result<Self, TaskFailure> {
-        let lock = TableWriteLock::acquire_to_reread(path, 0).map_err(execution)?;
-        Self::with_lock(path, lock)
-    }
-
-    fn with_lock(path: &Path, lock: TableWriteLock) -> Result<Self, TaskFailure> {
-        let measurement_set = MeasurementSet::open(path).map_err(execution)?;
-        Ok(Self {
-            measurement_set,
-            lock,
-        })
-    }
-
-    pub(super) fn initialize(mut self, column: VisibilityDataColumn) -> Result<Self, TaskFailure> {
-        self.lock = initialize_scratch_column(&mut self.measurement_set, column, self.lock)
-            .map_err(execution)?;
-        Ok(self)
-    }
-
-    pub(super) fn reload(self, path: &Path) -> Result<Self, TaskFailure> {
-        drop(self.measurement_set);
-        Self::with_lock(path, self.lock)
-    }
-
-    pub(super) fn release(self) -> Result<(), TaskFailure> {
-        drop(self.measurement_set);
-        self.lock.release().map_err(execution)
-    }
-}
-
-fn execution(error: impl std::fmt::Display) -> TaskFailure {
-    TaskFailure::execution(error.to_string())
-}
 
 pub(super) fn execute(
     task: &TaskInvocation<'_>,

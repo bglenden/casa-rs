@@ -915,8 +915,7 @@ def plotms(
     ``yframe``, ``yinterp``, ``phasecenter``, ``extendflag``, ``extcorr``,
     ``extchannel``, ``clearplots``.
     Accepted only at CASA's default, where CASA reads them, until #1526:
-    ``callib``, ``showatm``, ``showtsky``, ``showimage``,
-    ``colorizeoverlay``.
+    ``callib``, ``colorizeoverlay``.
     """
     return _call_casa(plotms, locals())
 
@@ -1010,8 +1009,7 @@ def flagdata(
     ``combinescans``, ``timefit``, ``freqfit``, ``maxnpieces``,
     ``flagdimension``, ``usewindowstats``, ``halfwin``, ``winsize``,
     ``antint_ref_antenna``, ``minchanfrac``, ``verbose``, ``growaround``,
-    ``flagneartime``, ``flagnearfreq``, ``minrel``, ``maxrel``, ``minabs``,
-    ``maxabs``, ``basecnt``, ``fieldcnt``, ``display``, ``savepars``,
+    ``flagneartime``, ``flagnearfreq``, ``display``, ``savepars``,
     ``cmdreason``, ``outfile``, ``overwrite``, ``writeflags``.
     """
     return _call_casa(flagdata, locals())

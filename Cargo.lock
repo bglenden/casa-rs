@@ -550,6 +550,7 @@ name = "casa-ms"
 version = "0.27.0"
 dependencies = [
  "bytemuck",
+ "casa-atmosphere",
  "casa-coordinates",
  "casa-logging",
  "casa-measures-data",

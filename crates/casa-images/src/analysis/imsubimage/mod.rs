@@ -10,19 +10,210 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use casa_lattices::{TraversalIter, TraversalSpec};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
-use casa_types::ArrayD;
+use casa_types::{ArrayD, RecordValue, Value};
 use ndarray::{Axis, Zip};
 
 use crate::image::{ImageHistoryEntry, append_image_history_entries, image_history_entries};
 use crate::{
     AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, ImageSubimageSummary,
-    ImsubimageRequest, PagedImage, TempImage, TempStoragePolicy, read_fits_image,
+    ImsubimageRequest, MutableImageInterface, PagedImage, TempImage, TempStoragePolicy,
+    read_fits_image,
 };
 
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
 use self::region::SubimageSelection;
+use super::axes::stokes_for_axis;
 use super::lel_mask::evaluate_mask;
+
+/// A region as CASA text, a region filename, or a casacore region record.
+pub enum SubimageRegion<'a> {
+    Text(&'a str),
+    Record(&'a RecordValue),
+}
+
+/// Region and degenerate-axis choices for image section extraction.
+pub struct SubimageOptions<'a> {
+    /// The full image is selected when no region is given.
+    pub region: Option<SubimageRegion<'a>>,
+    /// Drop singleton axes from the selection.
+    pub dropdeg: bool,
+    /// Singleton input axes to keep when dropping axes.
+    pub keepaxes: &'a [i64],
+}
+
+/// An image selection and the matching coordinates and beam metadata. Pixels
+/// remain in the source and are copied in chunks when writing the result.
+pub struct SubimagePlan {
+    selection: SubimageSelection,
+    kept_axes: Vec<usize>,
+    /// Pixel shape in output axis order.
+    pub shape: Vec<usize>,
+    /// Coordinates shifted to the lower bound of the output.
+    pub coordinates: casa_coordinates::CoordinateSystem,
+    /// Native coordinate representation when it differs from the typed model.
+    pub coordinate_record: Option<RecordValue>,
+    image_info: ImageInfo,
+}
+
+impl SubimagePlan {
+    /// Resolves the requested image region and the output pixel coordinates.
+    ///
+    /// Supply the source's saved coordinate record to retain its native layout.
+    /// Invalid or unsupported regions and axis lists return an error.
+    pub fn new<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        native_coordinates: Option<RecordValue>,
+        options: SubimageOptions<'_>,
+    ) -> Result<Self, ImageError> {
+        if matches!(&options.region, Some(SubimageRegion::Text(_)))
+            && image
+                .coordinates()
+                .find_coordinate(casa_coordinates::CoordinateType::Direction)
+                .is_none()
+        {
+            return Err(ImageError::CasaSelection(
+                "Coordinate system has no direction coordinate".into(),
+            ));
+        }
+        let selection = SubimageSelection::resolve(image, None, options.region, None, None)?;
+        Self::from_selection(
+            image,
+            native_coordinates,
+            selection,
+            options.dropdeg,
+            options.keepaxes,
+        )
+    }
+
+    fn from_selection<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        native_coordinates: Option<RecordValue>,
+        selection: SubimageSelection,
+        dropdeg: bool,
+        keepaxes: &[i64],
+    ) -> Result<Self, ImageError> {
+        let kept_axes = resolve_kept_axes(&selection.shape, dropdeg, keepaxes)?;
+        let cropped_stokes = if selection.selected_stokes.is_none()
+            && let Some(axis) = image.find_axis(casa_coordinates::CoordinateType::Stokes)
+            && selection.shape[axis] != image.shape()[axis]
+        {
+            let start = selection.start[axis];
+            let stokes = stokes_for_axis(image.coordinates(), axis)?;
+            Some(
+                stokes
+                    .get(start..start + selection.shape[axis])
+                    .ok_or_else(|| {
+                        ImageError::CasaSelection("Stokes region exceeds coordinate bounds".into())
+                    })?
+                    .to_vec(),
+            )
+        } else {
+            None
+        };
+        let (coordinates, coordinate_record, image_info) = reduce_coordinates_and_beams(
+            image.coordinates(),
+            native_coordinates,
+            CoordReductionSpec {
+                full_shape: image.shape(),
+                start: &selection.start,
+                shape: &selection.shape,
+                kept_axes: &kept_axes,
+                selected_stokes: selection
+                    .selected_stokes
+                    .as_deref()
+                    .or(cropped_stokes.as_deref()),
+            },
+            image.image_info()?,
+        )?;
+        let shape = kept_axes
+            .iter()
+            .map(|&axis| selection.shape[axis])
+            .collect();
+        Ok(Self {
+            selection,
+            kept_axes,
+            shape,
+            coordinates,
+            coordinate_record,
+            image_info,
+        })
+    }
+
+    /// The lower and upper pixel bounds in the source image, inclusive.
+    pub fn bounds(&self) -> (&[usize], Vec<usize>) {
+        let end = self
+            .selection
+            .start
+            .iter()
+            .zip(&self.selection.shape)
+            .map(|(start, count)| start + count - 1)
+            .collect();
+        (&self.selection.start, end)
+    }
+
+    /// Copies selected pixels, image metadata and the combined mask into a
+    /// new image allocated with the plan's shape and coordinates. The input
+    /// must be the source used to create the plan. Output is populated in
+    /// place, so file publication belongs to the caller after success.
+    pub fn copy_to<T: ImagePixel + Copy>(
+        &self,
+        image: &dyn ImageInterface<T>,
+        output: &mut dyn MutableImageInterface<T>,
+        mask_expression: Option<&str>,
+        stretch: bool,
+    ) -> Result<(), ImageError> {
+        if output.shape() != self.shape {
+            return Err(ImageError::ShapeMismatch {
+                expected: self.shape.clone(),
+                got: output.shape().to_vec(),
+            });
+        }
+        output.set_units_string(image.units().to_owned())?;
+        output.set_image_info(&self.image_info)?;
+        output.set_misc_info(image.misc_info())?;
+        let selection = &self.selection;
+        let mut mask =
+            image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
+        selection.apply_selection_masks(&mut mask);
+        if let Some(expression) = evaluate_mask(
+            mask_expression,
+            image.shape(),
+            image.coordinates(),
+            stretch,
+            (&selection.start, &selection.shape),
+        )? {
+            and_opt_mask(&mut mask, expression);
+        }
+        if let Some(mask) = mask
+            && mask.iter().any(|valid| !valid)
+        {
+            output.put_mask("mask0", &self.squeeze(mask))?;
+            output.set_default_mask("mask0")?;
+        }
+        let spec = TraversalSpec::tiles().section(selection.start.clone(), selection.shape.clone());
+        for chunk in TraversalIter::new(image, spec) {
+            let chunk = chunk?;
+            let position = self
+                .kept_axes
+                .iter()
+                .map(|&axis| chunk.cursor.position[axis] - selection.start[axis])
+                .collect::<Vec<_>>();
+            output.put_slice(&self.squeeze(chunk.data), &position)?;
+        }
+        Ok(())
+    }
+
+    fn squeeze<T>(&self, mut values: ArrayD<T>) -> ArrayD<T> {
+        for axis in (0..values.ndim()).rev() {
+            if !self.kept_axes.contains(&axis) {
+                values = values.index_axis_move(Axis(axis), 0);
+            }
+        }
+        values
+    }
+}
 
 enum SourceData<T: ImagePixel> {
     Paged {
@@ -111,15 +302,44 @@ pub(in crate::analysis) fn run(
     }
 }
 
-fn ensure_outfile_does_not_alias_input(outfile: &Path, imagename: &Path) -> Result<(), ImageError> {
-    let same_lexical = outfile == imagename;
-    let same_canon = fs::canonicalize(outfile)
-        .ok()
-        .zip(fs::canonicalize(imagename).ok())
-        .is_some_and(|(out, input)| input.starts_with(out));
-    if same_lexical || same_canon {
+/// Refuses to replace the input image, its ancestors, or existing entries inside it.
+pub fn ensure_outfile_does_not_alias_input(
+    outfile: &Path,
+    imagename: &Path,
+) -> Result<(), ImageError> {
+    let input = fs::canonicalize(imagename).ok();
+    let output = fs::canonicalize(outfile).ok();
+    if outfile == imagename
+        || input
+            .as_ref()
+            .zip(output.as_ref())
+            .is_some_and(|(input, output)| input.starts_with(output))
+    {
         return Err(ImageError::InvalidMetadata(format!(
             "outfile '{}' matches or contains input image '{}'",
+            outfile.display(),
+            imagename.display()
+        )));
+    }
+    if outfile.symlink_metadata().is_ok()
+        && input.as_ref().is_some_and(|input| {
+            let output_parent = outfile.parent().and_then(|parent| {
+                // A bare relative name has an empty parent that refers to this directory.
+                fs::canonicalize(if parent.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    parent
+                })
+                .ok()
+            });
+            output
+                .iter()
+                .chain(output_parent.iter())
+                .any(|path| path.starts_with(input))
+        })
+    {
+        return Err(ImageError::InvalidMetadata(format!(
+            "outfile '{}' is inside input image '{}'",
             outfile.display(),
             imagename.display()
         )));
@@ -177,45 +397,33 @@ fn run_typed<T: ImagePixel + Copy>(
     request: &ImsubimageRequest,
 ) -> Result<ImageSubimageSummary, ImageError> {
     let img = source.as_interface();
-    let full_shape = img.shape().to_vec();
-    let ndim = full_shape.len();
-
+    let region = request
+        .region
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(SubimageRegion::Text);
     let selection = SubimageSelection::resolve(
         img,
         request.box_pixels.as_deref(),
-        request.region.as_deref(),
+        region,
         request.chans.as_deref(),
         request.stokes.as_deref(),
     )?;
-
-    let kept_axes = resolve_kept_axes(&selection.shape, request.dropdeg, &request.keepaxes)?;
-    let (out_coords, out_legacy_coords, out_info) = reduce_coordinates_and_beams(
-        img.coordinates(),
-        source.paged(),
-        CoordReductionSpec {
-            full_shape: &full_shape,
-            start: &selection.start,
-            shape: &selection.shape,
-            kept_axes: &kept_axes,
-            selected_stokes: selection.selected_stokes.as_deref(),
-        },
-        img.image_info()?,
+    let native_coordinates =
+        source
+            .paged()
+            .and_then(|image| match image.table().keywords().get("coords") {
+                Some(Value::Record(record)) => Some(record.clone()),
+                _ => None,
+            });
+    let plan = SubimagePlan::from_selection(
+        img,
+        native_coordinates,
+        selection,
+        request.dropdeg,
+        &request.keepaxes,
     )?;
-
-    let mut mask = img.get_mask_slice(&selection.start, &selection.shape, &vec![1; ndim])?;
-    selection.apply_selection_masks(&mut mask);
-    if let Some(expr_mask) = evaluate_mask(
-        request.mask.as_deref(),
-        &full_shape,
-        img.coordinates(),
-        request.stretch,
-        (&selection.start, &selection.shape),
-    )? {
-        and_opt_mask(&mut mask, expr_mask);
-    }
-
-    let data = img.get_slice(&selection.start, &selection.shape, &vec![1; ndim])?;
-    let (data, mask, out_shape) = drop_selected_axes(data, mask, &selection.shape, &kept_axes);
 
     let destination = std::path::absolute(&request.outfile).map_err(output_io)?;
     let parent = destination.parent().ok_or_else(|| {
@@ -223,20 +431,12 @@ fn run_typed<T: ImagePixel + Copy>(
     })?;
     let stage = tempfile::tempdir_in(parent).map_err(output_io)?;
     let product = stage.path().join("image");
-    let mut output = PagedImage::<T>::create(out_shape.clone(), out_coords, &product)?;
-    output.set_units(img.units())?;
-    output.set_image_info(&out_info)?;
-    output.set_misc_info(img.misc_info())?;
-    if let Some(legacy) = out_legacy_coords {
-        output.set_coords_record_keyword(legacy);
+    let mut output =
+        PagedImage::<T>::create(plan.shape.clone(), plan.coordinates.clone(), &product)?;
+    if let Some(record) = &plan.coordinate_record {
+        output.set_coords_record_keyword(record.clone());
     }
-    output.put_slice(&data, &vec![0; out_shape.len()])?;
-    if let Some(m) = mask
-        && m.iter().any(|&v| !v)
-    {
-        output.put_mask("mask0", &m)?;
-        output.set_default_mask("mask0")?;
-    }
+    plan.copy_to(img, &mut output, request.mask.as_deref(), request.stretch)?;
     output.save()?;
     drop(output);
     write_output_history(&product, source.history(), request)?;
@@ -248,17 +448,13 @@ fn run_typed<T: ImagePixel + Copy>(
         result => result.map_err(output_io)?,
     }
 
+    let (blc, trc) = plan.bounds();
     Ok(ImageSubimageSummary {
         imagename: request.imagename.display().to_string(),
         outfile: request.outfile.display().to_string(),
-        blc: selection.start.clone(),
-        trc: selection
-            .start
-            .iter()
-            .zip(&selection.shape)
-            .map(|(s, len)| s + len - 1)
-            .collect(),
-        shape: out_shape,
+        blc: blc.to_vec(),
+        trc,
+        shape: plan.shape,
         units: img.units().to_string(),
     })
 }
@@ -309,28 +505,6 @@ fn resolve_kept_axes(
         ));
     }
     Ok(kept)
-}
-
-fn drop_selected_axes<T: Copy>(
-    mut data: ArrayD<T>,
-    mut mask: Option<ArrayD<bool>>,
-    selected_shape: &[usize],
-    kept_axes: &[usize],
-) -> (ArrayD<T>, Option<ArrayD<bool>>, Vec<usize>) {
-    if kept_axes.len() == selected_shape.len() {
-        return (data, mask, selected_shape.to_vec());
-    }
-    for ax in (0..selected_shape.len()).rev() {
-        if !kept_axes.contains(&ax) {
-            debug_assert_eq!(data.shape()[ax], 1);
-            data = data.index_axis_move(Axis(ax), 0);
-            if let Some(m) = mask.take() {
-                mask = Some(m.index_axis_move(Axis(ax), 0));
-            }
-        }
-    }
-    let out_shape = kept_axes.iter().map(|&ax| selected_shape[ax]).collect();
-    (data, mask, out_shape)
 }
 
 fn write_output_history(

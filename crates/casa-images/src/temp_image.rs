@@ -448,6 +448,11 @@ impl<T: ImagePixel> TempImage<T> {
         Ok(())
     }
 
+    /// Returns the temporary image's original log rows for derived images.
+    pub fn history_rows(&self) -> &[ImageHistoryRow] {
+        &self.history
+    }
+
     /// Clears the history log.
     pub fn clear_history(&mut self) -> Result<(), ImageError> {
         self.history.clear();

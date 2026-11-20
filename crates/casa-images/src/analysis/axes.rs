@@ -197,7 +197,7 @@ pub(super) fn replace_stokes_in_record(
 /// (a tabular spectral coordinate's, or a tabular coordinate's) is adjusted
 /// as well. Spectral tables are rebuilt over the selected channels, matching
 /// casacore's `CoordinateSystem::subImageInSitu` for nonlinear frequencies.
-fn shift_record_reference_pixels(
+pub(super) fn shift_record_reference_pixels(
     record: &mut RecordValue,
     start: &[usize],
     shape: &[usize],

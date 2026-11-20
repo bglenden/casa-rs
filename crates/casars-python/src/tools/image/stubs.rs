@@ -796,32 +796,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (done = None, verbose = None), text_signature = "($self, done=False, verbose=True)")]
-    fn remove(
-        &self,
-        done: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("remove")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (file), text_signature = "($self, file)")]
-    fn removefile(&self, file: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("removefile")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (name, overwrite = None), text_signature = "($self, name, overwrite=False)")]
-    fn rename(
-        &self,
-        name: &Bound<'_, PyAny>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("rename")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (pixels = None, region = None, mask = None, update = None, list = None, stretch = None), text_signature = "($self, pixels=[], region={}, mask='', update=False, list=False, stretch=False)")]
     fn replacemaskedpixels(
         &self,
@@ -916,23 +890,6 @@ impl PyImageTool {
         niter: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("statistics")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, region = None, mask = None, dropdeg = None, overwrite = None, list = None, stretch = None, wantreturn = None, keepaxes = None), text_signature = "($self, outfile='', region='', mask='', dropdeg=False, overwrite=False, list=True, stretch=False, wantreturn=True, keepaxes=[])")]
-    fn subimage(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        wantreturn: Option<&Bound<'_, PyAny>>,
-        keepaxes: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("subimage")
     }
 
     /// Not yet implemented in casa-rs.
