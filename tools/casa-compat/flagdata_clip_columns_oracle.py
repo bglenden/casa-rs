@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 
 import casatasks
 from casacore.tables import makearrcoldesc, maketabdesc, table
+from casatools import componentlist, ms as casa_ms
 import numpy as np
 
 from casars import tasks
@@ -272,28 +273,120 @@ def compare_virtual_model_selection():
         np.testing.assert_array_equal(ms.getcell("MODEL_DATA", 0), MODEL)
         fields = ms.getcol("FIELD_ID")
     options = dict(mode="clip", clipminmax=[0.9, 1.1], clipoutside=False, flagbackup=False)
-    copytree(vis, "virtual-reference.ms")
-    assert casatasks.flagdata(vis="virtual-reference.ms", datacolumn="MODEL", field="FLUX", **options) == {}
-    for field, (_, flags, _) in zip(fields, snapshot("virtual-reference.ms"), strict=True):
-        np.testing.assert_array_equal(flags, np.ones_like(flags) if field == 0 else BEFORE_FLAGS)
+    cases = (
+        ({"datacolumn": "MODEL", "field": "FLUX"}, 0, np.ones_like(MODEL), True),
+        ({"datacolumn": "MODEL", "field": "PHASE"}, 1, MODEL, True),
+        ({"datacolumn": "RESIDUAL", "field": "FLUX"}, 0, CORRECTED - 1, True),
+        ({"datacolumn": "RESIDUAL_DATA", "field": "FLUX"}, 0, OBSERVED - 1, True),
+        ({"datacolumn": "RESIDUAL", "field": "FLUX"}, 0, CORRECTED - 1, False),
+        ({"datacolumn": "RESIDUAL_DATA", "field": "FLUX"}, 0, OBSERVED - 1, False),
+        ({"datacolumn": "MODEL", "field": "FLUX", "timeavg": True, "timebin": "20s", "correlation": "REAL_XX"},
+         0, np.broadcast_to([1, 0], MODEL.shape), True),
+    )
+    for index, (selection, selected_field, values, physical) in enumerate(cases):
+        for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
+            path = f"virtual-{index}-{name}.ms"
+            copytree(vis, path)
+            if not physical:
+                with table(path, readonly=False, ack=False) as ms:
+                    ms.removecols("MODEL_DATA")
+            assert task(vis=path, **selection, **options) == {}
+            expected = BEFORE_FLAGS | (np.abs(values) == 1)
+            with table(path, ack=False) as ms, casa_table(path) as casa:
+                for row, field in enumerate(fields):
+                    wanted = expected if field == selected_field else BEFORE_FLAGS
+                    np.testing.assert_array_equal(ms.getcell("FLAG", row), wanted)
+                    np.testing.assert_array_equal(casa.getcell("FLAG", row).T, wanted)
+                    np.testing.assert_array_equal(ms.getcell("DATA", row), OBSERVED)
+                    if physical:
+                        np.testing.assert_array_equal(ms.getcell("MODEL_DATA", row), MODEL)
+    return len(cases)
 
-    original, auxiliary = snapshot(vis), auxiliary_content(vis)
-    for column in ("MODEL", "RESIDUAL", "RESIDUAL_DATA"):
-        try:
-            tasks.flagdata(vis=vis, datacolumn=column, field="FLUX", **options)
-        except RuntimeError as error:
-            assert "virtual model for FIELD_ID 0" in str(error) and "#1617" in str(error)
-        else:
-            raise AssertionError(column)
-        assert_preserved(vis, original, auxiliary)
 
-    expected = BEFORE_FLAGS | (np.abs(MODEL) == 1)
+def check_offset_virtual_component():
+    cl = componentlist()
+    try:
+        cl.addcomponent(dir="J2000 0h0m0.4s -30d0m0s", flux=2.0, fluxunit="Jy", freq="100GHz", shape="point")
+        cl.rename("offset.cl")
+    finally:
+        cl.done()
+    scratch, virtual = "offset-scratch.ms", "offset-virtual.ms"
+    for vis, usescratch in ((scratch, True), (virtual, False)):
+        copytree("data.ms", vis)
+        assert casatasks.ft(vis=vis, field="FLUX", complist="offset.cl", usescratch=usescratch) is None
+    with table(scratch, ack=False) as ms:
+        selected = ms.getcol("FIELD_ID") == 0
+        predicted = ms.getcol("MODEL_DATA").real[:, :, 0]
+    values = predicted[selected]
+    assert np.ptp(values) > 0.1
+    lower, upper = [float(np.quantile(values, q)) for q in (0.25, 0.75)]
+    expected = np.broadcast_to(BEFORE_FLAGS, (*predicted.shape, 2)).copy()
+    expected[selected, :, 0] |= (values >= np.float32(lower)) & (values <= np.float32(upper))
     for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
-        path = f"physical-field-{name}.ms"
-        copytree(vis, path)
-        assert task(vis=path, datacolumn="MODEL", field="PHASE", **options) == {}
-        for field, (_, flags, _) in zip(fields, snapshot(path), strict=True):
-            np.testing.assert_array_equal(flags, expected if field == 1 else BEFORE_FLAGS)
+        target = f"offset-{name}.ms"
+        copytree(virtual, target)
+        assert task(vis=target, mode="clip", datacolumn="MODEL", field="FLUX", correlation="REAL_XX",
+                    clipoutside=False, clipminmax=[lower, upper], flagbackup=False) == {}
+        with table(target, ack=False) as ms:
+            np.testing.assert_array_equal(ms.getcol("FLAG"), expected)
+            np.testing.assert_array_equal(ms.getcol("MODEL_DATA"), np.broadcast_to(MODEL, expected.shape))
+
+
+def compare_model_buffer_states():
+    vis = "model-buffer-states.ms"
+    copytree("data.ms", vis)
+    casatasks.setjy(vis=vis, field="FLUX", standard="manual", fluxdensity=[2, 0, 0, 0], usescratch=False)
+    with table(vis, readonly=False, ack=False) as ms:
+        flux = ms.getcol("FIELD_ID") == 0
+        times = ms.getcol("TIME")
+        start, finish = [flux & (time == times) for time in np.unique(times[flux])]
+        states = ms.getcol("STATE_ID")
+        assert np.all(states[flux] == 0)
+        states[start] = 1
+        states[finish] = np.arange(finish.sum()) % 2
+        ms.putcol("STATE_ID", states)
+        ms.putcol("MODEL_DATA", np.full_like(ms.getcol("DATA"), 11.0))
+    for index, (level, selected) in enumerate(((1, start), (2, finish), (11, np.zeros_like(start)))):
+        for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
+            target = f"buffer-states-{index}-{name}.ms"
+            copytree(vis, target)
+            assert task(vis=target, mode="clip", datacolumn="MODEL", field="FLUX", correlation="REAL_XX",
+                        clipoutside=False, clipminmax=[level - .1, level + .1], flagbackup=False) == {}
+            with table(target, ack=False) as ms:
+                expected = np.broadcast_to(BEFORE_FLAGS, ms.getcol("FLAG").shape).copy()
+                expected[selected, :, 0] = True
+                np.testing.assert_array_equal(ms.getcol("FLAG"), expected, err_msg=f"{name} {level}")
+
+
+def compare_attached_ephemeris():
+    from casaconfig import config
+
+    vis = "ephemeris-model.ms"
+    copytree("data.ms", vis)
+    casatasks.setjy(vis=vis, field="FLUX", standard="manual", fluxdensity=[2, 0, 0, 0], usescratch=False)
+    with table(vis, ack=False) as ms:
+        first_time = ms.getcol("TIME").min()
+    with table(f"{vis}/FIELD", readonly=False, ack=False) as fields:
+        fields.putcell("TIME", 0, first_time)
+        for name in ("PHASE_DIR", "REFERENCE_DIR", "DELAY_DIR"):
+            fields.putcell(name, 0, np.zeros_like(fields.getcell(name, 0)))
+    ephemeris = Path(config.measurespath, "ephemerides", "JPL-Horizons", "Uranus_55197-59214dUTC_J2000.tab")
+    tool = casa_ms()
+    try:
+        assert tool.open(vis, nomodify=False)
+        assert tool.addephemeris(0, str(ephemeris), "Uranus", [0])
+    finally:
+        tool.done()
+    products = []
+    for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
+        target = f"ephemeris-{name}.ms"
+        copytree(vis, target)
+        assert task(vis=target, mode="clip", datacolumn="MODEL", field="FLUX", correlation="REAL_XX",
+                    clipoutside=False, clipminmax=[-.5, .8], flagbackup=False) == {}
+        with table(target, ack=False) as ms:
+            products.append(ms.getcol("FLAG"))
+    assert products[0][:, :, 0].any()
+    np.testing.assert_array_equal(*products)
 
 
 def compare_repeat_applications():
@@ -318,11 +411,14 @@ def main():
         compare_sparse_spectra()
         products += compare_spectrum_windows()
         compare_residual_operands()
-        compare_virtual_model_selection()
+        products += compare_virtual_model_selection()
+        check_offset_virtual_component()
+        compare_model_buffer_states()
+        compare_attached_ephemeris()
         compare_repeat_applications()
-    print(f"{products + 5} clip data-column products, one preview, {refusals + 2} refusals and "
+    print(f"{products + 10} clip data-column products, one preview, {refusals + 2} refusals and "
           "cross-tool repeats matched CASA. Verified two sparse-spectrum protections, explicit "
-          "observed-column precedence and the virtual-model guard.")
+          "observed-column precedence and virtual component-model inputs.")
 
 
 if __name__ == "__main__":

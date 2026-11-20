@@ -349,7 +349,7 @@ pub(super) fn collect_time_bin(
             .map(ClipTimedRow::description)
             .collect::<Vec<_>>();
         let flags = read_flags(table, &rows, path)?;
-        let cells = columns.read(table, &rows, Some(&ddids), ddid_to_spw, path)?;
+        let cells = columns.read(ms, &rows, Some(&ddids), ddid_to_spw, path)?;
         for (slot, (&row, flags)) in rows.iter().zip(&flags).enumerate() {
             summary.total_samples += flags.len();
             summary.flagged_samples += flags.iter().filter(|&&flag| flag).count();
