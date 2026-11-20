@@ -72,6 +72,8 @@ Use `ia.open("example.im")` to reopen the product. Use
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.rotatebeam("15deg")` to rotate all stored restoring beams. On a
+directly opened FITS image, the rotation applies only to the open tool.
 Use `ia.summary(list=False)` to read the shape, coordinate axes, mask names
 and restoring beams and return the two report messages. The default
 `list=True` sends the report to the logger.

@@ -293,7 +293,7 @@ fn edit_beam(
     Ok(result)
 }
 
-fn input_history(value: &Variant) -> String {
+pub(super) fn input_history(value: &Variant) -> String {
     match value {
         Variant::Text(text) => format!("\"{text}\""),
         _ => value.describe(),
@@ -402,6 +402,7 @@ impl PyImageTool {
                 )
             });
             with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_image_info_record(info))).map_err(raised)?;
+            attachment.set_empty_beam_angle(0.0);
             if let Some(command) = command {
                 image.record_history("setrestoringbeam", command)?;
             }

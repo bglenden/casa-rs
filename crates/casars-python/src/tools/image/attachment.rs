@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
@@ -18,6 +19,9 @@ pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
     use_lock: Option<Arc<TableUseLock>>,
     shareable: bool,
+    // CASA rotates the cached null beam for its history messages without
+    // writing a restoring beam to the image.
+    empty_beam_angle: AtomicU64,
 }
 
 type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
@@ -40,6 +44,7 @@ impl AttachedImage {
                 handle: Mutex::new(image),
                 use_lock: None,
                 shareable: false,
+                empty_beam_angle: AtomicU64::new(0),
             }),
             key: None,
         }
@@ -139,6 +144,7 @@ impl AttachedImage {
             handle: Mutex::new(ImageHandle::open_native(path, lock_attempts).map_err(raised)?),
             use_lock,
             shareable: lock_attempts.is_some(),
+            empty_beam_angle: AtomicU64::new(0),
         });
         let opened = Self {
             image,
@@ -162,6 +168,18 @@ impl AttachedImage {
             .handle
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Read while holding the image handle's lock.
+    pub(super) fn empty_beam_angle(&self) -> f64 {
+        f64::from_bits(self.image.empty_beam_angle.load(Ordering::Relaxed))
+    }
+
+    /// Update while holding the image handle's lock.
+    pub(super) fn set_empty_beam_angle(&self, degrees: f64) {
+        self.image
+            .empty_beam_angle
+            .store(degrees.to_bits(), Ordering::Relaxed);
     }
 
     pub(super) fn is_persistent(&self) -> bool {
@@ -348,6 +366,7 @@ impl AttachedImage {
                 handle: Mutex::new(image),
                 use_lock: self.image.use_lock.clone(),
                 shareable: self.image.shareable,
+                empty_beam_angle: AtomicU64::new(self.empty_beam_angle().to_bits()),
             }),
             Err(error) => return restore_native_move(source, &target, backup, error),
         };
