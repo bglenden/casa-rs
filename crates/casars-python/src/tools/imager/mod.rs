@@ -32,7 +32,13 @@ struct ImagerState {
     prediction: ImagerPrediction,
     valid: bool,
     uses_scratch: bool,
-    model_in_sky_equation: bool,
+    sky_model: SkyModelPaths,
+}
+
+#[derive(Default)]
+struct SkyModelPaths {
+    images: Vec<PathBuf>,
+    components: Option<PathBuf>,
 }
 
 /// CASA's calibration-facing legacy imager.
@@ -180,7 +186,7 @@ impl PyImager {
                 .prediction
                 .define_model_geometry(request)
                 .map_err(runtime_error)?;
-            state.model_in_sky_equation = false;
+            state.sky_model = SkyModelPaths::default();
             Ok(true)
         })
     }
@@ -309,7 +315,7 @@ impl PyImager {
                 .prediction
                 .configure_single_dish(setup)
                 .map_err(runtime_error)?;
-            state.model_in_sky_equation = false;
+            state.sky_model = SkyModelPaths::default();
             Ok(true)
         })
     }
@@ -353,7 +359,7 @@ impl PyImager {
                     parallactic.to_radians(),
                 )
                 .map_err(runtime_error)?;
-            state.model_in_sky_equation = false;
+            state.sky_model = SkyModelPaths::default();
             Ok(())
         })?;
         let mut lines = vec![LogLine::info("Setting voltage pattern parameters")];
@@ -453,7 +459,7 @@ impl PyImager {
                     state.valid = selected;
                     if selected {
                         state.prediction.reset_fourier_machine();
-                        state.model_in_sky_equation = false;
+                        state.sky_model = SkyModelPaths::default();
                     }
                     Ok(Some(selected))
                 }
@@ -506,17 +512,25 @@ impl PyImager {
         phasecentertime: f64,
     ) -> PyResult<bool> {
         let images = model_images(model)?;
+        let components = (!complist.is_empty()).then(|| PathBuf::from(complist));
         let mut preparation_error = None;
         let result = self.attached(py, |state| {
-            let has_model = !images.is_empty() || !complist.is_empty();
-            // The legacy sky equation rejects a second model addition until
-            // the caller rebuilds its data or image selection.
-            if state.model_in_sky_equation && has_model {
+            // The sky equation has separate image and component slots.
+            // A call can fill either vacant slot and predict both together.
+            if (!images.is_empty() && !state.sky_model.images.is_empty())
+                || (components.is_some() && state.sky_model.components.is_some())
+            {
                 return Ok(false);
             }
             let model = ImagerPredictionModel {
-                images: &images,
-                components: (!complist.is_empty()).then(|| Path::new(complist)),
+                images: if images.is_empty() {
+                    &state.sky_model.images
+                } else {
+                    &images
+                },
+                components: components
+                    .as_deref()
+                    .or(state.sky_model.components.as_deref()),
                 incremental,
                 phase_centre_time: (phasecentertime >= 0.).then_some(phasecentertime),
             };
@@ -525,7 +539,12 @@ impl PyImager {
                 .predict_attached(&state.attachments, model, state.uses_scratch)
             {
                 Ok(true) => {
-                    state.model_in_sky_equation |= has_model;
+                    if !images.is_empty() {
+                        state.sky_model.images = images;
+                    }
+                    if components.is_some() {
+                        state.sky_model.components = components;
+                    }
                     Ok(true)
                 }
                 Err(AttachmentError::PredictionPreparation(error)) => {
