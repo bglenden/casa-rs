@@ -22809,7 +22809,6 @@
         },
         {
           "name": "callib",
-          "unimplemented": {"issue": 1526},
           "concept": {
             "id": "plotms.callib",
             "semantic_revision": 1

@@ -354,6 +354,12 @@ def _call_plotms(values, arguments):
         values["showimage"] = False
     if not paths and all(isinstance(arguments[name], str) for name in ("vis", "caltable")):
         return None
+    callib = arguments["callib"]
+    entries = [callib] if isinstance(callib, str) else callib
+    if isinstance(entries, (list, tuple)) and len(entries) == 1:
+        filename = entries[0]
+        if isinstance(filename, str) and "=" not in filename and not os.path.exists(filename):
+            raise RuntimeError("callib file does not exist")
     for name in ("field", "spw"):
         if name in values and isinstance(values[name], (int, float)):
             values[name] = str(values[name])
@@ -851,8 +857,10 @@ def _execute_task(
     *, bandpass_completed_pages: int | None = None,
 ) -> TaskCompletion:
     invocation = resolved.provider_invocation()
-    executable = _task_executable(task)
-    command = (executable, *invocation.args)
+    if task == "plotms" and resolved.get("callib"):
+        command = (_task_executable("calibrate"), "plotms", *invocation.args)
+    else:
+        command = (_task_executable(task), *invocation.args)
     environment = dict(os.environ)
     if task == "listcal":
         # A later listing error takes effect only when the reader reaches it.
@@ -882,7 +890,7 @@ def _execute_task(
             env=environment,
         )
     except OSError as error:
-        raise TaskInvocationError(f"cannot start {task} ({executable}): {error}") from error
+        raise TaskInvocationError(f"cannot start {task} ({command[0]}): {error}") from error
     stdout, stderr = _communicate(process, invocation.stdin or "")
 
     if payload is not None:

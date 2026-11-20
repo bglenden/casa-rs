@@ -45,7 +45,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 37 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
-| plotms | plotms | yes | 102 | 102 | 0 | 14 | 0 | 0 |
+| plotms | plotms | yes | 102 | 102 | 0 | 13 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
@@ -1346,7 +1346,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
 - Accepted only at CASA's default until #1032: `rowindex`, `colindex`, `plotindex`, `xframe`, `xinterp`, `yframe`, `yinterp`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
-- Accepted only at CASA's default until #1526: `callib`, `colorizeoverlay`
+- Accepted only at CASA's default until #1526: `colorizeoverlay`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 102, in CASA's order: yes
 - Defaults that differ: none
@@ -1355,7 +1355,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 14, Implemented: 24, Not implemented: 2, Partial: 62, Unassessed: 0.
+Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 13, Implemented: 24, Not implemented: 2, Partial: 63, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1369,11 +1369,11 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `colindex` | `0` | `0`; `colindex` → `colindex` | Default only | Column location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `plotindex` | `0` | `0`; `plotindex` → `plotindex` | Default only | Index to address a subplot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `xaxis` | `''` | `''`; `xaxis` → `xaxis` | Partial | Plot x-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `parangle`, `baseline`, `delay`, `antenna position`, `swp`, `u`, `tec`, `ant-parang`, `gamp`, `Antenna1`, `UVdist`, `WeightSpectrum`, `Baseline`, `flag`, `Real`, `switchedpower`, `timeint`, `WtSp`, `Ant-Elevation`, `GainReal`, `time_interval`, `uvdist_l`, `GainAmp`, `ant1`, `flagrow`, `Wt`, `Velocity`, `opac`, `Feed2`, `corr`, `imaginary`, `gainamp`, `Vwave`, `wwave`, `Frequency`, `observation`, `feed1`, `ant-azimuth`, `rate`, `Elevation`, `Intent`, `Row`, `swpower`, `antpos`, `ant-elevation`, `antenna`, `v`, `V`, `interval`, `sigmaspectrum`, `DelayRate`, `tsys`, `gainphase`, `Ant-Parangle`, `imag`, `Radial Velocity`, `UVwave`, `Observation`, `Poln`, `W`, `timeinterval`, `Channel`, `snr`, `SNR`, `frequency`, `Interval`, `uvdistl`, `disp`, `Imag`, `dispdelay`, `Feed1`, `rho`, `Ant-RA`, `delayrate`, `spgain`, `Antenna`, `Uwave`, `SigmaSpectrum`, `Azimuth`, `Scan`, `Tsys`, `polarization`, `intent`, `phase`, `amp`, `ant-parangle`, `SigmaSp`, `freq`, `wt*amp`, `channel`, `uwave`, `Flag`, `correlation`, `FlagRow`, `TEC`, `SwPower`, `GainPhase`, `GainImag`, `ant-parallacticangle`, `real`, `Time`, `weight`, `antenna2`, `gainimag`, `gimag`, `Antenna2`, `spw`, `gphase`, `Opac`, `parang`, `Amp`, `ant-ra`, `Sigma`, `amplitude`, `Ant-DEC`, `HourAngle`, `U`, `row`, `Wt*Amp`, `gainreal`, `chan`, `Field`, `DispDelay`, `hourang`, `vwave`, `radialvelocity`, `sigma`, `Antenna Position`, `Delay`, `uvwave`, `vel`, `uvdist`, `velocity`, `hourangle`, `poln`, `ant2`, `Phase`, `azimuth`, `Corr`, `parallacticangle`, `weightspectrum`, `Ant-Azimuth`, `wtsp`, ``, `Distance`, `opacity`, `antenna1`, `feed2`, `sigmasp`, `time`, `w`, `wt`, `field`, `greal`, `elevation`, `del`, `ant`, `ant-dec`, `Spw`, `scan`, `Wwave`, `ParAngle` | [paired](#plotms-evidence-paired) |
-| `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired) |
+| `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary) |
 | `xframe` | `''` | `''`; `xframe` → `xframe` | Default only | Coordinate frame to use for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `icrs`, `azelgeo`, `b1950`, `galactic`, ``, `j2000`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `xinterp` | `''` | `''`; `xinterp` → `xinterp` | Default only | Interpolation method for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: ``, `nearest`, `cubic spline`, `spline`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yaxis` | `''` | `''`; `yaxis` → `yaxis` | Partial | Plot y-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
-| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary) |
 | `yframe` | `''` | `''`; `yframe` → `yframe` | Default only | Coordinate frame to use for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yinterp` | `''` | `''`; `yinterp` → `yinterp` | Default only | Interpolation method for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yaxislocation` | `''` | `''`; `yaxislocation` → `yaxislocation` | Partial | Location of the y-axis (blank for default: left) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
@@ -1457,7 +1457,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Overwrite plot file if it already exists [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `showgui` | `True` | `True`; `showgui` → `showgui` | Partial | Show GUI [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `clearplots` | `True` | `True`; `clearplots` → `clearplots` | Default only | Remove any existing plots so new ones can replace them. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
-| `callib` | `[]` | `[]`; `callib` → `callib` | Default only | Calibration library string or filename for on-the-fly calibration. [advanced](#plotms-behavior-advanced)<br>Catalog domain: list[`string`], length 0..many; scalar allowed; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+| `callib` | `[]` | `[]`; `callib` → `callib` | Partial | Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated scalar or spectral weights. Iterated figures and additional calibration plotting controls remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [callibrary](#plotms-evidence-callibrary), [remaining](#plotms-evidence-remaining) |
 | `headeritems` | `''` | `''`; `headeritems` → `headeritems` | Not implemented | Comma-separated list of pre-defined page header items. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
 | `showatm` | `False` | `False`; `showatm` → `showatm` | Partial | Overlay atmospheric transmission on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
 | `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Partial | Overlay sky temperature on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
@@ -1491,7 +1491,7 @@ Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-select
 
 Pointing-coordinate axes and advanced per-axis MS data columns are open.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [callibrary](#plotms-evidence-callibrary).
 
 <a id="plotms-behavior-averaging"></a>
 ##### Average solution points
@@ -1523,20 +1523,20 @@ Evidence: [paired](#plotms-evidence-paired).
 <a id="plotms-behavior-export"></a>
 ##### Save and publish selected plot products
 
-**Partial** — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false.
+**Partial** — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and single-panel figures.
 
 More export, multi-plot state and interactive display forms remain open.
 
-Evidence: [paired](#plotms-evidence-paired).
+Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary).
 
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
 
-**Partial** — Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet callibrary, overlays, transforms and interactive flag controls.
+**Partial** — Apply calibration libraries to MeasurementSet plots in memory and compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.
 
 The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.
 
-Evidence: [atmosphere](#plotms-evidence-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining).
+Evidence: [atmosphere](#plotms-evidence-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining), [callibrary](#plotms-evidence-callibrary).
 
 #### plotms deviations and unfinished work
 
@@ -1547,9 +1547,9 @@ Evidence: [atmosphere](#plotms-evidence-atmosphere), [selectors](#plotms-evidenc
 - CASA: Raises Exception with message updateImmediately must be a boolean.
 - casa-rs: Displays and exports all available solution points without applying the selector text.
 - Rationale: Make the documented selection switch work when it is false.
-- User impact: The native request produces all 160 available points in the paired fixture.
+- User impact: The native request produces all 160 available points in the paired fixture. The same fallback preserves all 1,920 points in the unfiltered callibrary case.
 - Owner decision: Pending; not an accepted deviation.
-- Evidence: [paired](#plotms-evidence-paired).
+- Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary).
 
 ##### calibration-selection-diagnostics: Proposed
 
@@ -1600,6 +1600,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `d3571932be189f719e83e2626ba7fab982d23d33`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-calibration-selectors-20261119.json`.
+
+<a id="plotms-evidence-callibrary"></a>
+##### callibrary
+
+**Same-input callibrary plots — passed.** 43 public text exports, 874 points, one missing-library error and 12 rendered coordinates matched. The paired averages cover selected and strided channels and calibrated per-channel weights. Source visibilities, stored corrections, flags and weights were preserved. The disabled selector fallback matched 1,920 CASA points. CASA 6.7.6.14 and casaplotms 2.9.1 on identical MeasurementSets with file and inline callibraries, independent data columns and averaged channel and time coordinates.
+
+- [https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py](https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py)
+- Revision: `f9215c62670dfc19138bd9d65a949d22065f1c59`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_callibrary_oracle.py --work <new-dir> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-callibrary-20261119.json`.
 
 ### plotweather
 

@@ -11,7 +11,9 @@ use super::selection::Selection;
 use super::table_data::CalibrationTable;
 use crate::MsAverageSpec;
 
-pub(super) fn options(task: &TaskInvocation<'_>) -> Result<MsAverageSpec, TaskFailure> {
+pub(in crate::msexplore) fn options(
+    task: &TaskInvocation<'_>,
+) -> Result<MsAverageSpec, TaskFailure> {
     if !task.flag("averagedata")? {
         return Ok(MsAverageSpec::default());
     }
@@ -42,7 +44,7 @@ pub(super) fn options(task: &TaskInvocation<'_>) -> Result<MsAverageSpec, TaskFa
     })
 }
 
-pub(super) fn active(spec: &MsAverageSpec) -> bool {
+pub(in crate::msexplore) fn active(spec: &MsAverageSpec) -> bool {
     spec.avgchannel.is_some()
         || spec.avgtime.is_some()
         || spec.avgbaseline

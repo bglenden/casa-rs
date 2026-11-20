@@ -446,7 +446,9 @@ fn axis(
     }
 }
 
-pub(super) fn plot_limits(value: Option<&ParameterValue>) -> Result<[f64; 4], TaskFailure> {
+pub(in crate::msexplore) fn plot_limits(
+    value: Option<&ParameterValue>,
+) -> Result<[f64; 4], TaskFailure> {
     let Some(ParameterValue::Array(values)) = value else {
         return Ok([0.0; 4]);
     };
