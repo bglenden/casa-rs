@@ -7411,3 +7411,13 @@ channels 0–1 and 5–6. It averages visibility samples from original
 channels 0–1 and 2 and 5, in the order of its compressed channel
 buffer. casa-rs preserves the paired text coordinates and sample
 values so existing PlotMS diagnostics can be compared directly (#1526).
+
+## `impv` can lose overlap on small rotated strips
+
+In CASA 6.7.6.14, a 12-by-12 direction plane can report that the input and
+rotated output do not overlap even when both endpoints are at least two
+pixels from the edges. Examples are a reversed horizontal cut from
+`[8,6]` to `[3,6]` and a vertical cut from `[5,3]` to `[5,8]`. Padding the
+input direction plane before the same sky-coordinate cut restores the CASA
+result. casa-rs interpolates only the requested strip and agrees with the
+padded CASA reference without requiring callers to pad the input (#1024).

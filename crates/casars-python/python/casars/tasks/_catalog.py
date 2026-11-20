@@ -1053,16 +1053,16 @@ def impbcor(
 def impv(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     outfile: StrPath = '',
-    mode: Literal['coords', 'length'] = 'coords',
-    start: str = '',
-    end: str = '',
-    center: str | list[str] | tuple[str, ...] = '',
-    length: str = '',
-    pa: str = '',
-    width: int = 1,
+    mode: str = 'coords',
+    start: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    end: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    center: str | list[float] | tuple[float, float] | list[str] | tuple[str, str] = '',
+    length: float | str | Mapping[str, ParameterData] = '',
+    pa: str | Mapping[str, ParameterData] = '',
+    width: int | str | Mapping[str, ParameterData] = 1,
     unit: str = 'arcsec',
     overwrite: bool = False,
-    region: str = '',
+    region: StrPath | Mapping[str, ParameterData] = '',
     chans: str = '',
     stokes: str = '',
     mask: str = '',
@@ -1071,9 +1071,6 @@ def impv(
     """Extract a CASA-style position-velocity image
 
     CASA's ``impv``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``mode``, ``center``, ``length``, ``pa``, ``unit``, ``region``,
-    ``stokes``, ``mask``, ``stretch``.
     """
     return _call_casa(impv, locals())
 

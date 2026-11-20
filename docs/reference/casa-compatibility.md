@@ -37,7 +37,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | impbcor | impbcor | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | importfits | importfits | yes | 9 | 9 | 0 | 0 | 0 | 0 |
 | importvla | importvla | yes | 12 | 12 | 0 | 0 | 0 | 0 |
-| impv | impv | yes | 16 | 16 | 0 | 9 | 0 | 0 |
+| impv | impv | yes | 16 | 16 | 0 | 0 | 0 | 0 |
 | imregrid | imregrid | yes | 10 | 10 | 0 | 5 | 0 | 0 |
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 0 | 0 | 0 |
@@ -848,7 +848,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `mode`, `center`, `length`, `pa`, `unit`, `region`, `stokes`, `mask`, `stretch`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 16, in CASA's order: yes
 - Defaults that differ: none

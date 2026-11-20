@@ -342,29 +342,106 @@ pub struct ImmomentsRequest {
     pub overwrite: bool,
 }
 
-/// CASA `impv` request for a tutorial-scoped position-velocity image.
+/// CASA `impv` request for a position-velocity image along a strip.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImpvRequest {
     /// Input CASA image path.
     pub imagename: PathBuf,
     /// Output CASA image path.
     pub outfile: PathBuf,
-    /// CASA mode. This implementation supports `coords`.
+    /// CASA mode, selected by the first letter of `coords` or `length`.
     #[serde(default = "default_impv_mode")]
     pub mode: String,
-    /// Start pixel coordinate as `x,y`.
-    pub start: String,
-    /// End pixel coordinate as `x,y`.
-    pub end: String,
-    /// Slice width in pixels, averaged perpendicular to the path.
+    /// First endpoint in `coords` mode.
+    #[serde(default)]
+    pub start: Option<PvPosition>,
+    /// Second endpoint in `coords` mode.
+    #[serde(default)]
+    pub end: Option<PvPosition>,
+    /// Midpoint in `length` mode.
+    #[serde(default)]
+    pub center: Option<PvPosition>,
+    /// Distance between endpoints in pixels or angular units.
+    #[serde(default)]
+    pub length: Option<PvAmount>,
+    /// Sky position angle in `length` mode.
+    #[serde(default)]
+    pub pa: Option<PvAmount>,
+    /// Odd strip width in pixels, or a width in angular units.
     #[serde(default = "default_impv_width")]
-    pub width: usize,
+    pub width: PvAmount,
+    /// Angular unit of the output offset coordinate.
+    #[serde(default = "default_pv_unit")]
+    pub unit: String,
+    /// CASA text, named, or record region. Only non-direction axes may be cropped.
+    #[serde(default)]
+    pub region: Option<ParameterValue>,
     /// CASA channel expression, supporting tutorial forms like `4~12`.
     #[serde(default)]
     pub chans: Option<String>,
+    /// Stokes planes to include.
+    #[serde(default)]
+    pub stokes: Option<String>,
+    /// Optional LEL mask evaluated before extraction.
+    #[serde(default)]
+    pub mask: Option<String>,
+    /// Stretch a conforming mask over singleton or missing axes.
+    #[serde(default)]
+    pub stretch: bool,
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
+}
+
+impl Default for ImpvRequest {
+    fn default() -> Self {
+        Self {
+            imagename: PathBuf::new(),
+            outfile: PathBuf::new(),
+            mode: default_impv_mode(),
+            start: None,
+            end: None,
+            center: None,
+            length: None,
+            pa: None,
+            width: default_impv_width(),
+            unit: default_pv_unit(),
+            region: None,
+            chans: None,
+            stokes: None,
+            mask: None,
+            stretch: false,
+            overwrite: false,
+        }
+    }
+}
+
+/// Sky position or zero-based direction-plane pixels for `impv`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PvPosition {
+    /// Zero-based pixel coordinates as an integer pair.
+    Integral([i64; 2]),
+    /// Zero-based pixel coordinates, which can be fractional.
+    Pixel([f64; 2]),
+    /// Longitude and latitude in CASA's default direction frame.
+    World([String; 2]),
+    /// Sky direction, optionally prefixed with a reference frame.
+    Text(String),
+}
+
+/// A length, width, or angle supplied to `impv`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PvAmount {
+    /// Whole pixels.
+    Whole(i64),
+    /// Fractional pixels for the slice length.
+    Fractional(f64),
+    /// An angular value supplied as text.
+    Angular(String),
+    /// A CASA quanta record containing one angular value.
+    Quantity(BTreeMap<String, ParameterValue>),
 }
 
 /// CASA `imsubimage` request supporting full spatial/spectral/Stokes/mask
@@ -610,8 +687,12 @@ fn default_impv_mode() -> String {
     "coords".to_string()
 }
 
-fn default_impv_width() -> usize {
-    1
+fn default_impv_width() -> PvAmount {
+    PvAmount::Whole(1)
+}
+
+fn default_pv_unit() -> String {
+    "arcsec".into()
 }
 
 fn default_regrid_interpolation() -> String {

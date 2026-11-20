@@ -25829,7 +25829,7 @@
     {
       "kind": "task",
       "id": "impv",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Position Velocity",
       "category": "Images",
       "summary": "Extract a CASA-style position-velocity image",
@@ -25860,159 +25860,380 @@
       "bindings": [
         {
           "name": "mode",
-          "concept": {"id": "impv.mode", "semantic_revision": 1},
+          "concept": {
+            "id": "impv.mode",
+            "semantic_revision": 2
+          },
           "order": 2,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": "coords"}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "coords"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "projections": {
-            "cli": {"flags": ["--mode"], "metavar": "coords|length"},
-            "provider": {"field": "mode"},
-            "python": {"name": "mode"},
-            "presentation": {"label": "Mode", "group": "Slice", "advanced": true}
+            "cli": {
+              "flags": [
+                "--mode"
+              ],
+              "metavar": "coords|length"
+            },
+            "provider": {
+              "field": "mode"
+            },
+            "python": {
+              "name": "mode"
+            },
+            "presentation": {
+              "label": "Mode",
+              "group": "Slice",
+              "advanced": true
+            }
           },
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "impv's mode chooses how the slice is given, distinct from other tasks' operation modes."
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "center",
-          "concept": {"id": "pv.center", "semantic_revision": 1},
+          "concept": {
+            "id": "pv.center",
+            "semantic_revision": 2
+          },
           "order": 5,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "projections": {
-            "cli": {"flags": ["--center"], "metavar": "x,y"},
-            "provider": {"field": "center"},
-            "python": {"name": "center"},
-            "presentation": {"label": "Center", "group": "Slice", "advanced": true}
+            "cli": {
+              "flags": [
+                "--center"
+              ],
+              "metavar": "x,y"
+            },
+            "provider": {
+              "field": "center"
+            },
+            "python": {
+              "name": "center",
+              "type_hint": "str | list[float] | tuple[float, float] | list[str] | tuple[str, str]"
+            },
+            "presentation": {
+              "label": "Center",
+              "group": "Slice",
+              "advanced": true
+            }
           },
           "reviewed_homonym": {
             "review_id": "ADR-0006",
             "reason": "impv's center is a point in the direction plane, distinct from imstat's fit-half center estimator."
-          },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "length"}}
           }
         },
         {
           "name": "length",
-          "concept": {"id": "impv.length", "semantic_revision": 1},
-          "order": 6,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--length"], "metavar": "length"},
-            "provider": {"field": "length"},
-            "python": {"name": "length"},
-            "presentation": {"label": "Length", "group": "Slice", "advanced": true}
+          "concept": {
+            "id": "impv.length",
+            "semantic_revision": 2
           },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "length"}}
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--length"
+              ],
+              "metavar": "length"
+            },
+            "provider": {
+              "field": "length"
+            },
+            "python": {
+              "name": "length",
+              "type_hint": "float | str | Mapping[str, ParameterData]"
+            },
+            "presentation": {
+              "label": "Length",
+              "group": "Slice",
+              "advanced": true
+            }
           }
         },
         {
           "name": "pa",
-          "concept": {"id": "impv.pa", "semantic_revision": 1},
-          "order": 7,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--pa"], "metavar": "angle"},
-            "provider": {"field": "pa"},
-            "python": {"name": "pa"},
-            "presentation": {"label": "Position Angle", "group": "Slice", "advanced": true}
+          "concept": {
+            "id": "impv.pa",
+            "semantic_revision": 2
           },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "equals", "parameter": "mode", "value": {"kind": "string", "value": "length"}}
+          "order": 7,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--pa"
+              ],
+              "metavar": "angle"
+            },
+            "provider": {
+              "field": "pa"
+            },
+            "python": {
+              "name": "pa",
+              "type_hint": "str | Mapping[str, ParameterData]"
+            },
+            "presentation": {
+              "label": "Position Angle",
+              "group": "Slice",
+              "advanced": true
+            }
           }
         },
         {
           "name": "unit",
-          "concept": {"id": "impv.unit", "semantic_revision": 1},
-          "order": 9,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": "arcsec"}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--unit"], "metavar": "unit"},
-            "provider": {"field": "unit"},
-            "python": {"name": "unit"},
-            "presentation": {"label": "Offset Unit", "group": "Output", "advanced": true}
+          "concept": {
+            "id": "impv.unit",
+            "semantic_revision": 1
           },
-          "unimplemented": {"issue": 977}
+          "order": 9,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "arcsec"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--unit"
+              ],
+              "metavar": "unit"
+            },
+            "provider": {
+              "field": "unit"
+            },
+            "python": {
+              "name": "unit"
+            },
+            "presentation": {
+              "label": "Offset Unit",
+              "group": "Output",
+              "advanced": true
+            }
+          }
         },
         {
           "name": "region",
-          "concept": {"id": "image.selection.region", "semantic_revision": 1},
+          "concept": {
+            "id": "impv.region",
+            "semantic_revision": 1
+          },
           "order": 11,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "context_role": "region_reference",
           "projections": {
-            "cli": {"flags": ["--region"], "metavar": "region"},
-            "provider": {"field": "region"},
-            "python": {"name": "region"},
-            "presentation": {"label": "Region", "group": "Selection", "advanced": true}
+            "cli": {
+              "flags": [
+                "--region"
+              ],
+              "metavar": "region"
+            },
+            "provider": {
+              "field": "region"
+            },
+            "python": {
+              "name": "region",
+              "type_hint": "StrPath | Mapping[str, ParameterData]"
+            },
+            "presentation": {
+              "label": "Region",
+              "group": "Selection",
+              "advanced": true
+            }
           },
-          "unimplemented": {"issue": 977}
+          "reviewed_homonym": {
+            "review_id": "#977",
+            "reason": "This image region selection accepts a casacore region record and refuses direction-axis cropping."
+          }
         },
         {
           "name": "stokes",
-          "concept": {"id": "image.selection.stokes", "semantic_revision": 1},
-          "order": 13,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--stokes"], "metavar": "stokes"},
-            "provider": {"field": "stokes"},
-            "python": {"name": "stokes"},
-            "presentation": {"label": "Stokes", "group": "Selection", "advanced": true}
+          "concept": {
+            "id": "image.selection.stokes",
+            "semantic_revision": 1
           },
-          "unimplemented": {"issue": 977}
+          "order": 13,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--stokes"
+              ],
+              "metavar": "stokes"
+            },
+            "provider": {
+              "field": "stokes",
+              "adapter": "omit_none"
+            },
+            "python": {
+              "name": "stokes"
+            },
+            "presentation": {
+              "label": "Stokes",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
         },
         {
           "name": "mask",
-          "concept": {"id": "parameter.mask", "semantic_revision": 1},
+          "concept": {
+            "id": "parameter.mask",
+            "semantic_revision": 1
+          },
           "order": 14,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
           "context_role": "mask_reference",
           "projections": {
-            "cli": {"flags": ["--mask"], "metavar": "mask"},
-            "provider": {"field": "mask"},
-            "python": {"name": "mask"},
-            "presentation": {"label": "Mask", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+            "cli": {
+              "flags": [
+                "--mask"
+              ],
+              "metavar": "mask"
+            },
+            "provider": {
+              "field": "mask"
+            },
+            "python": {
+              "name": "mask"
+            },
+            "presentation": {
+              "label": "Mask",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
         },
         {
           "name": "stretch",
-          "concept": {"id": "parameter.stretch", "semantic_revision": 2},
-          "order": 15,
-          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
-          "required_when": {"kind": "never"},
-          "active_when": {"kind": "always"},
-          "projections": {
-            "cli": {"flags": ["--stretch"]},
-            "provider": {"field": "stretch"},
-            "python": {"name": "stretch"},
-            "presentation": {"label": "Stretch Mask", "group": "Selection", "advanced": true}
+          "concept": {
+            "id": "parameter.stretch",
+            "semantic_revision": 2
           },
-          "unimplemented": {
-            "issue": 977,
-            "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "mask", "value": {"kind": "string", "value": ""}}}
+          "order": 15,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--stretch"
+              ]
+            },
+            "provider": {
+              "field": "stretch"
+            },
+            "python": {
+              "name": "stretch"
+            },
+            "presentation": {
+              "label": "Stretch Mask",
+              "group": "Selection",
+              "advanced": true
+            }
           }
         },
         {
@@ -26115,7 +26336,7 @@
           "name": "start",
           "concept": {
             "id": "parameter.start",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 3,
           "default": {
@@ -26126,7 +26347,7 @@
             }
           },
           "required_when": {
-            "kind": "always"
+            "kind": "never"
           },
           "active_when": {
             "kind": "always"
@@ -26149,7 +26370,7 @@
             },
             "python": {
               "name": "start",
-              "type_hint": null
+              "type_hint": "str | list[float] | tuple[float, float] | list[str] | tuple[str, str]"
             },
             "presentation": {
               "label": "Start",
@@ -26164,7 +26385,7 @@
           "name": "end",
           "concept": {
             "id": "parameter.end",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 4,
           "default": {
@@ -26175,7 +26396,7 @@
             }
           },
           "required_when": {
-            "kind": "always"
+            "kind": "never"
           },
           "active_when": {
             "kind": "always"
@@ -26198,7 +26419,7 @@
             },
             "python": {
               "name": "end",
-              "type_hint": null
+              "type_hint": "str | list[float] | tuple[float, float] | list[str] | tuple[str, str]"
             },
             "presentation": {
               "label": "End",
@@ -26213,7 +26434,7 @@
           "name": "width",
           "concept": {
             "id": "impv.width",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 8,
           "default": {
@@ -26247,7 +26468,7 @@
             },
             "python": {
               "name": "width",
-              "type_hint": null
+              "type_hint": "int | str | Mapping[str, ParameterData]"
             },
             "presentation": {
               "label": "Width",

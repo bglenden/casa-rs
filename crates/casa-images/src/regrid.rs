@@ -814,10 +814,10 @@ pub fn regrid_complex_plane(
 
 /// One direction plane of the input, first axis fastest, with its mask
 /// (true where good) when it has one.
-struct Plane<'a> {
-    data: &'a [f64],
-    mask: Option<&'a [bool]>,
-    shape: [usize; 2],
+pub(crate) struct Plane<'a> {
+    pub(crate) data: &'a [f64],
+    pub(crate) mask: Option<&'a [bool]>,
+    pub(crate) shape: [usize; 2],
 }
 
 impl Plane<'_> {
@@ -829,7 +829,7 @@ impl Plane<'_> {
         self.mask.is_none_or(|mask| mask[i + j * self.shape[0]])
     }
 
-    fn sample(&self, method: RegridMethod, at: [f64; 2]) -> Option<f64> {
+    pub(crate) fn sample(&self, method: RegridMethod, at: [f64; 2]) -> Option<f64> {
         match method {
             RegridMethod::Nearest => self.nearest(at),
             RegridMethod::Linear => self.linear(at),
