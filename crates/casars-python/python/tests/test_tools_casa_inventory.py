@@ -60,7 +60,7 @@ IMPLEMENTED["coordsys"] = {
 }
 IMPLEMENTED["image"] = {
     "beamarea", "beamforconvolvedsize", "brightnessunit", "calc", "calcmask", "close", "commonbeam", "convertflux", "coordsys", "deconvolvefrombeam", "dohistory", "done", "fitsheader", "fromarray", "fromfits", "fromshape",
-    "getchunk", "haslock", "history", "imagecalc", "isconform", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
+    "getchunk", "getregion", "haslock", "history", "imagecalc", "isconform", "isopen", "ispersistent", "lock", "name", "open", "pixeltype", "putchunk", "remove", "removefile", "rename", "restoringbeam", "unlock",
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
     "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",
     "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "rotatebeam", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",

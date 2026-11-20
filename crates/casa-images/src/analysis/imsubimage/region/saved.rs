@@ -65,18 +65,17 @@ pub(super) fn parse_saved_region(
             compound::decode(region_name, rec, target_coords, full_shape, plane)
         }
         "LCSlicer" | "LCBox" => {
-            let (blc, trc) = if class_name == "LCSlicer" {
+            let (blc, trc, stride) = if class_name == "LCSlicer" {
                 let section = decode_lc_slicer(region_name, rec, target_coords, full_shape)?;
-                if let Some((axis, stride)) =
-                    section.stride.iter().enumerate().find(|&(_, &s)| s != 1)
-                {
-                    return Err(ImageError::InvalidMetadata(format!(
-                        "saved region '{region_name}' has non-unit stride {stride} on axis {axis}"
-                    )));
-                }
-                (section.lower, section.upper)
+                let stride = section
+                    .stride
+                    .iter()
+                    .any(|&step| step != 1)
+                    .then_some(section.stride);
+                (section.lower, section.upper, stride)
             } else {
-                decode_lc_box(region_name, rec, full_shape)?
+                let (lower, upper) = decode_lc_box(region_name, rec, full_shape)?;
+                (lower, upper, None)
             };
             let shapes = if full_shape.len() >= 2 {
                 vec![
@@ -96,6 +95,7 @@ pub(super) fn parse_saved_region(
                 shapes,
                 saved_mask: None,
                 saved_bounds: Some((blc, shape)),
+                stride,
             })
         }
         "WCBox" => {
@@ -118,6 +118,7 @@ pub(super) fn parse_saved_region(
                 shapes,
                 saved_mask: None,
                 saved_bounds: Some((blc, shape)),
+                stride: None,
             })
         }
         "WCEllipsoid" => {
@@ -128,6 +129,7 @@ pub(super) fn parse_saved_region(
                 shapes: vec![ellipse.into()],
                 saved_mask: None,
                 saved_bounds: Some(bounds),
+                stride: None,
             })
         }
         other => Err(ImageError::InvalidMetadata(format!(
@@ -171,16 +173,17 @@ fn polygon_region(
         shapes: Vec::new(),
         saved_mask: Some(SavedRegionMask::Whole(mask)),
         saved_bounds: Some((min_pt, shape)),
+        stride: None,
     })
 }
 
-pub(in crate::analysis::imsubimage) struct SlicerSection {
-    pub(in crate::analysis::imsubimage) lower: Vec<usize>,
-    pub(in crate::analysis::imsubimage) upper: Vec<usize>,
-    pub(in crate::analysis::imsubimage) stride: Vec<usize>,
+struct SlicerSection {
+    lower: Vec<usize>,
+    upper: Vec<usize>,
+    stride: Vec<usize>,
 }
 
-pub(in crate::analysis::imsubimage) fn decode_lc_slicer(
+fn decode_lc_slicer(
     name: &str,
     rec: &RecordValue,
     coords: &CoordinateSystem,
