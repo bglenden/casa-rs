@@ -960,6 +960,9 @@ region selects the same section from both inputs. The output copies the real
 image's metadata and uses the intersection of the input masks.
 Use <code>ia.isconform("other.im")</code> to check whether a float image has the same
 shape and compatible coordinates as a native float or complex image.
+Use <code>ia.convertflux(value, major, minor)</code> to convert a Gaussian's integrated
+flux to peak brightness. Pass <code>topeak=False</code> for the reverse conversion and
+select the channel and polarization for an image with per-plane beams.
 Use <code>ia.fitsheader()</code> to inspect the FITS header for a float image without
 exporting the pixels. Pass <code>exclude="HISTORY"</code> to omit the log from the returned
 dictionary. Use <code>retstr=True</code> to return the complete string of 80-byte cards.</p>
