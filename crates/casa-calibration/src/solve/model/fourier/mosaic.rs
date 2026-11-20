@@ -10,7 +10,7 @@ use casa_imaging_operator::{
     MosaicWindow, PolarizationRouting, SavedMosaicPlanes,
 };
 use casa_ms::{SubtableId, convert_frequency_to_frame, voltage_pattern};
-use casa_numerics::PrimaryBeam;
+use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, Complex32, RecordValue, Value};
@@ -257,19 +257,28 @@ fn common_kernels(
         // MosaicFT::fromRecord recreates its VPSkyJones at 1 THz.
         1.0e12
     };
-    let beam = PrimaryBeam::for_telescope(telescope, frequency)
-        .ok_or_else(|| model_error(format!("no legacy common mosaic beam for {telescope}")))?;
+    let antennas = row.ms.antenna().map_err(model_error)?;
+    let pattern = match telescope {
+        "NRAO140FT" => BeamPattern::for_dish_diameter(43.),
+        "NONE" => BeamPattern::polynomial(180. * 60., &[1.], true, false),
+        // VPSkyJones builds a numeric beam from the first dish when its
+        // telescope lookup returns UNKNOWN. Retain it for virtual models.
+        "DEFAULT" => {
+            BeamPattern::for_dish_diameter(antennas.dish_diameter(0).map_err(model_error)?)
+        }
+        _ => PrimaryBeam::for_telescope(telescope, frequency).map(PrimaryBeam::pattern),
+    }
+    .ok_or_else(|| model_error(format!("no legacy common mosaic beam for {telescope}")))?;
     let offset = common_beam_offset(row, direction, vla_image, telescope.contains("VLA"))?;
     let kernels = MosaicPb::simple_shifted_pattern_screens(
         geometry,
         polarization,
-        &beam.pattern(),
+        &pattern,
         std::slice::from_ref(window),
         offset,
     )
     .and_then(|screens| screens.finish())
     .map_err(model_error)?;
-    let antennas = row.ms.antenna().map_err(model_error)?;
     Ok((kernels, vec![0; antennas.row_count()]))
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare legacy VLA common-beam scratch and virtual predictions."""
+"""Compare legacy common-beam scratch and virtual predictions."""
 
 import argparse
 import json
@@ -18,11 +18,11 @@ from imager_facets_oracle import model_grids, model_recipe
 from imager_mosaic_oracle import compare, consume, field_samples, fixture
 
 
-def prepare(root, shifted):
+def prepare(root, shifted, telescope='VLA'):
     source, with_pointing, model = fixture(root)
     tables = table()
     assert tables.open(str(source / 'OBSERVATION'), nomodify=False)
-    assert tables.putcell('TELESCOPE_NAME', 0, 'VLA') and tables.close()
+    assert tables.putcell('TELESCOPE_NAME', 0, telescope) and tables.close()
     assert tables.open(str(source / 'SPECTRAL_WINDOW'), nomodify=False)
     for column in ('CHAN_FREQ', 'REF_FREQUENCY', 'CHAN_WIDTH',
                    'EFFECTIVE_BW', 'RESOLUTION', 'TOTAL_BANDWIDTH'):
@@ -81,17 +81,19 @@ def casa_reference(root, scratch):
     return result.returncode
 
 
-def run_case(root, shifted):
+def run_case(root, shifted, telescope='VLA'):
     from casars.tools import imager as native
 
     root.mkdir(parents=True)
-    source, model = prepare(root, shifted)
+    source, model = prepare(root, shifted, telescope)
     reference_exit = {name: casa_reference(root, scratch)
                       for name, scratch in [('scratch', True), ('virtual', False)]}
     predict(imager, source, root / 'unweighted.ms', model, True, 'ft')
     expected = field_samples(root / 'casa-scratch.ms')
+    assert all(abs(values).max() > 1. for values in expected)
     unweighted = field_samples(root / 'unweighted.ms')
-    assert all(relative_rms(a, b) > .01 for a, b in zip(expected, unweighted, strict=True))
+    if telescope != 'NONE':
+        assert all(relative_rms(a, b) > .01 for a, b in zip(expected, unweighted, strict=True))
     predict(native, source, root / 'native-scratch.ms', model, True)
     evidence = {'scratch': compare(field_samples(root / 'native-scratch.ms'), expected),
                 'casa_reference_exit': reference_exit}
@@ -99,17 +101,29 @@ def run_case(root, shifted):
     predict(native, source, root / 'native-virtual.ms', model, False)
     for writer in ('casa', 'native'):
         grid, = model_grids(model_recipe(root / f'{writer}-virtual.ms'))
-        assert grid['name'] == 'MosaicFT' and grid['telescope'] == 'VLA'
+        assert grid['name'] == 'MosaicFT' and grid['telescope'] == telescope
         assert grid['convsampling'] == 16 and grid['pbconvfunc']['name'] == 'SimplePBConvFunc'
         ia = image()
         assert ia.open(grid['diskimage'])
         coords = ia.coordsys()
         assert coords.telescope() == 'UNKNOWN' and coords.observer() == 'UNKNOWN'
         assert coords.done() and ia.done()
-    reference = consume(root / 'casa-virtual.ms', root / 'virtual-casa-casa.ms', 'casa')
-    if not shifted:
+    pairings = [('casa', 'native'), ('native', 'casa'), ('native', 'native')]
+    if telescope == 'DEFAULT':
+        for writer in ('casa', 'native'):
+            try:
+                consume(root / f'{writer}-virtual.ms', root / f'virtual-{writer}-casa.ms', 'casa')
+            except RuntimeError as error:
+                assert 'Failed to recovermosaic FTmachine' in str(error), error
+            else:
+                raise AssertionError('CASA reopened a DEFAULT telescope beam')
+        reference = expected
+        pairings.remove(('native', 'casa'))
+    else:
+        reference = consume(root / 'casa-virtual.ms', root / 'virtual-casa-casa.ms', 'casa')
+    if not shifted and telescope == 'VLA':
         assert all(relative_rms(a, b) > .001 for a, b in zip(reference, expected, strict=True))
-    for writer, reader in [('casa', 'native'), ('native', 'casa'), ('native', 'native')]:
+    for writer, reader in pairings:
         label = f'virtual-{writer}-{reader}'
         actual = consume(root / f'{writer}-virtual.ms', root / f'{label}.ms', reader)
         evidence[label] = compare(actual, reference)
@@ -131,6 +145,7 @@ def run(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--telescope', default='VLA')
     parser.add_argument('--casa-reference', choices=['scratch', 'virtual'])
     args = parser.parse_args()
     root = args.work.resolve()
@@ -139,7 +154,8 @@ def main():
         predict(imager, root / 'source.ms', root / f'casa-{args.casa_reference}.ms',
                 root / 'mosaic.im', args.casa_reference == 'scratch', child=True)
         return
-    evidence = run(root)
+    assert casatasks.version_string() == '6.7.6.14'
+    evidence = run(root) if args.telescope == 'VLA' else run_case(root, False, args.telescope)
     (root / 'results.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps(evidence, indent=2), flush=True)
 
