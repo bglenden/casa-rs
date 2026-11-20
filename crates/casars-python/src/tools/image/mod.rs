@@ -37,6 +37,7 @@ mod records;
 mod region_read;
 mod replace_masked;
 mod serialization;
+mod statistics;
 mod stubs;
 mod subimage;
 mod summary;
