@@ -27,6 +27,7 @@ CASA behaviours casa-rs does not follow:
 [spectral vectors with non-native byte order](#coordsys-doppler-conversion-can-misread-byte-swapped-arrays),
 [coordinate matrices with invalid rank or collapsed samples](#coordsys-linear-transform-input-can-abort-or-make-a-record-unreadable),
 [a statistics logfile reused by a later call](#imagestatistics-can-overwrite-a-logfile-omitted-from-the-current-call),
+[per-polarization flux on a selected channel](#image-statistics-can-use-the-wrong-beam-for-a-selected-channel),
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
 [reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
@@ -8073,6 +8074,15 @@ process. casa-rs raises an error for the duplicate axis.
 
 The pinned biweight algorithm can also terminate when every selected
 pixel is masked. casa-rs returns a recoverable error for the empty sample.
+
+## Image statistics can use the wrong beam for a selected channel
+
+On a direction, Stokes and spectral cube with distinct beams for I and Q,
+select one channel and compute `ia.statistics(axes=[0, 1], region=...)`.
+CASA 6.7.6.14 can divide both polarization sums by the beam area for I.
+The selected channel is degenerate, and the beam lookup assigns the
+polarization index to the channel dimension. casa-rs maps each result to
+its original channel and Stokes beam.
 
 ## Setting the pixels of a complex image can terminate CASA
 

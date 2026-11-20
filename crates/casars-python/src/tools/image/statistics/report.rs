@@ -12,6 +12,7 @@ use casa_coordinates::display::{
 };
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
 use casa_lattices::{StatisticsAlgorithm, StatisticsAlgorithmKind};
+use casa_types::quanta::Unit;
 
 use super::{Chunk, SpectralVelocity};
 
@@ -198,11 +199,10 @@ impl StatisticsReport<'_> {
     }
 
     fn flux_summary(&self, flux: f64) -> String {
-        let mut unit = self
-            .units
-            .strip_suffix("/beam")
-            .unwrap_or(self.units)
-            .to_owned();
+        let mut unit = self.units.split_once("/beam").map_or_else(
+            || self.units.to_owned(),
+            |(prefix, suffix)| format!("{prefix}{suffix}"),
+        );
         if self.units.contains('K') {
             unit.push_str(".arcsec2");
         }
@@ -229,11 +229,17 @@ impl StatisticsReport<'_> {
                 );
             }
         }
-        summary_number(
-            "         -- flux density [flux]:                    ",
-            flux,
-            Some(&unit),
-        )
+        let integrated = Unit::new(&unit).is_ok_and(|actual| {
+            ["Jy.km/s", "Jy.Hz", "K.arcsec2.km/s", "K.arcsec2.Hz"]
+                .into_iter()
+                .any(|name| Unit::new(name).is_ok_and(|target| actual.conformant(&target)))
+        });
+        let label = if integrated {
+            "         -- flux [flux]:                            "
+        } else {
+            "         -- flux density [flux]:                    "
+        };
+        summary_number(label, flux, Some(&unit))
     }
 
     pub(super) fn publish(

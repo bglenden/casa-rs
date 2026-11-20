@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, format_world_display};
-use casa_images::{ImageInterface, ImagePixel, analysis::statistics_flux_scale};
+use casa_images::{ImageInterface, ImagePixel};
 use casa_lattices::{
     ExecutionResources, FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm,
     StatsElement,
@@ -9,7 +9,7 @@ use casa_lattices::{
 use casa_types::Value;
 use casa_types::measures::MeasFrame;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::quanta::{Quantity, Unit};
+use casa_types::quanta::Unit;
 use ndarray::{ArrayD, Zip};
 use pyo3::prelude::*;
 
@@ -25,6 +25,7 @@ use super::pixels::{Chunk, and_mask, collapse_axes};
 use super::region_read::region_argument;
 use super::{PyImageTool, stub};
 
+mod flux;
 mod report;
 mod sampled;
 
@@ -156,24 +157,65 @@ fn calculate<T: ImagePixel + StatsElement>(
     let global = options.axes.is_empty() || options.axes.len() == chunk.size.len();
     let mask = and_mask(chunk.mask(image)?, options.expression.take());
     let mut fields = region_fields(image.coordinates(), chunk)?;
+    let report_flux = flux::allowed(image, &options.axes);
+    let flux_plan = report_flux
+        .then(|| {
+            flux::plan(
+                image,
+                chunk,
+                &options.axes,
+                global,
+                options.spectral_velocity,
+            )
+        })
+        .flatten();
     if !matches!(options.algorithm, StatisticsAlgorithm::Classic)
         && !matches!(options.algorithm, StatisticsAlgorithm::HingesFences { fence } if fence < 0.0)
     {
-        let scale = flux_scale(
-            image,
-            chunk,
-            &options.axes,
-            global,
-            options.spectral_velocity,
-        );
         let iterations = sampled::collect(
             &selection,
             chunk,
             &options,
             mask.as_ref(),
-            scale,
+            flux_plan
+                .as_ref()
+                .filter(|plan| plan.integral.is_none())
+                .map(|plan| &plan.scale),
             &mut fields,
         )?;
+        if !report_flux {
+            fields.retain(|(name, _)| *name != "flux");
+        }
+        if let Some(plan) = flux_plan
+            && let Some(integral) = &plan.integral
+            && !matches!(options.algorithm, StatisticsAlgorithm::Biweight { .. })
+            && !fields.iter().any(|(name, _)| *name == "flux")
+        {
+            let density_options = StatsOptions {
+                axes: integral.density_axes.clone(),
+                robust: false,
+                ..options
+            };
+            let mut densities = Vec::new();
+            sampled::collect(
+                &selection,
+                chunk,
+                &density_options,
+                mask.as_ref(),
+                Some(&plan.scale),
+                &mut densities,
+            )?;
+            if let Some((_, CasaValue::Floats { values, .. })) =
+                densities.into_iter().find(|(name, _)| *name == "flux")
+            {
+                fields.push((
+                    "flux",
+                    CasaValue::floats(vec![
+                        values.into_iter().sum::<f64>() * integral.channel_width,
+                    ]),
+                ));
+            }
+        }
         return Ok((CasaValue::record(fields), iterations));
     }
     let lattice: &dyn Lattice<T> =
@@ -223,24 +265,41 @@ fn calculate<T: ImagePixel + StatsElement>(
         fields.push((name, value));
     }
     if empty {
-        fields.push(("flux", CasaValue::floats(Vec::new())));
-    } else {
-        if let Some(scale) = flux_scale(
-            image,
-            chunk,
-            &options.axes,
-            global,
-            options.spectral_velocity,
-        ) {
-            let mut sums = stats.get_statistic(Statistic::Sum).map_err(raised)?;
-            Zip::from(&mut sums).and(&npts).for_each(|sum, &count| {
-                *sum = if count > 0.0 { *sum * scale } else { 0.0 };
-            });
-            fields.push(("flux", floating_array(sums)));
+        if report_flux {
+            fields.push(("flux", CasaValue::floats(Vec::new())));
         }
+    } else {
         if global {
             let (min, max) = stats.get_min_max_pos().map_err(raised)?;
             add_extrema(&mut fields, image.coordinates(), chunk, [min, max])?;
+        }
+        if let Some(plan) = flux_plan {
+            let counts = if let Some(integral) = &plan.integral {
+                stats.set_axes(integral.density_axes.clone());
+                stats.get_statistic(Statistic::Npts).map_err(raised)?
+            } else {
+                npts
+            };
+            let mut sums = stats.get_statistic(Statistic::Sum).map_err(raised)?;
+            for (offset, (sum, &count)) in sums
+                .view_mut()
+                .reversed_axes()
+                .iter_mut()
+                .zip(counts.reversed_axes().iter())
+                .enumerate()
+            {
+                *sum = if count > 0.0 {
+                    *sum * plan.scale.for_plane(offset)
+                } else {
+                    0.0
+                };
+            }
+            let output = if let Some(integral) = plan.integral {
+                CasaValue::floats(vec![sums.sum() * integral.channel_width])
+            } else {
+                floating_array(sums)
+            };
+            fields.push(("flux", output));
         }
     }
     Ok((CasaValue::record(fields), Vec::new()))
@@ -330,76 +389,6 @@ fn algorithm(
         })
     } else {
         Err(raised(format!("Unsupported algorithm {name}")))
-    }
-}
-
-fn flux_scale<T: ImagePixel>(
-    image: &impl ImageInterface<T>,
-    chunk: &Chunk,
-    axes: &[usize],
-    global: bool,
-    spectral_velocity: Option<&SpectralVelocity>,
-) -> Option<f64> {
-    let collapsed = |axis| global || axes.contains(&axis);
-    let axis_types = image.axis_types();
-    if !axis_types
-        .iter()
-        .enumerate()
-        .any(|(axis, kind)| collapsed(axis) && *kind == CoordinateType::Direction)
-        || axis_types.iter().enumerate().any(|(axis, kind)| {
-            collapsed(axis)
-                && chunk.size[axis] > 1
-                && !matches!(kind, CoordinateType::Direction | CoordinateType::Spectral)
-        })
-    {
-        return None;
-    }
-    let coordinates = image.coordinates();
-    let spectral_axis = image
-        .find_axis(CoordinateType::Spectral)
-        .filter(|&axis| collapsed(axis) && chunk.size[axis] > 1);
-    if spectral_axis.is_some()
-        && let Some(index) = coordinates.find_coordinate(CoordinateType::Spectral)
-        && let CoordinateModel::Spectral(spectral) = coordinates.coordinate(index)
-        && !spectral.has_linear_mapping()
-    {
-        return None;
-    }
-    let channels =
-        spectral_axis.map(|axis| [chunk.start[axis], chunk.start[axis] + chunk.stride[axis]]);
-    let units = image.units();
-    let beam = if let Some(brightness) = units.strip_suffix("/beam") {
-        let jansky = Unit::new("Jy").expect("standard Jy unit");
-        Quantity::new(1.0, brightness)
-            .ok()?
-            .get_value_in(&jansky)
-            .ok()?;
-        image.image_info().ok()?.beam_set.single_beam()
-    } else {
-        None
-    };
-    let direction_stride = axis_types
-        .iter()
-        .zip(&chunk.stride)
-        .filter(|(kind, _)| **kind == CoordinateType::Direction)
-        .map(|(_, &step)| step as f64)
-        .product::<f64>();
-    if let (Some([first, second]), Some(velocity)) = (channels, spectral_velocity) {
-        let index = coordinates.find_coordinate(CoordinateType::Spectral)?;
-        let model = coordinates.coordinate(index);
-        let CoordinateModel::Spectral(spectral) = model else {
-            return None;
-        };
-        let to_velocity = |pixel| {
-            let frequency = model.to_world(&[pixel as f64]).ok()?[0];
-            velocity.velocity_for_ratio(frequency.abs() / spectral.rest_frequency())
-        };
-        let width = (to_velocity(second)? - to_velocity(first)?).abs();
-        statistics_flux_scale(coordinates, units, beam, None)
-            .map(|scale| scale * direction_stride * width)
-    } else {
-        statistics_flux_scale(coordinates, units, beam, channels)
-            .map(|scale| scale * direction_stride)
     }
 }
 
