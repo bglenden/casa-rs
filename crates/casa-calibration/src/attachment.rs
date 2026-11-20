@@ -7,7 +7,7 @@ use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::{MeasurementSet, MsResult, MsSelection, MsSelectionError, ResolvedMsSelection};
 use casa_tables::{TableError, TableWriteLock, table_cache_name};
 
-use crate::model_columns::{has_column, initialize_scratch_column};
+use crate::model_columns::{has_column, initialize_calibrater_columns, initialize_scratch_column};
 use crate::session::resolve_casa_calibration_selection;
 
 pub(crate) struct OpenedMs {
@@ -34,6 +34,22 @@ impl OpenedMs {
 
     pub(crate) fn initialize(mut self, column: VisibilityDataColumn) -> MsResult<Self> {
         self.lock = initialize_scratch_column(&mut self.measurement_set, column, self.lock)?;
+        Ok(self)
+    }
+
+    pub(crate) fn initialize_calibrater(
+        mut self,
+        compress: bool,
+        add_corrected: bool,
+        add_model: bool,
+    ) -> MsResult<Self> {
+        self.lock = initialize_calibrater_columns(
+            &mut self.measurement_set,
+            compress,
+            add_corrected,
+            add_model,
+            self.lock,
+        )?;
         Ok(self)
     }
 

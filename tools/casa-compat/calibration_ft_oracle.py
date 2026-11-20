@@ -359,12 +359,17 @@ def fits_model(root, source, native, images):
     assert tool.open(images['point'])
     assert tool.tofits(outfile=str(path))
     tool.done()
-    for scratch in (False, True):
+    for name, scratch, models in (
+        ('virtual', False, str(path)),
+        ('scratch', True, str(path)),
+        ('taylor', True, [str(path), images['term1']]),
+    ):
         states = []
         for label, api in [('casa', casa), ('native', native)]:
-            dataset = root/f'fits-model-{scratch}-{label}.ms'
+            dataset = root/f'fits-model-{name}-{label}.ms'
             prepare(source, dataset)
-            assert api.ft(str(dataset), usescratch=scratch, model=str(path)) is None
+            assert api.ft(str(dataset), usescratch=scratch, model=models,
+                          nterms=2 if name == 'taylor' else 1) is None
             states.append(state(dataset))
         compare_outputs(states[1], states[0])
     return {'same_model_and_scratch_state': True}

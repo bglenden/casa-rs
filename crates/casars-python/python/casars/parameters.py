@@ -404,6 +404,8 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         explicit = self._explicit_values()
         originals = {name: value for name, value in self._overrides.items()
                      if name in explicit and (isinstance(value, str) or name == "spwmap"
+                                              or (self.surface in ("clearcal", "delmod", "ft")
+                                                  and name in ("addmodel", "otf", "scr", "incremental"))
                                               or (self.surface == "flagdata"
                                                   and name in ("chanbin", "timedev", "freqdev")))}
         projected = _native().parameter_provider_invocation(self.surface, explicit, originals)

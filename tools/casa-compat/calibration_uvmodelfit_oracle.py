@@ -17,7 +17,8 @@ from casatools import componentlist, table
 import numpy as np
 
 from bandpass_oracle import source_data
-from calibration_ft_oracle import coordinates, initial_time_range
+from applycal_mms_oracle import referenced_tables
+from calibration_ft_oracle import compare_outputs, coordinates, initial_time_range
 from calibration_scratch_oracle import prepare, state
 
 
@@ -165,22 +166,31 @@ def compare(root, source, native, name, options, *, output=True, error=None, par
         else:
             copy_for_case(source, dataset)
         before = state(dataset)
+        call_options = options() if callable(options) else options
         try:
             if output:
-                result = api.uvmodelfit(str(dataset), **options, outfile=str(table_path))
+                result = api.uvmodelfit(str(dataset), **call_options, outfile=str(table_path))
             else:
-                result, report = fit_report(api, dataset, options)
+                result, report = fit_report(api, dataset, call_options)
                 reports.append(report)
         except RuntimeError as actual:
             assert error and error in str(actual)
         else:
             assert result is None and error is None
         after = state(dataset)
-        np.testing.assert_equal(after[1], before[1])
+        assert {'MODEL_DATA', 'CORRECTED_DATA'} <= after[0].keys()
+        if 'MODEL_DATA' in before[0]:
+            np.testing.assert_equal(after[1], before[1])
+        else:
+            assert after[1][:2] == ({}, {})
         for column, values in before[0].items():
             np.testing.assert_array_equal(after[0][column], values)
-        outcomes.append((after[0], component(table_path) if output and not error else None))
-    np.testing.assert_equal(outcomes[1][0], outcomes[0][0])
+        members = [state(Path(member)) for member in referenced_tables(dataset)] if partition else []
+        outcomes.append((after, component(table_path) if output and not error else None, members))
+    compare_outputs(outcomes[1][0], outcomes[0][0])
+    for actual, expected in zip(outcomes[1][2], outcomes[0][2], strict=True):
+        assert {'MODEL_DATA', 'CORRECTED_DATA'} <= actual[0].keys()
+        compare_outputs(actual, expected)
     if reports:
         np.testing.assert_allclose(reports[1], reports[0], atol=5e-7, rtol=5e-6)
         return {'reported_values_and_errors': True}
@@ -240,6 +250,12 @@ def main():
     flagged = flagged_fixture(root, point)
     all_flagged = flagged_fixture(root, point, all_rows=True)
     polynomial, small_weights = phase_and_weight_fixtures(root, point)
+    virtual_only = root/'virtual-only.ms'
+    corrected_and_virtual = root/'corrected-and-virtual.ms'
+    scratch_and_virtual = root/'scratch-and-virtual.ms'
+    prepare(bare, virtual_only, virtual=True)
+    prepare(point, corrected_and_virtual, corrected=True, virtual=True)
+    prepare(point, scratch_and_virtual, corrected=True, model=True, virtual=True)
     rows = [
         ('point', point, dict(field='0', sourcepar=[1.5, .01, -.01], niter=10)),
         ('flux-only', point, dict(field='0', sourcepar=[1.2, .13, -.12],
@@ -260,6 +276,13 @@ def main():
               sourcepar=[2.3, .11, -.11, 1.31, .73, 30.], niter=14)),
         ('new-corrected', bare, dict(field='0', sourcepar=[1.5, .01, -.01], niter=10)),
         ('multi-ms-new-corrected', bare, dict(field='0', sourcepar=[1.5, .01, -.01], niter=10)),
+        ('new-scratch-and-remove-virtual', virtual_only, dict(field='0', niter=-1)),
+        ('multi-ms-new-both-scratch', virtual_only, dict(field='0', niter=-1)),
+        ('new-model-and-remove-virtual', corrected_and_virtual, dict(field='0', niter=-1)),
+        ('keep-scratch-and-virtual', scratch_and_virtual, dict(field='0', niter=-1)),
+        ('iterable-parameters', point, lambda: dict(field='0', niter=np.int64(0),
+              sourcepar=(value for value in [np.float32(1.), .13, -.12]),
+              varypar=iter([np.bool_(True), False, False]))),
         ('channel-range', nonuniform, dict(field='0', spw='0:1~7^2', sourcepar=[1.5, .13, -.12],
                                             varypar=[True, False, False])),
         ('disjoint-channels', nonuniform, dict(field='0', spw='0:0;3;7', sourcepar=[1.5, .13, -.12],

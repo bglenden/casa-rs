@@ -288,19 +288,27 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if error.completion.parameter == "width" and message == "list index out of range":
                 raise IndexError(message) from error
             raise
-    if name == "ft":
-        for selector in ("uvrange", "observation"):
-            if not isinstance(arguments[selector], str):
-                raise AssertionError(str({selector: ["must be of cStr type"]}))
-        terms = arguments["nterms"]
-        if isinstance(terms, bool):
-            values["nterms"] = int(terms)
+    if name in ("clearcal", "delmod", "ft", "uvmodelfit", "uvsub"):
+        from ._model_arguments import normalize
+
+        normalize(name, values, arguments)
         try:
             return run(name, **values).value
-        except TaskParameterError:
+        except TaskParameterError as error:
+            if name == "ft":
+                raise ValueError(error.completion.message) from error
             raise
-        except (TypeError, ValueError) as error:
-            raise AssertionError(str(error)) from error
+        except TaskExecutionError as error:
+            if error.completion.parameter in ("addmodel", "otf", "scr", "incremental"):
+                raise TypeError(error.completion.message) from error
+            if name == "ft" and error.completion.parameter == "reffreq":
+                raise RuntimeError(("*** Error *** In conversion of reffreq='", arguments["reffreq"],
+                                    "' to a numerical value")) from error
+            if name == "ft" and error.completion.parameter == "model":
+                raise RuntimeError(error.completion.message) from error
+            if name == "uvmodelfit":
+                raise RuntimeError(error.completion.message) from error
+            raise
     if name in ("smoothcal", "rerefant"):
         for path in ("vis", "tablein"):
             _validate_required_path(values, path, arguments[path])
@@ -312,20 +320,6 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 # The parameter profile carries finite values. This interval
                 # still covers the whole group for MeasurementSet epochs.
                 values["smoothtime"] = sys.float_info.max
-        try:
-            return run(name, **values).value
-        except (TypeError, ValueError) as error:
-            raise AssertionError(str(error)) from error
-    if name == "uvmodelfit":
-        shape = arguments["comptype"]
-        if isinstance(shape, str) and shape not in ("P", "G", "D"):
-            raise AssertionError(str({"comptype": [f"unallowed value {shape}"]}))
-        iterations = arguments["niter"]
-        if isinstance(iterations, bool):
-            values["niter"] = int(iterations)
-        source = arguments["sourcepar"]
-        if isinstance(source, (list, tuple)) and any(isinstance(item, bool) for item in source):
-            values["sourcepar"] = [float(item) if isinstance(item, bool) else item for item in source]
         try:
             return run(name, **values).value
         except (TypeError, ValueError) as error:
