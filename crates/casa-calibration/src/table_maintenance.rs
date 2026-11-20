@@ -12,7 +12,7 @@ use ndarray::{ArrayD, IxDyn};
 
 use crate::CalibrationOutputMode;
 use crate::constants::{COL_OBSERVATION_ID, TABLE_INFO_TYPE};
-use crate::paths::overlap;
+use crate::paths::{normalized, overlap, subtable_owner};
 use crate::solution_edit::{error_text, stage_calibration_table_edit};
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, SingleChannelFrequency,
@@ -59,9 +59,7 @@ pub(crate) fn prepare_empty_calibration_table<'a>(
     if destination.as_os_str().is_empty() {
         return Err("an output calibration table is required".into());
     }
-    if let Some(source) = measurement_set.path()
-        && overlap(source, destination).map_err(error_text)?
-    {
+    if overlaps_measurement_set(measurement_set, destination)? {
         return Err("the MeasurementSet and output calibration table overlap".into());
     }
     let complex = partype == "Complex";
@@ -109,6 +107,42 @@ pub(crate) fn prepare_empty_calibration_table<'a>(
             .map_err(error_text)?;
     }
     Ok(writer)
+}
+
+fn overlaps_measurement_set(ms: &MeasurementSet, destination: &Path) -> Result<bool, String> {
+    let Some(source) = ms.path() else {
+        return Ok(false);
+    };
+    let source = normalized(source).map_err(error_text)?;
+    let destination = normalized(destination).map_err(error_text)?;
+    if source.starts_with(&destination) {
+        return Ok(true);
+    }
+    // CASA can publish an independent calibration table inside the MS.
+    // Its storage files and subtables remain reserved to the owning table.
+    if let Ok(relative) = destination.strip_prefix(&source)
+        && let Some(first) = relative.iter().next()
+        && (first.to_string_lossy().starts_with("table.")
+            || SubtableId::ALL_REQUIRED
+                .iter()
+                .chain(SubtableId::ALL_OPTIONAL)
+                .any(|subtable| first == subtable.name()))
+    {
+        return Ok(true);
+    }
+    let main = ms.main_table();
+    let owner = subtable_owner(main, &source).map_err(error_text)?;
+    for link in main
+        .keywords()
+        .fields()
+        .iter()
+        .filter_map(|field| field.value.as_table_ref())
+    {
+        if overlap(&destination, &casa_tables::add_directory(link, &owner)).map_err(error_text)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn copy_standard_rows(source: &Table, target: &mut Table) -> Result<(), String> {
@@ -188,12 +222,15 @@ fn copy_moving_field_directions(ms: &MeasurementSet, target: &mut Table) -> Resu
 /// # Errors
 /// Returns a description of read, schema, or publication errors.
 pub fn update_calibration_table(path: &Path) -> Result<(), String> {
-    let table = Table::open(TableOptions::new(path)).map_err(error_text)?;
-    if table.info().table_type != TABLE_INFO_TYPE {
-        return Err("input is not a calibration table".into());
+    if !path.exists() {
+        return Err(format!("Table {} does not exist", path.display()));
     }
+    let table = Table::open(TableOptions::new(path)).map_err(error_text)?;
     if has_observation_column(&table) && table.keywords().get("OBSERVATION").is_some() {
         return Ok(());
+    }
+    if table.info().table_type != TABLE_INFO_TYPE {
+        return Err("input is not a calibration table".into());
     }
     drop(table);
     stage_calibration_table_edit(path, path, |table, stage| {
