@@ -52,10 +52,14 @@ use self::axes::direction_plane_axes;
 pub use self::exportfits::{ImageFitsHeader, image_fits_header};
 pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
-pub use self::lel_mask::{compile_image_tool_expression, evaluate_image_tool_mask};
+pub use self::lel_mask::{
+    ImageToolExpressionInputs, compile_image_tool_expression, evaluate_image_tool_mask,
+};
 pub use crate::expr_parser::ImageToolPixelExpression;
 mod lel_pixels;
-pub use self::lel_pixels::{calculate_complex_pixels, calculate_real_pixels};
+pub use self::lel_pixels::{
+    calculate_complex_pixels, calculate_real_pixels, materialize_image_tool_expression,
+};
 pub use self::list_log::imhead_list_log;
 #[cfg(casa_prebuilt_image_provider)]
 pub(crate) use self::schema::schema_maps_preserve_order;

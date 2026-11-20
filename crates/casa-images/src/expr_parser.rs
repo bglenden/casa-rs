@@ -1423,7 +1423,7 @@ where
                 }
                 let lhs = arg1.into_numeric(pos)?;
                 let rhs = arg2.into_numeric(pos)?;
-                lhs.spectral_index(rhs)
+                lhs.spectral_index_with_metadata(rhs, !self.casa_scalar_literals)
                     .map_err(|e| ExprParseError {
                         message: e.to_string(),
                         position: pos,
@@ -1447,7 +1447,7 @@ where
                 }
                 let u = arg1.into_numeric_or_constant(pos)?;
                 let q = arg2.into_numeric_or_constant(pos)?;
-                ImageExprBuilder::pa(u, q)
+                ImageExprBuilder::pa_with_metadata(u, q, !self.casa_scalar_literals)
                     .map_err(|e| ExprParseError {
                         message: e.to_string(),
                         position: pos,
@@ -1998,6 +1998,8 @@ pub enum ImageToolPixelExpression {
     Real(ImageExpression<f64>),
     /// Complex pixels, with double precision used for promoted operands.
     Complex(ImageExpression<Complex64>),
+    /// Boolean result, with its lattice shape when it has one.
+    Boolean(Vec<usize>),
 }
 
 pub(crate) fn compile_image_tool_pixels<'a, R>(
@@ -2022,9 +2024,7 @@ where
                 .compile()
                 .map(ImageToolPixelExpression::Real)
         }
-        ExprNode::Mask(_) => Err(ImageError::CasaSelection(
-            "Exception: Unsupported node data type Bool.".into(),
-        )),
+        ExprNode::Mask(mask) => Ok(ImageToolPixelExpression::Boolean(mask.shape().to_vec())),
     }
 }
 

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::ffi::{CStr, c_long};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 
 use casa_coordinates::{
     CoordinateSystem, FitsHeader, FitsValue, LinearCoordinate,
@@ -390,6 +392,78 @@ impl FitsSectionReader {
     ) -> Result<ArrayD<f32>, ImageError> {
         let mut file = self.file.lock().map_err(fits_error)?;
         read_section(&mut file, &self.shape, self.bitpix, start, count, stride)
+    }
+}
+
+struct SectionRequest {
+    start: Vec<usize>,
+    shape: Vec<usize>,
+    stride: Vec<usize>,
+    result: mpsc::SyncSender<Result<ArrayD<f32>, ImageError>>,
+}
+
+/// Retains the non-Send CFITSIO handle on one thread while expression workers
+/// request sections. The first pixel request opens the file.
+pub(crate) struct SharedFitsSectionReader {
+    requests: mpsc::Sender<Option<SectionRequest>>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl SharedFitsSectionReader {
+    pub(crate) fn new(path: PathBuf, hdu: usize, shape: Vec<usize>) -> Result<Self, ImageError> {
+        let (requests, receive) = mpsc::channel::<Option<SectionRequest>>();
+        let worker = thread::Builder::new()
+            .name("FITS expression reader".into())
+            .spawn(move || {
+                let mut reader = None;
+                while let Ok(Some(request)) = receive.recv() {
+                    let result = (|| {
+                        if reader.is_none() {
+                            reader = Some(FitsSectionReader::open(&path, hdu, &shape)?);
+                        }
+                        reader.as_ref().expect("open FITS section reader").read(
+                            &request.start,
+                            &request.shape,
+                            &request.stride,
+                        )
+                    })();
+                    let _ = request.result.send(result);
+                }
+            })
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        Ok(Self {
+            requests,
+            worker: Some(worker),
+        })
+    }
+
+    pub(crate) fn read(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<f32>, ImageError> {
+        let (result, receive) = mpsc::sync_channel(1);
+        self.requests
+            .send(Some(SectionRequest {
+                start: start.to_vec(),
+                shape: shape.to_vec(),
+                stride: stride.to_vec(),
+                result,
+            }))
+            .map_err(|_| ImageError::Io("FITS expression reader has closed".into()))?;
+        receive.recv().map_err(|_| {
+            ImageError::Io("FITS expression reader ended before returning data".into())
+        })?
+    }
+}
+
+impl Drop for SharedFitsSectionReader {
+    fn drop(&mut self) {
+        let _ = self.requests.send(None);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

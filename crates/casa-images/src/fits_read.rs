@@ -16,6 +16,7 @@ mod beams;
 mod history;
 mod tool_import;
 pub(crate) use history::{history_rows, read_cards};
+pub(crate) use tool_import::SharedFitsSectionReader;
 pub use tool_import::{FitsSectionReader, FitsToolImport, fits_section_image};
 
 /// A FITS image read into memory ([`read_fits_image`]).

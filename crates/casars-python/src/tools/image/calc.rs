@@ -24,6 +24,7 @@ impl PyImageTool {
             image.check_single_precision("calc")?;
             let expression = compile_image_tool_expression(pixels).map_err(raised)?;
             let (shape, coordinates) = match (&*image, &expression) {
+                (_, ImageToolPixelExpression::Boolean(_)) => return Err(raised("Exception: Unsupported node data type Bool.")),
                 (ImageHandle::Float(_), ImageToolPixelExpression::Real(expression)) =>
                     (expression.shape(), expression.coordinates()),
                 (ImageHandle::Complex(_), ImageToolPixelExpression::Complex(expression)) =>

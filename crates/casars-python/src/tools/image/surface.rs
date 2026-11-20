@@ -618,7 +618,7 @@ const METHODS: &[Method] = &[
             param("prec", K::Text, Text("float")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "imageconcat",

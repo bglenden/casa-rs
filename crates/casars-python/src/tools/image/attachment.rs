@@ -30,6 +30,7 @@ pub(super) fn registry() -> MutexGuard<'static, OpenImages> {
 pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,
+    retained_inputs: Vec<Self>,
 }
 
 impl AttachedImage {
@@ -40,6 +41,7 @@ impl AttachedImage {
                 use_lock: None,
             }),
             key: None,
+            retained_inputs: Vec::new(),
         }
     }
 
@@ -57,6 +59,7 @@ impl AttachedImage {
             return Ok(Self {
                 image,
                 key: Some(key),
+                retained_inputs: Vec::new(),
             });
         }
         let use_lock = key
@@ -73,6 +76,7 @@ impl AttachedImage {
         Ok(Self {
             image,
             key: Some(key),
+            retained_inputs: Vec::new(),
         })
     }
 
@@ -81,6 +85,21 @@ impl AttachedImage {
             .handle
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn open_expression_inputs<'a>(
+        paths: impl Iterator<Item = &'a Path>,
+    ) -> PyResult<Vec<Self>> {
+        let mut retained = Vec::new();
+        let mut registry = registry();
+        for path in paths.filter(|path| !path.is_file()) {
+            retained.push(Self::open(&mut registry, path)?);
+        }
+        Ok(retained)
+    }
+
+    pub(super) fn retain_expression_inputs(&mut self, inputs: Vec<Self>) {
+        self.retained_inputs.extend(inputs);
     }
 
     pub(super) fn is_persistent(&self) -> bool {
@@ -168,6 +187,7 @@ impl AttachedImage {
             return Ok(Self {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
+                retained_inputs: Vec::new(),
             });
         }
         if old_name
@@ -228,6 +248,7 @@ impl AttachedImage {
         Ok(Self {
             image,
             key: Some(target),
+            retained_inputs: Vec::new(),
         })
     }
 

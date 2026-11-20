@@ -3,7 +3,7 @@
 //! for image tasks.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use casa_coordinates::CoordinateSystem;
@@ -14,7 +14,7 @@ use crate::expr_parser::{
     HashMapResolver, ImageToolPixelExpression, ReplacementPixels, compile_image_tool_pixels,
     evaluate_replacement, parse_image_tool_mask, parse_subimage_mask_expr, referenced_images,
 };
-use crate::fits_read::{FitsSectionReader, FitsToolImport};
+use crate::fits_read::{FitsToolImport, SharedFitsSectionReader};
 use crate::image_expr::{ImageExprMeta, ImageExprValue};
 use crate::image_expr_lel::broadcast_array;
 use crate::{
@@ -64,20 +64,56 @@ fn is_single_precision(opened: &[(String, Operand)], name: &str) -> bool {
 /// Compile a real or complex LEL pixel expression for the public image tool.
 ///
 /// # Errors
-/// Returns an error for invalid expressions, undefined operands, or Boolean results.
+/// Returns an error for invalid expressions or undefined operands.
 pub fn compile_image_tool_expression(
     expression: &str,
 ) -> Result<ImageToolPixelExpression, ImageError> {
-    if expression.is_empty() {
-        return Err(ImageError::CasaSelection(
-            "Exception: You must specify an expression.".into(),
-        ));
+    ImageToolExpressionInputs::resolve(expression)?.compile()
+}
+
+struct ResolvedOperand {
+    name: String,
+    path: PathBuf,
+    mask: Option<String>,
+}
+
+/// Resolved image operand paths for a public calculator expression.
+pub struct ImageToolExpressionInputs<'a> {
+    expression: &'a str,
+    operands: Vec<ResolvedOperand>,
+}
+
+impl<'a> ImageToolExpressionInputs<'a> {
+    /// Resolve the operand paths relative to the current working directory.
+    /// # Errors
+    /// Returns an error for a missing operand or invalid expression.
+    pub fn resolve(expression: &'a str) -> Result<Self, ImageError> {
+        if expression.is_empty() {
+            return Err(ImageError::CasaSelection(
+                "Exception: You must specify an expression.".into(),
+            ));
+        }
+        Ok(Self {
+            expression,
+            operands: resolve_operands(expression)?,
+        })
     }
-    let opened = image_operands(expression)?;
-    let (real, complex) = operand_resolvers(&opened);
-    compile_image_tool_pixels(expression, &real, &complex, &|name| {
-        is_single_precision(&opened, name)
-    })
+
+    /// Paths of the images supplying expression values or masks.
+    pub fn paths(&self) -> impl ExactSizeIterator<Item = &Path> {
+        self.operands.iter().map(|operand| operand.path.as_path())
+    }
+
+    /// Compile the expression against these resolved operands.
+    /// # Errors
+    /// Returns an error if an operand is unreadable or the expression is invalid.
+    pub fn compile(&self) -> Result<ImageToolPixelExpression, ImageError> {
+        let opened = open_operands(&self.operands)?;
+        let (real, complex) = operand_resolvers(&opened);
+        compile_image_tool_pixels(self.expression, &real, &complex, &|name| {
+            is_single_precision(&opened, name)
+        })
+    }
 }
 
 /// Evaluate the Boolean mask used by the public image tool's `calcmask`.
@@ -137,11 +173,30 @@ pub(super) fn evaluate_replacement_pixels(
 }
 
 fn image_operands(expression: &str) -> Result<Vec<(String, Operand)>, ImageError> {
-    referenced_images(expression)?
-        .into_iter()
-        .map(|name| {
-            let image = open_operand(&name)?;
-            Ok::<_, ImageError>((name, image))
+    open_operands(&resolve_operands(expression)?)
+}
+
+fn resolve_operands(expression: &str) -> Result<Vec<ResolvedOperand>, ImageError> {
+    resolve_named_operands(referenced_images(expression)?)
+}
+
+fn resolve_named_operands(names: Vec<String>) -> Result<Vec<ResolvedOperand>, ImageError> {
+    let base = std::env::current_dir().map_err(|error| ImageError::Io(error.to_string()))?;
+    names.into_iter().map(|name| {
+        let (path, mask) = operand_path(&base, &name).ok_or_else(|| ImageError::CasaSelection(format!(
+            "Input mask specification is incorrect: ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"
+        )))?;
+        let path = path.canonicalize().map_err(|error| ImageError::Io(error.to_string()))?;
+        Ok(ResolvedOperand { name, path, mask })
+    }).collect()
+}
+
+fn open_operands(operands: &[ResolvedOperand]) -> Result<Vec<(String, Operand)>, ImageError> {
+    operands
+        .iter()
+        .map(|operand| {
+            let image = open_path_with_mask_name(&operand.path, operand.mask.clone())?;
+            Ok((operand.name.clone(), image))
         })
         .collect()
 }
@@ -195,14 +250,8 @@ pub(super) fn evaluate_mask(
         // including an absolute path that would otherwise lex as division.
         expr = format!("\"{}\"{suffix}", name.trim());
     }
-    let opened = referenced_images(&expr)
-        .map_err(mask_parse_error)?
-        .into_iter()
-        .map(|name| {
-            let image = open_operand(&name)?;
-            Ok((name, image))
-        })
-        .collect::<Result<Vec<_>, ImageError>>()?;
+    let names = referenced_images(&expr).map_err(mask_parse_error)?;
+    let opened = open_operands(&resolve_named_operands(names)?)?;
     evaluate(
         &expr,
         target_shape,
@@ -312,22 +361,21 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
     ))
 }
 
-fn open_operand(spec: &str) -> Result<Operand, ImageError> {
-    let direct_path = Path::new(spec);
+fn operand_path(base: &Path, spec: &str) -> Option<(PathBuf, Option<String>)> {
+    let direct_path = base.join(spec);
     if direct_path.exists() {
-        return open_path_with_mask_name(direct_path, None);
+        return Some((direct_path, None));
     }
     if let Some((left, right)) = spec.rsplit_once(':')
         && !left.is_empty()
         && !right.trim().is_empty()
-        && Path::new(left).exists()
     {
-        return open_path_with_mask_name(Path::new(left), Some(right.trim().to_string()));
+        let source = base.join(left);
+        if source.exists() {
+            return Some((source, Some(right.trim().to_owned())));
+        }
     }
-    Err(ImageError::CasaSelection(format!(
-        "Input mask specification is incorrect: ImageExprParse: '{spec}' is an unknown \
-         lattice or image or it is an unqualified region"
-    )))
+    None
 }
 
 fn open_path_with_mask_name(path: &Path, mask_name: Option<String>) -> Result<Operand, ImageError> {
@@ -348,16 +396,15 @@ fn open_path_with_mask_name(path: &Path, mask_name: Option<String>) -> Result<Op
                 path.display(),
             )));
         }
-        let path_owned = path.to_path_buf();
-        let dimensions = fits.shape().to_vec();
-        let hdu = fits.hdu_index();
-        let read = move |start: &[usize], shape: &[usize], stride: &[usize]| {
-            FitsSectionReader::open(&path_owned, hdu, &dimensions)?.read(start, shape, stride)
-        };
-        let mask_reader = read.clone();
+        let reader = Arc::new(SharedFitsSectionReader::new(
+            path.to_path_buf(),
+            fits.hdu_index(),
+            fits.shape().to_vec(),
+        )?);
+        let mask_reader = Arc::clone(&reader);
         let mask_fn = (fits.has_implicit_mask() && !ignore_default).then(|| {
             Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
-                let pixels = mask_reader(start, shape, stride)?;
+                let pixels = mask_reader.read(start, shape, stride)?;
                 Ok(pixels
                     .iter()
                     .any(|value| value.is_nan())
@@ -367,7 +414,9 @@ fn open_path_with_mask_name(path: &Path, mask_name: Option<String>) -> Result<Op
         let expression = ImageExprBuilder::from_section_readers(
             ImageExprMeta::from_fits(&fits, path)?,
             Arc::new(move |start, shape, stride| {
-                read(start, shape, stride).map(|pixels| pixels.mapv(f64::from))
+                reader
+                    .read(start, shape, stride)
+                    .map(|pixels| pixels.mapv(f64::from))
             }),
             mask_fn,
         );
