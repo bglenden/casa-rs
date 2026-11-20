@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use casa_imaging_operator::{GridPrecision, WPlaneCount};
+use casa_imaging_singledish::KernelParameters;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::position::MPosition;
 
@@ -56,6 +57,68 @@ pub struct ImagerSingleDish {
     pub kernel: ImagerSingleDishKernel,
     /// Predict interferometric visibilities using GridFT as well.
     pub combined: bool,
+}
+
+/// Length accepted by the legacy single-dish kernel controls.
+#[derive(Clone, Copy, Debug)]
+pub enum ImagerKernelWidth {
+    /// Width in pixels. Negative values select the kernel's default.
+    Pixels(f64),
+    /// Angular width in radians, converted using the imager's y cell size.
+    Radians(f64),
+}
+
+impl ImagerKernelWidth {
+    fn pixels(self, cell_rad: f64) -> f64 {
+        match self {
+            Self::Pixels(width) => width,
+            Self::Radians(width) => width / cell_rad.abs(),
+        }
+    }
+}
+
+/// Geometry and convolution settings supplied to `imager.setsdoptions`.
+#[derive(Clone, Debug)]
+pub struct ImagerSingleDishSetup {
+    /// Explicit kernel support in pixels, or a negative default marker.
+    pub support: i64,
+    /// Gaussian and Gaussian-jinc cutoff.
+    pub truncate: ImagerKernelWidth,
+    /// Gaussian half-width at half-maximum.
+    pub gaussian_width: ImagerKernelWidth,
+    /// Jinc scale parameter.
+    pub jinc_width: ImagerKernelWidth,
+    /// MeasurementSet POINTING direction column.
+    pub pointing_column: String,
+    /// Whether to cache the image coordinates of previous samples.
+    pub cache_pointings: bool,
+    /// Whether to convert the recorded directions before interpolation.
+    pub convert_first: String,
+}
+
+impl Default for ImagerSingleDishSetup {
+    fn default() -> Self {
+        Self {
+            support: -1,
+            truncate: ImagerKernelWidth::Pixels(-1.),
+            gaussian_width: ImagerKernelWidth::Pixels(-1.),
+            jinc_width: ImagerKernelWidth::Pixels(-1.),
+            pointing_column: "DIRECTION".into(),
+            cache_pointings: false,
+            convert_first: "NEVER".into(),
+        }
+    }
+}
+
+impl ImagerSingleDishSetup {
+    pub(super) fn kernel_parameters(&self, cell_rad: f64) -> KernelParameters {
+        KernelParameters {
+            convsupport: self.support,
+            truncate: f64::from(self.truncate.pixels(cell_rad) as f32),
+            gwidth: f64::from(self.gaussian_width.pixels(cell_rad) as f32),
+            jwidth: f64::from(self.jinc_width.pixels(cell_rad) as f32),
+        }
+    }
 }
 
 /// Convolution selected for the legacy imager's Fourier transform.
@@ -157,6 +220,8 @@ pub(super) struct PredictionGeometry {
     pub(super) frequency_frame_valid: bool,
     pub(super) voltage_pattern: Option<PreparedVoltagePattern>,
     pub(super) mosaic_voltage_table: Option<PathBuf>,
+    pub(super) single_dish_setup: ImagerSingleDishSetup,
+    pub(super) single_dish_cell_rad: Option<f64>,
 }
 
 impl PredictionGeometry {

@@ -10,14 +10,14 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
-use casa_imaging_singledish::{GridFunction, KernelParameters, KernelTable};
+use casa_imaging_singledish::{GridFunction, KernelTable};
 use casa_ms::MeasurementSet;
 use casa_types::measures::direction::MDirection;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, Ix2};
 
 use crate::ft::image::{coordinate_index, match_channel, polarization_coordinate};
-use crate::ft::single_dish::{default_beam, validate_support};
+use crate::ft::single_dish::{default_beam, kernel_function, read_kernel_parameters, validate_support};
 
 use super::fourier::{
     FourierRow, complex_model_image_path, lsrk_frequency_ratio, scratch_channel_masked,
@@ -82,8 +82,8 @@ impl PreparedModel {
                 ));
             }
         };
-        let function =
-            GridFunction::from_casa(name, KernelParameters::DEFAULT).map_err(model_error)?;
+        let parameters = read_kernel_parameters(record).map_err(model_error)?;
+        let function = kernel_function(name, parameters).map_err(model_error)?;
         let host = HostResources::detect().map_err(model_error)?;
         let _opening = admit(
             &host,
@@ -102,6 +102,9 @@ impl PreparedModel {
         let [nx, ny, pols, channels] = *image.shape() else {
             return Err(model_error("SDGrid needs a four-axis complex image"));
         };
+        if let Some(radius) = function.support() {
+            validate_support([nx, ny], radius).map_err(model_error)?;
+        }
         let coordinates = image.coordinates();
         let find = |kind| {
             coordinate_index(coordinates, kind)

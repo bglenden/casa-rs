@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use casa_calibration::{
     AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerPrediction, ImagerPredictionModel, ImagerVoltagePattern,
+    ImagerKernelWidth, ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup, ImagerVoltagePattern,
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -20,7 +20,7 @@ use pyo3::{
     types::{PyFloat, PyInt, PyList, PyString},
 };
 
-use crate::convert::{Variant, quantity_value};
+use crate::convert::{Variant, quantity, quantity_value, value_in};
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 const LOGGER: &str = "casars.tools.imager";
@@ -251,6 +251,49 @@ impl PyImager {
                 .prediction
                 .configure_transform(settings)
                 .map_err(runtime_error)?;
+            Ok(true)
+        })
+    }
+
+    #[pyo3(signature = (scale = 1.0, weight = 1.0, convsupport = -1, pointingcolumntouse = "DIRECTION", truncate = Variant::Empty, gwidth = Variant::Empty, jwidth = Variant::Empty, minweight = 0.0, clipminmax = false, enablecache = false, convertfirst = "NEVER"), text_signature = "($self, scale=1.0, weight=1.0, convsupport=-1, pointingcolumntouse='DIRECTION', truncate=[], gwidth=[], jwidth=[], minweight=0.0, clipminmax=False, enablecache=False, convertfirst='NEVER')")]
+    #[allow(clippy::too_many_arguments)]
+    fn setsdoptions(
+        &self,
+        py: Python<'_>,
+        scale: f64,
+        weight: f64,
+        convsupport: i64,
+        pointingcolumntouse: &str,
+        truncate: Variant,
+        gwidth: Variant,
+        jwidth: Variant,
+        minweight: f64,
+        clipminmax: bool,
+        enablecache: bool,
+        convertfirst: &str,
+    ) -> PyResult<bool> {
+        // GridBoth and SDGrid consume these when accumulating data and
+        // weights into an image. A forward model prediction samples pixels.
+        let _ = (scale, weight, minweight, clipminmax);
+        let width = |value| -> PyResult<_> {
+            let value = quantity(value)?;
+            Ok(match value.unit().name() {
+                "" | "pixel" => ImagerKernelWidth::Pixels(value.value()),
+                _ => ImagerKernelWidth::Radians(value_in(&value, "rad")?),
+            })
+        };
+        let setup = ImagerSingleDishSetup {
+            support: convsupport,
+            truncate: width(&truncate)?,
+            gaussian_width: width(&gwidth)?,
+            jinc_width: width(&jwidth)?,
+            pointing_column: pointingcolumntouse.into(),
+            cache_pointings: enablecache,
+            convert_first: convertfirst.into(),
+        };
+        self.with_state(py, |state| {
+            state.prediction.configure_single_dish(setup).map_err(runtime_error)?;
+            state.model_in_sky_equation = false;
             Ok(true)
         })
     }

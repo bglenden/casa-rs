@@ -39,7 +39,16 @@ pub(super) fn prepare_model(
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
-    validate_model(ms, selected, &image, kernel)?;
+    let context = &geometry.single_dish_setup;
+    if !matches!(context.convert_first.as_str(), "NEVER" | "ALWAYS" | "AUTO") {
+        return Err(invalid(format!("illegal ConvertFirst name {}", context.convert_first)));
+    }
+    let coords = image.coordinates();
+    let spatial = coordinate_index(coords, CoordinateType::Direction)?;
+    let CoordinateModel::Direction(direction) = coords.coordinate(spatial) else { unreachable!("direction coordinate") };
+    let cell = geometry.single_dish_cell_rad.unwrap_or(direction.increment()[1]);
+    let parameters = context.kernel_parameters(cell);
+    validate_model(ms, selected, &image, kernel, parameters)?;
     let mut coordinates = image.coordinates().clone();
     let pol = coordinate_index(&coordinates, CoordinateType::Stokes)?;
     let CoordinateModel::Stokes(axis) = coordinates.coordinate(pol) else {
@@ -71,7 +80,7 @@ pub(super) fn prepare_model(
     coordinates.replace_coordinate(pol, grid_axis);
     ImageModel::prepare(ms, selected, keep_zero, scratch, |path| {
         let (shape, nonzero) = write_planes(&image, coordinates.clone(), &routing, path)?;
-        let record = model_record(
+        let mut record = model_record(
             ms,
             selected,
             &coordinates,
@@ -82,6 +91,15 @@ pub(super) fn prepare_model(
             selected_correlations,
             &routing,
         )?;
+        let mut saved = RecordValue::default();
+        saved.upsert("convsupport", Value::Scalar(ScalarValue::Int64(parameters.convsupport)));
+        for (name, value) in [("truncate", parameters.truncate), ("gwidth", parameters.gwidth), ("jwidth", parameters.jwidth)] {
+            saved.upsert(name, Value::Scalar(ScalarValue::Float64(value)));
+        }
+        record.upsert("casars_sd_parameters", Value::Record(saved));
+        record.upsert("pointingdircol", Value::Scalar(ScalarValue::String(context.pointing_column.clone())));
+        record.upsert("casars_sd_convert_first", Value::Scalar(ScalarValue::String(context.convert_first.clone())));
+        record.upsert("casars_sd_cache_pointings", Value::Scalar(ScalarValue::Bool(context.cache_pointings)));
         Ok((record, nonzero))
     })
 }
@@ -91,12 +109,12 @@ fn validate_model(
     selected: &ResolvedMsSelection,
     image: &PagedImage<f32>,
     kernel: ImagerSingleDishKernel,
+    parameters: KernelParameters,
 ) -> MsResult<()> {
     let [nx, ny, ..] = *image.shape() else {
         return Err(invalid("single-dish model needs direction axes"));
     };
-    let function =
-        GridFunction::from_casa(kernel.name(), KernelParameters::DEFAULT).map_err(invalid)?;
+    let function = kernel_function(kernel.name(), parameters)?;
     let support = match function.support() {
         Some(support) => support,
         None => {
@@ -153,6 +171,37 @@ fn validate_model(
         }
     };
     validate_support([nx, ny], support)
+}
+
+pub(crate) fn kernel_function(name: &str, parameters: KernelParameters) -> MsResult<GridFunction> {
+    if name.eq_ignore_ascii_case("SF") && parameters.convsupport == 0 {
+        // A forward transform with no support produces a zero prediction.
+        // The imaging gridding parser rejects this unusable weight kernel.
+        return Ok(GridFunction::Spheroidal { support: 0 });
+    }
+    GridFunction::from_casa(name, parameters).map_err(invalid)
+}
+
+pub(crate) fn read_kernel_parameters(record: &RecordValue) -> MsResult<KernelParameters> {
+    let Some(value) = record.get("casars_sd_parameters") else {
+        return Ok(KernelParameters::DEFAULT);
+    };
+    let Value::Record(saved) = value else {
+        return Err(invalid("invalid single-dish kernel parameters"));
+    };
+    let numeric = |name| match saved.get(name) {
+        Some(Value::Scalar(ScalarValue::Float64(value))) => Ok(*value),
+        _ => Err(invalid(format!("invalid single-dish kernel {name}"))),
+    };
+    let Some(Value::Scalar(ScalarValue::Int64(convsupport))) = saved.get("convsupport") else {
+        return Err(invalid("invalid single-dish kernel convsupport"));
+    };
+    Ok(KernelParameters {
+        convsupport: *convsupport,
+        truncate: numeric("truncate")?,
+        gwidth: numeric("gwidth")?,
+        jwidth: numeric("jwidth")?,
+    })
 }
 
 pub(crate) fn validate_support([nx, ny]: [usize; 2], radius: usize) -> MsResult<()> {
