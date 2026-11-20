@@ -368,6 +368,12 @@ impl SpectralCoordinate {
         self
     }
 
+    /// Use the stored intrinsic frequency mapping without frame conversion.
+    pub fn without_conversion(mut self) -> Self {
+        self.conversion = None;
+        self
+    }
+
     /// Declares no frame for the axis, as CASA's `MFrequency::Undefined`
     /// does for a `specmode='cubedata'` image: the record's `system` reads
     /// `"Undefined"`, while frequencies keep meaning those of

@@ -258,8 +258,8 @@ const METHODS: &[Method] = &[
     method(
         "setmodel",
         &[param("modelimage", K::Text, D::Required)],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Partial,
     ),
     method(
         "setptmodel",
@@ -303,8 +303,8 @@ const METHODS: &[Method] = &[
             param("solmode", K::Text, D::Text("")),
             param("rmsthresh", K::Any, D::Empty),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Partial,
     ),
     method(
         "setsolvebandpoly",
