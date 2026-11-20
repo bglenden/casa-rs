@@ -7520,6 +7520,10 @@ the per-scan output matched two independent single-field CASA controls.
 An independent SciPy natural spline matched 52 valid complex factors
 in the spline comparison (#1525).
 
+The public `calibrater.accumulate(t=None)` call can leave a Python
+conversion error pending and terminate CASA 6.7.6.14. casa-rs raises
+`TypeError` before touching the input or output table (#1525).
+
 ## Image record restore can crash or damage an existing output
 
 CASA 6.7.6.14 segfaults in `ia.fromrecord` if an otherwise valid image

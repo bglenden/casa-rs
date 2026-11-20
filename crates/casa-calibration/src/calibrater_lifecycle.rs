@@ -22,6 +22,7 @@ use crate::{
 
 pub(crate) mod ep_cache;
 pub(crate) mod legacy_ep;
+mod table_tools;
 mod weights;
 
 use legacy_ep::LegacyEpSolver;
@@ -101,6 +102,21 @@ pub enum CalibraterLifecycleError {
     /// The attached tool could not initialize its visibility weights.
     #[error("Error in Calibrater::initWeights.")]
     InitWeights(#[source] casa_ms::MsError),
+    /// The newer CASA visibility iterator does not implement accumulation.
+    #[error("Calibrater::accumulate not implemented")]
+    AccumulateNeedsLegacyIterator,
+    /// CASA reports a generic accumulation failure after logging its cause.
+    #[error("Error in Calibrater::accumulate.")]
+    Accumulate(#[source] casa_ms::MsError),
+    /// Creating a calibration table failed.
+    #[error("{0}")]
+    CreateTable(String),
+    /// Smoothing an attached calibration table failed.
+    #[error("Error in Calibrater::smooth.")]
+    Smooth(#[source] casa_ms::MsError),
+    /// Re-referencing an attached calibration table failed.
+    #[error("Error in Calibrater::reRefant.")]
+    Rereference(#[source] casa_ms::MsError),
     /// MeasurementSet attachment or visibility selection failed.
     #[error(transparent)]
     Attachment(#[from] AttachmentError),

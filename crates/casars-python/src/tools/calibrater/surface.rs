@@ -6,21 +6,24 @@ use crate::tools::surface::{
 };
 
 const METHODS: &[Method] = &[
-    method(
-        "accumulate",
-        &[
-            param("tablein", K::Text, D::Text("")),
-            param("incrtable", K::Text, D::Text("")),
-            param("tableout", K::Text, D::Text("")),
-            param("field", K::Any, D::Empty),
-            param("calfield", K::Any, D::Empty),
-            param("interp", K::Text, D::Text("linear")),
-            param("t", K::Float, D::Float(-1.0)),
-            param("spwmap", K::Ints, D::Ints(&[-1])),
-        ],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "accumulate",
+            &[
+                param("tablein", K::Text, D::Text("")),
+                param("incrtable", K::Text, D::Text("")),
+                param("tableout", K::Text, D::Text("")),
+                param("field", K::Any, D::Empty),
+                param("calfield", K::Any, D::Empty),
+                param("interp", K::Text, D::Text("linear")),
+                param("t", K::Float, D::Float(-1.0)),
+                param("spwmap", K::Ints, D::Ints(&[-1])),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
     method("activityrec", &[], R::Any, S::NotYetImplemented),
     method("close", &[], R::Bool, S::Implemented),
     method(
@@ -30,17 +33,20 @@ const METHODS: &[Method] = &[
         S::NotYetImplemented,
     ),
     method("corrupt", &[], R::Any, S::NotYetImplemented),
-    method(
-        "createcaltable",
-        &[
-            param("caltable", K::Text, D::Required),
-            param("partype", K::Text, D::Required),
-            param("caltype", K::Text, D::Required),
-            param("singlechan", K::Bool, D::Required),
-        ],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "createcaltable",
+            &[
+                param("caltable", K::Text, D::Required),
+                param("partype", K::Text, D::Required),
+                param("caltype", K::Text, D::Required),
+                param("singlechan", K::Bool, D::Required),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
     Method {
         mutating: true,
         ..method(
@@ -187,17 +193,20 @@ const METHODS: &[Method] = &[
         R::Any,
         S::NotYetImplemented,
     ),
-    method(
-        "rerefant",
-        &[
-            param("tablein", K::Any, D::Required),
-            param("tableout", K::Any, D::Required),
-            param("refantmode", K::Text, D::Text("flexible")),
-            param("refant", K::Any, D::Empty),
-        ],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "rerefant",
+            &[
+                param("tablein", K::Text, D::Required),
+                param("tableout", K::Text, D::Required),
+                param("refantmode", K::Text, D::Text("flexible")),
+                param("refant", K::Any, D::Empty),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
     method(
         "reset",
         &[
@@ -351,19 +360,22 @@ const METHODS: &[Method] = &[
         R::Bool,
         S::Implemented,
     ),
-    method(
-        "smooth",
-        &[
-            param("tablein", K::Any, D::Required),
-            param("tableout", K::Any, D::Required),
-            param("field", K::Any, D::Empty),
-            param("smoothtype", K::Text, D::Text("median")),
-            param("smoothtime", K::Float, D::Float(60.0)),
-            param("ratesmooth", K::Bool, D::Bool(false)),
-        ],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "smooth",
+            &[
+                param("tablein", K::Text, D::Required),
+                param("tableout", K::Text, D::Required),
+                param("field", K::Any, D::Empty),
+                param("smoothtype", K::Text, D::Text("median")),
+                param("smoothtime", K::Float, D::Float(60.0)),
+                param("ratesmooth", K::Bool, D::Bool(false)),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
     method("solve", &[], R::Any, S::NotYetImplemented),
     method(
         "specifycal",
@@ -382,12 +394,15 @@ const METHODS: &[Method] = &[
         S::NotYetImplemented,
     ),
     method("state", &[], R::Any, S::NotYetImplemented),
-    method(
-        "updatecaltable",
-        &[param("caltable", K::Text, D::Required)],
-        R::Any,
-        S::NotYetImplemented,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "updatecaltable",
+            &[param("caltable", K::Text, D::Required)],
+            R::Bool,
+            S::Implemented,
+        )
+    },
     method(
         "validatecallib",
         &[param("callib", K::Record, D::EmptyRecord)],
