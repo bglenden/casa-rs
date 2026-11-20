@@ -2,7 +2,7 @@
 
 use std::ops::{AddAssign, Div};
 
-use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::{ArrayD, RecordValue};
 use ndarray::{Axis, IxDyn, Slice, Zip};
 
@@ -146,10 +146,16 @@ impl<'a> ImageDecimation<'a> {
                 axis,
                 coordinate.reference_pixel()[local] / factor as f64,
             )?;
+            let increments = match coordinate {
+                CoordinateModel::Direction(direction) => {
+                    direction.reference_and_increment_in_world_units().1
+                }
+                _ => coordinate.increment(),
+            };
             let (coordinates, _) = CoordinateSystem::set_increment_in_record(
                 &mut record,
                 axis,
-                coordinate.increment()[local] * factor as f64,
+                increments[local] * factor as f64,
             )?;
             plan.shape[axis] = match method {
                 DecimationMethod::Copy => plan.shape[axis].div_ceil(factor),

@@ -122,16 +122,24 @@ def test_decimate_direct_fits_with_stretched_mask(casa, tmp_path):
     mask = casa.image()
     assert mask.fromarray(str(mask_path), np.array([[0], [1]], dtype=np.float32))
     assert mask.done()
-    for backend in (casa, tools):
+    for index, backend in enumerate((casa, tools)):
         source = backend.image()
         assert source.open(str(path))
         expression = f'"{mask_path}" > 0'
         with pytest.raises(RuntimeError, match="mask should not be extended"):
             source.decimate(axis=1, factor=2, method="mean", mask=expression)
-        output = source.decimate(axis=1, factor=2, method="mean", mask=expression, stretch=True)
+        destination = str(tmp_path / f"decimated-{index}.im")
+        output = source.decimate(destination, axis=1, factor=2, method="mean", mask=expression, stretch=True)
         np.testing.assert_array_equal(output.getchunk(), [[0.0], [4.0]])
         np.testing.assert_array_equal(output.getchunk(getmask=True), [[False], [True]])
+        assert output.maskhandler("get") == ["mask0"]
         assert source.done() and output.done()
+        for reader in (casa, tools):
+            result = reader.image()
+            assert result.open(destination)
+            np.testing.assert_array_equal(result.getchunk(getmask=True), [[False], [True]])
+            np.testing.assert_array_equal(result.getchunk(), [[0.0], [4.0]])
+            assert result.done()
 
 
 def test_decimate_non_direction_coordinates_honor_implicit_and_explicit_regions(casa):
