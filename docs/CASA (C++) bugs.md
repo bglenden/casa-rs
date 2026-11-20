@@ -7651,6 +7651,13 @@ own entry for `both`. The CASA image tool opens both backing images, and
 native `uvsub` reopens the models. An incomplete CASA recipe raises an
 error that identifies the missing settings.
 
+Standalone SDGrid uses the interpolator selected by `freqinterp` for
+scratch prediction. Its native saved recipe retains that choice on reopen.
+GridBoth delegates prediction to its two child transforms. The legacy
+frequency setter updates the parent, so both children use nearest
+neighbour. In the pinned five-plane test, all four methods produce identical
+mixed-grid outputs. The native mixed-grid prediction follows that behavior.
+
 SDGrid can include a cross-correlation when all of its UVW components
 are nonpositive. casa-rs applies the single-dish contribution to
 autocorrelations. In `both`, the ordinary GridFT path predicts the
@@ -7669,4 +7676,5 @@ point at its recorded epoch. A second pinned run samples that converted
 track in the image frame.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
 [`imager_single_dish_oracle.py`](../tools/casa-compat/imager_single_dish_oracle.py) ·
-[`imager_single_dish_options_oracle.py`](../tools/casa-compat/imager_single_dish_options_oracle.py)
+[`imager_single_dish_options_oracle.py`](../tools/casa-compat/imager_single_dish_options_oracle.py) ·
+[`imager_single_dish_spectral_oracle.py`](../tools/casa-compat/imager_single_dish_spectral_oracle.py)

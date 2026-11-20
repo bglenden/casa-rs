@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 import casatasks
-from casatools import image, imager
+from casatools import image, imager, table
 import numpy as np
 
 from gaincal_oracle import relative_rms
@@ -61,13 +61,14 @@ def pair(root, source, model, mode, method, *, virtual=True, spw=''):
     if virtual:
         prepare_ms(source, stored, mode, scratch=False)
         assert predict(native, stored, model, mode, method, scratch=False)
-        products.append(read_virtual(stored, mode, 'BOX'))
+        saved_method = ('nearest', 'linear', 'cubic', 'spline').index(method) if mode == 'sd' else 0
+        products.append(read_virtual(stored, mode, 'BOX', sd_method=saved_method))
     for name, rows in [('autocorrelations', auto), ('cross-correlations', ~auto)]:
         if rows.any():
             values = expected[..., rows]
             errors = [relative_rms(product[..., rows], values) for product in products]
             print(label, name, errors, flush=True)
-            assert np.abs(values).max() > .1 and max(errors) < 1.e-3
+            assert np.abs(values).max() > .1 and max(errors) < 1.e-5
     return expected
 
 
@@ -90,8 +91,21 @@ def run(root):
     nearest = pair(root, source, model, 'sd', 'nearest', virtual=False, spw='0:5')
     linear = pair(root, source, model, 'sd', 'linear', virtual=False, spw='0:5')
     assert np.array_equal(nearest, linear)
+    table_tool = table()
+    assert table_tool.open(str(source), nomodify=False)
+    flags = table_tool.getcol('FLAG')
+    flags[0, 3, ::5] = True
+    row_flags = table_tool.getcol('FLAG_ROW')
+    row_flags[10] = True
+    assert table_tool.putcol('FLAG', flags)
+    assert table_tool.putcol('FLAG_ROW', row_flags) and table_tool.done()
+    pair(root, source, model, 'sd', 'cubic', virtual=False, spw='0:1~4;8~10')
     short = root / 'short.im'
     write_cube(template, short, [1., 2., .3])
+    pinned_short = root / 'short-pinned.ms'
+    prepare_ms(source, pinned_short, 'sd')
+    subprocess.run([sys.executable, __file__, '--casa', str(pinned_short), str(short),
+                    'sd', 'cubic', '--reject'], check=True)
     for scratch in (True, False):
         path = root / f'short-{scratch}.ms'
         prepare_ms(source, path, 'sd', scratch=scratch)
@@ -103,10 +117,12 @@ def main():
     parser.add_argument('--work', type=Path)
     parser.add_argument('--casa', nargs=4)
     parser.add_argument('--spw', default='')
+    parser.add_argument('--reject', action='store_true')
     args = parser.parse_args()
     if args.casa:
         path, model, mode, method = args.casa
-        assert predict(imager, Path(path), Path(model), mode, method, spw=args.spw)
+        result = predict(imager, Path(path), Path(model), mode, method, spw=args.spw)
+        assert bool(result) != args.reject
     else:
         run(args.work.resolve())
 

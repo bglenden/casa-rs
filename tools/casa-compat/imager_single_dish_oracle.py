@@ -66,7 +66,7 @@ def predict(factory, target, model, mode, kernel, *, pinned, scratch=True, spw='
     assert tool.done()
 
 
-def read_virtual(path, mode, kernel, *, selection=None):
+def read_virtual(path, mode, kernel, *, selection=None, sd_method=None):
     from casars.tools import ms
 
     table_tool = table()
@@ -79,6 +79,15 @@ def read_virtual(path, mode, kernel, *, selection=None):
     for entry in entries:
         if entry['name'] == 'SDGrid':
             assert entry['casars_sd_kernel'] == kernel
+            if sd_method is not None:
+                assert entry['freqinterpmethod'] == sd_method
+                if sd_method:
+                    frequencies = entry['casars_live_image_frequency']
+                    assert frequencies.ndim == 1 and len(frequencies) > 1
+                    increments = np.diff(frequencies)
+                    assert np.all(increments > 0) or np.all(increments < 0)
+                else:
+                    assert 'casars_live_image_frequency' not in entry
         stored = image()
         assert stored.open(entry['diskimage'])
         assert np.iscomplexobj(stored.getchunk()) and stored.done()
