@@ -92,6 +92,8 @@ impl PyImageTool {
             if handle.fits().is_some() {
                 return Err(raised(if set_mask { "Cannot make requested mask for this image type which is FITSImage" } else { "FITSImage is not writable" }));
             }
+            attachment.require_lock(&mut handle, casa_tables::LockType::Write)?;
+            let ImageHandle::Float(storage) = &*handle else { unreachable!("float attachment checked") };
             let default = with_storage!(storage, image => image.default_mask_name());
             let mask_name = if set_mask {
                 if let Some(name) = default {

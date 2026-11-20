@@ -1,5 +1,7 @@
 """Public image.set edits and native readback against CASA 6.7.6.14."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -39,6 +41,23 @@ def test_set_edits_the_region_and_preserves_the_default_mask(casa, tmp_path):
             np.testing.assert_array_equal(reader.getchunk(), expected_pixels)
             np.testing.assert_array_equal(reader.getchunk(getmask=True), expected_mask)
             assert reader.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_set_reacquires_write_lock_for_a_self_expression(casa, tmp_path):
+    for backend, peer in ((casa, tools), (tools, casa)):
+        source = str(tmp_path / f"{backend.__name__}.im")
+        image = backend.image()
+        assert image.fromarray(source, np.arange(12, dtype=np.float32).reshape(3, 4))
+        assert image.unlock()
+        assert image.set(f'mean("{source}") + 1', pixelmask=1)
+        np.testing.assert_array_equal(image.haslock(), [True, True])
+        assert image.done()
+        reader = peer.image()
+        assert reader.open(source)
+        np.testing.assert_array_equal(reader.getchunk(), np.full((3, 4), 6.5))
+        assert reader.getchunk(getmask=True).all()
+        assert reader.done()
 
 
 def test_set_accepts_scalar_lattice_expressions(casa, tmp_path):
