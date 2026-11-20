@@ -175,7 +175,7 @@ fn transform(
                 }
             }
             coordinates
-                .to_pixel_columns(values.view())
+                .to_pixel_columns_or_nan(values.view())
                 .map_err(|error| raised(error.to_string()))?
                 .into_raw_vec_and_offset()
                 .0

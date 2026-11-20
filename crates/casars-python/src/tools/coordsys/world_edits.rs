@@ -131,7 +131,7 @@ fn apply_location(
                 .collect(),
             model => vec![None; model.n_world_axes()],
         });
-    let mut updated = state.record.clone();
+    let mut updated = state.editable_record()?;
     for (axis, ((pixel, value), unit)) in pixels.into_iter().zip(canonical).zip(units).enumerate() {
         if !(use_all || mask[axis])
             || coordinates.pixel_axis_type(axis) == Some(CoordinateType::Stokes)
@@ -144,9 +144,7 @@ fn apply_location(
         CoordinateSystem::set_reference_value_in_record(&mut updated, axis, value)
             .map_err(raised)?;
     }
-    let mut edited = CoordinateState::from_record(updated)?;
-    edited.parent_name = std::mem::take(&mut state.parent_name);
-    *state = edited;
+    state.apply_edited_record(updated)?;
     Ok(true)
 }
 
@@ -185,7 +183,7 @@ fn apply_edit(
     let mut values = value
         .values_with_defaults(state, selected.zip(one_coordinate.as_ref()), defaults)?
         .into_iter();
-    let mut updated = state.record.clone();
+    let mut updated = state.editable_record()?;
     for (index, placement) in CoordinateSystem::record_coordinates(&state.record)
         .map_err(raised)?
         .into_iter()
@@ -220,9 +218,7 @@ fn apply_edit(
     if values.next().is_some() {
         return Err(raised("World and pixel axes do not align"));
     }
-    let mut edited = CoordinateState::from_record(updated)?;
-    edited.parent_name = std::mem::take(&mut state.parent_name);
-    *state = edited;
+    state.apply_edited_record(updated)?;
     Ok(true)
 }
 

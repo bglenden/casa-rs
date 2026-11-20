@@ -757,8 +757,8 @@ impl DirectionCoordinate {
         // Invert PC matrix
         let det = self.pc[[0, 0]] * self.pc[[1, 1]] - self.pc[[0, 1]] * self.pc[[1, 0]];
         if det.abs() < 1e-15 {
-            return Err(CoordinateError::ConversionFailed(
-                "singular PC matrix in DirectionCoordinate".into(),
+            return Err(CoordinateError::SingularTransform(
+                "singular PC matrix in DirectionCoordinate",
             ));
         }
         let dx = (self.pc[[1, 1]] * sx - self.pc[[0, 1]] * sy) / det;

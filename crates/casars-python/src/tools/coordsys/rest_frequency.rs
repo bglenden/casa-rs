@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
 use casa_types::quanta::{Quantity, Unit, casacore};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use numpy::PyReadonlyArrayDyn;
@@ -155,15 +155,13 @@ impl PyCoordsys {
             let &active = frequencies
                 .get(which)
                 .ok_or_else(|| raised("Failed AlwaysAssert which<restfreqs_p.nelements()"))?;
-            let mut record = state.record.clone();
+            let mut record = state.editable_record()?;
             let Some(Value::Record(target)) = record.get_mut(&placement.field) else {
                 return Err(raised("Spectral coordinate is missing from the record"));
             };
             target.upsert("restfreq", Value::Scalar(ScalarValue::Float64(active)));
             target.upsert("restfreqs", ArrayValue::from_f64_vec(frequencies).into());
-            state.coordinates = CoordinateSystem::from_record(&record)
-                .map_err(|error| raised(error.to_string()))?;
-            state.record = record;
+            state.apply_edited_record(record)?;
             Ok(true)
         })
     }

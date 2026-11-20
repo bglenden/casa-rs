@@ -38,8 +38,10 @@ def test_coupled_linear_matrix_matches_an_independent_affine_calculation(casa):
         np.testing.assert_array_equal(cs.lineartransform("linear"), matrix)
         with pytest.raises(RuntimeError, match="not a double or integer array"):
             cs.setlineartransform("linear", [])
-        with pytest.raises(RuntimeError, match="value array is empty"):
+        with pytest.raises(RuntimeError, match="not a double or integer array"):
             cs.setlineartransform("linear", 2.0)
+        with pytest.raises(RuntimeError, match="value array is empty"):
+            cs.setlineartransform("linear", np.array(2.0))
         np.testing.assert_array_equal(cs.lineartransform("linear"), matrix)
 
 
@@ -112,6 +114,44 @@ def test_tabular_pc_live_and_record_restore_semantics(casa, sampled):
         np.testing.assert_array_equal(restored.toworld([1.0])["numeric"], [14.0 if sampled else 1.0])
 
 
+@pytest.mark.parametrize("sampled", [False, True])
+@pytest.mark.parametrize("field", ["name", "increment", "referencepixel", "referencevalue"])
+def test_later_tabular_edits_preserve_the_live_matrix(casa, sampled, field):
+    for backend in (tools, casa):
+        cs = backend.coordsys().newcoordsys(tabular=True)
+        if sampled:
+            record = cs.torecord()
+            record["tabular0"]["pixelvalues"] = np.array([0.0, 2.0, 5.0])
+            record["tabular0"]["worldvalues"] = np.array([10.0, 14.0, 30.0])
+            assert cs.fromrecord(record)
+        assert cs.setlineartransform("tabular", [[2.0]])
+        if field == "name":
+            assert cs.setnames(["Tabular sample"], "tabular")
+            expected = 14.0 if sampled else 2.0
+        elif field == "increment":
+            assert cs.setincrement([7.0], "tabular")
+            expected = 17.0 if sampled else 14.0
+        elif field == "referencepixel":
+            assert cs.setreferencepixel([2.0], "tabular")
+            expected = -2.0
+        else:
+            assert cs.setreferencevalue([9.0], "tabular")
+            expected = 13.0 if sampled else 11.0
+        np.testing.assert_array_equal(cs.lineartransform("tabular"), [[2.0]])
+        np.testing.assert_allclose(cs.toworld([1.0])["numeric"], [expected])
+
+
+@pytest.mark.parametrize("kind", ["linear", "direction"])
+def test_singular_matrices_keep_forward_transforms_and_report_undefined_inverses(casa, kind):
+    for backend in (tools, casa):
+        cs = backend.coordsys().newcoordsys(**{kind: 2 if kind == "linear" else True})
+        assert cs.setlineartransform(kind, [[1.0, 2.0], [2.0, 4.0]])
+        world = cs.toworld([1.0, 1.0])["numeric"]
+        assert np.isfinite(world).all()
+        assert np.isnan(cs.topixel(world)["numeric"]).all()
+        assert np.isnan(cs.topixelmany(world[:, None])["numeric"]).all()
+
+
 def test_linear_coordinate_matrix_after_native_write_and_reopen(casa, tmp_path):
     matrix = np.array([[1.0, 2.0], [3.0, 5.0]])
     for index, writer in enumerate((tools, casa)):
@@ -145,6 +185,14 @@ def test_invalid_matrix_type_and_rank_do_not_edit_a_coordinate():
     with pytest.raises(RuntimeError, match="invalid tabular samples"):
         standalone.setlineartransform("tabular", [[0.0]])
     np.testing.assert_array_equal(standalone.lineartransform("tabular"), [[1.0]])
+
+
+def test_non_native_byte_order_is_respected_on_matrix_input():
+    cs = _linear(tools)
+    matrix = np.array([[1.0, 2.0], [3.0, 5.0]], dtype=np.dtype("float64").newbyteorder("S"))
+    assert cs.setlineartransform("linear", matrix)
+    np.testing.assert_array_equal(cs.lineartransform("linear"), matrix)
+    np.testing.assert_array_equal(cs.toworld([3.0, 5.0])["numeric"], [124.0, 238.0])
 
 
 def test_sampled_spectral_transform_is_folded_into_persisted_samples(casa):

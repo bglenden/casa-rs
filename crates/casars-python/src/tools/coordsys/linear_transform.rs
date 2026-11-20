@@ -37,7 +37,7 @@ fn matrix_input(value: Option<&Bound<'_, PyAny>>) -> PyResult<Array2<f64>> {
         match value.extract::<Variant>()? {
             Variant::Numbers(values) => (vec![values.len()], values),
             Variant::Array { shape, values } => (shape, values),
-            Variant::Number(_) | Variant::Bool(_) | Variant::Text(_) | Variant::Complex(_) => {
+            Variant::Complex(_) => {
                 return Err(raised("The value array is empty"));
             }
             _ => return Err(invalid()),
@@ -73,7 +73,7 @@ fn edit_record(original: &RecordValue, changed: &CoordinateModel) -> PyResult<Re
             let (key, fields) = if spectral.has_linear_mapping() {
                 ("wcs", &["pc"][..])
             } else {
-                ("tabular", &["pc", "worldvalues"][..])
+                ("tabular", &["pc", "pixelvalues", "worldvalues"][..])
             };
             let Some(Value::Record(source)) = native.get(key) else {
                 return Err(raised(format!("Missing spectral coordinate field {key}")));
@@ -91,6 +91,98 @@ fn edit_record(original: &RecordValue, changed: &CoordinateModel) -> PyResult<Re
         _ => write_fields(&mut updated, &native, &["pc"])?,
     }
     Ok(updated)
+}
+
+fn update_stored_coordinate(
+    record: &mut RecordValue,
+    field: &str,
+    model: &CoordinateModel,
+) -> PyResult<()> {
+    let Some(Value::Record(original)) = record.get(field) else {
+        return Err(raised("Missing coordinate record"));
+    };
+    let stored = edit_record(original, model)?;
+    record.upsert(field, Value::Record(stored));
+    Ok(())
+}
+
+// A tabular matrix survives edits to a live CASA tool. Its record instead
+// stores the effective samples and rebuilds them with an identity matrix.
+fn live_tabular_matrix(model: &CoordinateModel) -> Option<f64> {
+    let factor = match model {
+        CoordinateModel::Tabular(tabular) => tabular.linear_transform(),
+        CoordinateModel::Spectral(spectral) if !spectral.has_linear_mapping() => {
+            spectral.linear_transform()
+        }
+        _ => return None,
+    };
+    (factor != 1.0).then_some(factor)
+}
+
+fn change_tabular_matrix(model: &CoordinateModel, factor: f64) -> PyResult<CoordinateModel> {
+    match model {
+        CoordinateModel::Tabular(tabular) => Ok(tabular
+            .clone()
+            .with_linear_transform(factor)
+            .map_err(raised)?
+            .into()),
+        CoordinateModel::Spectral(spectral) => Ok(spectral
+            .clone()
+            .with_linear_transform(factor)
+            .map_err(raised)?
+            .into()),
+        _ => Err(raised(
+            "Coordinate no longer supports its tabular transform",
+        )),
+    }
+}
+
+impl CoordinateState {
+    fn tabular_matrices(&self) -> impl Iterator<Item = (usize, f64)> + '_ {
+        (0..self.coordinates.n_coordinates()).filter_map(|index| {
+            live_tabular_matrix(self.coordinates.coordinate(index)).map(|factor| (index, factor))
+        })
+    }
+
+    pub(super) fn editable_record(&self) -> PyResult<RecordValue> {
+        let mut record = self.record.clone();
+        let mut matrices = self.tabular_matrices().peekable();
+        if matrices.peek().is_none() {
+            return Ok(record);
+        }
+        let placements = CoordinateSystem::record_coordinates(&record).map_err(raised)?;
+        for (index, _) in matrices {
+            let original = self.coordinates.coordinate(index);
+            let unscaled = change_tabular_matrix(original, 1.0)?;
+            update_stored_coordinate(&mut record, &placements[index].field, &unscaled)?;
+        }
+        Ok(record)
+    }
+
+    pub(super) fn apply_edited_record(&mut self, record: RecordValue) -> PyResult<()> {
+        let coordinates = CoordinateSystem::from_record(&record).map_err(raised)?;
+        self.apply_edited_coordinates(record, coordinates)
+    }
+
+    pub(super) fn apply_edited_coordinates(
+        &mut self,
+        mut record: RecordValue,
+        mut coordinates: CoordinateSystem,
+    ) -> PyResult<()> {
+        let mut matrices = self.tabular_matrices().peekable();
+        if matrices.peek().is_some() {
+            let placements = CoordinateSystem::record_coordinates(&record).map_err(raised)?;
+            for (index, factor) in &mut matrices {
+                let changed = change_tabular_matrix(coordinates.coordinate(index), factor)?;
+                update_stored_coordinate(&mut record, &placements[index].field, &changed)?;
+                coordinates.replace_coordinate(index, changed);
+            }
+        }
+        drop(matrices);
+        self.record = record;
+        self.coordinates = coordinates;
+        Ok(())
+    }
 }
 
 fn apply_matrix(
@@ -142,12 +234,8 @@ fn apply_matrix(
             .into(),
         CoordinateModel::Stokes(_) => return Ok(true),
     };
-    let Some(Value::Record(original)) = state.record.get(&placement.field) else {
-        return Err(raised("Missing coordinate record"));
-    };
-    let stored = edit_record(original, &changed)?;
     let mut record = state.record.clone();
-    record.upsert(&placement.field, Value::Record(stored));
+    update_stored_coordinate(&mut record, &placement.field, &changed)?;
     let changed = if sliced {
         CoordinateSystem::from_record(&record)
             .map_err(raised)?

@@ -160,6 +160,19 @@ impl CoordinateSystem {
     ///
     /// The world vector must have length [`n_world_axes`](Self::n_world_axes).
     pub fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
+        self.project_pixels(world, false)
+    }
+
+    /// Converts world to pixel like [`Self::to_pixel`], using NaN for axes
+    /// whose linear transform is singular, as CASA's public tool does.
+    ///
+    /// # Errors
+    /// Returns other conversion errors and wrong world-axis counts.
+    pub fn to_pixel_or_nan(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
+        self.project_pixels(world, true)
+    }
+
+    fn project_pixels(&self, world: &[f64], undefined: bool) -> Result<Vec<f64>, CoordinateError> {
         let n_world = self.n_world_axes();
         if world.len() != n_world {
             return Err(CoordinateError::DimensionMismatch {
@@ -174,8 +187,13 @@ impl CoordinateSystem {
         for coord in &self.coordinates {
             let nw = coord.n_world_axes();
             let world_slice = &world[world_offset..world_offset + nw];
-            let p = coord.to_pixel(world_slice)?;
-            pixel.extend(p);
+            match coord.to_pixel(world_slice) {
+                Ok(values) => pixel.extend(values),
+                Err(CoordinateError::SingularTransform(_)) if undefined => {
+                    pixel.extend(std::iter::repeat_n(f64::NAN, coord.n_pixel_axes()));
+                }
+                Err(error) => return Err(error),
+            }
             world_offset += nw;
         }
 
@@ -195,6 +213,25 @@ impl CoordinateSystem {
         &self,
         world: ArrayView2<'_, f64>,
     ) -> Result<Array2<f64>, CoordinateError> {
+        self.project_pixel_columns(world, false)
+    }
+
+    /// Converts world columns to pixel columns with NaNs for singular axes.
+    ///
+    /// # Errors
+    /// Returns other conversion errors and wrong world-axis counts.
+    pub fn to_pixel_columns_or_nan(
+        &self,
+        world: ArrayView2<'_, f64>,
+    ) -> Result<Array2<f64>, CoordinateError> {
+        self.project_pixel_columns(world, true)
+    }
+
+    fn project_pixel_columns(
+        &self,
+        world: ArrayView2<'_, f64>,
+        undefined: bool,
+    ) -> Result<Array2<f64>, CoordinateError> {
         let n_world = self.n_world_axes();
         if world.nrows() != n_world {
             return Err(CoordinateError::DimensionMismatch {
@@ -213,15 +250,27 @@ impl CoordinateSystem {
             let world = world.slice_axis(Axis(0), (world_offset..next_world).into());
             let mut pixel = pixels.slice_axis_mut(Axis(0), (pixel_offset..next_pixel).into());
             if let CoordinateModel::Linear(linear) = coord {
-                linear.to_pixel_columns(world, pixel.view_mut())?;
+                match linear.to_pixel_columns(world, pixel.view_mut()) {
+                    Ok(()) => (),
+                    Err(CoordinateError::SingularTransform(_)) if undefined => pixel.fill(f64::NAN),
+                    Err(error) => return Err(error),
+                }
             } else {
                 for (column, mut output) in
                     world.axis_iter(Axis(1)).zip(pixel.axis_iter_mut(Axis(1)))
                 {
                     input.clear();
                     input.extend(column.iter().copied());
-                    for (output, value) in output.iter_mut().zip(coord.to_pixel(&input)?) {
-                        *output = value;
+                    match coord.to_pixel(&input) {
+                        Ok(values) => {
+                            for (output, value) in output.iter_mut().zip(values) {
+                                *output = value;
+                            }
+                        }
+                        Err(CoordinateError::SingularTransform(_)) if undefined => {
+                            output.fill(f64::NAN)
+                        }
+                        Err(error) => return Err(error),
                     }
                 }
             }
