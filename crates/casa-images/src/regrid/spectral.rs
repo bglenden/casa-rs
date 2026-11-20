@@ -21,7 +21,7 @@
 use casa_coordinates::{CoordinateModel, CoordinateType};
 use ndarray::{ArrayD, Axis, IxDyn, NdFloat, ShapeBuilder, Zip};
 
-use super::RegridMethod;
+use super::{RegridMethod, RegridPixel};
 use crate::ImagePixel;
 
 /// How the spectral axis is regridded: its pixel axis and the input pixel
@@ -122,7 +122,7 @@ impl SpectralPlan {
         )
     }
 
-    pub(super) fn apply_precise<T: ImagePixel + NdFloat>(
+    pub(super) fn apply_precise<T: RegridPixel>(
         &self,
         data: &ArrayD<T>,
         mask: &ArrayD<bool>,
@@ -131,13 +131,13 @@ impl SpectralPlan {
         self.apply_with(data, mask, shape, |value| value, |value| value)
     }
 
-    fn apply_with<T: ImagePixel + Copy, F: NdFloat>(
+    fn apply_with<T: ImagePixel + Copy, V: RegridPixel>(
         &self,
         data: &ArrayD<T>,
         mask: &ArrayD<bool>,
         shape: &[usize],
-        read: impl Fn(T) -> F,
-        write: impl Fn(F) -> T,
+        read: impl Fn(T) -> V,
+        write: impl Fn(V) -> T,
     ) -> (ArrayD<T>, ArrayD<bool>) {
         let mut out_data = ArrayD::<T>::from_elem(IxDyn(shape).f(), T::default_value());
         let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(shape).f(), false);
@@ -151,7 +151,7 @@ impl SpectralPlan {
                 let derivatives = (self.method == RegridMethod::Cubic && line.len() > 1)
                     .then(|| second_derivatives(|k| at(k).0, line.len()));
                 for (channel, position) in self.positions.iter().enumerate() {
-                    let Some(position) = position.and_then(F::from) else {
+                    let Some(position) = position.and_then(cast::<V::Real>) else {
                         continue;
                     };
                     let (value, valid) = match (self.method, &derivatives) {
@@ -170,30 +170,37 @@ impl SpectralPlan {
     }
 }
 
-fn nearest<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), count: usize) -> (F, bool) {
+fn nearest<F: NdFloat, V>(x: F, at: impl Fn(usize) -> (V, bool), count: usize) -> (V, bool) {
     let last = number::<F>((count - 1) as f64);
     let channel = index((x - number::<F>(0.5)).ceil(), count - 1);
     let (value, valid) = at(channel);
     (value, valid && (F::zero()..=last).contains(&x))
 }
 
-fn second_derivatives<F: NdFloat>(at: impl Fn(usize) -> F, count: usize) -> Vec<F> {
+fn second_derivatives<F: NdFloat, V: RegridPixel<Real = F>>(
+    at: impl Fn(usize) -> V,
+    count: usize,
+) -> Vec<V> {
     let mut coefficients = vec![F::zero(); count];
-    let mut result = vec![F::zero(); count];
+    let mut result = vec![V::default_value(); count];
     for i in 1..count - 1 {
         let diagonal = number::<F>(4.0) - coefficients[i - 1];
         let difference = (at(i + 1) - at(i)) - (at(i) - at(i - 1));
         coefficients[i] = F::one() / diagonal;
-        result[i] = (number::<F>(6.0) * difference - result[i - 1]) / diagonal;
+        result[i] = (difference * number::<F>(6.0) - result[i - 1]) / diagonal;
     }
     // InterpolateArray1D back-substitutes down through index 2.
     for i in (2..count - 1).rev() {
-        result[i] = result[i] - coefficients[i] * result[i + 1];
+        result[i] = result[i] - result[i + 1] * coefficients[i];
     }
     result
 }
 
-fn spline<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), derivatives: &[F]) -> (F, bool) {
+fn spline<F: NdFloat, V: RegridPixel<Real = F>>(
+    x: F,
+    at: impl Fn(usize) -> (V, bool),
+    derivatives: &[V],
+) -> (V, bool) {
     let last = derivatives.len() - 1;
     let right = index(x.ceil(), last).max(1);
     let left = right - 1;
@@ -201,10 +208,10 @@ fn spline<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), derivatives: &[F]) 
     let b = F::one() - a;
     let (y1, good1) = at(left);
     let (y2, good2) = at(right);
-    let value = a * y1
-        + b * y2
-        + (a * a * a - a) * derivatives[left] / number::<F>(6.0)
-        + (b * b * b - b) * derivatives[right] / number::<F>(6.0);
+    let value = y1 * a
+        + y2 * b
+        + derivatives[left] * (a * a * a - a) / number::<F>(6.0)
+        + derivatives[right] * (b * b * b - b) / number::<F>(6.0);
     (
         value,
         good1 && good2 && (F::zero()..=number::<F>((last) as f64)).contains(&x),
@@ -213,7 +220,11 @@ fn spline<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), derivatives: &[F]) 
 
 /// casacore `InterpolateArray1D::interpolatePtr`'s `linear` case with flags,
 /// goodIsTrue and no extrapolation, over `0..count` with at least two pixels.
-fn linear<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), count: usize) -> (F, bool) {
+fn linear<F: NdFloat, V: RegridPixel<Real = F>>(
+    x: F,
+    at: impl Fn(usize) -> (V, bool),
+    count: usize,
+) -> (V, bool) {
     let bracket = index(x.ceil(), count);
     let (right, discard) = match bracket {
         0 => (1, x != F::zero()),
@@ -225,7 +236,7 @@ fn linear<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), count: usize) -> (F
     let frac = x - number::<F>((left) as f64);
     let limit = F::epsilon();
     if frac > limit && frac < F::one() - limit {
-        (y1 + frac * (y2 - y1), !discard && good1 && good2)
+        (y1 + (y2 - y1) * frac, !discard && good1 && good2)
     } else if frac <= limit {
         (y1, !discard && good1)
     } else {
@@ -234,7 +245,11 @@ fn linear<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), count: usize) -> (F
 }
 
 fn number<F: NdFloat>(value: f64) -> F {
-    F::from(value).expect("finite index or constant")
+    cast(value).expect("finite index or constant")
+}
+
+fn cast<F: NdFloat>(value: f64) -> Option<F> {
+    F::from(value)
 }
 
 fn index<F: NdFloat>(x: F, max: usize) -> usize {

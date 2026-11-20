@@ -9,18 +9,21 @@ use std::path::Path;
 use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
 use casa_types::quanta::Quantity;
 use casa_types::quanta::casacore::mvangle_radians;
-use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
-use ndarray::{Array2, Axis, IxDyn, Zip};
+use casa_types::ArrayD;
+use ndarray::{Array2, Axis, IxDyn, Slice, Zip};
 
 use crate::analysis::axes::{direction_plane_axes, stokes_for_axis};
 use crate::analysis::{
     PixelRegion, parse_box_region, parse_image_channel_selection, parse_stokes_selection,
 };
-use crate::{ImageError, ImageInterface, ImagePixel, PolygonRegion};
+use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::SubimageRegion;
 
 pub(super) mod saved;
+mod sections;
+
+pub(super) use sections::StridedSection;
 
 use saved::{load_saved_region, parse_saved_region};
 
@@ -69,95 +72,6 @@ struct QualifiedShape {
     planes: PlaneSelection,
 }
 
-pub(super) struct StridedSection {
-    pub(super) start: Vec<usize>,
-    pub(super) count: Vec<usize>,
-    pub(super) stride: Vec<usize>,
-}
-
-impl StridedSection {
-    pub(super) fn resolve<T: ImagePixel>(
-        image: &dyn ImageInterface<T>,
-        region: Option<SubimageRegion<'_>>,
-    ) -> Result<Self, ImageError> {
-        if let Some(SubimageRegion::Record(record)) = region {
-            match record.get("name") {
-                Some(Value::Scalar(ScalarValue::String(name))) if name == "WCPolygon" => {
-                    let polygon =
-                        PolygonRegion::from_record("region", record, image.coordinates())?;
-                    let bounds = polygon
-                        .bounds(image.coordinates(), image.shape())?
-                        .ok_or_else(empty_section)?;
-                    return Ok(Self {
-                        start: bounds.start,
-                        count: bounds.shape,
-                        stride: vec![1; image.ndim()],
-                    });
-                }
-                Some(Value::Scalar(ScalarValue::String(name))) if name == "WCUnion" => {
-                    return Self::union(image, record);
-                }
-                _ => {}
-            }
-            if let Some(section) =
-                saved::strided_lc_slicer(record, image.coordinates(), image.shape())?
-            {
-                return Ok(section);
-            }
-        }
-        let selection = SubimageSelection::resolve(image, None, region, None, None)?;
-        Ok(Self {
-            start: selection.start,
-            count: selection.shape,
-            stride: vec![1; image.ndim()],
-        })
-    }
-
-    fn union<T: ImagePixel>(
-        image: &dyn ImageInterface<T>,
-        record: &RecordValue,
-    ) -> Result<Self, ImageError> {
-        let Some(Value::Record(members)) = record.get("regions") else {
-            return Err(ImageError::InvalidMetadata(
-                "WCUnion is missing its regions".into(),
-            ));
-        };
-        let mut start = image.shape().to_vec();
-        let mut end = vec![0; image.ndim()];
-        for member in members.fields().iter().filter(|field| field.name != "nr") {
-            let Value::Record(child) = &member.value else {
-                return Err(ImageError::InvalidMetadata(
-                    "WCUnion member is missing its region record".into(),
-                ));
-            };
-            let section = match Self::resolve(image, Some(SubimageRegion::Record(child))) {
-                Ok(section) => section,
-                Err(ImageError::CasaSelection(message)) if message == EMPTY_SECTION => continue,
-                Err(error) => return Err(error),
-            };
-            for axis in 0..image.ndim() {
-                start[axis] = start[axis].min(section.start[axis]);
-                end[axis] = end[axis].max(
-                    section.start[axis] + (section.count[axis] - 1) * section.stride[axis] + 1,
-                );
-            }
-        }
-        if end.contains(&0) {
-            return Err(empty_section());
-        }
-        let count = end
-            .into_iter()
-            .zip(&start)
-            .map(|(end, start)| end - start)
-            .collect();
-        Ok(Self {
-            start,
-            count,
-            stride: vec![1; image.ndim()],
-        })
-    }
-}
-
 const EMPTY_SECTION: &str = "selected region contains no pixels inside the image";
 
 fn empty_section() -> ImageError {
@@ -176,14 +90,13 @@ impl From<SpatialShape> for QualifiedShape {
 pub(in crate::analysis) struct SubimageSelection {
     pub(in crate::analysis) start: Vec<usize>,
     pub(in crate::analysis) shape: Vec<usize>,
+    pub(super) stride: Option<Vec<usize>>,
     pub(in crate::analysis) plane: [usize; 2],
     /// Precomputed spatial mask (shape `[shape[plane[0]], shape[plane[1]]]`) if
     /// the selection is non-rectangular or a union of multiple shapes.
     pub(in crate::analysis) spatial_mask: Option<Array2<bool>>,
     qualified_shapes: Vec<QualifiedShape>,
-    /// Full-dimensional mask from saved `WCPolygon` / `WCUnion`, if any,
-    /// covering the entire parent image (sliced lazily to `[start, shape]`).
-    pub(in crate::analysis) saved_polygon_mask: Option<ArrayD<bool>>,
+    saved_mask: Option<SavedRegionMask>,
     pub(in crate::analysis) channel_axis: Option<usize>,
     pub(in crate::analysis) channel_indices: Option<Vec<usize>>,
     pub(in crate::analysis) stokes_axis: Option<usize>,
@@ -193,7 +106,37 @@ pub(in crate::analysis) struct SubimageSelection {
 }
 
 impl SubimageSelection {
+    pub(super) fn packed_shape(&self) -> Vec<usize> {
+        match &self.stride {
+            Some(stride) => self
+                .shape
+                .iter()
+                .zip(stride)
+                .map(|(&size, &step)| size.div_ceil(step))
+                .collect(),
+            None => self.shape.clone(),
+        }
+    }
+
     pub(in crate::analysis) fn resolve<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        box_arg: Option<&str>,
+        region_arg: Option<SubimageRegion<'_>>,
+        chans_arg: Option<&str>,
+        stokes_arg: Option<&str>,
+    ) -> Result<Self, ImageError> {
+        let selection = Self::resolve_section(image, box_arg, region_arg, chans_arg, stokes_arg)?;
+        if let Some(strides) = &selection.stride
+            && let Some((axis, &step)) = strides.iter().enumerate().find(|(_, step)| **step != 1)
+        {
+            return Err(ImageError::InvalidMetadata(format!(
+                "saved region has non-unit stride {step} on axis {axis}"
+            )));
+        }
+        Ok(selection)
+    }
+
+    pub(super) fn resolve_section<T: ImagePixel>(
         image: &dyn ImageInterface<T>,
         box_arg: Option<&str>,
         region_arg: Option<SubimageRegion<'_>>,
@@ -210,8 +153,9 @@ impl SubimageSelection {
         };
 
         let mut regions: Vec<QualifiedShape> = Vec::new();
-        let mut saved_polygon_mask: Option<ArrayD<bool>> = None;
+        let mut saved_mask = None;
         let mut saved_bounds: Option<(Vec<usize>, Vec<usize>)> = None;
+        let mut stride = None;
 
         if let Some(box_text) = box_arg {
             let PixelRegion::Boxes(boxes) = parse_box_region(box_text, &full_shape, plane)? else {
@@ -222,14 +166,13 @@ impl SubimageSelection {
             }
         }
 
-        let mut saved_union = false;
+        let mut is_compound = false;
         if let Some(region) = region_arg {
             let parsed = match region {
                 SubimageRegion::Text(text) => {
                     parse_region_argument(image, text, &full_shape, plane)?
                 }
                 SubimageRegion::Record(record) => {
-                    saved_union = record.get("regions").is_some();
                     parse_saved_region("region", record, image.coordinates(), &full_shape, plane)?
                 }
             };
@@ -244,9 +187,11 @@ impl SubimageSelection {
                     "saved region cannot be combined with box, chans, or stokes".into(),
                 ));
             }
+            is_compound = parsed.is_compound;
             regions.extend(parsed.shapes);
-            saved_polygon_mask = parsed.saved_polygon_mask;
+            saved_mask = parsed.saved_mask;
             saved_bounds = parsed.saved_bounds;
+            stride = parsed.stride;
         }
 
         let explicit = |selection: Option<&str>| selection.is_some_and(|s| !s.trim().is_empty());
@@ -274,7 +219,7 @@ impl SubimageSelection {
             plane,
             &spatial_shapes,
             saved_bounds.as_ref(),
-            saved_polygon_mask.as_ref(),
+            saved_mask.is_some(),
         )?;
 
         let (channel_axis, channel_indices) = resolve_channels(
@@ -298,7 +243,7 @@ impl SubimageSelection {
             &mut shape,
         )?;
 
-        let has_multiple_regions = saved_union
+        let has_multiple_regions = is_compound
             || regions.len() > 1
             || channel_axis
                 .zip(channel_indices.as_ref())
@@ -309,6 +254,7 @@ impl SubimageSelection {
         Ok(Self {
             start,
             shape,
+            stride,
             plane,
             spatial_mask,
             qualified_shapes: if regions
@@ -319,7 +265,7 @@ impl SubimageSelection {
             } else {
                 Vec::new()
             },
-            saved_polygon_mask,
+            saved_mask,
             channel_axis: channel_axis.or_else(|| image.find_axis(CoordinateType::Spectral)),
             channel_indices,
             stokes_axis: stokes_axis.or_else(|| image.find_axis(CoordinateType::Stokes)),
@@ -334,21 +280,18 @@ impl SubimageSelection {
         let box_mask = self.spatial_mask.as_ref().map(|spatial| {
             ArrayD::from_shape_fn(IxDyn(&self.shape), |idx| spatial[[idx[px], idx[py]]])
         });
-        let poly_mask = self.saved_polygon_mask.as_ref().map(|saved_poly| {
-            let slice_elems: Vec<ndarray::SliceInfoElem> = self
-                .start
-                .iter()
-                .zip(self.shape.iter())
-                .map(|(&s, &len)| ndarray::SliceInfoElem::Slice {
-                    start: s as isize,
-                    end: Some((s + len) as isize),
-                    step: 1,
+        let region_mask = self.saved_mask.as_ref().map(|saved| match saved {
+            SavedRegionMask::Whole(pixels) => pixels
+                .slice_each_axis(|axis| {
+                    let index = axis.axis.index();
+                    let start = self.start[index];
+                    Slice::from(start..start + self.shape[index])
                 })
-                .collect();
-            saved_poly.slice(slice_elems.as_slice()).to_owned()
+                .to_owned(),
+            SavedRegionMask::Cropped(pixels) => pixels.clone(),
         });
 
-        match (box_mask, poly_mask) {
+        match (box_mask, region_mask) {
             (Some(mut bm), Some(pm)) => {
                 // `box` and `region` combine by spatial union (CASA fromBCS).
                 Zip::from(&mut bm).and(&pm).for_each(|b, &p| *b = *b || p);
@@ -441,10 +384,19 @@ fn mask_skipped_axis(
     *mask = Some(m);
 }
 
+enum SavedRegionMask {
+    Whole(ArrayD<bool>),
+    // The compound mask starts at its saved bounds, which cannot be combined
+    // with a separate box, channel, or Stokes selection.
+    Cropped(ArrayD<bool>),
+}
+
 struct ParsedRegion {
+    is_compound: bool,
     shapes: Vec<QualifiedShape>,
-    saved_polygon_mask: Option<ArrayD<bool>>,
+    saved_mask: Option<SavedRegionMask>,
     saved_bounds: Option<(Vec<usize>, Vec<usize>)>,
+    stride: Option<Vec<usize>>,
 }
 
 fn parse_region_argument<T: ImagePixel>(
@@ -470,9 +422,11 @@ fn parse_region_argument<T: ImagePixel>(
     if let Some(box_text) = text.strip_prefix("box:") {
         let b = parse_single_box(box_text.trim(), full_shape, plane)?;
         return Ok(ParsedRegion {
+            is_compound: false,
             shapes: vec![SpatialShape::Box(b).into()],
-            saved_polygon_mask: None,
+            saved_mask: None,
             saved_bounds: None,
+            stride: None,
         });
     }
     if let Some(inner) = text
@@ -481,17 +435,21 @@ fn parse_region_argument<T: ImagePixel>(
     {
         let b = parse_single_box(inner.trim(), full_shape, plane)?;
         return Ok(ParsedRegion {
+            is_compound: false,
             shapes: vec![SpatialShape::Box(b).into()],
-            saved_polygon_mask: None,
+            saved_mask: None,
             saved_bounds: None,
+            stride: None,
         });
     }
     if looks_like_four_ints(text) {
         let b = parse_single_box(text, full_shape, plane)?;
         return Ok(ParsedRegion {
+            is_compound: false,
             shapes: vec![SpatialShape::Box(b).into()],
-            saved_polygon_mask: None,
+            saved_mask: None,
             saved_bounds: None,
+            stride: None,
         });
     }
 
@@ -598,9 +556,11 @@ fn parse_crtf_document<T: ImagePixel>(
         )));
     }
     Ok(ParsedRegion {
+        is_compound: false,
         shapes,
-        saved_polygon_mask: None,
+        saved_mask: None,
         saved_bounds: None,
+        stride: None,
     })
 }
 
@@ -1068,7 +1028,7 @@ fn resolve_spatial_and_saved_bounds(
     plane: [usize; 2],
     shapes: &[&SpatialShape],
     saved_bounds: Option<&(Vec<usize>, Vec<usize>)>,
-    saved_polygon_mask: Option<&ArrayD<bool>>,
+    has_saved_mask: bool,
 ) -> Result<SpatialResolution, ImageError> {
     let mut start = vec![0usize; ndim];
     let mut shape = full_shape.to_vec();
@@ -1098,7 +1058,7 @@ fn resolve_spatial_and_saved_bounds(
 
     // Fast path for single box with no saved WCPolygon.
     if shapes.len() == 1
-        && saved_polygon_mask.is_none()
+        && !has_saved_mask
         && let SpatialShape::Box([x0, y0, x1, y1]) = *shapes[0]
     {
         if x1 >= nx || y1 >= ny || x1 < x0 || y1 < y0 {
@@ -1114,6 +1074,14 @@ fn resolve_spatial_and_saved_bounds(
             start,
             shape,
             spatial_mask: None,
+        });
+    }
+    if saved_bounds.is_some() && !has_saved_mask {
+        let spatial_mask = rasterize_shapes(shapes, [start[px], start[py]], [shape[px], shape[py]]);
+        return Ok(SpatialResolution {
+            start,
+            shape,
+            spatial_mask,
         });
     }
 
@@ -1168,7 +1136,7 @@ fn resolve_spatial_and_saved_bounds(
         return Err(empty_section());
     }
 
-    if saved_polygon_mask.is_some() {
+    if has_saved_mask {
         // When both box and saved WCPolygon exist, form union over their planes.
         min_x = min_x.min(start[px]);
         min_y = min_y.min(start[py]);
@@ -1181,17 +1149,23 @@ fn resolve_spatial_and_saved_bounds(
     shape[px] = max_x - min_x + 1;
     shape[py] = max_y - min_y + 1;
 
-    let spatial = Array2::from_shape_fn((shape[px], shape[py]), |(lx, ly)| {
-        let gx = min_x + lx;
-        let gy = min_y + ly;
-        shapes.iter().any(|s| shape_contains(s, gx, gy))
-    });
-    let spatial = (!spatial.iter().all(|&v| v)).then_some(spatial);
+    let spatial_mask = rasterize_shapes(shapes, [min_x, min_y], [shape[px], shape[py]]);
     Ok(SpatialResolution {
         start,
         shape,
-        spatial_mask: spatial,
+        spatial_mask,
     })
+}
+
+fn rasterize_shapes(
+    shapes: &[&SpatialShape],
+    [x0, y0]: [usize; 2],
+    [nx, ny]: [usize; 2],
+) -> Option<Array2<bool>> {
+    let spatial = Array2::from_shape_fn((nx, ny), |(x, y)| {
+        shapes.iter().any(|s| shape_contains(s, x0 + x, y0 + y))
+    });
+    (!spatial.iter().all(|&inside| inside)).then_some(spatial)
 }
 
 fn shape_candidate_bounds(

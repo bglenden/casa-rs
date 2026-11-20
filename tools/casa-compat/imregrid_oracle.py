@@ -10,9 +10,10 @@ import tempfile
 
 import numpy as np
 from casatasks import imregrid, version_string
-from casatools import image
+from casatools import coordsys, image
 
-INPUTS = ("cube.im", "template.im", "single.im", "masked.im", "transposed.im", "cube_pol.im", "template_pol.im", "double.im")
+INPUTS = ("cube.im", "template.im", "single.im", "masked.im", "transposed.im", "cube_pol.im", "template_pol.im", "double.im",
+          "complex.im", "dcomplex.im", "complex_sfl.im")
 CASES = {
     "frequency": {},
     "velocity": {"asvelocity": True},
@@ -37,6 +38,15 @@ CASES = {
     "galactic_frame": {"template": "GALACTIC", "axes": [3], "shape": [1, 1, 1, 1]},
     "identity_spectral_cubic": {"imagename": "masked.im", "template": "masked.im", "axes": [3], "interpolation": "cubic"},
     "identity_decimation_refused": {"template": "cube.im", "axes": [0, 1], "decimate": 100},
+    "complex_cubic": {"imagename": "complex.im", "interpolation": "cubic"},
+    "complex_frequency": {"imagename": "complex.im", "axes": [3]},
+    "complex_same_frame": {"imagename": "complex.im", "template": "J2000"},
+    "complex_same_frame_existing": {"imagename": "complex.im", "template": "J2000", "overwrite": True},
+    "complex_frame_refused": {"imagename": "complex.im", "template": "GALACTIC"},
+    "complex_sfl_frame": {"imagename": "complex_sfl.im", "template": "GALACTIC"},
+    "double_frame_refused": {"imagename": "double.im", "template": "GALACTIC"},
+    "dcomplex_frequency": {"imagename": "dcomplex.im", "axes": [3], "interpolation": "cubic"},
+    "dcomplex_spatial": {"imagename": "dcomplex.im", "axes": [0, 1]},
 }
 
 
@@ -94,6 +104,41 @@ def make_double():
         tool.done()
 
 
+def make_complex():
+    tool = image()
+    assert tool.open("cube.im")
+    cs = tool.coordsys()
+    record = cs.torecord()
+    shape = tool.shape()
+    cs.done()
+    tool.done()
+    x, y, _, channel = np.indices(shape, dtype=np.float64)
+    real = x**2 + 0.1 * y**2 + np.sin(x * y) + 20 * channel**2 + 1
+    imag = 1 + 0.21 * x * y**2 + np.cos(x + channel * y) - 3 * channel**2
+    for name, dtype, precision, scale in [
+        ("complex.im", np.complex64, "f", 1.0),
+        ("dcomplex.im", np.complex128, "d", 1e100),
+    ]:
+        try:
+            pixels = ((real + 1j * imag) * scale).astype(dtype)
+            assert tool.fromarray(name, pixels, csys=record, type=precision)
+            if precision == "f":
+                assert tool.setbrightnessunit("Jy/beam")
+                assert tool.setrestoringbeam("4arcsec", "3arcsec", "12deg", log=False)
+                assert tool.putregion(pixelmask=(x + 2 * y + channel) % 23 != 0)
+        finally:
+            tool.done()
+    cs = coordsys()
+    try:
+        assert cs.fromrecord(record)
+        assert cs.setprojection("SFL")
+        pixels = (real + 1j * imag).astype(np.complex64)
+        assert tool.fromarray("complex_sfl.im", pixels, csys=cs.torecord())
+    finally:
+        cs.done()
+        tool.done()
+
+
 def snapshot(path):
     ia = image()
     assert ia.open(path)
@@ -102,7 +147,8 @@ def snapshot(path):
         try:
             shape = ia.shape().tolist()
             beam = ia.restoringbeam()
-            return {
+            pixels = ia.getchunk().ravel(order="F")
+            result = {
                 "shape": shape,
                 "names": cs.names(),
                 "units": cs.units(),
@@ -113,9 +159,13 @@ def snapshot(path):
                 "pixel0_world": plain(cs.toworld([0] * len(shape))["numeric"]),
                 "brightness": ia.brightnessunit(),
                 "mask": ia.getchunk(getmask=True).ravel(order="F").tolist(),
-                "pixels": ia.getchunk().ravel(order="F").tolist(),
+                "pixels": pixels.tolist(),
                 "beam": {key: [item["value"], item["unit"]] for key, item in beam.items()},
             }
+            if np.iscomplexobj(pixels):
+                result["pixels"] = np.column_stack((pixels.real, pixels.imag)).tolist()
+                result["pixel_type"] = ia.pixeltype()
+            return result
         finally:
             cs.done()
     finally:
@@ -130,6 +180,7 @@ def run_cases():
     cube("cube_pol.im", (14, 12, 3, 5), 1.4e9, 2e6, 1.42e9, polarizations=["I", "Q", "U"])
     cube("template_pol.im", (12, 10, 2, 4), 1.401e9, 2.3e6, 1.421e9, shifted=True, polarizations=["Q", "U"])
     make_double()
+    make_complex()
     dictionary = imregrid(imagename="template.im", template="get")
     reference = imregrid(imagename="cube.im", template="get")
     def edit(direction=None, spectral=None):
@@ -151,16 +202,25 @@ def run_cases():
         "optical_velocity": {"template": edit(spectral={"velType": 1, "wcs": {"crval": 1.402e9}}), "axes": [3], "asvelocity": True},
         "disjoint_replicated_spectrum": {"template": edit(spectral={"wcs": {"crval": 2e9}}), "axes": [3], "replicate": True},
         "double_spectrum": {"imagename": "double.im", "template": edit(spectral={"wcs": {"crpix": 0.25}}), "axes": [3]},
+        "complex_dictionary": {"imagename": "complex.im", "template": dictionary, "interpolation": "nearest"},
     }
     cases = {}
     for name, options in {**CASES, **extra}.items():
         args = {"imagename": "cube.im", "template": "template.im", "asvelocity": False, "decimate": 0, **options}
         case = {"params": plain(args)}
         product = f"{name}.out"
+        if name == "complex_same_frame_existing":
+            case["existing"] = "template.im"
+            shutil.copytree(case["existing"], product)
         try:
             assert imregrid(**args, output=product) is None
-        except (AssertionError, RuntimeError, ValueError, TypeError) as error:
+        except Exception as error:
+            if not isinstance(error, (AssertionError, RuntimeError, ValueError, TypeError)):
+                if name != "complex_sfl_frame" or "a projection of SFL" not in str(error):
+                    raise
             case["error"] = str(error).splitlines()[0].replace(f"{Path.cwd()}/", "")
+            if "existing" in case:
+                assert snapshot(product) == snapshot(case["existing"])
         else:
             case["product"] = snapshot(product)
             if name == "singleton":
