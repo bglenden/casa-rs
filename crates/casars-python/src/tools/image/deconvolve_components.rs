@@ -14,7 +14,7 @@ use crate::tools::{LogLine, componentlist::image_component_records, emit, table:
 
 use super::PyImageTool;
 use super::beam_edit::beam_for_units;
-use super::beams::image_info;
+use super::beam_view::BeamView;
 use super::handle::{ImageHandle, raised};
 
 fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
@@ -123,6 +123,7 @@ fn source_beam(axes: &[Quantity; 3], rad: &Unit) -> PyResult<GaussianBeam> {
 
 fn deconvolved_record(
     image: &ImageHandle,
+    beam_view: &BeamView,
     input: &RecordValue,
     channel: i64,
     polarization: i64,
@@ -131,7 +132,7 @@ fn deconvolved_record(
     image.check_single_precision("deconvolvecomponentlist")?;
     let components = image_component_records(input, logs)?;
     let missing_beam = || raised("Exception: This image does not have a restoring beam.");
-    if image_info(image).map_err(raised)?.beam_set.is_empty() {
+    if beam_view.beam_set().map_err(raised)?.is_empty() {
         return Err(missing_beam());
     }
     if CoordinateSystem::first_direction_in_record(&image.coordinate_record())
@@ -142,7 +143,7 @@ fn deconvolved_record(
             "Exception: This image does not contain a direction coordinate.",
         ));
     }
-    let stored_beam = beam_for_units(image, channel, polarization)?.ok_or_else(missing_beam)?;
+    let stored_beam = beam_for_units(beam_view, channel, polarization)?.ok_or_else(missing_beam)?;
     let rad = Unit::new("rad").expect("built-in radians unit");
     let radians =
         |quantity: &Quantity| casacore::get_conformant_value(quantity, &rad).map_err(raised);
@@ -211,6 +212,7 @@ impl PyImageTool {
             };
             deconvolved_record(
                 &attachment.lock(),
+                &attachment.beam_view(),
                 &record,
                 channel,
                 polarization,

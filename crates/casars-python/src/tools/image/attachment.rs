@@ -5,13 +5,14 @@
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableError, TableOptions, TableUseLock, TableWriteLock};
 use pyo3::prelude::*;
 
+use super::beam_view::BeamView;
+use super::beams::image_info_record;
 use super::handle::{ImageHandle, raised};
 use super::stub;
 
@@ -19,9 +20,6 @@ pub(super) struct SharedImage {
     handle: Mutex<ImageHandle>,
     use_lock: Option<Arc<TableUseLock>>,
     shareable: bool,
-    // CASA rotates the cached null beam for its history messages without
-    // writing a restoring beam to the image.
-    empty_beam_angle: AtomicU64,
 }
 
 type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
@@ -35,18 +33,20 @@ pub(super) fn registry() -> MutexGuard<'static, OpenImages> {
 pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,
+    beam_view: Mutex<BeamView>,
 }
 
 impl AttachedImage {
     pub(super) fn temporary(image: ImageHandle) -> Self {
+        let beam_view = BeamView::from_info(image_info_record(&image));
         Self {
             image: Arc::new(SharedImage {
                 handle: Mutex::new(image),
                 use_lock: None,
                 shareable: false,
-                empty_beam_angle: AtomicU64::new(0),
             }),
             key: None,
+            beam_view: Mutex::new(beam_view),
         }
     }
 
@@ -57,7 +57,7 @@ impl AttachedImage {
         let key = key(path)?;
         let shared = Self::shared(&registry(), &key);
         if let Some(shared) = shared {
-            shared.require_lock(&mut shared.lock(), casa_tables::LockType::Read)?;
+            shared.read_current_beams()?;
             return Ok(shared);
         }
 
@@ -74,8 +74,15 @@ impl AttachedImage {
             }
         };
         drop(opened);
-        shared.require_lock(&mut shared.lock(), casa_tables::LockType::Read)?;
+        shared.read_current_beams()?;
         Ok(shared)
+    }
+
+    fn read_current_beams(&self) -> PyResult<()> {
+        let mut handle = self.lock();
+        self.require_lock(&mut handle, casa_tables::LockType::Read)?;
+        *self.beam_view() = BeamView::from_info(image_info_record(&handle));
+        Ok(())
     }
 
     pub(super) fn open_created(registry: &mut OpenImages, path: &Path) -> PyResult<Self> {
@@ -107,6 +114,7 @@ impl AttachedImage {
             .map(|image| Self {
                 image,
                 key: Some(key.to_path_buf()),
+                beam_view: Mutex::default(),
             })
     }
 
@@ -140,15 +148,17 @@ impl AttachedImage {
             .then(|| acquire(key).map(Arc::new))
             .transpose()
             .map_err(raised)?;
+        let handle = ImageHandle::open_native(path, lock_attempts).map_err(raised)?;
+        let beam_view = BeamView::from_info(image_info_record(&handle));
         let image = Arc::new(SharedImage {
-            handle: Mutex::new(ImageHandle::open_native(path, lock_attempts).map_err(raised)?),
+            handle: Mutex::new(handle),
             use_lock,
             shareable: lock_attempts.is_some(),
-            empty_beam_angle: AtomicU64::new(0),
         });
         let opened = Self {
             image,
             key: Some(key.to_path_buf()),
+            beam_view: Mutex::new(beam_view),
         };
         opened.check_bound_name(&opened.lock())?;
         Ok(opened)
@@ -170,16 +180,10 @@ impl AttachedImage {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Read while holding the image handle's lock.
-    pub(super) fn empty_beam_angle(&self) -> f64 {
-        f64::from_bits(self.image.empty_beam_angle.load(Ordering::Relaxed))
-    }
-
-    /// Update while holding the image handle's lock.
-    pub(super) fn set_empty_beam_angle(&self, degrees: f64) {
-        self.image
-            .empty_beam_angle
-            .store(degrees.to_bits(), Ordering::Relaxed);
+    pub(super) fn beam_view(&self) -> MutexGuard<'_, BeamView> {
+        self.beam_view
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(super) fn is_persistent(&self) -> bool {
@@ -302,6 +306,7 @@ impl AttachedImage {
             return Ok(Self {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
+                beam_view: Mutex::new(self.beam_view().clone()),
             });
         }
         if old_name
@@ -361,20 +366,22 @@ impl AttachedImage {
             log_rename(&mut image)?;
             Ok::<_, PyErr>(image)
         };
-        let image = match reopen() {
-            Ok(image) => Arc::new(SharedImage {
-                handle: Mutex::new(image),
-                use_lock: self.image.use_lock.clone(),
-                shareable: self.image.shareable,
-                empty_beam_angle: AtomicU64::new(self.empty_beam_angle().to_bits()),
-            }),
+        let handle = match reopen() {
+            Ok(image) => image,
             Err(error) => return restore_native_move(source, &target, backup, error),
         };
+        let beam_view = BeamView::from_info(image_info_record(&handle));
+        let image = Arc::new(SharedImage {
+            handle: Mutex::new(handle),
+            use_lock: self.image.use_lock.clone(),
+            shareable: self.image.shareable,
+        });
         registry.remove(source);
         registry.insert(target.clone(), vec![Arc::downgrade(&image)]);
         Ok(Self {
             image,
             key: Some(target),
+            beam_view: Mutex::new(beam_view),
         })
     }
 

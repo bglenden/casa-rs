@@ -80,12 +80,12 @@ fn beam_matrix(
 }
 
 pub(super) fn restoring_beam(
-    image: &ImageHandle,
+    view: &super::beam_view::BeamView,
     channel: i64,
     polarization: i64,
     mode: &str,
 ) -> PyResult<CasaValue> {
-    let beams = image_info(image).map_err(raised)?.beam_set;
+    let beams = view.beam_set().map_err(raised)?;
     let first = mode.as_bytes().first().map(u8::to_ascii_lowercase);
     let matrix = first == Some(b'm');
     if !matrix && first != Some(b'l') {
@@ -107,7 +107,7 @@ pub(super) fn restoring_beam(
     if beams.is_empty() {
         return Ok(CasaValue::empty_record());
     }
-    let info = image_info_record(image);
+    let info = Some(view.record());
     let beam = |channel, polarization| {
         CasaValue::from_record(&stored_beam_record(info, &beams, channel, polarization))
     };
@@ -204,8 +204,13 @@ pub(super) fn axis_length(image: &ImageHandle, axis: Option<usize>) -> PyResult<
     }
 }
 
-fn beam_area(image: &ImageHandle, channel: i64, polarization: i64) -> PyResult<CasaValue> {
-    let beams = image_info(image).map_err(raised)?.beam_set;
+fn beam_area(
+    image: &ImageHandle,
+    view: &super::beam_view::BeamView,
+    channel: i64,
+    polarization: i64,
+) -> PyResult<CasaValue> {
+    let beams = view.beam_set().map_err(raised)?;
     if beams.is_empty() {
         return Err(raised(
             "Exception: This image has no beam(s). The setrestoringbeam() method may be used to set its beam(s).",
@@ -272,14 +277,14 @@ fn beam_area(image: &ImageHandle, channel: i64, polarization: i64) -> PyResult<C
     ]))
 }
 
-fn common_beam(image: &ImageHandle) -> PyResult<CasaValue> {
+fn common_beam(image: &ImageHandle, view: &super::beam_view::BeamView) -> PyResult<CasaValue> {
     image.check_single_precision("commonbeam")?;
-    let beams = image_info(image).map_err(raised)?.beam_set;
+    let beams = view.beam_set().map_err(raised)?;
     if beams.is_empty() {
         return Err(raised("Exception: This image has no beam(s)."));
     }
     let common = beams.common_beam().map_err(raised)?;
-    let info = image_info_record(image);
+    let info = Some(view.record());
     let matching_plane = (0..beams.n_stokes()).find_map(|polarization| {
         (0..beams.n_channels())
             .find(|&channel| *beams.beam(channel, polarization) == common)
@@ -323,7 +328,7 @@ impl PyImageTool {
         py.detach(|| {
             self.state().image.as_ref().map_or_else(
                 || Ok(CasaValue::empty_record()),
-                |image| restoring_beam(&image.lock(), channel, polarization, mbret),
+                |image| restoring_beam(&image.beam_view(), channel, polarization, mbret),
             )
         })?
         .into_python(py)
@@ -334,7 +339,7 @@ impl PyImageTool {
         py.detach(|| {
             self.state().image.as_ref().map_or_else(
                 || Ok(CasaValue::empty_record()),
-                |image| beam_area(&image.lock(), channel, polarization),
+                |image| beam_area(&image.lock(), &image.beam_view(), channel, polarization),
             )
         })?
         .into_python(py)
@@ -344,7 +349,7 @@ impl PyImageTool {
         py.detach(|| {
             self.state().image.as_ref().map_or_else(
                 || Ok(CasaValue::empty_record()),
-                |image| common_beam(&image.lock()),
+                |image| common_beam(&image.lock(), &image.beam_view()),
             )
         })?
         .into_python(py)

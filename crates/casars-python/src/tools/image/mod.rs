@@ -6,6 +6,7 @@
 mod attachment;
 mod beam_edit;
 mod beam_rotate;
+mod beam_view;
 mod beams;
 mod concatenate;
 mod conformance;

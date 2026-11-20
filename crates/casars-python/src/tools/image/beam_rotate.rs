@@ -11,10 +11,10 @@ use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
 use super::beam_edit::input_history;
+use super::beam_view::BeamView;
 use super::beams::{image_info, image_info_record, stored_beam_record, subrecord};
-use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::handle::{ImageHandle, Storage, raised, with_pixels};
 
-#[derive(Clone)]
 struct BeamChange {
     original: StoredGaussianBeam,
     rotated: StoredGaussianBeam,
@@ -74,13 +74,13 @@ fn multiple_beam_messages(name: &str, min: &BeamChange, max: &BeamChange) -> PyR
 
 fn rotate_beam_record(
     beams: &ImageBeamSet,
-    info: Option<&RecordValue>,
+    view: &BeamView,
     updated: &mut RecordValue,
     angle: &Quantity,
     name: &str,
 ) -> PyResult<Vec<String>> {
     let change = |channel, stokes| {
-        let beam = stored_beam_record(info, beams, channel, stokes);
+        let beam = stored_beam_record(Some(view.record()), beams, channel, stokes);
         BeamChange::new(
             StoredGaussianBeam::from_record(&beam).map_err(raised)?,
             angle,
@@ -88,15 +88,15 @@ fn rotate_beam_record(
     };
     if beams.is_single() {
         let single = change(0, 0)?;
+        updated.remove("perplanebeams");
         updated.upsert("restoringbeam", Value::Record(single.rotated.to_record()));
         return single.messages(name, "").map(Vec::from);
     }
-    let mut grid = info
-        .and_then(|info| subrecord(info, "perplanebeams"))
+    let mut grid = subrecord(view.record(), "perplanebeams")
         .cloned()
         .unwrap_or_else(|| beams.to_record());
-    let mut minimum: Option<(f64, BeamChange)> = None;
-    let mut maximum: Option<(f64, BeamChange)> = None;
+    let [minimum, maximum] = view.extrema();
+    let indices = |index| (index % beams.n_channels(), index / beams.n_channels());
     for stokes in 0..beams.n_stokes() {
         for channel in 0..beams.n_channels() {
             let plane = change(channel, stokes)?;
@@ -105,20 +105,16 @@ fn rotate_beam_record(
                 format!("*{index}"),
                 Value::Record(plane.rotated.to_record()),
             );
-            let area = beams.beam(channel, stokes).area();
-            if minimum.as_ref().is_none_or(|(min, _)| area < *min) {
-                minimum = Some((area, plane.clone()));
-            }
-            if maximum.as_ref().is_none_or(|(max, _)| area > *max) {
-                maximum = Some((area, plane));
-            }
         }
     }
+    updated.remove("restoringbeam");
     updated.upsert("perplanebeams", Value::Record(grid));
+    let (min_chan, min_stokes) = indices(minimum);
+    let (max_chan, max_stokes) = indices(maximum);
     multiple_beam_messages(
         name,
-        &minimum.expect("nonempty beam set").1,
-        &maximum.expect("nonempty beam set").1,
+        &change(min_chan, min_stokes)?,
+        &change(max_chan, max_stokes)?,
     )
 }
 
@@ -139,27 +135,27 @@ impl PyImageTool {
                 return Err(raised("Exception: Quantity is not an angle."));
             }
             attachment.require_lock(&mut image, LockType::Write)?;
-            let info = image_info(&image).map_err(raised)?;
+            let mut view = attachment.beam_view();
+            let beams = view.beam_set().map_err(raised)?;
             let name = image
                 .path()
                 .map_or_else(|| "Temporary_Image".into(), |path| path.display().to_string());
-            let messages = if info.beam_set.is_empty() {
+            let (messages, updated_info, empty_angle) = if beams.is_empty() {
                 let zero = Quantity::new(0.0, "arcsec").expect("built-in angular unit");
-                let previous = Quantity::with_unit(attachment.empty_beam_angle(), degrees);
+                let previous = Quantity::with_unit(view.empty_angle_degrees, degrees);
                 let beam = StoredGaussianBeam::new(zero.clone(), zero, previous).map_err(raised)?;
                 let change = BeamChange::new(beam, &rotation)?;
                 let messages = multiple_beam_messages(&name, &change, &change)?;
-                attachment.set_empty_beam_angle(
-                    change.rotated.component(BeamComponent::PositionAngle).value(),
-                );
-                messages
+                let angle = change.rotated.component(BeamComponent::PositionAngle).value();
+                (messages, None, angle)
             } else {
-                let record = image_info_record(&image);
-                let mut updated = record.cloned().unwrap_or_else(|| info.to_record());
-                let messages = rotate_beam_record(&info.beam_set, record, &mut updated, &rotation, &name)?;
-                with_pixels!(&mut *image, storage => with_storage!(storage, target => target.set_image_info_record(updated)))
-                    .map_err(raised)?;
-                messages
+                let mut updated = match image_info_record(&image) {
+                    Some(info) => info.clone(),
+                    None => image_info(&image).map_err(raised)?.to_record(),
+                };
+                let messages = rotate_beam_record(&beams, &view, &mut updated, &rotation, &name)?;
+                casa_images::ImageInfo::from_record(&updated).map_err(raised)?;
+                (messages, Some(updated), 0.0)
             };
             let mut history = Vec::with_capacity(messages.len() + 2);
             if state.history {
@@ -167,8 +163,21 @@ impl PyImageTool {
                 history.push(format!("ia.rotatebeam(angle={})", input_history(&angle)));
             }
             history.extend(messages.iter().cloned());
-            image.append_history_at("::BeamManipulator::rotate", &history)?;
-            image.save().map_err(raised)?;
+            let location = "::BeamManipulator::rotate";
+            with_pixels!(&mut *image, storage => match storage {
+                Storage::Paged(image) => image.save_image_info_with_history(updated_info.as_ref(), location, &history),
+                Storage::Temp { image, .. } => {
+                    if let Some(updated) = &updated_info {
+                        image.set_image_info_record(updated.clone()).map_err(raised)?;
+                    }
+                    image.append_history_at(location, &history)
+                },
+            }).map_err(raised)?;
+            if let Some(updated) = updated_info {
+                view.capture(&updated);
+            } else {
+                view.empty_angle_degrees = empty_angle;
+            }
             Ok::<_, PyErr>(Some(messages))
         })?;
         let Some(messages) = result else {

@@ -12,6 +12,7 @@ use crate::convert::{Variant, quantity, value::CasaValue};
 use crate::tools::{LogLine, emit, table::casa_record};
 
 use super::PyImageTool;
+use super::beam_view::BeamView;
 use super::beams::{
     axis_length, image_info, image_info_record, plane_axes, stored_beam_record, subrecord,
 };
@@ -44,11 +45,11 @@ fn beam_quantity(value: &Variant, label: &str) -> PyResult<Quantity> {
 }
 
 pub(super) fn beam_for_units(
-    image: &ImageHandle,
+    current: &BeamView,
     channel: i64,
     polarization: i64,
 ) -> PyResult<Option<StoredGaussianBeam>> {
-    let beams = image_info(image).map_err(raised)?.beam_set;
+    let beams = current.beam_set().map_err(raised)?;
     if beams.is_empty() {
         return Ok(None);
     }
@@ -64,7 +65,7 @@ pub(super) fn beam_for_units(
         }
     };
     let record = stored_beam_record(
-        image_info_record(image),
+        Some(current.record()),
         &beams,
         index(channel, beams.n_channels())?,
         index(polarization, beams.n_stokes())?,
@@ -75,7 +76,7 @@ pub(super) fn beam_for_units(
 }
 
 fn beam_from_arguments(
-    image: &ImageHandle,
+    current: &BeamView,
     major: &Variant,
     minor: &Variant,
     pa: &Variant,
@@ -98,7 +99,7 @@ fn beam_from_arguments(
         .iter()
         .any(|value| value.unit().conformant(&dimensionless))
     {
-        beam_for_units(image, channel, polarization)?
+        beam_for_units(current, channel, polarization)?
     } else {
         None
     };
@@ -238,23 +239,25 @@ fn copy_beams(
 
 fn edit_beam(
     image: &ImageHandle,
+    view: &BeamView,
     beam: RecordValue,
     channel: i64,
     polarization: i64,
 ) -> PyResult<RecordValue> {
-    let current = image_info(image).map_err(raised)?;
-    let original = image_info_record(image);
-    let mut result = original.cloned().unwrap_or_else(|| current.to_record());
+    let beams = view.beam_set().map_err(raised)?;
+    let mut result = image_info_record(image)
+        .cloned()
+        .unwrap_or(image_info(image).map_err(raised)?.to_record());
     result.remove("restoringbeam");
     result.remove("perplanebeams");
     let indexed = channel >= 0 || polarization >= 0;
-    if current.beam_set.is_single() && indexed {
+    if beams.is_single() && indexed {
         return Err(raised(
             "Channel and/or polarization has been specified, but this image has a single (global restoring beam. This beam will not be altered. If you really want to modify the global beam, rerun setting both channel and polarization less than zero",
         ));
     }
-    if !indexed || current.beam_set.is_empty() {
-        let (channels, stokes) = if indexed || current.beam_set.is_multi() {
+    if !indexed || beams.is_empty() {
+        let (channels, stokes) = if indexed || beams.is_multi() {
             let (spectral, stokes_axis) = plane_axes(&image.coordinate_record())?;
             (
                 axis_length(image, spectral)?,
@@ -266,17 +269,16 @@ fn edit_beam(
         replace_all(&mut result, beam, channels, stokes);
         return Ok(result);
     }
-    let channels = current.beam_set.n_channels();
-    let stokes = current.beam_set.n_stokes();
+    let channels = beams.n_channels();
+    let stokes = beams.n_stokes();
     if channel >= channels as i64 || polarization >= stokes as i64 {
         return Err(raised(
             "Failed AlwaysAssert Int(chan) < _beams.shape()[0] && Int(stokes) < _beams.shape()[1]",
         ));
     }
-    let mut grid = original
-        .and_then(|record| subrecord(record, "perplanebeams"))
+    let mut grid = subrecord(view.record(), "perplanebeams")
         .cloned()
-        .unwrap_or_else(|| current.beam_set.to_record());
+        .unwrap_or_else(|| beams.to_record());
     for pol in 0..stokes {
         for chan in 0..channels {
             if (polarization < 0 || polarization as usize == pol)
@@ -353,6 +355,7 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else { return Ok(None) };
             let mut image = attachment.lock();
             attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
+            let mut view = attachment.beam_view();
             let (info, message) = if !imagename.is_empty() {
                 if !major.is_empty_sequence() || !minor.is_empty_sequence()
                     || !matches!(&pa, Variant::Text(text) if text == UNSPECIFIED_PA)
@@ -383,7 +386,7 @@ impl PyImageTool {
                 (info, "Removed restoring beam(s)".to_owned())
             } else {
                 let updated = if beam.is_empty() {
-                    beam_from_arguments(&image, &major, &minor, &pa, channel, polarization)?
+                    beam_from_arguments(&view, &major, &minor, &pa, channel, polarization)?
                 } else {
                     beam_from_record(&beam)?
                 };
@@ -392,7 +395,7 @@ impl PyImageTool {
                 } else {
                     String::new()
                 };
-                (edit_beam(&image, updated, channel, polarization)?, message)
+                (edit_beam(&image, &view, updated, channel, polarization)?, message)
             };
             let beam = record_history_value(&beam)?;
             let command = state.history.then(|| {
@@ -401,8 +404,8 @@ impl PyImageTool {
                     input_history(&major), input_history(&minor), input_history(&pa),
                 )
             });
-            with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_image_info_record(info))).map_err(raised)?;
-            attachment.set_empty_beam_angle(0.0);
+            with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_image_info_record(info.clone()))).map_err(raised)?;
+            view.capture(&info);
             if let Some(command) = command {
                 image.record_history("setrestoringbeam", command)?;
             }
