@@ -150,17 +150,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixel = None, world = None, mask = None), text_signature = "($self, pixel=[-1], world=[], mask=[False])")]
-    fn setreferencelocation(
-        &self,
-        pixel: Option<&Bound<'_, PyAny>>,
-        world: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setreferencelocation")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (refcode = None, restfreq = None, frequencies = None, doppler = None, velocities = None), text_signature = "($self, refcode='', restfreq=[], frequencies=[], doppler='', velocities=[])")]
     fn setspectral(
         &self,

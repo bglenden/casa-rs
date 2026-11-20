@@ -55,7 +55,7 @@ IMPLEMENTED["coordsys"] = {
     "observer", "parentname", "projection", "referencecode", "referencepixel", "restfrequency",
     "setepoch", "setincrement", "setreferencevalue",
     "setnames", "setobserver", "setparentname", "setstokes", "setunits",
-    "setreferencepixel", "setrestfrequency", "settelescope",
+    "setreferencelocation", "setreferencepixel", "setrestfrequency", "settelescope",
     "stokes", "telescope", "topixel", "topixelmany", "torecord", "toworld", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
