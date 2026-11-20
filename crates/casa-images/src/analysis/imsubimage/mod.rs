@@ -161,6 +161,35 @@ impl SubimagePlan {
         (&self.selection.start, end)
     }
 
+    /// Image metadata with the restoring beams cropped to this section.
+    pub fn image_info(&self) -> &ImageInfo {
+        &self.image_info
+    }
+
+    /// Check an optional mask expression against the parent image. This also
+    /// checks stretching along the selected axes. Operations that edit the
+    /// underlying pixel values can validate a mask without materializing it.
+    ///
+    /// # Errors
+    ///
+    /// An invalid expression or a mask that does not conform to the image.
+    pub fn validate_mask<T: ImagePixel>(
+        &self,
+        image: &dyn ImageInterface<T>,
+        mask: Option<&str>,
+        stretch: bool,
+    ) -> Result<(), ImageError> {
+        let shape = vec![1; self.selection.start.len()];
+        evaluate_mask(
+            mask,
+            image.shape(),
+            image.coordinates(),
+            stretch,
+            (&self.selection.start, &shape),
+        )?;
+        Ok(())
+    }
+
     /// Copies selected pixels, image metadata and the combined mask into a
     /// new image allocated with the plan's shape and coordinates. The input
     /// must be the source used to create the plan. Output is populated in

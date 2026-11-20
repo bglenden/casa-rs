@@ -34,16 +34,18 @@
 //! precision, rounded, plus the points' (summed in single precision), added
 //! to the image.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_components::{ComponentList, PixelGrid, ShapeKind, SkyComponent};
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate};
-use casa_images::PagedImage;
+use casa_images::analysis::{SubimageOptions, SubimagePlan, SubimageRegion};
+use casa_images::{ImageError, ImageInfo, MutableImageInterface, PagedImage};
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::FrequencyRef;
-use ndarray::{Array3, IxDyn};
+use ndarray::{Array3, ArrayD, IxDyn};
 
 use super::{SkyModelError, pixel_axes, require_native_direction_frame};
 use crate::simutil::{SimutilError, qa};
@@ -64,9 +66,9 @@ impl Placement<'_> {
     /// The frequencies at which `component` is sampled: the image's,
     /// expressed in the frame of the component's spectrum (see the module
     /// documentation).
-    fn frequencies_for(&self, component: &SkyComponent) -> Result<Vec<f64>, SkyModelError> {
+    fn frequencies_for(&self, component: &SkyComponent) -> Result<Cow<'_, [f64]>, SkyModelError> {
         let reference = component.spectrum().reference_frequency();
-        let unconverted = Ok(self.frequencies_hz.clone());
+        let unconverted = Ok(Cow::Borrowed(self.frequencies_hz.as_slice()));
         let Some((image_frame, measures)) = &self.spectral_frame else {
             return unconverted;
         };
@@ -85,16 +87,17 @@ impl Placement<'_> {
             ))
         })?;
         let ratio = reference.hz() / converted.hz();
-        Ok(self
-            .frequencies_hz
-            .iter()
-            .map(|frequency| frequency * ratio)
-            .collect())
+        Ok(Cow::Owned(
+            self.frequencies_hz
+                .iter()
+                .map(|frequency| frequency * ratio)
+                .collect(),
+        ))
     }
 
     /// The direction cosines of pixel `(x, y)`.
     fn pixel_direction(&self, x: f64, y: f64) -> Result<[f64; 3], SkyModelError> {
-        let world = self.direction.to_world(&[x, y]).map_err(|_| {
+        let world = self.direction.pixel_to_world([x, y]).map_err(|_| {
             SkyModelError::Model(format!(
                 "Unable to convert to world direction at pixel [{x}, {y}]"
             ))
@@ -113,7 +116,7 @@ impl Placement<'_> {
             .convert_to(self.grid.frame, &MeasFrame::default())
             .map_err(|error| SkyModelError::Model(error.to_string()))?;
         let (lon, lat) = direction.as_angles();
-        let pixel = self.direction.to_pixel(&[lon, lat])?;
+        let pixel = self.direction.world_to_pixel([lon, lat])?;
         let target = [(pixel[0] + 0.5).floor(), (pixel[1] + 0.5).floor()];
         let [nx, ny] = self.shape.map(|n| n as f64);
         if target[0] < -1.0 || target[1] < -1.0 || target[0] > nx || target[1] > ny {
@@ -160,16 +163,130 @@ enum PointPlacement {
 /// other than I, Q, U or V, a component casa-rs does not sample, or an image
 /// that cannot be read or written.
 pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), SkyModelError> {
+    require_components(list)?;
+    let mut image = PagedImage::<f32>::open(image_path)?;
+    let (direction, axes) = model_direction(image.coordinates())?;
+    require_native_direction_frame(direction)?;
+    let info = image.image_info()?;
+    let (scale, warning) = unit_scale(
+        image.units(),
+        &info,
+        direction,
+        "casa-rs does not yet add components to an image with a beam per plane",
+    )?;
+    let mut pixels = image.get()?;
+    apply_model(
+        &mut pixels,
+        image.coordinates(),
+        direction,
+        axes,
+        list,
+        scale,
+        false,
+    )?;
+    if let Some(warning) = warning {
+        tracing::warn!("{warning}");
+    }
+    image.put_slice(&pixels, &vec![0; image.shape().len()])?;
+    image.save()?;
+    Ok(())
+}
+
+/// Selection and arithmetic for a public image component edit.
+pub struct ComponentEdit<'a> {
+    /// Restrict edits to the selected region's bounding section.
+    pub region: Option<SubimageRegion<'a>>,
+    /// Optional lattice mask to check for conformability.
+    pub mask: Option<&'a str>,
+    /// Permit degenerate input mask axes to expand.
+    pub stretch: bool,
+    /// Remove the model from the image.
+    pub subtract: bool,
+}
+
+/// The selected pixel bounds and any brightness-unit warning.
+pub struct ComponentEditReport {
+    /// Inclusive bounds in the parent image.
+    pub bounds: (Vec<usize>, Vec<usize>),
+    /// CASA's warning when the brightness unit implies an assumed beam area.
+    pub warning: Option<String>,
+}
+
+/// Apply a component model in the selected section.
+///
+/// # Errors
+///
+/// Invalid selections or model geometry, unsupported image metadata, and
+/// failures to read or write the image section.
+pub fn modify_components(
+    image: &mut dyn MutableImageInterface<f32>,
+    list: &ComponentList,
+    options: ComponentEdit<'_>,
+) -> Result<ComponentEditReport, SkyModelError> {
+    if image
+        .coordinates()
+        .find_coordinate(CoordinateType::Direction)
+        .is_none()
+    {
+        let name = image
+            .name()
+            .map_or_else(|| "Temporary_Image".into(), Path::to_string_lossy);
+        return Err(SkyModelError::Model(format!(
+            "Exception: Image {name} does not have required coordinate Direction."
+        )));
+    }
+    require_components(list)?;
+    let plan = SubimagePlan::new(
+        image,
+        None,
+        SubimageOptions {
+            region: options.region,
+            dropdeg: false,
+            keepaxes: &[],
+        },
+    )?;
+    plan.validate_mask(image, options.mask, options.stretch)?;
+    let (direction, axes) = model_direction(&plan.coordinates)?;
+    let (scale, warning) = unit_scale(
+        image.units(),
+        plan.image_info(),
+        direction,
+        "LELCoordinates::getSpectralInfo - cannot extend lattice without coordinates",
+    )?;
+    let (start, end) = plan.bounds();
+    let mut pixels = image
+        .get_slice(start, &plan.shape, &vec![1; plan.shape.len()])
+        .map_err(ImageError::from)?;
+    apply_model(
+        &mut pixels,
+        &plan.coordinates,
+        direction,
+        axes,
+        list,
+        scale,
+        options.subtract,
+    )?;
+    image.put_slice(&pixels, start).map_err(ImageError::from)?;
+    Ok(ComponentEditReport {
+        bounds: (start.to_vec(), end),
+        warning,
+    })
+}
+
+fn require_components(list: &ComponentList) -> Result<(), SkyModelError> {
     if list.is_empty() {
         return Err(SkyModelError::Model(
-            "There are no components in the model componentlist".to_string(),
+            "There are no components in the model componentlist".into(),
         ));
     }
-    let mut image = PagedImage::<f32>::open(image_path)?;
-    let coordinates = image.coordinates().clone();
-    let shape = image.shape().to_vec();
+    Ok(())
+}
+
+fn model_direction(
+    coordinates: &casa_coordinates::CoordinateSystem,
+) -> Result<(&DirectionCoordinate, [usize; 2]), SkyModelError> {
     let Some((direction_index, direction_axes)) =
-        pixel_axes(&coordinates, CoordinateType::Direction)
+        pixel_axes(coordinates, CoordinateType::Direction)
     else {
         return Err(SkyModelError::Model(
             "Image does not have a direction coordinate".to_string(),
@@ -178,12 +295,27 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
     let CoordinateModel::Direction(direction) = coordinates.coordinate(direction_index) else {
         unreachable!("the coordinate found is a direction coordinate");
     };
-    require_native_direction_frame(direction)?;
+    let axes = direction_axes
+        .try_into()
+        .map_err(|_| SkyModelError::Model("Image does not have two direction axes".into()))?;
+    Ok((direction, axes))
+}
+
+fn apply_model(
+    pixels: &mut ArrayD<f32>,
+    coordinates: &casa_coordinates::CoordinateSystem,
+    direction: &DirectionCoordinate,
+    direction_axes: [usize; 2],
+    list: &ComponentList,
+    scale: Option<f64>,
+    subtract: bool,
+) -> Result<(), SkyModelError> {
+    let shape = pixels.shape();
     let increment = direction.increment();
     let mut placement = Placement {
         direction,
         grid: PixelGrid {
-            frame: direction.direction_ref(),
+            frame: direction.conversion_direction_ref(),
             longitude_size_rad: increment[0].abs(),
             latitude_size_rad: increment[1].abs(),
         },
@@ -192,7 +324,7 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
         spectral_frame: None,
     };
     let spectral =
-        pixel_axes(&coordinates, CoordinateType::Spectral).filter(|(_, axes)| axes[0] > 0);
+        pixel_axes(coordinates, CoordinateType::Spectral).filter(|(_, axes)| axes[0] > 0);
     placement.frequencies_hz = match &spectral {
         Some((index, axes)) => {
             let CoordinateModel::Spectral(coordinate) = coordinates.coordinate(*index) else {
@@ -210,7 +342,7 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
         }
         None => vec![list.components()[0].spectrum().reference_frequency().hz()],
     };
-    let stokes = stokes_planes(&coordinates, &shape)?;
+    let stokes = stokes_planes(coordinates, shape)?;
 
     let mut extended = Vec::new();
     let mut points: BTreeMap<[usize; 2], Vec<f32>> = BTreeMap::new();
@@ -218,7 +350,7 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
     let nstokes = stokes.planes.len();
     for component in list.iter() {
         if !matches!(component.shape().kind(), ShapeKind::Point) {
-            extended.push(component);
+            extended.push((component, placement.frequencies_for(component)?));
             continue;
         }
         match placement.point_pixel(component)? {
@@ -234,29 +366,34 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
                 }
             }
             PointPlacement::Outside => {}
-            PointPlacement::Nowhere => extended.push(component),
+            PointPlacement::Nowhere => {
+                extended.push((component, placement.frequencies_for(component)?))
+            }
         }
     }
 
     let [nx, ny] = placement.shape;
-    let mut directions = Vec::with_capacity(nx * ny);
-    for y in 0..ny {
-        for x in 0..nx {
-            directions.push(placement.pixel_direction(x as f64, y as f64)?);
-        }
-    }
-    let mut samples = Array3::<f64>::zeros((4, nx * ny, nfreq));
-    for component in extended {
-        let frequencies = placement.frequencies_for(component)?;
-        component.sample_pixels(&mut samples, &directions, &placement.grid, &frequencies)?;
-    }
-
-    let scale = unit_scale(&image, direction)?;
-    let mut pixels = image.get()?;
     let frequency_axis = spectral.as_ref().map(|(_, axes)| axes[0]);
     let mut position = vec![0; shape.len()];
-    for y in 0..ny {
-        for x in 0..nx {
+    // Bound the temporary double-precision model to about one MiB per batch.
+    let spatial_batch = (131_072 / (4 * nfreq)).max(1);
+    for first in (0..nx * ny).step_by(spatial_batch) {
+        let length = spatial_batch.min(nx * ny - first);
+        let samples = if extended.is_empty() {
+            None
+        } else {
+            let directions = (first..first + length)
+                .map(|pixel| placement.pixel_direction((pixel % nx) as f64, (pixel / nx) as f64))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut samples = Array3::<f64>::zeros((4, length, nfreq));
+            for (component, frequencies) in &extended {
+                component.sample_pixels(&mut samples, &directions, &placement.grid, frequencies)?;
+            }
+            Some(samples)
+        };
+        for local in 0..length {
+            let x = (first + local) % nx;
+            let y = (first + local) / nx;
             let point = points.get(&[x, y]);
             for frequency in 0..nfreq {
                 for (plane, &parameter) in stokes.planes.iter().enumerate() {
@@ -268,20 +405,20 @@ pub fn add_components(image_path: &Path, list: &ComponentList) -> Result<(), Sky
                     if let Some(axis) = stokes.axis {
                         position[axis] = plane;
                     }
-                    let mut value = samples[[parameter, y * nx + x, frequency]] as f32;
+                    let mut value = samples
+                        .as_ref()
+                        .map_or(0.0, |samples| samples[[parameter, local, frequency]] as f32);
                     if let Some(point) = point {
                         value += point[frequency * nstokes + plane];
                     }
                     if let Some(scale) = scale {
                         value = (f64::from(value) * scale) as f32;
                     }
-                    pixels[IxDyn(&position)] += value;
+                    pixels[IxDyn(&position)] += if subtract { -value } else { value };
                 }
             }
         }
     }
-    image.put_slice(&pixels, &vec![0; shape.len()])?;
-    image.save()?;
     Ok(())
 }
 
@@ -354,31 +491,33 @@ fn qa_value_in_hz(unit: &str) -> Result<f64, SkyModelError> {
 /// The factor the components are scaled by for the image's brightness
 /// unit: the beam's area in pixels for Jy/beam with a beam, none otherwise.
 fn unit_scale(
-    image: &PagedImage<f32>,
+    units: &str,
+    info: &ImageInfo,
     direction: &DirectionCoordinate,
-) -> Result<Option<f64>, SkyModelError> {
-    let units = image.units().to_string();
+    multi_beam_error: &str,
+) -> Result<(Option<f64>, Option<String>), SkyModelError> {
     if units.contains("pixel") {
-        return Ok(None);
+        return Ok((None, None));
     }
     if !units.contains("beam") {
-        tracing::warn!(
-            "Image units [{units}] are not dimensionally equivalent to Jy/pixel or Jy/beam. Assuming they are equivalent Jy/pixel"
-        );
-        return Ok(None);
-    }
-    let info = image.image_info()?;
-    if info.beam_set.has_multi_beam() {
-        return Err(SkyModelError::Model(
-            "casa-rs does not yet add components to an image with a beam per plane".to_string(),
+        return Ok((
+            None,
+            Some(format!(
+                "Image units [{units}] are not dimensionally equivalent to Jy/pixel or Jy/beam. Assuming they are equivalent Jy/pixel"
+            )),
         ));
     }
+    if info.beam_set.has_multi_beam() {
+        return Err(SkyModelError::Model(multi_beam_error.into()));
+    }
     let Some(beam) = info.beam_set.single_beam().filter(|beam| !beam.is_null()) else {
-        tracing::warn!(
-            "No beam defined even though the image units contain a beam. Will assume the beam area is one pixel"
-        );
-        return Ok(None);
+        return Ok((None, Some(
+            "No beam defined even though the image units contain a beam. Will assume the beam area is one pixel".into()
+        )));
     };
     let increment = direction.increment();
-    Ok(Some(beam.area() / (increment[0] * increment[1]).abs()))
+    Ok((
+        Some(beam.area() / (increment[0] * increment[1]).abs()),
+        None,
+    ))
 }

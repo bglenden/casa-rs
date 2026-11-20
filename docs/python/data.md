@@ -90,6 +90,10 @@ Use `ia.deconvolvecomponentlist(cl.torecord())` to remove the restoring beam
 from Gaussian components on an attached float or complex image. Point
 components are returned intact. For a per-plane beam grid, select the
 channel and polarization on each nondegenerate axis.
+Use `ia.modify(cl.torecord(), subtract=False)` to add a component model to a
+float image. The default subtracts the model. A region limits the pixel
+section. CASA validates an explicit mask and applies the edit to the stored
+pixels in that section.
 Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
 float or complex image. Use `update=True` to validate the selected native
 pixel mask after replacement.
