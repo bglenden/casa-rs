@@ -2,7 +2,7 @@
 
 use std::ops::{AddAssign, Div};
 
-use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
 use ndarray::{Axis, IxDyn, Slice, Zip};
 use num_complex::{Complex32, Complex64};
