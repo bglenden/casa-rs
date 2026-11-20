@@ -21,6 +21,7 @@ use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
 use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
 use super::imager_definition::ImagerDefinitionRequest;
+use super::legacy_pbw::pointing::LegacyEpOffsets;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
 use super::settings::{
     ImagerGridder, ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerSingleDishSetup,
@@ -62,7 +63,8 @@ pub struct ImagerPrediction {
     frequency_frame_valid: bool,
     ft_location: Option<MPosition>,
     options: ImagerTransformOptions,
-    legacy_pbw: Option<ImagerLegacyPbWOptions>,
+    legacy_pbw: Option<(ImagerLegacyPbWOptions, Option<PathBuf>)>,
+    legacy_ep: Option<(Option<PathBuf>, LegacyEpOffsets)>,
     legacy_aw: Option<ImagerLegacyAwOptions>,
     single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
@@ -129,6 +131,7 @@ impl Default for ImagerPrediction {
             ft_location: None,
             options: ImagerTransformOptions::default(),
             legacy_pbw: None,
+            legacy_ep: None,
             legacy_aw: None,
             single_dish_setup: ImagerSingleDishSetup::default(),
             taylor: (1, None),
@@ -189,6 +192,7 @@ impl ImagerPrediction {
     /// Discard the Fourier machine after a visibility selection change.
     pub fn reset_fourier_machine(&mut self) {
         self.mosaic_voltage_pattern = None;
+        self.legacy_ep = None;
     }
 
     /// The current settings, including prior buffer sizes retained by setoptions.
@@ -205,8 +209,21 @@ impl ImagerPrediction {
         options: ImagerTransformOptions,
         legacy_pbw: ImagerLegacyPbWOptions,
     ) -> MsResult<()> {
+        self.configure_legacy_pbw_with_pointing(options, legacy_pbw, None)
+    }
+
+    /// Select legacy primary-beam and W projection with an optional EP Jones table.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_legacy_pbw_with_pointing(
+        &mut self,
+        options: ImagerTransformOptions,
+        legacy_pbw: ImagerLegacyPbWOptions,
+        pointing_table: Option<PathBuf>,
+    ) -> MsResult<()> {
         self.configure_transform(options)?;
-        self.legacy_pbw = Some(legacy_pbw);
+        self.legacy_pbw = Some((legacy_pbw, pointing_table));
         Ok(())
     }
 
@@ -625,6 +642,7 @@ impl ImagerPrediction {
                 "this legacy beam-squint Fourier mode is pending #1520",
             ));
         }
+        self.prepare_legacy_ep(ms, selected)?;
         // MosaicFT uses its convolution beam directly.
         let pattern = self
             .voltage_pattern
@@ -768,6 +786,30 @@ impl ImagerPrediction {
         Ok(Some((components, images)))
     }
 
+    fn prepare_legacy_ep(
+        &mut self,
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+    ) -> MsResult<()> {
+        let Some((options, path)) = &self.legacy_pbw else {
+            return Ok(());
+        };
+        if !options.apply_pointing_offsets {
+            return Ok(());
+        }
+        if let Some((owner, offsets)) = &self.legacy_ep
+            && owner.as_deref() == ms.path()
+        {
+            return offsets.check_selection(selected);
+        }
+        let path = path
+            .as_deref()
+            .ok_or_else(|| invalid("epjtablename is required to apply legacy pointing offsets"))?;
+        let offsets = LegacyEpOffsets::for_selection(path, ms, selected)?;
+        self.legacy_ep = Some((ms.path().map(Path::to_path_buf), offsets));
+        Ok(())
+    }
+
     fn track_images(
         &self,
         ms: &MeasurementSet,
@@ -892,9 +934,18 @@ impl ImagerPrediction {
             });
             let keep_zero = facets > 1
                 || (scratch && !model.incremental && model.components.is_none() && index == 0);
-            if let Some(legacy_pbw) = legacy_pbw {
+            if let Some((legacy_pbw, _)) = legacy_pbw {
                 images.extend(super::legacy_pbw::prepare_model(
-                    ms, selected, path, &geometry, legacy_pbw, keep_zero, scratch,
+                    ms,
+                    selected,
+                    path,
+                    &geometry,
+                    (
+                        legacy_pbw,
+                        self.legacy_ep.as_ref().map(|(_, offsets)| offsets),
+                    ),
+                    keep_zero,
+                    scratch,
                 )?);
             } else if let Some(legacy_aw) = legacy_aw {
                 images.extend(super::legacy_aw::prepare_model(

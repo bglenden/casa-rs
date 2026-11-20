@@ -22,6 +22,7 @@ pub struct LegacyPbWConvolution {
     support: u16,
     w_scale: f64,
     reference_angle_rad: f64,
+    antenna_pointing: bool,
     cache: Mutex<Option<(CfKey, Arc<DenseCell>)>>,
     mueller: MuellerRouting,
     correction: ImageCorrection,
@@ -128,16 +129,28 @@ impl LegacyPbWConvolution {
             support,
             w_scale: geometry.image().increment_rad[0].abs(),
             reference_angle_rad,
+            antenna_pointing: false,
             cache: Mutex::new(None),
             mueller,
             correction,
         })
     }
 
-    fn make_cell(&self, key: CfKey) -> DenseCell {
+    /// Include the antenna pointing phase in prediction and its kernel sum.
+    #[must_use]
+    pub fn with_antenna_pointing(mut self, enabled: bool) -> Self {
+        self.antenna_pointing = enabled;
+        self
+    }
+
+    fn rotation(&self, key: CfKey) -> (f64, f64) {
         let bits = (u32::from(key.group) << 16) | u32::from(key.cube);
         let angle = f64::from(f32::from_bits(bits)) - self.reference_angle_rad;
-        let (sin, cos) = angle.sin_cos();
+        angle.sin_cos()
+    }
+
+    fn make_cell(&self, key: CfKey) -> DenseCell {
+        let (sin, cos) = self.rotation(key);
         let side = self.samples.shape()[0] as i64;
         let correlations = self.samples.shape()[2];
         let origin = side / 2;
@@ -254,7 +267,11 @@ impl ConvolutionFunctionSet for LegacyPbWConvolution {
     }
 
     fn pointing_ramp(&self) -> bool {
-        false
+        self.antenna_pointing
+    }
+
+    fn prediction_pointing_rotation(&self, key: CfKey) -> Option<(f64, f64)> {
+        self.antenna_pointing.then(|| self.rotation(key))
     }
 
     fn tap_footprint(&self) -> TapFootprint {
