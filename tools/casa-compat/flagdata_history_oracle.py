@@ -106,6 +106,27 @@ def compare_relocated_history(source):
     compare_new_rows(paths, original, 1, (start, end), subtable="PROVENANCE")
 
 
+def check_retained_reader(source):
+    for name, task in TASKS:
+        vis = f"retained-history-{name}.ms"
+        copytree(source, vis)
+        with table(f"{vis}/HISTORY", lockoptions="usernoread", ack=False) as reader:
+            original = list(reader.getcol("MESSAGE"))
+            managers = {key: value["TYPE"] for key, value in reader.getdminfo().items()}
+            assert task(vis=vis, flagbackup=False) == {}
+            reader.resync()
+            assert {key: value["TYPE"] for key, value in reader.getdminfo().items()} == managers
+            current = list(reader.getcol("MESSAGE"))
+            assert current[:len(original)] == original and len(current) == len(original) + 78
+            assert current[len(original)] == "taskname=flagdata"
+            other = casatasks.flagdata if name == "native" else tasks.flagdata
+            assert other(vis=vis, field="FLUX", flagbackup=False) == {}
+            reader.resync()
+            final = list(reader.getcol("MESSAGE"))
+            assert final[:len(current)] == current and len(final) == len(current) + 78
+            assert final[len(current)] == "taskname=flagdata"
+
+
 def compare_unchanged(source):
     cases = ({"mode": "summary"}, {"mode": "clip", "action": "calculate"},
              {"action": "none"}, {"action": ""}, {"field": "unavailable"})
@@ -132,6 +153,7 @@ def main():
         seed_history(source)
         applied = compare_applies(source)
         compare_relocated_history(source)
+        check_retained_reader(source)
         unchanged = compare_unchanged(source)
     print(f"{applied + 1} flagdata HISTORY products and {unchanged} unchanged inputs verified against CASA")
 

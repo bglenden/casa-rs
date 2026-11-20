@@ -119,6 +119,24 @@ impl Table {
         self.edit_rows_in_place(Rows::Append { count, defaults })
     }
 
+    /// Append distinct records in a single edit, preserving the table's
+    /// existing manager bindings. Standard, AipsIO and incremental managers
+    /// accept explicit record values.
+    ///
+    /// # Errors
+    /// The table cannot be locked or written, a row disagrees with its
+    /// schema, or a manager cannot append explicit records.
+    pub fn append_records_in_place(&mut self, records: &[RecordValue]) -> Result<(), TableError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let schema = self.schema().ok_or(TableError::PreparedRowRequiresSchema)?;
+        for (offset, row) in records.iter().enumerate() {
+            super::columns::validate_row_against_schema(self.row_count() + offset, row, schema)?;
+        }
+        self.edit_rows_in_place(Rows::AppendRecords(records))
+    }
+
     /// Keep the given rows in an existing plain table, in ascending order,
     /// and delete all others. This operation preserves manager bindings.
     ///

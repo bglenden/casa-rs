@@ -23,6 +23,7 @@ pub(crate) enum Rows<'a> {
         count: usize,
         defaults: &'a RecordValue,
     },
+    AppendRecords(&'a [RecordValue]),
     Keep(&'a [usize]),
 }
 
@@ -31,6 +32,9 @@ impl Rows<'_> {
         match *self {
             Rows::Append { count, .. } => old
                 .checked_add(count as u64)
+                .ok_or_else(|| StorageError::FormatMismatch("table row count overflow".into())),
+            Rows::AppendRecords(records) => old
+                .checked_add(records.len() as u64)
                 .ok_or_else(|| StorageError::FormatMismatch("table row count overflow".into())),
             Rows::Keep(rows) => Ok(rows.len() as u64),
         }
@@ -53,6 +57,7 @@ pub(crate) struct StagedEdit<'a> {
     pub(super) table: &'a Path,
     pub(super) staged: tempfile::TempDir,
     extensions: Vec<Extension>,
+    preserve_file_identity: bool,
 }
 
 impl<'a> StagedEdit<'a> {
@@ -64,6 +69,7 @@ impl<'a> StagedEdit<'a> {
     ) -> Result<Self, StorageError> {
         let new_rows = rows.len(old_rows)?;
         let mut edit = Self::new(table)?;
+        edit.preserve_file_identity = matches!(rows, Rows::AppendRecords(_));
         let order = if dat.big_endian {
             ByteOrder::BigEndian
         } else {
@@ -101,6 +107,7 @@ impl<'a> StagedEdit<'a> {
                 .prefix(".casa-rs-edit-")
                 .tempdir_in(table)?,
             extensions: Vec::new(),
+            preserve_file_identity: false,
         })
     }
 
@@ -179,7 +186,7 @@ impl<'a> StagedEdit<'a> {
                     self.extensions.push(Extension::Payload { path, len });
                 }
             }
-            "IncrementalStMan" if matches!(rows, Rows::Append { .. }) => {
+            "IncrementalStMan" if matches!(rows, Rows::Append { .. } | Rows::AppendRecords(_)) => {
                 let values = self.manager_rows(columns, rows, old_rows)?;
                 let (endian, size, cache) = incremental_stman::ism_layout(&original)?;
                 incremental_stman::write_ism_with_layout(
@@ -189,6 +196,19 @@ impl<'a> StagedEdit<'a> {
                     endian,
                     Some(size),
                     cache,
+                )?;
+            }
+            "StandardStMan" if matches!(rows, Rows::AppendRecords(_)) => {
+                let Rows::AppendRecords(records) = rows else {
+                    unreachable!()
+                };
+                standard_stman::stage_records(
+                    &original,
+                    &destination,
+                    columns,
+                    &manager.data,
+                    old_rows,
+                    records,
                 )?;
             }
             "StandardStMan" | "StManAipsIO" => {
@@ -234,19 +254,25 @@ impl<'a> StagedEdit<'a> {
         let mut existing = CompositeStorage
             .load_selected_columns_with_row_hint(self.table, &names, Some(old_rows))?
             .rows;
+        let project = |record: &RecordValue| {
+            RecordValue::new(
+                names
+                    .iter()
+                    .filter_map(|name| {
+                        record
+                            .get(name)
+                            .map(|value| RecordField::new(*name, value.clone()))
+                    })
+                    .collect(),
+            )
+        };
         match *rows {
             Rows::Append { count, defaults } => {
-                let row = RecordValue::new(
-                    names
-                        .iter()
-                        .filter_map(|name| {
-                            defaults
-                                .get(name)
-                                .map(|value| RecordField::new(*name, value.clone()))
-                        })
-                        .collect(),
-                );
-                existing.extend(std::iter::repeat_n(row, count));
+                existing.extend(std::iter::repeat_n(project(defaults), count));
+                Ok(existing)
+            }
+            Rows::AppendRecords(records) => {
+                existing.extend(records.iter().map(project));
                 Ok(existing)
             }
             Rows::Keep(kept) => {
