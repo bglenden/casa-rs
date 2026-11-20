@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Stored correlation planes selected by the CASA flagging agents.
+//! Stored correlation planes and Stokes products selected by flagging agents.
 
 use std::collections::BTreeSet;
 
@@ -11,6 +11,7 @@ use super::{FlagDataColumn, FlagDataMode, FlaggingError, display_ms_path};
 // CASA checks the first named receptor product in this order before
 // constructing its clipping visibility mapper for a buffer.
 const RECEPTOR_PRODUCTS: [&str; 8] = ["XX", "YY", "XY", "YX", "RR", "LL", "LR", "RL"];
+const STOKES_PRODUCTS: [&str; 4] = ["I", "Q", "U", "V"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ClipMetric {
@@ -29,8 +30,27 @@ const CLIP_OPERATORS: [(&str, ClipMetric); 5] = [
     ("NORM", ClipMetric::SquaredMagnitude),
 ];
 
+#[derive(Debug, Clone, Copy)]
+pub(super) enum StokesCombination {
+    Sum,
+    Difference,
+    ImaginaryDifference,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum ClipProjection {
+    Stored(usize),
+    Stokes(usize, usize, StokesCombination),
+}
+
+#[derive(Clone)]
+enum SelectedCorrelations {
+    Stored(Vec<usize>),
+    Clip(Vec<ClipProjection>),
+}
+
 pub(super) struct CorrelationSelection {
-    by_description: Vec<Vec<usize>>,
+    by_description: Vec<SelectedCorrelations>,
     clip_metric: Option<ClipMetric>,
     unknown_clip_expression: Option<(String, Vec<bool>)>,
 }
@@ -151,21 +171,29 @@ impl CorrelationSelection {
             } else {
                 visibility.to_owned()
             };
-            let products = if visibility.contains("WVR") {
-                wvr_clip_products(&visibility, &modes).ok_or_else(unsupported)?
-            } else if (clip_operator.is_none() && required.contains("I"))
-                || modes.iter().all(|stored| stored.contains(&"I"))
+            let wvr = visibility.contains("WVR");
+            let products = if !wvr
+                && ((clip_operator.is_none() && required.contains("I"))
+                    || modes.iter().all(|stored| stored.contains(&"I")))
             {
                 // Without WVR, the mapper skips every buffer with stored I.
                 Vec::new()
             } else {
-                if !default_clip && visibility.contains(['I', 'Q', 'U', 'V']) {
-                    return Err(unsupported());
-                }
-                RECEPTOR_PRODUCTS
+                // WVR admits stored I and suppresses V. Other products can
+                // still be evaluated in the same buffer.
+                let stokes = if wvr {
+                    &["Q", "U"][..]
+                } else {
+                    &STOKES_PRODUCTS
+                };
+                wvr.then_some("I")
                     .into_iter()
-                    .chain(["Q", "U", "V"].into_iter().filter(|_| default_clip))
-                    .filter(|name| visibility.contains(*name))
+                    .chain(
+                        RECEPTOR_PRODUCTS
+                            .into_iter()
+                            .chain(stokes.iter().copied())
+                            .filter(|name| visibility.contains(*name)),
+                    )
                     .collect()
             };
             if clip_operator.is_some() && products.is_empty() {
@@ -173,27 +201,29 @@ impl CorrelationSelection {
                     float_suffix.map_or_else(|| text.clone(), |suffix| format!("REAL {suffix}")),
                 );
             }
-            Some(products)
+            Some((products, wvr))
         } else {
             None
         };
-        let by_polarization: Vec<Vec<usize>> = modes
+        let by_polarization: Vec<SelectedCorrelations> = modes
             .iter()
             .map(|names| {
                 if !required.iter().all(|name| names.contains(name)) {
-                    return Vec::new();
+                    return SelectedCorrelations::Stored(Vec::new());
                 }
-                if let Some(products) = &clip_products {
-                    return clip_planes(products, names);
+                if let Some((products, wvr)) = &clip_products {
+                    return SelectedCorrelations::Clip(clip_projections(products, names, *wvr));
                 }
                 let mut seen = BTreeSet::new();
-                names
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(plane, name)| {
-                        (required.contains(name) && seen.insert(name)).then_some(plane)
-                    })
-                    .collect()
+                SelectedCorrelations::Stored(
+                    names
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(plane, name)| {
+                            (required.contains(name) && seen.insert(name)).then_some(plane)
+                        })
+                        .collect(),
+                )
             })
             .collect();
 
@@ -233,7 +263,7 @@ impl CorrelationSelection {
             .enumerate()
             .map(|(row, (id, _))| {
                 if !active.contains(&id) {
-                    return Ok(Vec::new());
+                    return Ok(SelectedCorrelations::Stored(Vec::new()));
                 }
                 by_polarization.get(id as usize).cloned().ok_or_else(|| {
                     FlaggingError::MutateFlags {
@@ -245,26 +275,35 @@ impl CorrelationSelection {
             .collect::<Result<_, _>>()?;
         Ok(Some(Self {
             by_description,
-            clip_metric: clip_operator.map(|(metric, _)| metric),
+            clip_metric: clip_operator
+                .map(|(metric, _)| metric)
+                .or((mode == FlagDataMode::Clip).then_some(ClipMetric::Amplitude)),
             unknown_clip_expression,
         }))
     }
 
     pub(super) fn planes(&self, ddid: i32) -> &[usize] {
-        self.by_description
-            .get(ddid as usize)
-            .map_or(&[], Vec::as_slice)
+        match self.by_description.get(ddid as usize) {
+            Some(SelectedCorrelations::Stored(planes)) => planes,
+            _ => &[],
+        }
     }
 
     pub(super) fn has_setup(&self) -> bool {
-        self.by_description.iter().any(|planes| !planes.is_empty())
+        self.by_description.iter().any(|selection| {
+            matches!(selection, SelectedCorrelations::Stored(planes) if !planes.is_empty())
+        })
     }
 
     pub(super) fn clip_metric(&self) -> Option<ClipMetric> {
         self.clip_metric
     }
 
-    pub(super) fn clip_planes_for(&self, ddid: i32, path: &str) -> Result<&[usize], FlaggingError> {
+    pub(super) fn clip_projections_for(
+        &self,
+        ddid: i32,
+        path: &str,
+    ) -> Result<&[ClipProjection], FlaggingError> {
         if let Some((expression, report_on_description)) = &self.unknown_clip_expression
             && report_on_description.get(ddid as usize) == Some(&true)
         {
@@ -276,51 +315,46 @@ impl CorrelationSelection {
                 ),
             });
         }
-        Ok(self.planes(ddid))
+        Ok(match self.by_description.get(ddid as usize) {
+            Some(SelectedCorrelations::Clip(projections)) => projections,
+            _ => &[],
+        })
     }
 }
 
-fn wvr_clip_products(visibility: &str, modes: &[Vec<&str>]) -> Option<Vec<&'static str>> {
-    let derived = modes
-        .iter()
-        .filter(|stored| stored.contains(&"I"))
-        .any(|stored| {
-            let has_pair = |a, b| stored.contains(&a) && stored.contains(&b);
-            (visibility.contains('Q')
-                && !stored.contains(&"Q")
-                && (has_pair("XX", "YY") || has_pair("RL", "LR")))
-                || (visibility.contains('U')
-                    && !stored.contains(&"U")
-                    && (has_pair("XY", "YX") || has_pair("RL", "LR")))
-        });
-    if derived {
-        return None;
-    }
-    // WVR admits a stored-I buffer. CASA's visibility mapper also adds
-    // other requested stored products, with V suppressed for WVR.
-    Some(
-        std::iter::once("I")
-            .chain(
-                RECEPTOR_PRODUCTS
-                    .into_iter()
-                    .chain(["Q", "U"])
-                    .filter(|name| visibility.contains(*name)),
-            )
-            .collect(),
-    )
-}
-
-fn clip_planes(products: &[&str], stored: &[&str]) -> Vec<usize> {
+fn clip_projections(products: &[&str], stored: &[&str], wvr: bool) -> Vec<ClipProjection> {
     let Some(first) = products.first() else {
         return Vec::new();
     };
-    if !stored.contains(first) || (stored.contains(&"I") && *first != "I") {
+    if stored.contains(&"I") != wvr || clip_projection(first, stored).is_none() {
         return Vec::new();
     }
-    // The visibility mapper resolves duplicate labels to the last stored
-    // plane. Direct manual masks use the first occurrence.
     products
         .iter()
-        .filter_map(|name| stored.iter().rposition(|stored| stored == name))
+        .filter_map(|name| clip_projection(name, stored))
         .collect()
+}
+
+fn clip_projection(product: &str, stored: &[&str]) -> Option<ClipProjection> {
+    use StokesCombination::{Difference, ImaginaryDifference, Sum};
+
+    // The visibility mapper uses the last plane if a label is stored twice.
+    let plane = |name| stored.iter().rposition(|&stored| stored == name);
+    if let Some(index) = plane(product) {
+        return Some(ClipProjection::Stored(index));
+    }
+    let bases = match product {
+        "I" => [("XX", "YY", Sum), ("RR", "LL", Sum)],
+        "Q" => [("XX", "YY", Difference), ("RL", "LR", Sum)],
+        "U" => [("XY", "YX", Sum), ("RL", "LR", ImaginaryDifference)],
+        "V" => [("XY", "YX", ImaginaryDifference), ("RR", "LL", Difference)],
+        _ => return None,
+    };
+    bases.into_iter().find_map(|(left, right, combination)| {
+        Some(ClipProjection::Stokes(
+            plane(left)?,
+            plane(right)?,
+            combination,
+        ))
+    })
 }
