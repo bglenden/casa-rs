@@ -317,7 +317,10 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     Ok(())
 }
 
-fn lock_table_tree(path: &Path, leases: &mut BTreeMap<PathBuf, TableWriteLock>) -> PyResult<()> {
+pub(super) fn lock_table_tree(
+    path: &Path,
+    leases: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> PyResult<()> {
     let not_writable = |name: &Path| {
         raised(format!(
             "Cannot delete file {} because table is not writable",

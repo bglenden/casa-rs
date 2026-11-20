@@ -38,11 +38,12 @@ use casa_lattices::{
     TraversalCacheScope,
 };
 use casa_types::{ArrayD, RecordValue};
+use ndarray::IxDyn;
 
 use crate::error::ImageError;
 use crate::image::{
     ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface,
-    PagedImage,
+    PagedImage, assign_mask_slice, slice_mask_array, validate_mask_slice_write,
 };
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
@@ -307,10 +308,14 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Returns a named mask as a full-image boolean array.
     pub fn get_named_mask(&self, name: &str) -> Result<ArrayD<bool>, ImageError> {
+        self.find_named_mask(name).cloned()
+    }
+
+    fn find_named_mask(&self, name: &str) -> Result<&ArrayD<bool>, ImageError> {
         self.masks
             .iter()
             .find(|(candidate, _)| candidate == name)
-            .map(|(_, mask)| mask.clone())
+            .map(|(_, mask)| mask)
             .ok_or_else(|| ImageError::MaskNotFound(name.to_string()))
     }
 
@@ -331,6 +336,31 @@ impl<T: ImagePixel> TempImage<T> {
         } else {
             self.masks.push((name.to_owned(), data.clone()));
         }
+        Ok(())
+    }
+
+    /// Copies a rectangular block into a named mask, allocating an all-false
+    /// mask if this is the first write for that name.
+    ///
+    /// # Errors
+    /// Returns an error if the origin or block is outside the image shape.
+    pub fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        if let Some((_, mask)) = self
+            .masks
+            .iter_mut()
+            .find(|(candidate, _)| candidate == name)
+        {
+            return assign_mask_slice(mask, data, start);
+        }
+        validate_mask_slice_write(self.shape(), data.shape(), start)?;
+        let mut mask = ArrayD::from_elem(IxDyn(self.shape()), false);
+        assign_mask_slice(&mut mask, data, start)?;
+        self.masks.push((name.to_owned(), mask));
         Ok(())
     }
 
@@ -707,6 +737,16 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
         TempImage::get_named_mask(self, name)
     }
 
+    fn get_named_mask_slice(
+        &self,
+        name: &str,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        slice_mask_array(self.find_named_mask(name)?, start, shape, stride)
+    }
+
     fn history(&self) -> Result<Vec<String>, ImageError> {
         TempImage::history(self)
     }
@@ -931,6 +971,24 @@ mod tests {
 
         img.unset_default_mask().unwrap();
         assert!(img.default_mask_name().is_none());
+    }
+
+    #[test]
+    fn named_mask_blocks_preserve_strided_boundary_values() {
+        let mut image = TempImage::<f32>::new(vec![5, 3], cs(), TempStoragePolicy::Memory).unwrap();
+        let block = ArrayD::from_elem(IxDyn(&[3, 1]), true);
+        assert!(image.put_mask_slice("mask", &block, &[3, 0]).is_err());
+        assert!(image.mask_names().is_empty());
+        image.put_mask_slice("mask", &block, &[2, 1]).unwrap();
+        let row = image
+            .get_named_mask_slice("mask", &[0, 1], &[3, 1], &[2, 1])
+            .unwrap();
+        assert_eq!(row.as_slice().unwrap(), &[false, true, true]);
+        assert!(
+            image
+                .get_named_mask_slice("mask", &[0, 1], &[3, 1], &[0, 1])
+                .is_err()
+        );
     }
 
     #[test]

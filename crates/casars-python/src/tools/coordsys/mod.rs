@@ -5,6 +5,7 @@
 
 mod axis_labels;
 mod construction;
+pub(super) use construction::{append_coordinate, validate_coordinate_indices};
 mod frame_metadata;
 mod inspect;
 mod observation;

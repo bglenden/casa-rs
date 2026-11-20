@@ -78,7 +78,7 @@ fn native_coordinate_field(name: &str) -> Option<(&str, usize)> {
     }
 }
 
-fn validate_coordinate_indices(record: &RecordValue) -> PyResult<()> {
+pub(in crate::tools) fn validate_coordinate_indices(record: &RecordValue) -> PyResult<usize> {
     let mut indices = Vec::new();
     for field in record.fields() {
         let Some((kind, index)) = native_coordinate_field(&field.name) else {
@@ -97,52 +97,61 @@ fn validate_coordinate_indices(record: &RecordValue) -> PyResult<()> {
             "Coordinate record numbering must be contiguous and unique",
         ));
     }
+    Ok(indices.len())
+}
+
+/// Append a coordinate and its axis-mapping fields, keeping the existing record intact.
+pub(in crate::tools) fn append_coordinate(
+    coordinates: &mut CoordinateSystem,
+    record: &mut RecordValue,
+    coordinate: impl Into<CoordinateModel>,
+) -> PyResult<()> {
+    let coordinate = coordinate.into();
+    let index = coordinates.n_coordinates();
+    let first_pixel = coordinates.n_pixel_axes() as i32;
+    let first_world = coordinates.n_world_axes() as i32;
+    let n_pixel = coordinate.n_pixel_axes();
+    let n_world = coordinate.n_world_axes();
+    let replacements = coordinate
+        .to_world(&vec![0.0; n_pixel])
+        .map_err(|error| raised(error.to_string()))?;
+    let kind = coordinate.coordinate_type();
+    let name = kind.to_string().to_ascii_lowercase();
+    let mut axis_record = coordinate.to_record();
+    match kind {
+        CoordinateType::Spectral => {
+            axis_record.upsert("conversion", default_spectral_conversion().into());
+        }
+        CoordinateType::Linear => {
+            axis_record.remove("coordinate_type");
+            axis_record.remove("naxes");
+        }
+        _ => {}
+    }
+    record.upsert(format!("{name}{index}"), axis_record.into());
+    record.upsert(
+        format!("pixelmap{index}"),
+        ArrayValue::from_i32_vec((first_pixel..first_pixel + n_pixel as i32).collect()).into(),
+    );
+    record.upsert(
+        format!("worldmap{index}"),
+        ArrayValue::from_i32_vec((first_world..first_world + n_world as i32).collect()).into(),
+    );
+    record.upsert(
+        format!("pixelreplace{index}"),
+        ArrayValue::from_f64_vec(vec![0.0; n_pixel]).into(),
+    );
+    record.upsert(
+        format!("worldreplace{index}"),
+        ArrayValue::from_f64_vec(replacements).into(),
+    );
+    coordinates.add_coordinate(coordinate);
     Ok(())
 }
 
 impl CoordinateState {
     fn append(&mut self, coordinate: impl Into<CoordinateModel>) -> PyResult<()> {
-        let coordinate = coordinate.into();
-        let index = self.coordinates.n_coordinates();
-        let first_pixel = self.coordinates.n_pixel_axes() as i32;
-        let first_world = self.coordinates.n_world_axes() as i32;
-        let n_pixel = coordinate.n_pixel_axes();
-        let n_world = coordinate.n_world_axes();
-        let replacements = coordinate
-            .to_world(&vec![0.0; n_pixel])
-            .map_err(|error| raised(error.to_string()))?;
-        let kind = coordinate.coordinate_type();
-        let name = kind.to_string().to_ascii_lowercase();
-        let mut record = coordinate.to_record();
-        match kind {
-            CoordinateType::Spectral => {
-                record.upsert("conversion", default_spectral_conversion().into());
-            }
-            CoordinateType::Linear => {
-                record.remove("coordinate_type");
-                record.remove("naxes");
-            }
-            _ => {}
-        }
-        self.record.upsert(format!("{name}{index}"), record.into());
-        self.record.upsert(
-            format!("pixelmap{index}"),
-            ArrayValue::from_i32_vec((first_pixel..first_pixel + n_pixel as i32).collect()).into(),
-        );
-        self.record.upsert(
-            format!("worldmap{index}"),
-            ArrayValue::from_i32_vec((first_world..first_world + n_world as i32).collect()).into(),
-        );
-        self.record.upsert(
-            format!("pixelreplace{index}"),
-            ArrayValue::from_f64_vec(vec![0.0; n_pixel]).into(),
-        );
-        self.record.upsert(
-            format!("worldreplace{index}"),
-            ArrayValue::from_f64_vec(replacements).into(),
-        );
-        self.coordinates.add_coordinate(coordinate);
-        Ok(())
+        append_coordinate(&mut self.coordinates, &mut self.record, coordinate)
     }
 
     fn add_defaults(

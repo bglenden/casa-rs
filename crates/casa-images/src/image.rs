@@ -437,7 +437,7 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
-        slice_mask_array(self.get_named_mask(name)?, start, shape, stride)
+        slice_mask_array(&self.get_named_mask(name)?, start, shape, stride)
     }
 
     /// Returns the history entries associated with the image.
@@ -569,7 +569,7 @@ pub trait ImageInterface<T: ImagePixel>: Lattice<T> {
             )),
             None => self
                 .default_mask()?
-                .map(|mask| slice_mask_array(mask, start, shape, stride))
+                .map(|mask| slice_mask_array(&mask, start, shape, stride))
                 .transpose(),
         }
     }
@@ -2261,7 +2261,7 @@ impl<T: ImagePixel> PagedImage<T> {
         stride: &[usize],
     ) -> Result<ArrayD<bool>, ImageError> {
         if let Some(mask) = self.temp_masks.get(name) {
-            return slice_mask_array(mask.clone(), start, shape, stride);
+            return slice_mask_array(mask, start, shape, stride);
         }
         let masks = match self.table.keywords().get(MASKS_KEYWORD) {
             Some(Value::Record(rec)) => rec,
@@ -2278,7 +2278,7 @@ impl<T: ImagePixel> PagedImage<T> {
                         got: array.shape().to_vec(),
                     });
                 }
-                slice_mask_array(array.clone(), start, shape, stride)
+                slice_mask_array(array, start, shape, stride)
             }
             Value::Record(record) => self.with_persistent_mask(name, record, |mask| {
                 mask.get_slice(start, shape, stride).map_err(Into::into)
@@ -3269,8 +3269,8 @@ fn make_lcbox_record(shape: &[usize]) -> RecordValue {
     record
 }
 
-fn slice_mask_array(
-    mask: ArrayD<bool>,
+pub(crate) fn slice_mask_array(
+    mask: &ArrayD<bool>,
     start: &[usize],
     shape: &[usize],
     stride: &[usize],
@@ -3282,6 +3282,7 @@ fn slice_mask_array(
             got: vec![start.len(), shape.len(), stride.len()],
         });
     }
+    let mut slice_info = Vec::with_capacity(ndim);
     for axis in 0..ndim {
         let Some(last) = shape[axis]
             .checked_sub(1)
@@ -3293,32 +3294,25 @@ fn slice_mask_array(
                 got: start.to_vec(),
             });
         };
-        if shape[axis] > 0 && (start[axis] >= mask.shape()[axis] || last >= mask.shape()[axis]) {
+        if stride[axis] == 0 || last >= mask.shape()[axis] {
             return Err(ImageError::ShapeMismatch {
                 expected: mask.shape().to_vec(),
                 got: start.to_vec(),
             });
         }
+        // End the slice just after its last selected element, including
+        // sections whose final stride lands on the array boundary.
+        slice_info.push(SliceInfoElem::Slice {
+            start: start[axis] as isize,
+            end: Some((last + 1) as isize),
+            step: stride[axis].min(isize::MAX as usize) as isize,
+        });
     }
-
-    let slice_info: Vec<SliceInfoElem> = start
-        .iter()
-        .zip(shape.iter())
-        .zip(stride.iter())
-        .map(|((&s, &n), &st)| {
-            let end = if n == 0 { s } else { s + n * st };
-            SliceInfoElem::Slice {
-                start: s as isize,
-                end: Some(end as isize),
-                step: st as isize,
-            }
-        })
-        .collect();
     let view = mask.slice(slice_info.as_slice());
     Ok(view.to_owned())
 }
 
-fn validate_mask_slice_write(
+pub(crate) fn validate_mask_slice_write(
     full_shape: &[usize],
     data_shape: &[usize],
     start: &[usize],
@@ -3346,7 +3340,7 @@ fn validate_mask_slice_write(
     Ok(())
 }
 
-fn assign_mask_slice(
+pub(crate) fn assign_mask_slice(
     mask: &mut ArrayD<bool>,
     data: &ArrayD<bool>,
     start: &[usize],

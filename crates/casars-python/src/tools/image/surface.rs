@@ -36,7 +36,7 @@ const METHODS: &[Method] = &[
             param("silent", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "addnoise",
