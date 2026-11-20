@@ -211,6 +211,9 @@ Use `ia.crop(axes=...)` to trim fully masked edge planes along the selected
 axes. The method applies the region and optional mask expression before
 finding the crop bounds. Pass `region=[]` when using `box`, `chans`, or
 `stokes` separately.
+Use `ia.decimate(axis=..., factor=..., method="copy")` to keep every nth
+plane. With `method="mean"`, it averages valid samples in each complete
+group and drops the trailing partial group.
 
 `ia.statistics()` returns statistics over a real native CASA image, an
 attached FITS image, or a temporary image. Pass `axes` for per-plane results,

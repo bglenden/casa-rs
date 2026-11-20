@@ -6,6 +6,7 @@
 mod bounding_box;
 pub(super) mod coords;
 mod crop;
+mod decimate;
 mod insert;
 mod noise;
 mod pixel_edit;
@@ -21,6 +22,7 @@ pub use replace_masked::{
 
 pub use bounding_box::ImageRegionBounds;
 pub use crop::{ImageCrop, ImageCropOptions};
+pub use decimate::{DecimationMethod, DecimationPixel, ImageDecimation, ImageDecimationOptions};
 pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
 pub use pixel_edit::ImagePixelSelection;
@@ -160,10 +162,10 @@ impl SubimagePlan {
         let step = |axis| selection.stride.as_ref().map_or(1, |stride| stride[axis]);
         let cropped_stokes = if selection.selected_stokes.is_none()
             && let Some(axis) = image.find_axis(casa_coordinates::CoordinateType::Stokes)
-            && packed_shape[axis] != image.shape()[axis]
+            && let stokes = stokes_for_axis(image.coordinates(), axis)?
+            && (packed_shape[axis] != image.shape()[axis] || stokes.len() > image.shape()[axis])
         {
             let start = selection.start[axis];
-            let stokes = stokes_for_axis(image.coordinates(), axis)?;
             Some(
                 stokes
                     .get(start..start + selection.shape[axis])
