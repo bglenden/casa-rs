@@ -19,6 +19,39 @@ use casa_types::measures::position::MPosition;
 
 use super::{ImagerImageDefinition, invalid};
 
+/// CASA's `Imager::makeEmptyImage` fits square direction tiles to the
+/// first axis, with at most four Stokes and 32 spectral planes per tile.
+pub(super) fn model_tile_shape(
+    [nx, ny, npol, nchan]: [usize; 4],
+    volume: i32,
+) -> MsResult<[usize; 4]> {
+    let pol = npol.min(4);
+    let chan = nchan.min(32);
+    let volume = volume.checked_abs().unwrap_or_default() as usize;
+    let mut side = 32;
+    if volume > 0 {
+        let area = volume / pol.max(1) / chan.max(1);
+        let floor = area.isqrt();
+        let preferred = floor + usize::from(floor * floor < area);
+        side = if preferred > nx.min(ny) {
+            nx.min(ny)
+        } else {
+            nx.checked_div(preferred).map_or(0, |tiles| nx / tiles)
+        };
+        side = side.max(10);
+    }
+    let tiles = [side.min(nx), side.min(ny), pol, chan];
+    let bytes = tiles
+        .iter()
+        .try_fold(size_of::<f32>(), |bytes, &axis| bytes.checked_mul(axis));
+    if bytes.is_none_or(|bytes| bytes > i32::MAX as usize) {
+        return Err(invalid(
+            "model image tiles exceed the representable data-manager bucket size",
+        ));
+    }
+    Ok(tiles)
+}
+
 /// Direction of the pixel at the centre of the model image.
 pub enum ImagerPhaseCentre {
     /// Use a phase direction from FIELD.
@@ -335,4 +368,20 @@ fn rest_frequency(ms: &MeasurementSet, field: usize, window: usize) -> MsResult<
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::model_tile_shape;
+
+    #[test]
+    fn tile_bytes_fit_the_signed_storage_manager_bucket() {
+        let volume = 1 << 29;
+        assert_eq!(
+            model_tile_shape([2048, 2048, 4, 31], volume).unwrap(),
+            [2048, 2048, 4, 31]
+        );
+        let error = model_tile_shape([2048, 2048, 4, 32], volume).unwrap_err();
+        assert!(error.to_string().contains("data-manager bucket size"));
+    }
 }
