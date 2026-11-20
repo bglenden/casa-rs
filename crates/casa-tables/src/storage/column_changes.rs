@@ -18,15 +18,56 @@ use super::{
     CompositeStorage, StorageError, incremental_stman, standard_stman, stman_aipsio, tiled_stman,
 };
 
+pub(crate) enum ColumnGroupPayload<'a> {
+    Defaults,
+    Scalars([&'a [Option<ScalarValue>]; 2]),
+    Tiled(&'a crate::StreamedTiledShapeColumn),
+}
+
 impl<'a> StagedEdit<'a> {
     pub(crate) fn stage_columns(
         table: &'a Path,
-        mut dat: TableDatContents,
+        dat: TableDatContents,
         added: Vec<ColumnAddition>,
         dminfo: Option<ManagerAddition>,
         existing: &[DataManagerInfo],
     ) -> Result<Self, StorageError> {
+        Self::stage_column_groups(
+            table,
+            dat,
+            [(added, dminfo, ColumnGroupPayload::Defaults)],
+            existing,
+        )
+    }
+
+    pub(crate) fn stage_column_groups(
+        table: &'a Path,
+        mut dat: TableDatContents,
+        groups: impl IntoIterator<
+            Item = (
+                Vec<ColumnAddition>,
+                Option<ManagerAddition>,
+                ColumnGroupPayload<'a>,
+            ),
+        >,
+        existing: &[DataManagerInfo],
+    ) -> Result<Self, StorageError> {
         let edit = Self::new(table)?;
+        for (columns, manager, payload) in groups {
+            edit.stage_column_group(&mut dat, columns, manager, existing, payload)?;
+        }
+        edit.stage_control(&dat)?;
+        Ok(edit)
+    }
+
+    fn stage_column_group(
+        &self,
+        dat: &mut TableDatContents,
+        added: Vec<ColumnAddition>,
+        dminfo: Option<ManagerAddition>,
+        existing: &[DataManagerInfo],
+        payload: ColumnGroupPayload<'_>,
+    ) -> Result<(), StorageError> {
         let mut groups = BTreeSet::new();
         let mut defaults = RecordValue::default();
         let mut names: HashSet<_> = dat
@@ -35,7 +76,13 @@ impl<'a> StagedEdit<'a> {
             .iter()
             .map(|c| c.col_name.clone())
             .collect();
-        let mut manager_names: HashSet<_> = existing.iter().map(|dm| dm.name.clone()).collect();
+        let mut manager_names: HashSet<_> = dat
+            .table_desc
+            .columns
+            .iter()
+            .map(|column| column.data_manager_group.clone())
+            .collect();
+        manager_names.extend(existing.iter().map(|dm| dm.name.clone()));
         let spec = dminfo.as_ref().map(|dm| &dm.spec);
         let mut assigned = if let Some(dm) = &dminfo {
             if !dm.name.is_empty() && !manager_names.insert(dm.name.clone()) {
@@ -44,11 +91,7 @@ impl<'a> StagedEdit<'a> {
                     dm.name
                 )));
             }
-            Some((
-                allocate(&mut dat, &dm.kind),
-                dm.kind.clone(),
-                dm.name.clone(),
-            ))
+            Some((allocate(dat, &dm.kind), dm.kind.clone(), dm.name.clone()))
         } else {
             existing
                 .iter()
@@ -76,7 +119,7 @@ impl<'a> StagedEdit<'a> {
                         name = format!("{requested}_{suffix}");
                         suffix += 1;
                     }
-                    let chosen = (allocate(&mut dat, &kind), kind, name);
+                    let chosen = (allocate(dat, &kind), kind, name);
                     if admits_add(&chosen.1) {
                         assigned = Some(chosen.clone());
                     }
@@ -121,8 +164,38 @@ impl<'a> StagedEdit<'a> {
                 .map(|(column, _)| column.clone())
                 .collect();
             let original = existing.iter().find(|dm| dm.seq_nr == seq);
-            let output =
-                edit.write_added_columns(&dat, seq, &columns, original, &defaults, spec)?;
+            let output = match &payload {
+                ColumnGroupPayload::Defaults => {
+                    self.write_added_columns(dat, seq, &columns, original, &defaults, spec)?
+                }
+                ColumnGroupPayload::Scalars(values) => {
+                    let path = self.staged.path().join(format!("table.f{seq}"));
+                    Some(standard_stman::write_ssm_file_scalar_columns(
+                        &path,
+                        &columns,
+                        values,
+                        dat.big_endian,
+                        &columns[0].data_manager_group,
+                    )?)
+                }
+                ColumnGroupPayload::Tiled(stream) => {
+                    let [column] = columns.as_slice() else {
+                        return Err(StorageError::Schema("expected one streamed column".into()));
+                    };
+                    if !stream.matches_descriptor(column) {
+                        return Err(StorageError::Schema(
+                            "streamed column type or rank differs from the schema".into(),
+                        ));
+                    }
+                    crate::install_streamed_tiled_shape_column(
+                        self.staged.path(),
+                        seq,
+                        &column.data_manager_group,
+                        (*stream).clone(),
+                    )?;
+                    None
+                }
+            };
             if let Some(blob) = output {
                 dat.column_set
                     .data_managers
@@ -132,8 +205,7 @@ impl<'a> StagedEdit<'a> {
                     .data = blob;
             }
         }
-        edit.stage_control(&dat)?;
-        Ok(edit)
+        Ok(())
     }
 
     fn write_added_columns(
@@ -152,6 +224,15 @@ impl<'a> StagedEdit<'a> {
         let nrows = usize::try_from(dat.nrrow).map_err(|_| {
             StorageError::FormatMismatch("column addition row count overflow".into())
         })?;
+        if kind == "CompressComplex" {
+            super::virtual_compress::ComplexCompression::read(
+                &columns[0].keywords,
+                &columns[0].col_name,
+                kind,
+            )?;
+            // This manager reads its backing columns and owns no payload.
+            return Ok(None);
+        }
         let defaults = RecordValue::new(
             defaults
                 .fields()

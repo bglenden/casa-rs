@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Attachment and visibility-equation state shared by calibrater operations.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
-use casa_ms::MsSelection;
+use casa_components::ComponentList;
+use casa_ms::{MeasurementSet, MsSelection, SubtableId};
+use casa_tables::RequiredScalarColumnValues;
+use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
+use crate::model_columns::initialize_calibrater_columns;
 
 use crate::{
     ApplyCalibrationTableSpec, AttachmentError, AttachmentMode, AttachmentOptions,
     CalibrationAttachment, CalibrationDataset, CalibrationError, CalibrationOutputMode,
-    CalibrationSolveRequest, CalibrationSolveResult, GainSolveModelSource, point_model_stokes,
-    reset_calibration_set, solve_calibration_with_output_mode,
+    CalibrationSolveRequest, CalibrationSolveResult, GainSolveModelSource, VisibilityFitRequest,
+    delete_calibration_model, fit_visibility_component, point_model_stokes, reset_calibration_set,
+    solve_calibration_with_output_mode,
 };
 
 /// State shared by the calibrater's model, apply and solve operations.
@@ -53,6 +59,22 @@ pub enum CalibraterLifecycleError {
     /// A point model must contain at most four finite CASA Stokes values.
     #[error("a point model requires up to four finite Stokes values")]
     InvalidPointModel,
+    /// CASA 6.7.6 uses the SPW selector for channel selection.
+    #[error(
+        "Error in Calibrater::selectvis(): Old-fashioned chanmode selection is no longer supported!"
+    )]
+    ObsoleteChannelMode,
+    /// The legacy iterator's velocity selector is disabled in pinned CASA.
+    #[error("Error in Calibrater::selectvis(): Exception: Method not implemented.")]
+    LegacyVelocityMode,
+    /// The legacy channel window lies outside a selected spectral window.
+    #[error(
+        "Error in Calibrater::selectvis(): Failed AlwaysAssert start >= 0 && start + channelGroupSize_p <= nChan_p"
+    )]
+    LegacyChannelBounds,
+    /// CASA's visibility component fitter uses the legacy iterator.
+    #[error("Calibrater::modelfit not implemented")]
+    FitNeedsLegacyIterator,
     /// MeasurementSet attachment or visibility selection failed.
     #[error(transparent)]
     Attachment(#[from] AttachmentError),
@@ -89,12 +111,50 @@ impl CalibraterLifecycle {
     ///
     /// Returns an error when the MeasurementSet cannot be opened.
     pub fn open(&mut self, path: &Path) -> Result<(), CalibraterLifecycleError> {
+        self.open_with_scratch(path, false, false, false)
+    }
+
+    /// Attach a writable MeasurementSet, initializing requested scratch
+    /// columns that are absent. Existing columns retain their values.
+    ///
+    /// # Errors
+    /// The MeasurementSet cannot be opened for update or scratch cannot be
+    /// initialized.
+    pub fn open_with_scratch(
+        &mut self,
+        path: &Path,
+        compress: bool,
+        add_corrected: bool,
+        add_model: bool,
+    ) -> Result<(), CalibraterLifecycleError> {
+        self.close();
         let attachment = CalibrationAttachment::attach(
             path,
             AttachmentMode::Open,
             AttachmentOptions::default(),
             MsSelection::default(),
         )?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(attachment.path().join("table.dat"))
+            .map_err(|error| {
+                AttachmentError::from(casa_ms::MsError::InvalidInput(format!(
+                    "cannot open {} for update: {error}",
+                    attachment.path().display(),
+                )))
+            })?;
+        if add_corrected || add_model {
+            let mut opened = OpenedMs::open(attachment.path()).map_err(AttachmentError::from)?;
+            opened.lock = initialize_calibrater_columns(
+                &mut opened.measurement_set,
+                compress,
+                add_corrected,
+                add_model,
+                opened.lock,
+            )
+            .map_err(AttachmentError::from)?;
+            opened.release().map_err(AttachmentError::from)?;
+        }
         self.equation = Some(VisibilityEquation {
             attachment,
             model: CalibraterModel::FromMeasurementSet,
@@ -127,14 +187,45 @@ impl CalibraterLifecycle {
     ///
     /// Returns an error without an open dataset or if a selector fails.
     pub fn select(&mut self, selection: MsSelection) -> Result<(), CalibraterLifecycleError> {
+        self.select_with_channel_mode(selection, "none", [1, 0, 1])
+    }
+
+    /// Select data with the Python tool's channel mode and legacy channel
+    /// count, start and step. The modern iterator uses the SPW expression.
+    ///
+    /// # Errors
+    /// The dataset or selector is invalid, or the removed channel-mode
+    /// selector was requested.
+    pub fn select_with_channel_mode(
+        &mut self,
+        mut selection: MsSelection,
+        channel_mode: &str,
+        legacy_channels: [i64; 3],
+    ) -> Result<(), CalibraterLifecycleError> {
+        let legacy_iterator = self.legacy_iterator;
         let equation = self.equation_mut()?;
-        let selected = equation.attachment.select(selection);
+        let selected = equation
+            .attachment
+            .select(selection.clone())
+            .map_err(Into::into)
+            .and_then(|()| match channel_mode {
+                "none" => Ok(()),
+                _ if !legacy_iterator => Err(CalibraterLifecycleError::ObsoleteChannelMode),
+                "velocity" | "opticalvelocity" => Err(CalibraterLifecycleError::LegacyVelocityMode),
+                mode => {
+                    selection.spw = Some(legacy_spw_expression(
+                        &equation.attachment,
+                        (mode == "channel").then_some(legacy_channels),
+                    )?);
+                    equation.attachment.select(selection).map_err(Into::into)
+                }
+            });
         equation.apply = ApplyTerms::default();
         equation.solve = None;
         if let Err(error) = selected {
             equation.attachment.reset_selection();
             equation.model = CalibraterModel::FromMeasurementSet;
-            return Err(error.into());
+            return Err(error);
         }
         Ok(())
     }
@@ -197,6 +288,120 @@ impl CalibraterLifecycle {
         .map_err(AttachmentError::from)?;
         opened.release().map_err(AttachmentError::from)?;
         Ok(())
+    }
+
+    /// Delete model data on the actual attachment. The explicit field and
+    /// SPW expressions address virtual models. Scratch removal is global.
+    ///
+    /// # Errors
+    /// The MeasurementSet is missing, a selector is invalid, or a write fails.
+    pub fn delete_model(
+        &self,
+        field: Option<&str>,
+        spw: Option<&str>,
+        virtual_model: bool,
+        scratch: bool,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation()?;
+        if !virtual_model && !scratch {
+            return Ok(());
+        }
+        let mut opened =
+            OpenedMs::open(equation.attachment.path()).map_err(AttachmentError::from)?;
+        delete_calibration_model(
+            &mut opened.measurement_set,
+            field,
+            spw,
+            virtual_model,
+            scratch,
+            &mut opened.lock,
+        )
+        .map_err(AttachmentError::from)?;
+        opened.release().map_err(AttachmentError::from)?;
+        Ok(())
+    }
+
+    /// Describe the existing MAIN and SOURCE virtual model field records.
+    ///
+    /// # Errors
+    /// The tool has no open MeasurementSet or its model records cannot be read.
+    pub fn model_header_lines(&self) -> Result<Vec<String>, CalibraterLifecycleError> {
+        let equation = self.equation()?;
+        equation
+            .attachment
+            .with_write(|ms, _, _| {
+                let main = ms.main_table();
+                if main.row_count() == 0 {
+                    return Ok(Vec::new());
+                }
+                let mut fields = std::collections::BTreeSet::new();
+                for rows in (0..main.row_count()).step_by(65_536) {
+                    let end = (rows + 65_536).min(main.row_count());
+                    let indices = (rows..end).collect::<Vec<_>>();
+                    let columns =
+                        main.required_scalar_columns_owned_for_rows(&["FIELD_ID"], &indices)?;
+                    let Some(RequiredScalarColumnValues::Int32(ids)) = columns.get("FIELD_ID")
+                    else {
+                        return Err(casa_ms::MsError::InvalidInput(
+                            "FIELD_ID must be Int32".into(),
+                        )
+                        .into());
+                    };
+                    fields.extend(ids.iter().filter_map(|&id| usize::try_from(id).ok()));
+                }
+                let field = ms.field()?;
+                let mut lines = vec!["MS Header field records:".into()];
+                let mut has_pointer = false;
+                for table in [Some(main), ms.subtable(SubtableId::Source)]
+                    .into_iter()
+                    .flatten()
+                {
+                    let keywords = table.keywords();
+                    for &id in &fields {
+                        if let Some(Value::Scalar(ScalarValue::String(key))) =
+                            keywords.get(&format!("definedmodel_field_{id}"))
+                        {
+                            has_pointer = true;
+                            if keywords.get(key).is_some() {
+                                lines.push(format!(" {} (id = {id})", field.name(id)?));
+                            }
+                        }
+                    }
+                }
+                if !has_pointer {
+                    lines.push(" None.".into());
+                }
+                Ok(lines)
+            })
+            .map_err(Into::into)
+    }
+
+    /// Fit a visibility component using the tool's current selection.
+    ///
+    /// # Errors
+    /// The dataset or selection is invalid, the fit fails, or the requested
+    /// component table cannot be written.
+    pub fn fit_model(
+        &self,
+        request: VisibilityFitRequest<'_>,
+        output: Option<&Path>,
+    ) -> Result<Vec<f64>, CalibraterLifecycleError> {
+        if !self.legacy_iterator {
+            return Err(CalibraterLifecycleError::FitNeedsLegacyIterator);
+        }
+        let equation = self.equation()?;
+        equation
+            .attachment
+            .with_write(|ms, selection, _| {
+                let fit = fit_visibility_component(ms, selection, request)?;
+                if let Some(path) = output {
+                    ComponentList::from(vec![fit.component])
+                        .write_table(path)
+                        .map_err(|error| casa_ms::MsError::InvalidInput(error.to_string()))?;
+                }
+                Ok(fit.parameters)
+            })
+            .map_err(Into::into)
     }
 
     /// Configure the solver for the current visibility equation.
@@ -284,4 +489,48 @@ impl CalibraterLifecycle {
             .as_mut()
             .ok_or(CalibraterLifecycleError::Unattached)
     }
+}
+
+fn legacy_spw_expression(
+    attachment: &CalibrationAttachment,
+    channels: Option<[i64; 3]>,
+) -> Result<String, CalibraterLifecycleError> {
+    let selected = attachment.resolve()?;
+    let windows: BTreeSet<_> = selected
+        .selected_rows
+        .iter()
+        .map(|row| row.spectral_window_id)
+        .collect();
+    let Some([count, start, step]) = channels else {
+        return Ok(windows
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(","));
+    };
+    let ms = MeasurementSet::open(attachment.path()).map_err(AttachmentError::from)?;
+    let spw = ms.spectral_window().map_err(AttachmentError::from)?;
+    let window_channels = |id| {
+        spw.num_chan(id as usize)
+            .map(i64::from)
+            .map_err(AttachmentError::from)
+    };
+    let count = if step < 1 {
+        1
+    } else if count < 1 || start < 0 {
+        window_channels(*windows.first().ok_or(AttachmentError::EmptySelection)?)?
+    } else {
+        count
+    };
+    let stop = start
+        .checked_add(count)
+        .ok_or(CalibraterLifecycleError::LegacyChannelBounds)?;
+    let mut expressions = Vec::new();
+    for id in windows {
+        if start < 0 || stop > window_channels(id)? {
+            return Err(CalibraterLifecycleError::LegacyChannelBounds);
+        }
+        expressions.push(format!("{id}:{start}~{}", stop - 1));
+    }
+    Ok(expressions.join(","))
 }

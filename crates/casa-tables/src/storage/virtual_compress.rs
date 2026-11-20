@@ -66,6 +66,25 @@ const KW_CC_FIXED: &str = "_CompressComplex_Fixed";
 const KW_CC_AUTO_SCALE: &str = "_CompressComplex_AutoScale";
 const KW_CC_TYPE: &str = "_CompressComplex_Type";
 
+pub(crate) fn automatic_complex_keywords(stored: &str, scale: &str, offset: &str) -> RecordValue {
+    let mut keywords = RecordValue::default();
+    for (key, name) in [
+        (KW_MAPPED_SOURCE, stored),
+        (KW_CC_SCALE_NAME, scale),
+        (KW_CC_OFFSET_NAME, offset),
+        (KW_CC_TYPE, "CompressComplex"),
+    ] {
+        keywords.upsert(key, Value::Scalar(ScalarValue::String(name.to_owned())));
+    }
+    for (key, flag) in [(KW_CC_FIXED, false), (KW_CC_AUTO_SCALE, true)] {
+        keywords.upsert(key, Value::Scalar(ScalarValue::Bool(flag)));
+    }
+    for key in [KW_CC_SCALE, KW_CC_OFFSET] {
+        keywords.upsert(key, Value::Scalar(ScalarValue::Float32(0.)));
+    }
+    keywords
+}
+
 /// NaN sentinel for CompressFloat (Short -32768).
 const NAN_SENTINEL_SHORT: i16 = i16::MIN;
 
@@ -238,6 +257,21 @@ pub enum ComplexScale {
 }
 
 impl ComplexCompression {
+    /// CASA's automatically scaled CompressComplex layout for a new complex
+    /// array column, with separate packed, scale and offset columns.
+    pub fn automatic_standard(column: &str) -> Self {
+        Self {
+            stored: format!("{column}_COMPRESSED"),
+            scale: ComplexScale::PerRow {
+                scale: format!("{column}_SCALE"),
+                offset: format!("{column}_OFFSET"),
+                automatic: true,
+            },
+            variant: CompressComplexVariant::Standard,
+            casa_layout: true,
+        }
+    }
+
     pub(crate) fn read(
         keywords: &RecordValue,
         column: &str,

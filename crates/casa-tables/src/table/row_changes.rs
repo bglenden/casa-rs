@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use super::*;
+use crate::storage::column_changes::ColumnGroupPayload;
 use crate::storage::row_changes::{Rows, StagedEdit};
 
 /// One column to install in an existing disk table.
@@ -90,6 +91,91 @@ impl Table {
             plan.publish()?;
             this.reload_disk_state_at(path)
         })
+    }
+
+    /// Install a complete CASA CompressComplex array with its packed cells
+    /// and automatic per-row scale and offset.
+    ///
+    /// The logical column and its three backing columns are published under
+    /// a single descriptor update, leaving other data managers untouched.
+    ///
+    /// # Errors
+    /// The table cannot add the supplied array or publish its storage groups.
+    pub fn add_compressed_complex_array_in_place(
+        &mut self,
+        schema: ColumnSchema,
+        scalar_manager: &str,
+        tiled_manager: &str,
+        packed: &crate::StreamedTiledShapeColumn,
+        scales: &[Option<ScalarValue>],
+        offsets: &[Option<ScalarValue>],
+    ) -> Result<(), TableError> {
+        if schema.data_type() != Some(PrimitiveType::Complex32)
+            || [packed.row_count(), scales.len(), offsets.len()]
+                .into_iter()
+                .any(|count| count != self.row_count())
+        {
+            return Err(TableError::Storage(
+                "compressed complex layout requires one packed cell, scale and offset per row"
+                    .into(),
+            ));
+        }
+        let logical = schema.name().to_owned();
+        let stored = format!("{logical}_COMPRESSED");
+        let scale = format!("{logical}_SCALE");
+        let offset = format!("{logical}_OFFSET");
+        let add = |schema, default, keywords| ColumnAddition {
+            schema,
+            default,
+            keywords,
+            manager_type: None,
+            manager_group: None,
+        };
+        let group = |kind: &str, name: &str, spec| {
+            Some(ManagerAddition {
+                kind: kind.to_owned(),
+                name: name.to_owned(),
+                spec,
+            })
+        };
+        let scalars = [&offset, &scale].map(|column| {
+            add(
+                ColumnSchema::scalar(column, PrimitiveType::Float32),
+                None,
+                RecordValue::default(),
+            )
+        });
+        let packed_schema = ColumnSchema::array_variable(&stored, PrimitiveType::Int32, Some(2));
+        let keywords =
+            crate::storage::virtual_compress::automatic_complex_keywords(&stored, &scale, &offset);
+        let groups = [
+            (
+                scalars.into(),
+                group("StandardStMan", scalar_manager, RecordValue::default()),
+                ColumnGroupPayload::Scalars([offsets, scales]),
+            ),
+            (
+                vec![add(packed_schema, None, RecordValue::default())],
+                group("TiledShapeStMan", tiled_manager, RecordValue::default()),
+                ColumnGroupPayload::Tiled(packed),
+            ),
+            (
+                vec![add(schema, None, keywords)],
+                group("CompressComplex", &logical, RecordValue::default()),
+                ColumnGroupPayload::Defaults,
+            ),
+        ];
+        self.edit_clean_layout(
+            "add compressed array in place",
+            move |this, path, mut dat, old| {
+                dat.raise_row_count(old);
+                let plan =
+                    StagedEdit::stage_column_groups(path, dat, groups, this.data_manager_info())?;
+                this.note_persisted_write(path);
+                plan.publish()?;
+                this.reload_disk_state_at(path)
+            },
+        )
     }
 
     fn edit_rows_in_place(&mut self, rows: Rows<'_>) -> Result<(), TableError> {

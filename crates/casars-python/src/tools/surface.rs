@@ -71,6 +71,8 @@ pub(crate) enum CasaDefault {
     Empty,
     /// `{}`, the default of record parameters.
     EmptyRecord,
+    /// A scalar quantity record with value and unit fields.
+    Quantity(f64, &'static str),
     /// `None` (casa-rs constructor controls).
     None,
 }
@@ -91,6 +93,7 @@ impl CasaDefault {
             Self::Bools(values) => json!(values),
             Self::Empty => json!([]),
             Self::EmptyRecord => json!({}),
+            Self::Quantity(value, unit) => json!({"value": value, "unit": unit}),
             Self::None => JsonValue::Null,
         })
     }

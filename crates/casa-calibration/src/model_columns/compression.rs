@@ -8,12 +8,172 @@ use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::write_session::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationColumnBatch,
     MeasurementSetMutationColumnValues, MeasurementSetWriteColumnPlan,
+    MeasurementSetWriteResources,
 };
-use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelectionRow};
-use casa_tables::{ComplexCompression, ComplexScale, Table};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
+use casa_ms::{
+    MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, scratch_columns,
+};
+use casa_tables::{
+    ColumnSchema, ComplexCompression, ComplexScale, StreamedTiledShapeCubeLayout,
+    StreamedTiledShapeValueType, StreamingTiledShapeWriter, Table, TableWriteLock,
+};
+use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue};
 
-use super::invalid;
+use super::{CORRECTED, MODEL, invalid, model_polarizations, observed_column, reset_batch};
+
+const BATCH_ROWS: usize = 256;
+
+pub(super) fn initialize_columns(
+    ms: &mut MeasurementSet,
+    selected: ResolvedMsSelection,
+    columns: &[VisibilityDataColumn],
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    let (layouts, big_endian) = packing_layout(ms, &selected)?;
+    let path = lock
+        .path()
+        .parent()
+        .ok_or_else(|| invalid("MAIN has no parent directory"))?;
+    let temporary = tempfile::tempdir_in(path).map_err(invalid)?;
+    for &column in columns {
+        let (scalars, packed, comment) = match column {
+            MODEL => ("ModelScaleOffset", "ModelCompTiled", "model data"),
+            CORRECTED => ("CorrScaleOffset", "CorrectedCompTiled", "corrected data"),
+            _ => return Err(invalid("cannot compress observed data during attachment")),
+        };
+        let name = column.name();
+        let schema = ColumnSchema::array_variable(name, PrimitiveType::Complex32, Some(2))
+            .with_comment(comment);
+        let writer = StreamingTiledShapeWriter::create(
+            temporary.path().join(name),
+            StreamedTiledShapeValueType::Int32,
+            layouts.clone(),
+            MeasurementSetWriteResources::from_system_memory(1)
+                .map_err(invalid)?
+                .available_bytes,
+            big_endian,
+        )
+        .map_err(invalid)?;
+        let data = pack_initial_cells(ms, &selected, column, writer)?;
+        scratch_columns::prepare_write_holding(ms, column, true, lock)?;
+        ms.main_table_mut().add_compressed_complex_array_in_place(
+            schema,
+            scalars,
+            packed,
+            &data.packed,
+            &data.scales,
+            &data.offsets,
+        )?;
+        lock.record_write();
+    }
+    Ok(())
+}
+
+fn packing_layout(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+) -> MsResult<(Vec<StreamedTiledShapeCubeLayout>, bool)> {
+    let spectral = ms.spectral_window()?;
+    let mut max_channels = 0usize;
+    for window in 0..spectral.row_count() {
+        max_channels =
+            max_channels.max(usize::try_from(spectral.num_chan(window)?).map_err(invalid)?);
+    }
+    let main = ms.main_table();
+    let observed = main.column_accessor(observed_column(ms))?;
+    let mut shapes = BTreeMap::<Vec<usize>, usize>::new();
+    let mut first_correlations = None;
+    for batch in selected.selected_rows.chunks(BATCH_ROWS) {
+        let indices = batch.iter().map(|row| row.row_index).collect::<Vec<_>>();
+        for shape in observed.array_shapes_uncached(&indices)? {
+            let shape = shape.ok_or_else(|| invalid("observed data has an undefined cell"))?;
+            let &[correlations, _] = shape.as_slice() else {
+                return Err(invalid("observed visibility must have two axes"));
+            };
+            if correlations == 0 {
+                return Err(invalid("observed visibility has no correlations"));
+            }
+            first_correlations.get_or_insert(correlations);
+            *shapes.entry(shape).or_default() += 1;
+        }
+    }
+    let correlations = first_correlations.ok_or_else(|| invalid("observed data has no rows"))?;
+    let channel_tile = max_channels / 10 + 1;
+    let tile = vec![
+        correlations,
+        channel_tile,
+        131_072 / correlations / channel_tile + 1,
+    ];
+    let layouts = shapes
+        .into_iter()
+        .map(|(shape, count)| StreamedTiledShapeCubeLayout::new(shape, count, tile.clone()))
+        .collect();
+    let big_endian = main
+        .stored_endian_format()?
+        .is_none_or(casa_tables::EndianFormat::is_big_endian);
+    Ok((layouts, big_endian))
+}
+
+struct PackedScratch {
+    packed: casa_tables::StreamedTiledShapeColumn,
+    scales: Vec<Option<ScalarValue>>,
+    offsets: Vec<Option<ScalarValue>>,
+}
+
+fn pack_initial_cells(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    column: VisibilityDataColumn,
+    mut writer: StreamingTiledShapeWriter,
+) -> MsResult<PackedScratch> {
+    let codec = ComplexCompression::automatic_standard(column.name());
+    let polarizations = if column == MODEL {
+        model_polarizations(ms)?
+    } else {
+        BTreeMap::new()
+    };
+    let destination = ScratchDestination::new(ms, column)?;
+    let row_count = selected.selected_rows.len();
+    let mut scales = Vec::with_capacity(row_count);
+    let mut offsets = Vec::with_capacity(row_count);
+    for batch in selected.selected_rows.chunks(BATCH_ROWS) {
+        let columns = reset_batch(
+            ms,
+            batch,
+            std::slice::from_ref(&destination),
+            &BTreeMap::new(),
+            &polarizations,
+        )?
+        .columns;
+        for column in columns {
+            let MeasurementSetMutationColumnValues::Arrays(values) = column.values else {
+                return Err(invalid("initial scratch cells must be arrays"));
+            };
+            for value in values {
+                let ArrayValue::Complex32(value) = value else {
+                    return Err(invalid("initial compressed scratch cells must be complex"));
+                };
+                let (packed, (scale, offset)) =
+                    codec.encode_visibility_cell(&value, None, (0., 0.), None)?;
+                let cells = packed.view().reversed_axes();
+                let contiguous = cells.as_standard_layout();
+                writer
+                    .push_i32_row(
+                        packed.shape(),
+                        contiguous.as_slice().expect("contiguous row"),
+                    )
+                    .map_err(invalid)?;
+                scales.push(Some(ScalarValue::Float32(scale)));
+                offsets.push(Some(ScalarValue::Float32(offset)));
+            }
+        }
+    }
+    Ok(PackedScratch {
+        packed: writer.finish().map_err(invalid)?,
+        scales,
+        offsets,
+    })
+}
 
 pub(crate) struct ScratchDestination {
     pub(super) visibility: VisibilityDataColumn,

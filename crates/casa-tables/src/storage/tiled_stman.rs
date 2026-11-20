@@ -6825,6 +6825,7 @@ pub fn install_streamed_tiled_shape_complex32_column(
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum StreamedTiledShapeValueType {
     Bool,
+    Int32,
     Float32,
     Float64,
     Complex32,
@@ -6834,6 +6835,7 @@ impl StreamedTiledShapeValueType {
     fn casacore_type(self) -> CasacoreDataType {
         match self {
             Self::Bool => CasacoreDataType::TpBool,
+            Self::Int32 => CasacoreDataType::TpInt,
             Self::Float32 => CasacoreDataType::TpFloat,
             Self::Float64 => CasacoreDataType::TpDouble,
             Self::Complex32 => CasacoreDataType::TpComplex,
@@ -7110,6 +7112,26 @@ impl StreamingTiledShapeWriter {
             } else {
                 write_f32_le(&mut encoded[idx * 4..], value);
             }
+        }
+        self.assemble_seconds += assemble_started.elapsed().as_secs_f64();
+        self.push_encoded_row(cell_shape, &encoded)
+    }
+
+    /// Append one Int32 cell in casacore axis order.
+    pub fn push_i32_row(
+        &mut self,
+        cell_shape: &[usize],
+        values: &[i32],
+    ) -> Result<(), StorageError> {
+        self.require_value_type(StreamedTiledShapeValueType::Int32)?;
+        let assemble_started = Instant::now();
+        let mut encoded = Vec::with_capacity(size_of_val(values));
+        for &value in values {
+            encoded.extend_from_slice(&if self.big_endian {
+                value.to_be_bytes()
+            } else {
+                value.to_le_bytes()
+            });
         }
         self.assemble_seconds += assemble_started.elapsed().as_secs_f64();
         self.push_encoded_row(cell_shape, &encoded)
