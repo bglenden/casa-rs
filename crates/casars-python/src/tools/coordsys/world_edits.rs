@@ -77,15 +77,6 @@ fn apply_edit(
         CoordinateState::new(system)
     });
     let input_coordinates = one_coordinate.as_ref().unwrap_or(state);
-    let value = match value {
-        // CASA replaces the unset argument with the full reference vector.
-        WorldArgument::Numeric(values) if values.is_empty() => WorldArgument::Numeric(
-            coordinates(&state.coordinates)
-                .flat_map(|coordinate| WorldEdit::Reference.declared(coordinate))
-                .collect(),
-        ),
-        value => value,
-    };
     // An explicit coordinate type fills missing values from that coordinate's reference.
     let fallback = if selected.is_some() {
         WorldEdit::Reference
@@ -96,7 +87,7 @@ fn apply_edit(
         .flat_map(|coordinate| fallback.native(coordinate))
         .collect();
     let mut values = value
-        .values_with_defaults(input_coordinates, defaults)?
+        .values_with_defaults(state, selected.zip(one_coordinate.as_ref()), defaults)?
         .into_iter();
     let mut updated = state.record.clone();
     for (index, placement) in CoordinateSystem::record_coordinates(&state.record)
