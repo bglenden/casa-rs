@@ -4,7 +4,30 @@
 
 use num_complex::Complex32;
 
-use super::SpectralAxis;
+use super::{LegacyPredictionMap, SpectralAxis, SpectralKernel, SpectralResampler};
+
+impl SpectralResampler {
+    /// Legacy spline prediction uses the cubic channel map and interpolates
+    /// the original image frequencies with casacore's second derivatives.
+    /// Use the row prediction methods for this resampler. The bounded
+    /// backend stencil cannot express a spline across the whole image axis.
+    #[must_use]
+    pub fn legacy_spline(output: SpectralAxis, matching: SpectralAxis) -> Self {
+        let mut resampler = Self::channel_local(output, SpectralKernel::Cubic);
+        resampler.legacy_prediction_map = Some(LegacyPredictionMap {
+            axis: matching,
+            selection: None,
+            spline: true,
+        });
+        resampler
+    }
+
+    pub(super) fn uses_legacy_spline(&self) -> bool {
+        self.legacy_prediction_map
+            .as_ref()
+            .is_some_and(|mapping| mapping.spline)
+    }
+}
 
 #[derive(Debug, Default)]
 pub(super) struct SplineScratch {

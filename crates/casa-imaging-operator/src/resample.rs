@@ -824,27 +824,6 @@ impl SpectralResampler {
         self
     }
 
-    /// Legacy spline prediction uses the cubic channel map and interpolates
-    /// the original image frequencies with casacore's second derivatives.
-    /// Use the row prediction methods for this resampler. The bounded
-    /// backend stencil cannot express a spline across the whole image axis.
-    #[must_use]
-    pub fn legacy_spline(output: SpectralAxis, matching: SpectralAxis) -> Self {
-        let mut resampler = Self::channel_local(output, SpectralKernel::Cubic);
-        resampler.legacy_prediction_map = Some(LegacyPredictionMap {
-            axis: matching,
-            selection: None,
-            spline: true,
-        });
-        resampler
-    }
-
-    fn uses_legacy_spline(&self) -> bool {
-        self.legacy_prediction_map
-            .as_ref()
-            .is_some_and(|mapping| mapping.spline)
-    }
-
     /// Set the original channel `start`, `count`, and `stride` of the next
     /// legacy visibility buffer. Ordinary resamplers ignore this selection.
     pub fn set_legacy_prediction_selection(&mut self, selection: Option<[usize; 3]>) {
