@@ -4,7 +4,7 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{ImageInterface, ImagePixel, image::image_history_rows};
-use casa_types::{RecordValue, Value};
+use casa_types::RecordValue;
 use ndarray::{ArrayD, IxDyn, SliceInfoElem, Zip};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
@@ -12,7 +12,7 @@ use pyo3::types::{PyDict, PyString};
 use crate::convert::Variant;
 use crate::tools::table::casa_record;
 
-use super::beams::{axis_length, image_info, image_info_record, plane_axes, stored_beam_record};
+use super::beams::{axis_length, image_info, image_info_record, plane_axes, subset_beam_record};
 use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
@@ -85,25 +85,7 @@ fn selected_image_info(original: &ImageHandle, selection: &Selection) -> PyResul
     if channels.len() == beams.n_channels() && polarizations.len() == beams.n_stokes() {
         return Ok(record);
     }
-    let subset = beams.subset(&channels, &polarizations).map_err(raised)?;
-    let beam = |channel, polarization| {
-        Value::Record(stored_beam_record(stored, beams, channel, polarization))
-    };
-    record.remove("perplanebeams");
-    if subset.is_single() {
-        record.upsert("restoringbeam", beam(channels[0], polarizations[0]));
-    } else {
-        let mut grid = subset.to_record();
-        for (plane, &polarization) in polarizations.iter().enumerate() {
-            for (slot, &channel) in channels.iter().enumerate() {
-                grid.upsert(
-                    format!("*{}", plane * channels.len() + slot),
-                    beam(channel, polarization),
-                );
-            }
-        }
-        record.upsert("perplanebeams", Value::Record(grid));
-    }
+    subset_beam_record(&mut record, stored, beams, &channels, &polarizations).map_err(raised)?;
     Ok(record)
 }
 
