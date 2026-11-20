@@ -5,9 +5,10 @@ Work issue: #___
 
 Evidence:
 - `command or test`: result
+- Exceptional hosted checks, if needed: reason, tested revision and run link
 
-Decisions: none. Otherwise each choice made without the owner (what, why,
-the alternative not taken), with the `owner-review` label on the PR.
+Decisions: none. Otherwise record consequential choices made without the
+owner and the reasons, with the `owner-review` label on the PR.
 
 Review: delete this line unless there was one; otherwise local or external,
 the reviewer, the revision, and how each finding was resolved.
