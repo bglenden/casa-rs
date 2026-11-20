@@ -124,8 +124,14 @@ impl SubimageSelection {
             selection.shape = slicer.count;
             return Ok((selection, slicer.stride));
         }
-        let selection = Self::resolve_with_origin(image, None, region, None, None, Some(target))?;
-        Ok((selection, vec![1; image.ndim()]))
+        let mut selection =
+            Self::resolve_with_origin(image, None, region, None, None, Some(target))?;
+        selection.shape = selection.packed_shape();
+        let stride = selection
+            .stride
+            .take()
+            .unwrap_or_else(|| vec![1; image.ndim()]);
+        Ok((selection, stride))
     }
 
     pub(super) fn packed_shape(&self) -> Vec<usize> {

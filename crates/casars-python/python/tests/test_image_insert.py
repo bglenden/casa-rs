@@ -1,6 +1,8 @@
 """Native and FITS image.insert geometry and mask parity with CASA 6.7.6.14."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import numpy as np
 import pytest
@@ -34,6 +36,35 @@ def test_insert_reacquires_a_native_target_write_lock(casa, tmp_path):
         expected[1:3, 1:3] = values
         np.testing.assert_array_equal(reader.getchunk(), expected)
         assert reader.done()
+
+
+def test_insert_reads_one_generation_during_a_local_source_edit(tmp_path):
+    path = str(tmp_path / "source.im")
+    shape = (1536, 1536)
+    first = np.full(shape, 1, dtype=np.float32)
+    second = np.full(shape, 2, dtype=np.float32)
+    source, target = tools.image(), tools.image()
+    assert source.fromarray(path, first)
+    assert target.fromshape(shape=shape)
+    start = Barrier(2)
+
+    def edit_source():
+        start.wait(timeout=10)
+        for _ in range(10):
+            assert source.putchunk(second, locking=False)
+            assert source.putchunk(first, locking=False)
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            editing = pool.submit(edit_source)
+            start.wait(timeout=10)
+            for _ in range(4):
+                assert target.insert(path, locate=[0, 0])
+                pixels = target.getchunk()
+                assert pixels.min() == pixels.max() and pixels.flat[0] in (1, 2)
+            editing.result(timeout=30)
+    finally:
+        assert target.done() and source.done()
 
 
 def test_insert_detached_and_empty_intersection(casa, tmp_path):
@@ -105,15 +136,22 @@ def test_insert_crops_complex_pixels_and_handles_overlapping_same_image(casa, tm
 
 
 @pytest.mark.parametrize("locate,expected_start", [([0, 0], (0, 0)), ([-1], (2, 1))])
-def test_insert_samples_strided_source_pixels_and_mask(casa, tmp_path, locate, expected_start):
+@pytest.mark.parametrize("saved", [False, True])
+def test_insert_samples_strided_source_pixels_and_mask(
+    casa, tmp_path, locate, expected_start, saved,
+):
     data = np.arange(15, dtype=np.float32).reshape(5, 3) + 1
     source = str(tmp_path / "strided-source.im")
     writer = casa.image()
     assert writer.fromarray(source, data)
     assert writer.calcmask(f'"{source}">7')
     assert writer.done()
-    selection = casa.regionmanager().box([0, 0], [4, 2])
-    selection["inc"] = np.array([2, 1], dtype=np.float32)
+    regions = casa.regionmanager()
+    selection = regions.box([0, 0], [4, 2], [2, 1])
+    if saved:
+        region_file = str(tmp_path / "strided.rgn")
+        assert regions.tofile(region_file, selection)
+        selection = region_file
     for module in [casa, tools]:
         path = str(tmp_path / f"{module.__name__}.strided.im")
         image = module.image()
