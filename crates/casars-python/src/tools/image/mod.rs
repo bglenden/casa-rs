@@ -19,6 +19,7 @@ mod coordinate_conversion;
 mod copy;
 mod copy_region;
 mod create;
+mod crop;
 mod data_compat;
 mod deconvolve_components;
 mod default_record;
