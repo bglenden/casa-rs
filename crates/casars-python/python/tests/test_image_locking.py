@@ -501,32 +501,41 @@ assert ia.unlock() and ia.done()
 def test_putregion_yields_automatic_write_lock_to_casa_reader(casa, tmp_path):
     path = tmp_path / "edit.im"
     ready = tmp_path / "reader-ready"
+    start = tmp_path / "request-lock"
     image = tools.image()
     values = np.full((2, 2), 7, dtype=np.float32)
     assert image.fromshape(str(path), [2, 2])
-    assert image.putregion(values)
-    assert_locks(image, True, True)
+    assert image.unlock()
     child = subprocess.Popen(
         [sys.executable, "-c", """
 import sys
+import time
 from pathlib import Path
 import numpy as np
 from casatools import table
 reader = table()
-assert reader.open(sys.argv[1], lockoptions={'option': 'user'})
+assert reader.open(sys.argv[1], nomodify=False, lockoptions={'option': 'user'})
+reader.unlock()
 Path(sys.argv[2]).touch()
-assert reader.lock(write=False, nattempts=14)
+deadline = time.monotonic() + 12
+while not Path(sys.argv[3]).exists() and time.monotonic() < deadline:
+    time.sleep(0.03)
+assert Path(sys.argv[3]).exists()
+reader.lock(write=False, nattempts=14)
 assert reader.haslock(write=False)
 np.testing.assert_array_equal(reader.getcell('map', 0), np.full((2, 2), 7))
 reader.close()
-""", str(path), str(ready)],
+""", str(path), str(ready), str(start)],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
     try:
         deadline = time.monotonic() + 12
         while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
             time.sleep(0.03)
-        assert ready.exists()
+        assert ready.exists(), child.stderr.read() if child.poll() is not None else "CASA reader did not open"
+        assert image.putregion(values)
+        assert_locks(image, True, True)
+        start.touch()
         while child.poll() is None and time.monotonic() < deadline:
             assert image.putregion(values)
             if not image.haslock()[1]:
