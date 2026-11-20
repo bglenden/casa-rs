@@ -578,8 +578,8 @@
 <a href=#578 id=578 data-nosnippet>578</a>    /// # Errors
 <a href=#579 id=579 data-nosnippet>579</a>    ///
 <a href=#580 id=580 data-nosnippet>580</a>    /// A direction the projection cannot place (behind a TAN image's
-<a href=#581 id=581 data-nosnippet>581</a>    /// tangent plane, for instance), a singular PC matrix, or a frame
-<a href=#582 id=582 data-nosnippet>582</a>    /// conversion requiring context that is not yet available (#977).
+<a href=#581 id=581 data-nosnippet>581</a>    /// tangent plane, for instance), a nonfinite pixel, a singular PC matrix,
+<a href=#582 id=582 data-nosnippet>582</a>    /// or a frame conversion requiring context that is not yet available (#977).
 <a href=#583 id=583 data-nosnippet>583</a>    </span><span class="kw">pub fn </span>world_to_pixel(<span class="kw-2">&amp;</span><span class="self">self</span>, world: [f64; <span class="number">2</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;[f64; <span class="number">2</span>], CoordinateError&gt; {
 <a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">let </span>world = <span class="self">self</span>.convert_frame(world, <span class="self">self</span>.conversion_ref, <span class="self">self</span>.direction_ref)<span class="question-mark">?</span>;
 <a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">let </span>(phi, theta) = <span class="self">self</span>.celestial_to_native(world[<span class="number">0</span>], world[<span class="number">1</span>]);
@@ -648,367 +648,373 @@
 <a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">let </span>dx = (<span class="self">self</span>.pc[[<span class="number">1</span>, <span class="number">1</span>]] * sx - <span class="self">self</span>.pc[[<span class="number">0</span>, <span class="number">1</span>]] * sy) / det;
 <a href=#649 id=649 data-nosnippet>649</a>        <span class="kw">let </span>dy = (-<span class="self">self</span>.pc[[<span class="number">1</span>, <span class="number">0</span>]] * sx + <span class="self">self</span>.pc[[<span class="number">0</span>, <span class="number">0</span>]] * sy) / det;
 <a href=#650 id=650 data-nosnippet>650</a>
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="prelude-val">Ok</span>((dx + <span class="self">self</span>.crpix[<span class="number">0</span>], dy + <span class="self">self</span>.crpix[<span class="number">1</span>]))
-<a href=#652 id=652 data-nosnippet>652</a>    }
-<a href=#653 id=653 data-nosnippet>653</a>
-<a href=#654 id=654 data-nosnippet>654</a>    <span class="doccomment">/// Native spherical (phi, theta) to celestial (lon, lat) using the
-<a href=#655 id=655 data-nosnippet>655</a>    /// Calabretta &amp; Greisen (2002) spherical rotation (eq. 2).
-<a href=#656 id=656 data-nosnippet>656</a>    ///
-<a href=#657 id=657 data-nosnippet>657</a>    /// Uses the pre-computed native pole (alpha_p, delta_p).
-<a href=#658 id=658 data-nosnippet>658</a>    </span><span class="kw">fn </span>native_to_celestial(<span class="kw-2">&amp;</span><span class="self">self</span>, phi: f64, theta: f64) -&gt; (f64, f64) {
-<a href=#659 id=659 data-nosnippet>659</a>        <span class="kw">let </span>(alpha_p, delta_p) = (<span class="self">self</span>.native_pole[<span class="number">0</span>], <span class="self">self</span>.native_pole[<span class="number">1</span>]);
-<a href=#660 id=660 data-nosnippet>660</a>        <span class="kw">let </span>radians_per_degree = PI / <span class="number">180.0</span>;
-<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span>to_degrees = <span class="number">1.0 </span>/ radians_per_degree;
-<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">let </span>phi_degrees = phi * to_degrees;
-<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">let </span>theta_degrees = theta * to_degrees;
-<a href=#664 id=664 data-nosnippet>664</a>        <span class="kw">let </span>euler_0 = alpha_p * to_degrees;
-<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span>euler_1 = <span class="number">90.0 </span>- delta_p * to_degrees;
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span>euler_2 = <span class="self">self</span>.longpole * to_degrees;
-<a href=#667 id=667 data-nosnippet>667</a>        <span class="kw">let </span>(euler_4, euler_3) = wcslib_sin_cos_degrees(euler_1);
-<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">let </span>(sin_theta, cos_theta) = wcslib_sin_cos_degrees(theta_degrees);
-<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>dphi = phi_degrees - euler_2;
-<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">let </span>(sin_phi, cos_phi) = wcslib_sin_cos_degrees(dphi);
-<a href=#671 id=671 data-nosnippet>671</a>
-<a href=#672 id=672 data-nosnippet>672</a>        <span class="kw">let </span>cos_theta_3 = cos_theta * euler_3;
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span>cos_theta_4 = cos_theta * euler_4;
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>sin_theta_3 = sin_theta * euler_3;
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>sin_theta_4 = sin_theta * euler_4;
-<a href=#676 id=676 data-nosnippet>676</a>
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="kw">let </span><span class="kw-2">mut </span>x = sin_theta_4 - cos_theta_3 * cos_phi;
-<a href=#678 id=678 data-nosnippet>678</a>        <span class="kw">if </span>x.abs() &lt; <span class="number">1.0e-5 </span>{
-<a href=#679 id=679 data-nosnippet>679</a>            x = -wcslib_cos_degrees(theta_degrees + euler_1) + cos_theta_3 * (<span class="number">1.0 </span>- cos_phi);
-<a href=#680 id=680 data-nosnippet>680</a>        }
-<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>y = -cos_theta * sin_phi;
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="kw">let </span>delta_longitude = <span class="kw">if </span>x != <span class="number">0.0 </span>|| y != <span class="number">0.0 </span>{
-<a href=#683 id=683 data-nosnippet>683</a>            wcslib_atan2_degrees(y, x)
-<a href=#684 id=684 data-nosnippet>684</a>        } <span class="kw">else if </span>euler_1 &lt; <span class="number">90.0 </span>{
-<a href=#685 id=685 data-nosnippet>685</a>            dphi + <span class="number">180.0
-<a href=#686 id=686 data-nosnippet>686</a>        </span>} <span class="kw">else </span>{
-<a href=#687 id=687 data-nosnippet>687</a>            -dphi
-<a href=#688 id=688 data-nosnippet>688</a>        };
-<a href=#689 id=689 data-nosnippet>689</a>        <span class="kw">let </span><span class="kw-2">mut </span>longitude_degrees = euler_0 + delta_longitude;
-<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">if </span>euler_0 &gt;= <span class="number">0.0 </span>{
-<a href=#691 id=691 data-nosnippet>691</a>            <span class="kw">if </span>longitude_degrees &lt; <span class="number">0.0 </span>{
-<a href=#692 id=692 data-nosnippet>692</a>                longitude_degrees += <span class="number">360.0</span>;
-<a href=#693 id=693 data-nosnippet>693</a>            }
-<a href=#694 id=694 data-nosnippet>694</a>        } <span class="kw">else if </span>longitude_degrees &gt; <span class="number">0.0 </span>{
-<a href=#695 id=695 data-nosnippet>695</a>            longitude_degrees -= <span class="number">360.0</span>;
-<a href=#696 id=696 data-nosnippet>696</a>        }
-<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">if </span>longitude_degrees &gt; <span class="number">360.0 </span>{
-<a href=#698 id=698 data-nosnippet>698</a>            longitude_degrees -= <span class="number">360.0</span>;
-<a href=#699 id=699 data-nosnippet>699</a>        } <span class="kw">else if </span>longitude_degrees &lt; -<span class="number">360.0 </span>{
-<a href=#700 id=700 data-nosnippet>700</a>            longitude_degrees += <span class="number">360.0</span>;
-<a href=#701 id=701 data-nosnippet>701</a>        }
-<a href=#702 id=702 data-nosnippet>702</a>
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>latitude_degrees = <span class="kw">if </span>dphi % <span class="number">180.0 </span>== <span class="number">0.0 </span>{
-<a href=#704 id=704 data-nosnippet>704</a>            <span class="kw">let </span><span class="kw-2">mut </span>latitude = theta_degrees + cos_phi * euler_1;
-<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">if </span>latitude &gt; <span class="number">90.0 </span>{
-<a href=#706 id=706 data-nosnippet>706</a>                latitude = <span class="number">180.0 </span>- latitude;
-<a href=#707 id=707 data-nosnippet>707</a>            }
-<a href=#708 id=708 data-nosnippet>708</a>            <span class="kw">if </span>latitude &lt; -<span class="number">90.0 </span>{
-<a href=#709 id=709 data-nosnippet>709</a>                latitude = -<span class="number">180.0 </span>- latitude;
-<a href=#710 id=710 data-nosnippet>710</a>            }
-<a href=#711 id=711 data-nosnippet>711</a>            latitude
-<a href=#712 id=712 data-nosnippet>712</a>        } <span class="kw">else </span>{
-<a href=#713 id=713 data-nosnippet>713</a>            <span class="kw">let </span>z = sin_theta_3 + cos_theta_4 * cos_phi;
-<a href=#714 id=714 data-nosnippet>714</a>            <span class="kw">if </span>z.abs() &gt; <span class="number">0.99 </span>{
-<a href=#715 id=715 data-nosnippet>715</a>                z.signum() * wcslib_acos_degrees((x * x + y * y).sqrt())
-<a href=#716 id=716 data-nosnippet>716</a>            } <span class="kw">else </span>{
-<a href=#717 id=717 data-nosnippet>717</a>                wcslib_asin_degrees(z)
-<a href=#718 id=718 data-nosnippet>718</a>            }
-<a href=#719 id=719 data-nosnippet>719</a>        };
-<a href=#720 id=720 data-nosnippet>720</a>
-<a href=#721 id=721 data-nosnippet>721</a>        (
-<a href=#722 id=722 data-nosnippet>722</a>            longitude_degrees / to_degrees,
-<a href=#723 id=723 data-nosnippet>723</a>            latitude_degrees / to_degrees,
-<a href=#724 id=724 data-nosnippet>724</a>        )
-<a href=#725 id=725 data-nosnippet>725</a>    }
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>pixel = (dx + <span class="self">self</span>.crpix[<span class="number">0</span>], dy + <span class="self">self</span>.crpix[<span class="number">1</span>]);
+<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">if </span>!pixel.<span class="number">0</span>.is_finite() || !pixel.<span class="number">1</span>.is_finite() {
+<a href=#653 id=653 data-nosnippet>653</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CoordinateError::ConversionFailed(
+<a href=#654 id=654 data-nosnippet>654</a>                <span class="string">"direction has no finite pixel coordinate"</span>.into(),
+<a href=#655 id=655 data-nosnippet>655</a>            ));
+<a href=#656 id=656 data-nosnippet>656</a>        }
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="prelude-val">Ok</span>(pixel)
+<a href=#658 id=658 data-nosnippet>658</a>    }
+<a href=#659 id=659 data-nosnippet>659</a>
+<a href=#660 id=660 data-nosnippet>660</a>    <span class="doccomment">/// Native spherical (phi, theta) to celestial (lon, lat) using the
+<a href=#661 id=661 data-nosnippet>661</a>    /// Calabretta &amp; Greisen (2002) spherical rotation (eq. 2).
+<a href=#662 id=662 data-nosnippet>662</a>    ///
+<a href=#663 id=663 data-nosnippet>663</a>    /// Uses the pre-computed native pole (alpha_p, delta_p).
+<a href=#664 id=664 data-nosnippet>664</a>    </span><span class="kw">fn </span>native_to_celestial(<span class="kw-2">&amp;</span><span class="self">self</span>, phi: f64, theta: f64) -&gt; (f64, f64) {
+<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span>(alpha_p, delta_p) = (<span class="self">self</span>.native_pole[<span class="number">0</span>], <span class="self">self</span>.native_pole[<span class="number">1</span>]);
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span>radians_per_degree = PI / <span class="number">180.0</span>;
+<a href=#667 id=667 data-nosnippet>667</a>        <span class="kw">let </span>to_degrees = <span class="number">1.0 </span>/ radians_per_degree;
+<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">let </span>phi_degrees = phi * to_degrees;
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>theta_degrees = theta * to_degrees;
+<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">let </span>euler_0 = alpha_p * to_degrees;
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="kw">let </span>euler_1 = <span class="number">90.0 </span>- delta_p * to_degrees;
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="kw">let </span>euler_2 = <span class="self">self</span>.longpole * to_degrees;
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span>(euler_4, euler_3) = wcslib_sin_cos_degrees(euler_1);
+<a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>(sin_theta, cos_theta) = wcslib_sin_cos_degrees(theta_degrees);
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>dphi = phi_degrees - euler_2;
+<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">let </span>(sin_phi, cos_phi) = wcslib_sin_cos_degrees(dphi);
+<a href=#677 id=677 data-nosnippet>677</a>
+<a href=#678 id=678 data-nosnippet>678</a>        <span class="kw">let </span>cos_theta_3 = cos_theta * euler_3;
+<a href=#679 id=679 data-nosnippet>679</a>        <span class="kw">let </span>cos_theta_4 = cos_theta * euler_4;
+<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">let </span>sin_theta_3 = sin_theta * euler_3;
+<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>sin_theta_4 = sin_theta * euler_4;
+<a href=#682 id=682 data-nosnippet>682</a>
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span><span class="kw-2">mut </span>x = sin_theta_4 - cos_theta_3 * cos_phi;
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">if </span>x.abs() &lt; <span class="number">1.0e-5 </span>{
+<a href=#685 id=685 data-nosnippet>685</a>            x = -wcslib_cos_degrees(theta_degrees + euler_1) + cos_theta_3 * (<span class="number">1.0 </span>- cos_phi);
+<a href=#686 id=686 data-nosnippet>686</a>        }
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="kw">let </span>y = -cos_theta * sin_phi;
+<a href=#688 id=688 data-nosnippet>688</a>        <span class="kw">let </span>delta_longitude = <span class="kw">if </span>x != <span class="number">0.0 </span>|| y != <span class="number">0.0 </span>{
+<a href=#689 id=689 data-nosnippet>689</a>            wcslib_atan2_degrees(y, x)
+<a href=#690 id=690 data-nosnippet>690</a>        } <span class="kw">else if </span>euler_1 &lt; <span class="number">90.0 </span>{
+<a href=#691 id=691 data-nosnippet>691</a>            dphi + <span class="number">180.0
+<a href=#692 id=692 data-nosnippet>692</a>        </span>} <span class="kw">else </span>{
+<a href=#693 id=693 data-nosnippet>693</a>            -dphi
+<a href=#694 id=694 data-nosnippet>694</a>        };
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span><span class="kw-2">mut </span>longitude_degrees = euler_0 + delta_longitude;
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">if </span>euler_0 &gt;= <span class="number">0.0 </span>{
+<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw">if </span>longitude_degrees &lt; <span class="number">0.0 </span>{
+<a href=#698 id=698 data-nosnippet>698</a>                longitude_degrees += <span class="number">360.0</span>;
+<a href=#699 id=699 data-nosnippet>699</a>            }
+<a href=#700 id=700 data-nosnippet>700</a>        } <span class="kw">else if </span>longitude_degrees &gt; <span class="number">0.0 </span>{
+<a href=#701 id=701 data-nosnippet>701</a>            longitude_degrees -= <span class="number">360.0</span>;
+<a href=#702 id=702 data-nosnippet>702</a>        }
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">if </span>longitude_degrees &gt; <span class="number">360.0 </span>{
+<a href=#704 id=704 data-nosnippet>704</a>            longitude_degrees -= <span class="number">360.0</span>;
+<a href=#705 id=705 data-nosnippet>705</a>        } <span class="kw">else if </span>longitude_degrees &lt; -<span class="number">360.0 </span>{
+<a href=#706 id=706 data-nosnippet>706</a>            longitude_degrees += <span class="number">360.0</span>;
+<a href=#707 id=707 data-nosnippet>707</a>        }
+<a href=#708 id=708 data-nosnippet>708</a>
+<a href=#709 id=709 data-nosnippet>709</a>        <span class="kw">let </span>latitude_degrees = <span class="kw">if </span>dphi % <span class="number">180.0 </span>== <span class="number">0.0 </span>{
+<a href=#710 id=710 data-nosnippet>710</a>            <span class="kw">let </span><span class="kw-2">mut </span>latitude = theta_degrees + cos_phi * euler_1;
+<a href=#711 id=711 data-nosnippet>711</a>            <span class="kw">if </span>latitude &gt; <span class="number">90.0 </span>{
+<a href=#712 id=712 data-nosnippet>712</a>                latitude = <span class="number">180.0 </span>- latitude;
+<a href=#713 id=713 data-nosnippet>713</a>            }
+<a href=#714 id=714 data-nosnippet>714</a>            <span class="kw">if </span>latitude &lt; -<span class="number">90.0 </span>{
+<a href=#715 id=715 data-nosnippet>715</a>                latitude = -<span class="number">180.0 </span>- latitude;
+<a href=#716 id=716 data-nosnippet>716</a>            }
+<a href=#717 id=717 data-nosnippet>717</a>            latitude
+<a href=#718 id=718 data-nosnippet>718</a>        } <span class="kw">else </span>{
+<a href=#719 id=719 data-nosnippet>719</a>            <span class="kw">let </span>z = sin_theta_3 + cos_theta_4 * cos_phi;
+<a href=#720 id=720 data-nosnippet>720</a>            <span class="kw">if </span>z.abs() &gt; <span class="number">0.99 </span>{
+<a href=#721 id=721 data-nosnippet>721</a>                z.signum() * wcslib_acos_degrees((x * x + y * y).sqrt())
+<a href=#722 id=722 data-nosnippet>722</a>            } <span class="kw">else </span>{
+<a href=#723 id=723 data-nosnippet>723</a>                wcslib_asin_degrees(z)
+<a href=#724 id=724 data-nosnippet>724</a>            }
+<a href=#725 id=725 data-nosnippet>725</a>        };
 <a href=#726 id=726 data-nosnippet>726</a>
-<a href=#727 id=727 data-nosnippet>727</a>    <span class="doccomment">/// Celestial (lon, lat) to native spherical (phi, theta), as WCSLIB's
-<a href=#728 id=728 data-nosnippet>728</a>    /// `sphs2x` forms them: the native latitude exactly when the longitude
-<a href=#729 id=729 data-nosnippet>729</a>    /// offset is a multiple of 180°, and from `acos` of the native
-<a href=#730 id=730 data-nosnippet>730</a>    /// longitude's arguments where `|sin θ| &gt; 0.99`, since `asin` near ±1
-<a href=#731 id=731 data-nosnippet>731</a>    /// loses half the precision (up to 1.5e-8 rad at the reference
-<a href=#732 id=732 data-nosnippet>732</a>    /// direction itself, 0.009 of a 0.35″ pixel). The native longitude is
-<a href=#733 id=733 data-nosnippet>733</a>    /// normalized to `[-π, π]`, as `sphs2x` normalizes it, so a projection
-<a href=#734 id=734 data-nosnippet>734</a>    /// whose reference is on its native equator places a direction near
-<a href=#735 id=735 data-nosnippet>735</a>    /// its reference near the reference pixel whatever its native pole's
-<a href=#736 id=736 data-nosnippet>736</a>    /// longitude (180° south of the celestial equator).
-<a href=#737 id=737 data-nosnippet>737</a>    </span><span class="kw">fn </span>celestial_to_native(<span class="kw-2">&amp;</span><span class="self">self</span>, lon: f64, lat: f64) -&gt; (f64, f64) {
-<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span>(alpha_p, delta_p) = (<span class="self">self</span>.native_pole[<span class="number">0</span>], <span class="self">self</span>.native_pole[<span class="number">1</span>]);
-<a href=#739 id=739 data-nosnippet>739</a>        <span class="kw">let </span>to_degrees = <span class="number">180.0 </span>/ PI;
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>latitude_degrees = lat * to_degrees;
-<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>euler_1 = <span class="number">90.0 </span>- delta_p * to_degrees;
-<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>(euler_4, euler_3) = wcslib_sin_cos_degrees(euler_1);
-<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span>(sin_lat, cos_lat) = wcslib_sin_cos_degrees(latitude_degrees);
-<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">let </span>dlng = (lon - alpha_p) * to_degrees;
-<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>(sin_dlng, cos_dlng) = wcslib_sin_cos_degrees(dlng);
-<a href=#746 id=746 data-nosnippet>746</a>
-<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span>cos_lat_3 = cos_lat * euler_3;
-<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>cos_lat_4 = cos_lat * euler_4;
-<a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">let </span>sin_lat_3 = sin_lat * euler_3;
-<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span>sin_lat_4 = sin_lat * euler_4;
-<a href=#751 id=751 data-nosnippet>751</a>
-<a href=#752 id=752 data-nosnippet>752</a>        <span class="comment">// Native longitude.
-<a href=#753 id=753 data-nosnippet>753</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>x = sin_lat_4 - cos_lat_3 * cos_dlng;
-<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">if </span>x.abs() &lt; <span class="number">1.0e-5 </span>{
-<a href=#755 id=755 data-nosnippet>755</a>            x = -wcslib_cos_degrees(latitude_degrees + euler_1) + cos_lat_3 * (<span class="number">1.0 </span>- cos_dlng);
-<a href=#756 id=756 data-nosnippet>756</a>        }
-<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span>y = -cos_lat * sin_dlng;
-<a href=#758 id=758 data-nosnippet>758</a>        <span class="kw">let </span><span class="kw-2">mut </span>phi = <span class="self">self</span>.longpole + y.atan2(x);
-<a href=#759 id=759 data-nosnippet>759</a>        <span class="kw">if </span>phi &gt; PI {
-<a href=#760 id=760 data-nosnippet>760</a>            phi -= <span class="number">2.0 </span>* PI;
-<a href=#761 id=761 data-nosnippet>761</a>        } <span class="kw">else if </span>phi &lt; -PI {
-<a href=#762 id=762 data-nosnippet>762</a>            phi += <span class="number">2.0 </span>* PI;
-<a href=#763 id=763 data-nosnippet>763</a>        }
-<a href=#764 id=764 data-nosnippet>764</a>
-<a href=#765 id=765 data-nosnippet>765</a>        <span class="comment">// Native latitude.
-<a href=#766 id=766 data-nosnippet>766</a>        </span><span class="kw">let </span>theta_degrees = <span class="kw">if </span>dlng % <span class="number">180.0 </span>== <span class="number">0.0 </span>{
-<a href=#767 id=767 data-nosnippet>767</a>            <span class="kw">let </span><span class="kw-2">mut </span>theta = latitude_degrees + cos_dlng * euler_1;
-<a href=#768 id=768 data-nosnippet>768</a>            <span class="kw">if </span>theta &gt; <span class="number">90.0 </span>{
-<a href=#769 id=769 data-nosnippet>769</a>                theta = <span class="number">180.0 </span>- theta;
-<a href=#770 id=770 data-nosnippet>770</a>            }
-<a href=#771 id=771 data-nosnippet>771</a>            <span class="kw">if </span>theta &lt; -<span class="number">90.0 </span>{
-<a href=#772 id=772 data-nosnippet>772</a>                theta = -<span class="number">180.0 </span>- theta;
-<a href=#773 id=773 data-nosnippet>773</a>            }
-<a href=#774 id=774 data-nosnippet>774</a>            theta
-<a href=#775 id=775 data-nosnippet>775</a>        } <span class="kw">else </span>{
-<a href=#776 id=776 data-nosnippet>776</a>            <span class="kw">let </span>z = sin_lat_3 + cos_lat_4 * cos_dlng;
-<a href=#777 id=777 data-nosnippet>777</a>            <span class="kw">if </span>z.abs() &gt; <span class="number">0.99 </span>{
-<a href=#778 id=778 data-nosnippet>778</a>                z.signum() * wcslib_acos_degrees((x * x + y * y).sqrt())
-<a href=#779 id=779 data-nosnippet>779</a>            } <span class="kw">else </span>{
-<a href=#780 id=780 data-nosnippet>780</a>                wcslib_asin_degrees(z)
-<a href=#781 id=781 data-nosnippet>781</a>            }
-<a href=#782 id=782 data-nosnippet>782</a>        };
-<a href=#783 id=783 data-nosnippet>783</a>
-<a href=#784 id=784 data-nosnippet>784</a>        (phi, theta_degrees / to_degrees)
-<a href=#785 id=785 data-nosnippet>785</a>    }
-<a href=#786 id=786 data-nosnippet>786</a>}
-<a href=#787 id=787 data-nosnippet>787</a>
-<a href=#788 id=788 data-nosnippet>788</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>wcslib_sin_cos_degrees(angle_degrees: f64) -&gt; (f64, f64) {
-<a href=#789 id=789 data-nosnippet>789</a>    <span class="kw">if </span>angle_degrees % <span class="number">90.0 </span>== <span class="number">0.0 </span>{
-<a href=#790 id=790 data-nosnippet>790</a>        <span class="kw">let </span>quadrant = ((angle_degrees / <span class="number">90.0 </span>+ <span class="number">0.5</span>).floor().abs() <span class="kw">as </span>i64) % <span class="number">4</span>;
-<a href=#791 id=791 data-nosnippet>791</a>        <span class="kw">return match </span>quadrant {
-<a href=#792 id=792 data-nosnippet>792</a>            <span class="number">0 </span>=&gt; (<span class="number">0.0</span>, <span class="number">1.0</span>),
-<a href=#793 id=793 data-nosnippet>793</a>            <span class="number">1 </span>=&gt; (<span class="kw">if </span>angle_degrees &gt; <span class="number">0.0 </span>{ <span class="number">1.0 </span>} <span class="kw">else </span>{ -<span class="number">1.0 </span>}, <span class="number">0.0</span>),
-<a href=#794 id=794 data-nosnippet>794</a>            <span class="number">2 </span>=&gt; (<span class="number">0.0</span>, -<span class="number">1.0</span>),
-<a href=#795 id=795 data-nosnippet>795</a>            <span class="number">3 </span>=&gt; (<span class="kw">if </span>angle_degrees &gt; <span class="number">0.0 </span>{ -<span class="number">1.0 </span>} <span class="kw">else </span>{ <span class="number">1.0 </span>}, <span class="number">0.0</span>),
-<a href=#796 id=796 data-nosnippet>796</a>            <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(),
-<a href=#797 id=797 data-nosnippet>797</a>        };
-<a href=#798 id=798 data-nosnippet>798</a>    }
-<a href=#799 id=799 data-nosnippet>799</a>    <span class="kw">let </span>angle_radians = angle_degrees * (PI / <span class="number">180.0</span>);
-<a href=#800 id=800 data-nosnippet>800</a>    (angle_radians.sin(), angle_radians.cos())
-<a href=#801 id=801 data-nosnippet>801</a>}
-<a href=#802 id=802 data-nosnippet>802</a>
-<a href=#803 id=803 data-nosnippet>803</a><span class="kw">fn </span>wcslib_cos_degrees(angle_degrees: f64) -&gt; f64 {
-<a href=#804 id=804 data-nosnippet>804</a>    wcslib_sin_cos_degrees(angle_degrees).<span class="number">1
-<a href=#805 id=805 data-nosnippet>805</a></span>}
-<a href=#806 id=806 data-nosnippet>806</a>
-<a href=#807 id=807 data-nosnippet>807</a><span class="kw">fn </span>wcslib_acos_degrees(value: f64) -&gt; f64 {
-<a href=#808 id=808 data-nosnippet>808</a>    <span class="kw">if </span>value &gt;= <span class="number">1.0 </span>&amp;&amp; value - <span class="number">1.0 </span>&lt; <span class="number">1.0e-10 </span>{
-<a href=#809 id=809 data-nosnippet>809</a>        <span class="number">0.0
-<a href=#810 id=810 data-nosnippet>810</a>    </span>} <span class="kw">else if </span>value == <span class="number">0.0 </span>{
-<a href=#811 id=811 data-nosnippet>811</a>        <span class="number">90.0
-<a href=#812 id=812 data-nosnippet>812</a>    </span>} <span class="kw">else if </span>value &lt;= -<span class="number">1.0 </span>&amp;&amp; value + <span class="number">1.0 </span>&gt; -<span class="number">1.0e-10 </span>{
-<a href=#813 id=813 data-nosnippet>813</a>        <span class="number">180.0
-<a href=#814 id=814 data-nosnippet>814</a>    </span>} <span class="kw">else </span>{
-<a href=#815 id=815 data-nosnippet>815</a>        value.acos() * (<span class="number">180.0 </span>/ PI)
-<a href=#816 id=816 data-nosnippet>816</a>    }
-<a href=#817 id=817 data-nosnippet>817</a>}
-<a href=#818 id=818 data-nosnippet>818</a>
-<a href=#819 id=819 data-nosnippet>819</a><span class="kw">fn </span>wcslib_asin_degrees(value: f64) -&gt; f64 {
-<a href=#820 id=820 data-nosnippet>820</a>    <span class="kw">if </span>value &lt;= -<span class="number">1.0 </span>&amp;&amp; value + <span class="number">1.0 </span>&gt; -<span class="number">1.0e-10 </span>{
-<a href=#821 id=821 data-nosnippet>821</a>        -<span class="number">90.0
-<a href=#822 id=822 data-nosnippet>822</a>    </span>} <span class="kw">else if </span>value == <span class="number">0.0 </span>{
-<a href=#823 id=823 data-nosnippet>823</a>        <span class="number">0.0
-<a href=#824 id=824 data-nosnippet>824</a>    </span>} <span class="kw">else if </span>value &gt;= <span class="number">1.0 </span>&amp;&amp; value - <span class="number">1.0 </span>&lt; <span class="number">1.0e-10 </span>{
-<a href=#825 id=825 data-nosnippet>825</a>        <span class="number">90.0
-<a href=#826 id=826 data-nosnippet>826</a>    </span>} <span class="kw">else </span>{
-<a href=#827 id=827 data-nosnippet>827</a>        value.asin() * (<span class="number">180.0 </span>/ PI)
-<a href=#828 id=828 data-nosnippet>828</a>    }
-<a href=#829 id=829 data-nosnippet>829</a>}
-<a href=#830 id=830 data-nosnippet>830</a>
-<a href=#831 id=831 data-nosnippet>831</a><span class="kw">fn </span>wcslib_atan2_degrees(y: f64, x: f64) -&gt; f64 {
-<a href=#832 id=832 data-nosnippet>832</a>    <span class="kw">if </span>y == <span class="number">0.0 </span>{
-<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">if </span>x &gt;= <span class="number">0.0 </span>{ <span class="number">0.0 </span>} <span class="kw">else </span>{ <span class="number">180.0 </span>}
-<a href=#834 id=834 data-nosnippet>834</a>    } <span class="kw">else if </span>x == <span class="number">0.0 </span>{
-<a href=#835 id=835 data-nosnippet>835</a>        <span class="kw">if </span>y &gt; <span class="number">0.0 </span>{ <span class="number">90.0 </span>} <span class="kw">else </span>{ -<span class="number">90.0 </span>}
-<a href=#836 id=836 data-nosnippet>836</a>    } <span class="kw">else </span>{
-<a href=#837 id=837 data-nosnippet>837</a>        y.atan2(x) * (<span class="number">180.0 </span>/ PI)
-<a href=#838 id=838 data-nosnippet>838</a>    }
-<a href=#839 id=839 data-nosnippet>839</a>}
-<a href=#840 id=840 data-nosnippet>840</a>
-<a href=#841 id=841 data-nosnippet>841</a><span class="kw">fn </span>convert_value_to_unit(
-<a href=#842 id=842 data-nosnippet>842</a>    value: f64,
-<a href=#843 id=843 data-nosnippet>843</a>    from_unit: <span class="kw-2">&amp;</span>str,
-<a href=#844 id=844 data-nosnippet>844</a>    to_unit: <span class="kw-2">&amp;</span>str,
-<a href=#845 id=845 data-nosnippet>845</a>    field: <span class="kw-2">&amp;</span>str,
-<a href=#846 id=846 data-nosnippet>846</a>) -&gt; <span class="prelude-ty">Result</span>&lt;f64, CoordinateError&gt; {
-<a href=#847 id=847 data-nosnippet>847</a>    <span class="kw">let </span>quantity = Quantity::new(value, from_unit).map_err(|error| {
-<a href=#848 id=848 data-nosnippet>848</a>        CoordinateError::InvalidRecord(<span class="macro">format!</span>(
-<a href=#849 id=849 data-nosnippet>849</a>            <span class="string">"invalid direction coordinate unit for {field}: {from_unit} ({error})"
-<a href=#850 id=850 data-nosnippet>850</a>        </span>))
-<a href=#851 id=851 data-nosnippet>851</a>    })<span class="question-mark">?</span>;
-<a href=#852 id=852 data-nosnippet>852</a>    <span class="kw">let </span>target = Unit::new(to_unit).map_err(|error| {
-<a href=#853 id=853 data-nosnippet>853</a>        CoordinateError::InvalidRecord(<span class="macro">format!</span>(
-<a href=#854 id=854 data-nosnippet>854</a>            <span class="string">"invalid direction coordinate target unit for {field}: {to_unit} ({error})"
-<a href=#855 id=855 data-nosnippet>855</a>        </span>))
-<a href=#856 id=856 data-nosnippet>856</a>    })<span class="question-mark">?</span>;
-<a href=#857 id=857 data-nosnippet>857</a>    quantity.get_value_in(<span class="kw-2">&amp;</span>target).map_err(|error| {
-<a href=#858 id=858 data-nosnippet>858</a>        CoordinateError::InvalidRecord(<span class="macro">format!</span>(
-<a href=#859 id=859 data-nosnippet>859</a>            <span class="string">"cannot convert direction coordinate {field} from {from_unit} to {to_unit}: {error}"
-<a href=#860 id=860 data-nosnippet>860</a>        </span>))
-<a href=#861 id=861 data-nosnippet>861</a>    })
-<a href=#862 id=862 data-nosnippet>862</a>}
-<a href=#863 id=863 data-nosnippet>863</a>
-<a href=#864 id=864 data-nosnippet>864</a><span class="kw">impl </span>Coordinate <span class="kw">for </span>DirectionCoordinate {
-<a href=#865 id=865 data-nosnippet>865</a>    <span class="kw">fn </span>coordinate_type(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CoordinateType {
-<a href=#866 id=866 data-nosnippet>866</a>        CoordinateType::Direction
-<a href=#867 id=867 data-nosnippet>867</a>    }
-<a href=#868 id=868 data-nosnippet>868</a>
-<a href=#869 id=869 data-nosnippet>869</a>    <span class="kw">fn </span>n_pixel_axes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#870 id=870 data-nosnippet>870</a>        <span class="number">2 </span>- usize::from(<span class="self">self</span>.removed_axis.is_some())
-<a href=#871 id=871 data-nosnippet>871</a>    }
-<a href=#872 id=872 data-nosnippet>872</a>
-<a href=#873 id=873 data-nosnippet>873</a>    <span class="kw">fn </span>n_world_axes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#874 id=874 data-nosnippet>874</a>        <span class="self">self</span>.n_pixel_axes()
-<a href=#875 id=875 data-nosnippet>875</a>    }
-<a href=#876 id=876 data-nosnippet>876</a>
-<a href=#877 id=877 data-nosnippet>877</a>    <span class="kw">fn </span>to_world(<span class="kw-2">&amp;</span><span class="self">self</span>, pixel: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, CoordinateError&gt; {
-<a href=#878 id=878 data-nosnippet>878</a>        <span class="kw">if </span>pixel.len() != <span class="self">self</span>.n_pixel_axes() {
-<a href=#879 id=879 data-nosnippet>879</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CoordinateError::DimensionMismatch {
-<a href=#880 id=880 data-nosnippet>880</a>                expected: <span class="self">self</span>.n_pixel_axes(),
-<a href=#881 id=881 data-nosnippet>881</a>                got: pixel.len(),
-<a href=#882 id=882 data-nosnippet>882</a>            });
-<a href=#883 id=883 data-nosnippet>883</a>        }
-<a href=#884 id=884 data-nosnippet>884</a>
-<a href=#885 id=885 data-nosnippet>885</a>        <span class="kw">let </span>full = <span class="kw">if let </span><span class="prelude-val">Some</span>(removed) = <span class="self">self</span>.removed_axis {
-<a href=#886 id=886 data-nosnippet>886</a>            <span class="kw">let </span><span class="kw-2">mut </span>full = [pixel[<span class="number">0</span>]; <span class="number">2</span>];
-<a href=#887 id=887 data-nosnippet>887</a>            full[removed.index] = removed.pixel;
-<a href=#888 id=888 data-nosnippet>888</a>            full
-<a href=#889 id=889 data-nosnippet>889</a>        } <span class="kw">else </span>{
-<a href=#890 id=890 data-nosnippet>890</a>            [pixel[<span class="number">0</span>], pixel[<span class="number">1</span>]]
-<a href=#891 id=891 data-nosnippet>891</a>        };
-<a href=#892 id=892 data-nosnippet>892</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.select_axis(<span class="self">self</span>.pixel_to_world(full)<span class="question-mark">?</span>))
-<a href=#893 id=893 data-nosnippet>893</a>    }
-<a href=#894 id=894 data-nosnippet>894</a>
-<a href=#895 id=895 data-nosnippet>895</a>    <span class="kw">fn </span>to_pixel(<span class="kw-2">&amp;</span><span class="self">self</span>, world: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, CoordinateError&gt; {
-<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">if </span>world.len() != <span class="self">self</span>.n_world_axes() {
-<a href=#897 id=897 data-nosnippet>897</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CoordinateError::DimensionMismatch {
-<a href=#898 id=898 data-nosnippet>898</a>                expected: <span class="self">self</span>.n_world_axes(),
-<a href=#899 id=899 data-nosnippet>899</a>                got: world.len(),
-<a href=#900 id=900 data-nosnippet>900</a>            });
-<a href=#901 id=901 data-nosnippet>901</a>        }
-<a href=#902 id=902 data-nosnippet>902</a>
-<a href=#903 id=903 data-nosnippet>903</a>        <span class="kw">let </span>full = <span class="kw">if let </span><span class="prelude-val">Some</span>(removed) = <span class="self">self</span>.removed_axis {
-<a href=#904 id=904 data-nosnippet>904</a>            <span class="kw">let </span><span class="kw-2">mut </span>full = [world[<span class="number">0</span>]; <span class="number">2</span>];
-<a href=#905 id=905 data-nosnippet>905</a>            full[removed.index] = removed.world_rad;
-<a href=#906 id=906 data-nosnippet>906</a>            full
-<a href=#907 id=907 data-nosnippet>907</a>        } <span class="kw">else </span>{
-<a href=#908 id=908 data-nosnippet>908</a>            [world[<span class="number">0</span>], world[<span class="number">1</span>]]
-<a href=#909 id=909 data-nosnippet>909</a>        };
-<a href=#910 id=910 data-nosnippet>910</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.select_axis(<span class="self">self</span>.world_to_pixel(full)<span class="question-mark">?</span>))
-<a href=#911 id=911 data-nosnippet>911</a>    }
-<a href=#912 id=912 data-nosnippet>912</a>
-<a href=#913 id=913 data-nosnippet>913</a>    <span class="kw">fn </span>reference_value(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
-<a href=#914 id=914 data-nosnippet>914</a>        <span class="self">self</span>.select_axis(<span class="self">self</span>.crval)
-<a href=#915 id=915 data-nosnippet>915</a>    }
-<a href=#916 id=916 data-nosnippet>916</a>
-<a href=#917 id=917 data-nosnippet>917</a>    <span class="kw">fn </span>reference_pixel(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
-<a href=#918 id=918 data-nosnippet>918</a>        <span class="self">self</span>.select_axis(<span class="self">self</span>.crpix)
-<a href=#919 id=919 data-nosnippet>919</a>    }
-<a href=#920 id=920 data-nosnippet>920</a>
-<a href=#921 id=921 data-nosnippet>921</a>    <span class="kw">fn </span>increment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
-<a href=#922 id=922 data-nosnippet>922</a>        <span class="self">self</span>.select_axis(<span class="self">self</span>.cdelt)
-<a href=#923 id=923 data-nosnippet>923</a>    }
-<a href=#924 id=924 data-nosnippet>924</a>
-<a href=#925 id=925 data-nosnippet>925</a>    <span class="kw">fn </span>axis_names(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;String&gt; {
-<a href=#926 id=926 data-nosnippet>926</a>        <span class="self">self</span>.select_axis(<span class="self">self</span>.full_axis_names())
-<a href=#927 id=927 data-nosnippet>927</a>    }
-<a href=#928 id=928 data-nosnippet>928</a>
-<a href=#929 id=929 data-nosnippet>929</a>    <span class="kw">fn </span>axis_units(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;String&gt; {
-<a href=#930 id=930 data-nosnippet>930</a>        <span class="macro">vec!</span>[<span class="string">"rad"</span>.into(); <span class="self">self</span>.n_world_axes()]
-<a href=#931 id=931 data-nosnippet>931</a>    }
-<a href=#932 id=932 data-nosnippet>932</a>}
-<a href=#933 id=933 data-nosnippet>933</a>
-<a href=#934 id=934 data-nosnippet>934</a><span class="kw">impl </span>DirectionCoordinate {
-<a href=#935 id=935 data-nosnippet>935</a>    <span class="kw">fn </span>full_axis_names(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [String; <span class="number">2</span>] {
-<a href=#936 id=936 data-nosnippet>936</a>        <span class="self">self</span>.world_names
-<a href=#937 id=937 data-nosnippet>937</a>            .clone()
-<a href=#938 id=938 data-nosnippet>938</a>            .unwrap_or_else(|| <span class="kw">match </span><span class="self">self</span>.direction_ref {
-<a href=#939 id=939 data-nosnippet>939</a>                DirectionRef::GALACTIC | DirectionRef::SUPERGAL =&gt; {
-<a href=#940 id=940 data-nosnippet>940</a>                    [<span class="string">"Longitude"</span>.into(), <span class="string">"Latitude"</span>.into()]
-<a href=#941 id=941 data-nosnippet>941</a>                }
-<a href=#942 id=942 data-nosnippet>942</a>                <span class="kw">_ </span>=&gt; [<span class="string">"Right Ascension"</span>.into(), <span class="string">"Declination"</span>.into()],
-<a href=#943 id=943 data-nosnippet>943</a>            })
-<a href=#944 id=944 data-nosnippet>944</a>    }
-<a href=#945 id=945 data-nosnippet>945</a>
-<a href=#946 id=946 data-nosnippet>946</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_record(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RecordValue {
-<a href=#947 id=947 data-nosnippet>947</a>        <span class="kw">let </span><span class="kw-2">mut </span>rec = RecordValue::default();
-<a href=#948 id=948 data-nosnippet>948</a>        rec.upsert(
-<a href=#949 id=949 data-nosnippet>949</a>            <span class="string">"system"</span>,
-<a href=#950 id=950 data-nosnippet>950</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.direction_ref))),
-<a href=#951 id=951 data-nosnippet>951</a>        );
-<a href=#952 id=952 data-nosnippet>952</a>        rec.upsert(
-<a href=#953 id=953 data-nosnippet>953</a>            <span class="string">"projection"</span>,
-<a href=#954 id=954 data-nosnippet>954</a>            Value::Scalar(ScalarValue::String(<span class="self">self</span>.projection.name().into())),
-<a href=#955 id=955 data-nosnippet>955</a>        );
-<a href=#956 id=956 data-nosnippet>956</a>        rec.upsert(
-<a href=#957 id=957 data-nosnippet>957</a>            <span class="string">"projection_parameters"</span>,
-<a href=#958 id=958 data-nosnippet>958</a>            Value::Array(ArrayValue::from_f64_vec(
-<a href=#959 id=959 data-nosnippet>959</a>                <span class="self">self</span>.projection.parameters().to_vec(),
-<a href=#960 id=960 data-nosnippet>960</a>            )),
+<a href=#727 id=727 data-nosnippet>727</a>        (
+<a href=#728 id=728 data-nosnippet>728</a>            longitude_degrees / to_degrees,
+<a href=#729 id=729 data-nosnippet>729</a>            latitude_degrees / to_degrees,
+<a href=#730 id=730 data-nosnippet>730</a>        )
+<a href=#731 id=731 data-nosnippet>731</a>    }
+<a href=#732 id=732 data-nosnippet>732</a>
+<a href=#733 id=733 data-nosnippet>733</a>    <span class="doccomment">/// Celestial (lon, lat) to native spherical (phi, theta), as WCSLIB's
+<a href=#734 id=734 data-nosnippet>734</a>    /// `sphs2x` forms them: the native latitude exactly when the longitude
+<a href=#735 id=735 data-nosnippet>735</a>    /// offset is a multiple of 180°, and from `acos` of the native
+<a href=#736 id=736 data-nosnippet>736</a>    /// longitude's arguments where `|sin θ| &gt; 0.99`, since `asin` near ±1
+<a href=#737 id=737 data-nosnippet>737</a>    /// loses half the precision (up to 1.5e-8 rad at the reference
+<a href=#738 id=738 data-nosnippet>738</a>    /// direction itself, 0.009 of a 0.35″ pixel). The native longitude is
+<a href=#739 id=739 data-nosnippet>739</a>    /// normalized to `[-π, π]`, as `sphs2x` normalizes it, so a projection
+<a href=#740 id=740 data-nosnippet>740</a>    /// whose reference is on its native equator places a direction near
+<a href=#741 id=741 data-nosnippet>741</a>    /// its reference near the reference pixel whatever its native pole's
+<a href=#742 id=742 data-nosnippet>742</a>    /// longitude (180° south of the celestial equator).
+<a href=#743 id=743 data-nosnippet>743</a>    </span><span class="kw">fn </span>celestial_to_native(<span class="kw-2">&amp;</span><span class="self">self</span>, lon: f64, lat: f64) -&gt; (f64, f64) {
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">let </span>(alpha_p, delta_p) = (<span class="self">self</span>.native_pole[<span class="number">0</span>], <span class="self">self</span>.native_pole[<span class="number">1</span>]);
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>to_degrees = <span class="number">180.0 </span>/ PI;
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">let </span>latitude_degrees = lat * to_degrees;
+<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span>euler_1 = <span class="number">90.0 </span>- delta_p * to_degrees;
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>(euler_4, euler_3) = wcslib_sin_cos_degrees(euler_1);
+<a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">let </span>(sin_lat, cos_lat) = wcslib_sin_cos_degrees(latitude_degrees);
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span>dlng = (lon - alpha_p) * to_degrees;
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">let </span>(sin_dlng, cos_dlng) = wcslib_sin_cos_degrees(dlng);
+<a href=#752 id=752 data-nosnippet>752</a>
+<a href=#753 id=753 data-nosnippet>753</a>        <span class="kw">let </span>cos_lat_3 = cos_lat * euler_3;
+<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>cos_lat_4 = cos_lat * euler_4;
+<a href=#755 id=755 data-nosnippet>755</a>        <span class="kw">let </span>sin_lat_3 = sin_lat * euler_3;
+<a href=#756 id=756 data-nosnippet>756</a>        <span class="kw">let </span>sin_lat_4 = sin_lat * euler_4;
+<a href=#757 id=757 data-nosnippet>757</a>
+<a href=#758 id=758 data-nosnippet>758</a>        <span class="comment">// Native longitude.
+<a href=#759 id=759 data-nosnippet>759</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>x = sin_lat_4 - cos_lat_3 * cos_dlng;
+<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">if </span>x.abs() &lt; <span class="number">1.0e-5 </span>{
+<a href=#761 id=761 data-nosnippet>761</a>            x = -wcslib_cos_degrees(latitude_degrees + euler_1) + cos_lat_3 * (<span class="number">1.0 </span>- cos_dlng);
+<a href=#762 id=762 data-nosnippet>762</a>        }
+<a href=#763 id=763 data-nosnippet>763</a>        <span class="kw">let </span>y = -cos_lat * sin_dlng;
+<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span><span class="kw-2">mut </span>phi = <span class="self">self</span>.longpole + y.atan2(x);
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="kw">if </span>phi &gt; PI {
+<a href=#766 id=766 data-nosnippet>766</a>            phi -= <span class="number">2.0 </span>* PI;
+<a href=#767 id=767 data-nosnippet>767</a>        } <span class="kw">else if </span>phi &lt; -PI {
+<a href=#768 id=768 data-nosnippet>768</a>            phi += <span class="number">2.0 </span>* PI;
+<a href=#769 id=769 data-nosnippet>769</a>        }
+<a href=#770 id=770 data-nosnippet>770</a>
+<a href=#771 id=771 data-nosnippet>771</a>        <span class="comment">// Native latitude.
+<a href=#772 id=772 data-nosnippet>772</a>        </span><span class="kw">let </span>theta_degrees = <span class="kw">if </span>dlng % <span class="number">180.0 </span>== <span class="number">0.0 </span>{
+<a href=#773 id=773 data-nosnippet>773</a>            <span class="kw">let </span><span class="kw-2">mut </span>theta = latitude_degrees + cos_dlng * euler_1;
+<a href=#774 id=774 data-nosnippet>774</a>            <span class="kw">if </span>theta &gt; <span class="number">90.0 </span>{
+<a href=#775 id=775 data-nosnippet>775</a>                theta = <span class="number">180.0 </span>- theta;
+<a href=#776 id=776 data-nosnippet>776</a>            }
+<a href=#777 id=777 data-nosnippet>777</a>            <span class="kw">if </span>theta &lt; -<span class="number">90.0 </span>{
+<a href=#778 id=778 data-nosnippet>778</a>                theta = -<span class="number">180.0 </span>- theta;
+<a href=#779 id=779 data-nosnippet>779</a>            }
+<a href=#780 id=780 data-nosnippet>780</a>            theta
+<a href=#781 id=781 data-nosnippet>781</a>        } <span class="kw">else </span>{
+<a href=#782 id=782 data-nosnippet>782</a>            <span class="kw">let </span>z = sin_lat_3 + cos_lat_4 * cos_dlng;
+<a href=#783 id=783 data-nosnippet>783</a>            <span class="kw">if </span>z.abs() &gt; <span class="number">0.99 </span>{
+<a href=#784 id=784 data-nosnippet>784</a>                z.signum() * wcslib_acos_degrees((x * x + y * y).sqrt())
+<a href=#785 id=785 data-nosnippet>785</a>            } <span class="kw">else </span>{
+<a href=#786 id=786 data-nosnippet>786</a>                wcslib_asin_degrees(z)
+<a href=#787 id=787 data-nosnippet>787</a>            }
+<a href=#788 id=788 data-nosnippet>788</a>        };
+<a href=#789 id=789 data-nosnippet>789</a>
+<a href=#790 id=790 data-nosnippet>790</a>        (phi, theta_degrees / to_degrees)
+<a href=#791 id=791 data-nosnippet>791</a>    }
+<a href=#792 id=792 data-nosnippet>792</a>}
+<a href=#793 id=793 data-nosnippet>793</a>
+<a href=#794 id=794 data-nosnippet>794</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>wcslib_sin_cos_degrees(angle_degrees: f64) -&gt; (f64, f64) {
+<a href=#795 id=795 data-nosnippet>795</a>    <span class="kw">if </span>angle_degrees % <span class="number">90.0 </span>== <span class="number">0.0 </span>{
+<a href=#796 id=796 data-nosnippet>796</a>        <span class="kw">let </span>quadrant = ((angle_degrees / <span class="number">90.0 </span>+ <span class="number">0.5</span>).floor().abs() <span class="kw">as </span>i64) % <span class="number">4</span>;
+<a href=#797 id=797 data-nosnippet>797</a>        <span class="kw">return match </span>quadrant {
+<a href=#798 id=798 data-nosnippet>798</a>            <span class="number">0 </span>=&gt; (<span class="number">0.0</span>, <span class="number">1.0</span>),
+<a href=#799 id=799 data-nosnippet>799</a>            <span class="number">1 </span>=&gt; (<span class="kw">if </span>angle_degrees &gt; <span class="number">0.0 </span>{ <span class="number">1.0 </span>} <span class="kw">else </span>{ -<span class="number">1.0 </span>}, <span class="number">0.0</span>),
+<a href=#800 id=800 data-nosnippet>800</a>            <span class="number">2 </span>=&gt; (<span class="number">0.0</span>, -<span class="number">1.0</span>),
+<a href=#801 id=801 data-nosnippet>801</a>            <span class="number">3 </span>=&gt; (<span class="kw">if </span>angle_degrees &gt; <span class="number">0.0 </span>{ -<span class="number">1.0 </span>} <span class="kw">else </span>{ <span class="number">1.0 </span>}, <span class="number">0.0</span>),
+<a href=#802 id=802 data-nosnippet>802</a>            <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(),
+<a href=#803 id=803 data-nosnippet>803</a>        };
+<a href=#804 id=804 data-nosnippet>804</a>    }
+<a href=#805 id=805 data-nosnippet>805</a>    <span class="kw">let </span>angle_radians = angle_degrees * (PI / <span class="number">180.0</span>);
+<a href=#806 id=806 data-nosnippet>806</a>    (angle_radians.sin(), angle_radians.cos())
+<a href=#807 id=807 data-nosnippet>807</a>}
+<a href=#808 id=808 data-nosnippet>808</a>
+<a href=#809 id=809 data-nosnippet>809</a><span class="kw">fn </span>wcslib_cos_degrees(angle_degrees: f64) -&gt; f64 {
+<a href=#810 id=810 data-nosnippet>810</a>    wcslib_sin_cos_degrees(angle_degrees).<span class="number">1
+<a href=#811 id=811 data-nosnippet>811</a></span>}
+<a href=#812 id=812 data-nosnippet>812</a>
+<a href=#813 id=813 data-nosnippet>813</a><span class="kw">fn </span>wcslib_acos_degrees(value: f64) -&gt; f64 {
+<a href=#814 id=814 data-nosnippet>814</a>    <span class="kw">if </span>value &gt;= <span class="number">1.0 </span>&amp;&amp; value - <span class="number">1.0 </span>&lt; <span class="number">1.0e-10 </span>{
+<a href=#815 id=815 data-nosnippet>815</a>        <span class="number">0.0
+<a href=#816 id=816 data-nosnippet>816</a>    </span>} <span class="kw">else if </span>value == <span class="number">0.0 </span>{
+<a href=#817 id=817 data-nosnippet>817</a>        <span class="number">90.0
+<a href=#818 id=818 data-nosnippet>818</a>    </span>} <span class="kw">else if </span>value &lt;= -<span class="number">1.0 </span>&amp;&amp; value + <span class="number">1.0 </span>&gt; -<span class="number">1.0e-10 </span>{
+<a href=#819 id=819 data-nosnippet>819</a>        <span class="number">180.0
+<a href=#820 id=820 data-nosnippet>820</a>    </span>} <span class="kw">else </span>{
+<a href=#821 id=821 data-nosnippet>821</a>        value.acos() * (<span class="number">180.0 </span>/ PI)
+<a href=#822 id=822 data-nosnippet>822</a>    }
+<a href=#823 id=823 data-nosnippet>823</a>}
+<a href=#824 id=824 data-nosnippet>824</a>
+<a href=#825 id=825 data-nosnippet>825</a><span class="kw">fn </span>wcslib_asin_degrees(value: f64) -&gt; f64 {
+<a href=#826 id=826 data-nosnippet>826</a>    <span class="kw">if </span>value &lt;= -<span class="number">1.0 </span>&amp;&amp; value + <span class="number">1.0 </span>&gt; -<span class="number">1.0e-10 </span>{
+<a href=#827 id=827 data-nosnippet>827</a>        -<span class="number">90.0
+<a href=#828 id=828 data-nosnippet>828</a>    </span>} <span class="kw">else if </span>value == <span class="number">0.0 </span>{
+<a href=#829 id=829 data-nosnippet>829</a>        <span class="number">0.0
+<a href=#830 id=830 data-nosnippet>830</a>    </span>} <span class="kw">else if </span>value &gt;= <span class="number">1.0 </span>&amp;&amp; value - <span class="number">1.0 </span>&lt; <span class="number">1.0e-10 </span>{
+<a href=#831 id=831 data-nosnippet>831</a>        <span class="number">90.0
+<a href=#832 id=832 data-nosnippet>832</a>    </span>} <span class="kw">else </span>{
+<a href=#833 id=833 data-nosnippet>833</a>        value.asin() * (<span class="number">180.0 </span>/ PI)
+<a href=#834 id=834 data-nosnippet>834</a>    }
+<a href=#835 id=835 data-nosnippet>835</a>}
+<a href=#836 id=836 data-nosnippet>836</a>
+<a href=#837 id=837 data-nosnippet>837</a><span class="kw">fn </span>wcslib_atan2_degrees(y: f64, x: f64) -&gt; f64 {
+<a href=#838 id=838 data-nosnippet>838</a>    <span class="kw">if </span>y == <span class="number">0.0 </span>{
+<a href=#839 id=839 data-nosnippet>839</a>        <span class="kw">if </span>x &gt;= <span class="number">0.0 </span>{ <span class="number">0.0 </span>} <span class="kw">else </span>{ <span class="number">180.0 </span>}
+<a href=#840 id=840 data-nosnippet>840</a>    } <span class="kw">else if </span>x == <span class="number">0.0 </span>{
+<a href=#841 id=841 data-nosnippet>841</a>        <span class="kw">if </span>y &gt; <span class="number">0.0 </span>{ <span class="number">90.0 </span>} <span class="kw">else </span>{ -<span class="number">90.0 </span>}
+<a href=#842 id=842 data-nosnippet>842</a>    } <span class="kw">else </span>{
+<a href=#843 id=843 data-nosnippet>843</a>        y.atan2(x) * (<span class="number">180.0 </span>/ PI)
+<a href=#844 id=844 data-nosnippet>844</a>    }
+<a href=#845 id=845 data-nosnippet>845</a>}
+<a href=#846 id=846 data-nosnippet>846</a>
+<a href=#847 id=847 data-nosnippet>847</a><span class="kw">fn </span>convert_value_to_unit(
+<a href=#848 id=848 data-nosnippet>848</a>    value: f64,
+<a href=#849 id=849 data-nosnippet>849</a>    from_unit: <span class="kw-2">&amp;</span>str,
+<a href=#850 id=850 data-nosnippet>850</a>    to_unit: <span class="kw-2">&amp;</span>str,
+<a href=#851 id=851 data-nosnippet>851</a>    field: <span class="kw-2">&amp;</span>str,
+<a href=#852 id=852 data-nosnippet>852</a>) -&gt; <span class="prelude-ty">Result</span>&lt;f64, CoordinateError&gt; {
+<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">let </span>quantity = Quantity::new(value, from_unit).map_err(|error| {
+<a href=#854 id=854 data-nosnippet>854</a>        CoordinateError::InvalidRecord(<span class="macro">format!</span>(
+<a href=#855 id=855 data-nosnippet>855</a>            <span class="string">"invalid direction coordinate unit for {field}: {from_unit} ({error})"
+<a href=#856 id=856 data-nosnippet>856</a>        </span>))
+<a href=#857 id=857 data-nosnippet>857</a>    })<span class="question-mark">?</span>;
+<a href=#858 id=858 data-nosnippet>858</a>    <span class="kw">let </span>target = Unit::new(to_unit).map_err(|error| {
+<a href=#859 id=859 data-nosnippet>859</a>        CoordinateError::InvalidRecord(<span class="macro">format!</span>(
+<a href=#860 id=860 data-nosnippet>860</a>            <span class="string">"invalid direction coordinate target unit for {field}: {to_unit} ({error})"
+<a href=#861 id=861 data-nosnippet>861</a>        </span>))
+<a href=#862 id=862 data-nosnippet>862</a>    })<span class="question-mark">?</span>;
+<a href=#863 id=863 data-nosnippet>863</a>    quantity.get_value_in(<span class="kw-2">&amp;</span>target).map_err(|error| {
+<a href=#864 id=864 data-nosnippet>864</a>        CoordinateError::InvalidRecord(<span class="macro">format!</span>(
+<a href=#865 id=865 data-nosnippet>865</a>            <span class="string">"cannot convert direction coordinate {field} from {from_unit} to {to_unit}: {error}"
+<a href=#866 id=866 data-nosnippet>866</a>        </span>))
+<a href=#867 id=867 data-nosnippet>867</a>    })
+<a href=#868 id=868 data-nosnippet>868</a>}
+<a href=#869 id=869 data-nosnippet>869</a>
+<a href=#870 id=870 data-nosnippet>870</a><span class="kw">impl </span>Coordinate <span class="kw">for </span>DirectionCoordinate {
+<a href=#871 id=871 data-nosnippet>871</a>    <span class="kw">fn </span>coordinate_type(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CoordinateType {
+<a href=#872 id=872 data-nosnippet>872</a>        CoordinateType::Direction
+<a href=#873 id=873 data-nosnippet>873</a>    }
+<a href=#874 id=874 data-nosnippet>874</a>
+<a href=#875 id=875 data-nosnippet>875</a>    <span class="kw">fn </span>n_pixel_axes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#876 id=876 data-nosnippet>876</a>        <span class="number">2 </span>- usize::from(<span class="self">self</span>.removed_axis.is_some())
+<a href=#877 id=877 data-nosnippet>877</a>    }
+<a href=#878 id=878 data-nosnippet>878</a>
+<a href=#879 id=879 data-nosnippet>879</a>    <span class="kw">fn </span>n_world_axes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#880 id=880 data-nosnippet>880</a>        <span class="self">self</span>.n_pixel_axes()
+<a href=#881 id=881 data-nosnippet>881</a>    }
+<a href=#882 id=882 data-nosnippet>882</a>
+<a href=#883 id=883 data-nosnippet>883</a>    <span class="kw">fn </span>to_world(<span class="kw-2">&amp;</span><span class="self">self</span>, pixel: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, CoordinateError&gt; {
+<a href=#884 id=884 data-nosnippet>884</a>        <span class="kw">if </span>pixel.len() != <span class="self">self</span>.n_pixel_axes() {
+<a href=#885 id=885 data-nosnippet>885</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CoordinateError::DimensionMismatch {
+<a href=#886 id=886 data-nosnippet>886</a>                expected: <span class="self">self</span>.n_pixel_axes(),
+<a href=#887 id=887 data-nosnippet>887</a>                got: pixel.len(),
+<a href=#888 id=888 data-nosnippet>888</a>            });
+<a href=#889 id=889 data-nosnippet>889</a>        }
+<a href=#890 id=890 data-nosnippet>890</a>
+<a href=#891 id=891 data-nosnippet>891</a>        <span class="kw">let </span>full = <span class="kw">if let </span><span class="prelude-val">Some</span>(removed) = <span class="self">self</span>.removed_axis {
+<a href=#892 id=892 data-nosnippet>892</a>            <span class="kw">let </span><span class="kw-2">mut </span>full = [pixel[<span class="number">0</span>]; <span class="number">2</span>];
+<a href=#893 id=893 data-nosnippet>893</a>            full[removed.index] = removed.pixel;
+<a href=#894 id=894 data-nosnippet>894</a>            full
+<a href=#895 id=895 data-nosnippet>895</a>        } <span class="kw">else </span>{
+<a href=#896 id=896 data-nosnippet>896</a>            [pixel[<span class="number">0</span>], pixel[<span class="number">1</span>]]
+<a href=#897 id=897 data-nosnippet>897</a>        };
+<a href=#898 id=898 data-nosnippet>898</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.select_axis(<span class="self">self</span>.pixel_to_world(full)<span class="question-mark">?</span>))
+<a href=#899 id=899 data-nosnippet>899</a>    }
+<a href=#900 id=900 data-nosnippet>900</a>
+<a href=#901 id=901 data-nosnippet>901</a>    <span class="kw">fn </span>to_pixel(<span class="kw-2">&amp;</span><span class="self">self</span>, world: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, CoordinateError&gt; {
+<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">if </span>world.len() != <span class="self">self</span>.n_world_axes() {
+<a href=#903 id=903 data-nosnippet>903</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CoordinateError::DimensionMismatch {
+<a href=#904 id=904 data-nosnippet>904</a>                expected: <span class="self">self</span>.n_world_axes(),
+<a href=#905 id=905 data-nosnippet>905</a>                got: world.len(),
+<a href=#906 id=906 data-nosnippet>906</a>            });
+<a href=#907 id=907 data-nosnippet>907</a>        }
+<a href=#908 id=908 data-nosnippet>908</a>
+<a href=#909 id=909 data-nosnippet>909</a>        <span class="kw">let </span>full = <span class="kw">if let </span><span class="prelude-val">Some</span>(removed) = <span class="self">self</span>.removed_axis {
+<a href=#910 id=910 data-nosnippet>910</a>            <span class="kw">let </span><span class="kw-2">mut </span>full = [world[<span class="number">0</span>]; <span class="number">2</span>];
+<a href=#911 id=911 data-nosnippet>911</a>            full[removed.index] = removed.world_rad;
+<a href=#912 id=912 data-nosnippet>912</a>            full
+<a href=#913 id=913 data-nosnippet>913</a>        } <span class="kw">else </span>{
+<a href=#914 id=914 data-nosnippet>914</a>            [world[<span class="number">0</span>], world[<span class="number">1</span>]]
+<a href=#915 id=915 data-nosnippet>915</a>        };
+<a href=#916 id=916 data-nosnippet>916</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.select_axis(<span class="self">self</span>.world_to_pixel(full)<span class="question-mark">?</span>))
+<a href=#917 id=917 data-nosnippet>917</a>    }
+<a href=#918 id=918 data-nosnippet>918</a>
+<a href=#919 id=919 data-nosnippet>919</a>    <span class="kw">fn </span>reference_value(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+<a href=#920 id=920 data-nosnippet>920</a>        <span class="self">self</span>.select_axis(<span class="self">self</span>.crval)
+<a href=#921 id=921 data-nosnippet>921</a>    }
+<a href=#922 id=922 data-nosnippet>922</a>
+<a href=#923 id=923 data-nosnippet>923</a>    <span class="kw">fn </span>reference_pixel(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+<a href=#924 id=924 data-nosnippet>924</a>        <span class="self">self</span>.select_axis(<span class="self">self</span>.crpix)
+<a href=#925 id=925 data-nosnippet>925</a>    }
+<a href=#926 id=926 data-nosnippet>926</a>
+<a href=#927 id=927 data-nosnippet>927</a>    <span class="kw">fn </span>increment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+<a href=#928 id=928 data-nosnippet>928</a>        <span class="self">self</span>.select_axis(<span class="self">self</span>.cdelt)
+<a href=#929 id=929 data-nosnippet>929</a>    }
+<a href=#930 id=930 data-nosnippet>930</a>
+<a href=#931 id=931 data-nosnippet>931</a>    <span class="kw">fn </span>axis_names(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;String&gt; {
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="self">self</span>.select_axis(<span class="self">self</span>.full_axis_names())
+<a href=#933 id=933 data-nosnippet>933</a>    }
+<a href=#934 id=934 data-nosnippet>934</a>
+<a href=#935 id=935 data-nosnippet>935</a>    <span class="kw">fn </span>axis_units(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;String&gt; {
+<a href=#936 id=936 data-nosnippet>936</a>        <span class="macro">vec!</span>[<span class="string">"rad"</span>.into(); <span class="self">self</span>.n_world_axes()]
+<a href=#937 id=937 data-nosnippet>937</a>    }
+<a href=#938 id=938 data-nosnippet>938</a>}
+<a href=#939 id=939 data-nosnippet>939</a>
+<a href=#940 id=940 data-nosnippet>940</a><span class="kw">impl </span>DirectionCoordinate {
+<a href=#941 id=941 data-nosnippet>941</a>    <span class="kw">fn </span>full_axis_names(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [String; <span class="number">2</span>] {
+<a href=#942 id=942 data-nosnippet>942</a>        <span class="self">self</span>.world_names
+<a href=#943 id=943 data-nosnippet>943</a>            .clone()
+<a href=#944 id=944 data-nosnippet>944</a>            .unwrap_or_else(|| <span class="kw">match </span><span class="self">self</span>.direction_ref {
+<a href=#945 id=945 data-nosnippet>945</a>                DirectionRef::GALACTIC | DirectionRef::SUPERGAL =&gt; {
+<a href=#946 id=946 data-nosnippet>946</a>                    [<span class="string">"Longitude"</span>.into(), <span class="string">"Latitude"</span>.into()]
+<a href=#947 id=947 data-nosnippet>947</a>                }
+<a href=#948 id=948 data-nosnippet>948</a>                <span class="kw">_ </span>=&gt; [<span class="string">"Right Ascension"</span>.into(), <span class="string">"Declination"</span>.into()],
+<a href=#949 id=949 data-nosnippet>949</a>            })
+<a href=#950 id=950 data-nosnippet>950</a>    }
+<a href=#951 id=951 data-nosnippet>951</a>
+<a href=#952 id=952 data-nosnippet>952</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_record(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RecordValue {
+<a href=#953 id=953 data-nosnippet>953</a>        <span class="kw">let </span><span class="kw-2">mut </span>rec = RecordValue::default();
+<a href=#954 id=954 data-nosnippet>954</a>        rec.upsert(
+<a href=#955 id=955 data-nosnippet>955</a>            <span class="string">"system"</span>,
+<a href=#956 id=956 data-nosnippet>956</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.direction_ref))),
+<a href=#957 id=957 data-nosnippet>957</a>        );
+<a href=#958 id=958 data-nosnippet>958</a>        rec.upsert(
+<a href=#959 id=959 data-nosnippet>959</a>            <span class="string">"projection"</span>,
+<a href=#960 id=960 data-nosnippet>960</a>            Value::Scalar(ScalarValue::String(<span class="self">self</span>.projection.name().into())),
 <a href=#961 id=961 data-nosnippet>961</a>        );
-<a href=#962 id=962 data-nosnippet>962</a>        <span class="comment">// In the world units, as casacore's `DirectionCoordinate::save`
-<a href=#963 id=963 data-nosnippet>963</a>        // writes them.
-<a href=#964 id=964 data-nosnippet>964</a>        </span>rec.upsert(
-<a href=#965 id=965 data-nosnippet>965</a>            <span class="string">"crval"</span>,
-<a href=#966 id=966 data-nosnippet>966</a>            Value::Array(ArrayValue::from_f64_vec(
-<a href=#967 id=967 data-nosnippet>967</a>                <span class="self">self</span>.in_world_units(<span class="self">self</span>.crval).to_vec(),
-<a href=#968 id=968 data-nosnippet>968</a>            )),
-<a href=#969 id=969 data-nosnippet>969</a>        );
-<a href=#970 id=970 data-nosnippet>970</a>        rec.upsert(
-<a href=#971 id=971 data-nosnippet>971</a>            <span class="string">"crpix"</span>,
-<a href=#972 id=972 data-nosnippet>972</a>            Value::Array(ArrayValue::from_f64_vec(<span class="self">self</span>.crpix.to_vec())),
-<a href=#973 id=973 data-nosnippet>973</a>        );
-<a href=#974 id=974 data-nosnippet>974</a>        rec.upsert(
-<a href=#975 id=975 data-nosnippet>975</a>            <span class="string">"cdelt"</span>,
-<a href=#976 id=976 data-nosnippet>976</a>            Value::Array(ArrayValue::from_f64_vec(
-<a href=#977 id=977 data-nosnippet>977</a>                <span class="self">self</span>.in_world_units(<span class="self">self</span>.cdelt).to_vec(),
-<a href=#978 id=978 data-nosnippet>978</a>            )),
+<a href=#962 id=962 data-nosnippet>962</a>        rec.upsert(
+<a href=#963 id=963 data-nosnippet>963</a>            <span class="string">"projection_parameters"</span>,
+<a href=#964 id=964 data-nosnippet>964</a>            Value::Array(ArrayValue::from_f64_vec(
+<a href=#965 id=965 data-nosnippet>965</a>                <span class="self">self</span>.projection.parameters().to_vec(),
+<a href=#966 id=966 data-nosnippet>966</a>            )),
+<a href=#967 id=967 data-nosnippet>967</a>        );
+<a href=#968 id=968 data-nosnippet>968</a>        <span class="comment">// In the world units, as casacore's `DirectionCoordinate::save`
+<a href=#969 id=969 data-nosnippet>969</a>        // writes them.
+<a href=#970 id=970 data-nosnippet>970</a>        </span>rec.upsert(
+<a href=#971 id=971 data-nosnippet>971</a>            <span class="string">"crval"</span>,
+<a href=#972 id=972 data-nosnippet>972</a>            Value::Array(ArrayValue::from_f64_vec(
+<a href=#973 id=973 data-nosnippet>973</a>                <span class="self">self</span>.in_world_units(<span class="self">self</span>.crval).to_vec(),
+<a href=#974 id=974 data-nosnippet>974</a>            )),
+<a href=#975 id=975 data-nosnippet>975</a>        );
+<a href=#976 id=976 data-nosnippet>976</a>        rec.upsert(
+<a href=#977 id=977 data-nosnippet>977</a>            <span class="string">"crpix"</span>,
+<a href=#978 id=978 data-nosnippet>978</a>            Value::Array(ArrayValue::from_f64_vec(<span class="self">self</span>.crpix.to_vec())),
 <a href=#979 id=979 data-nosnippet>979</a>        );
-<a href=#980 id=980 data-nosnippet>980</a>        <span class="comment">// casacore's matrix, the PC's transpose (see `from_record`).
-<a href=#981 id=981 data-nosnippet>981</a>        </span>rec.upsert(
-<a href=#982 id=982 data-nosnippet>982</a>            <span class="string">"pc"</span>,
-<a href=#983 id=983 data-nosnippet>983</a>            Value::Array(ArrayValue::Float64(
-<a href=#984 id=984 data-nosnippet>984</a>                ArrayD::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">2</span>]).f(), <span class="self">self</span>.pc.iter().copied().collect())
-<a href=#985 id=985 data-nosnippet>985</a>                    .expect(<span class="string">"2x2 direction pc matrix"</span>),
-<a href=#986 id=986 data-nosnippet>986</a>            )),
-<a href=#987 id=987 data-nosnippet>987</a>        );
-<a href=#988 id=988 data-nosnippet>988</a>        rec.upsert(
-<a href=#989 id=989 data-nosnippet>989</a>            <span class="string">"axes"</span>,
-<a href=#990 id=990 data-nosnippet>990</a>            Value::Array(ArrayValue::from_string_vec(<span class="self">self</span>.full_axis_names().to_vec())),
-<a href=#991 id=991 data-nosnippet>991</a>        );
-<a href=#992 id=992 data-nosnippet>992</a>        rec.upsert(
-<a href=#993 id=993 data-nosnippet>993</a>            <span class="string">"units"</span>,
-<a href=#994 id=994 data-nosnippet>994</a>            Value::Array(ArrayValue::from_string_vec(<span class="self">self</span>.world_units.to_vec())),
-<a href=#995 id=995 data-nosnippet>995</a>        );
-<a href=#996 id=996 data-nosnippet>996</a>        rec.upsert(
-<a href=#997 id=997 data-nosnippet>997</a>            <span class="string">"conversionSystem"</span>,
-<a href=#998 id=998 data-nosnippet>998</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.conversion_ref))),
-<a href=#999 id=999 data-nosnippet>999</a>        );
-<a href=#1000 id=1000 data-nosnippet>1000</a>        rec.upsert(
-<a href=#1001 id=1001 data-nosnippet>1001</a>            <span class="string">"longpole"</span>,
-<a href=#1002 id=1002 data-nosnippet>1002</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.longpole.to_degrees())),
-<a href=#1003 id=1003 data-nosnippet>1003</a>        );
-<a href=#1004 id=1004 data-nosnippet>1004</a>        rec.upsert(
-<a href=#1005 id=1005 data-nosnippet>1005</a>            <span class="string">"latpole"</span>,
-<a href=#1006 id=1006 data-nosnippet>1006</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.latpole.to_degrees())),
-<a href=#1007 id=1007 data-nosnippet>1007</a>        );
-<a href=#1008 id=1008 data-nosnippet>1008</a>        rec
-<a href=#1009 id=1009 data-nosnippet>1009</a>    }
-<a href=#1010 id=1010 data-nosnippet>1010</a>}
-<a href=#1011 id=1011 data-nosnippet>1011</a>
-<a href=#1012 id=1012 data-nosnippet>1012</a><span class="attr">#[cfg(test)]
-<a href=#1013 id=1013 data-nosnippet>1013</a></span><span class="kw">mod </span>tests;
+<a href=#980 id=980 data-nosnippet>980</a>        rec.upsert(
+<a href=#981 id=981 data-nosnippet>981</a>            <span class="string">"cdelt"</span>,
+<a href=#982 id=982 data-nosnippet>982</a>            Value::Array(ArrayValue::from_f64_vec(
+<a href=#983 id=983 data-nosnippet>983</a>                <span class="self">self</span>.in_world_units(<span class="self">self</span>.cdelt).to_vec(),
+<a href=#984 id=984 data-nosnippet>984</a>            )),
+<a href=#985 id=985 data-nosnippet>985</a>        );
+<a href=#986 id=986 data-nosnippet>986</a>        <span class="comment">// casacore's matrix, the PC's transpose (see `from_record`).
+<a href=#987 id=987 data-nosnippet>987</a>        </span>rec.upsert(
+<a href=#988 id=988 data-nosnippet>988</a>            <span class="string">"pc"</span>,
+<a href=#989 id=989 data-nosnippet>989</a>            Value::Array(ArrayValue::Float64(
+<a href=#990 id=990 data-nosnippet>990</a>                ArrayD::from_shape_vec(IxDyn(<span class="kw-2">&amp;</span>[<span class="number">2</span>, <span class="number">2</span>]).f(), <span class="self">self</span>.pc.iter().copied().collect())
+<a href=#991 id=991 data-nosnippet>991</a>                    .expect(<span class="string">"2x2 direction pc matrix"</span>),
+<a href=#992 id=992 data-nosnippet>992</a>            )),
+<a href=#993 id=993 data-nosnippet>993</a>        );
+<a href=#994 id=994 data-nosnippet>994</a>        rec.upsert(
+<a href=#995 id=995 data-nosnippet>995</a>            <span class="string">"axes"</span>,
+<a href=#996 id=996 data-nosnippet>996</a>            Value::Array(ArrayValue::from_string_vec(<span class="self">self</span>.full_axis_names().to_vec())),
+<a href=#997 id=997 data-nosnippet>997</a>        );
+<a href=#998 id=998 data-nosnippet>998</a>        rec.upsert(
+<a href=#999 id=999 data-nosnippet>999</a>            <span class="string">"units"</span>,
+<a href=#1000 id=1000 data-nosnippet>1000</a>            Value::Array(ArrayValue::from_string_vec(<span class="self">self</span>.world_units.to_vec())),
+<a href=#1001 id=1001 data-nosnippet>1001</a>        );
+<a href=#1002 id=1002 data-nosnippet>1002</a>        rec.upsert(
+<a href=#1003 id=1003 data-nosnippet>1003</a>            <span class="string">"conversionSystem"</span>,
+<a href=#1004 id=1004 data-nosnippet>1004</a>            Value::Scalar(ScalarValue::String(<span class="macro">format!</span>(<span class="string">"{:?}"</span>, <span class="self">self</span>.conversion_ref))),
+<a href=#1005 id=1005 data-nosnippet>1005</a>        );
+<a href=#1006 id=1006 data-nosnippet>1006</a>        rec.upsert(
+<a href=#1007 id=1007 data-nosnippet>1007</a>            <span class="string">"longpole"</span>,
+<a href=#1008 id=1008 data-nosnippet>1008</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.longpole.to_degrees())),
+<a href=#1009 id=1009 data-nosnippet>1009</a>        );
+<a href=#1010 id=1010 data-nosnippet>1010</a>        rec.upsert(
+<a href=#1011 id=1011 data-nosnippet>1011</a>            <span class="string">"latpole"</span>,
+<a href=#1012 id=1012 data-nosnippet>1012</a>            Value::Scalar(ScalarValue::Float64(<span class="self">self</span>.latpole.to_degrees())),
+<a href=#1013 id=1013 data-nosnippet>1013</a>        );
+<a href=#1014 id=1014 data-nosnippet>1014</a>        rec
+<a href=#1015 id=1015 data-nosnippet>1015</a>    }
+<a href=#1016 id=1016 data-nosnippet>1016</a>}
+<a href=#1017 id=1017 data-nosnippet>1017</a>
+<a href=#1018 id=1018 data-nosnippet>1018</a><span class="attr">#[cfg(test)]
+<a href=#1019 id=1019 data-nosnippet>1019</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

@@ -2722,6 +2722,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#imhead-displays-a-bogus-observation-date-after-calendar-overflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        imhead displays a bogus observation date after calendar overflow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8379,6 +8390,14 @@ UTC, 37 seconds later. Where the scale is lost was not pinned down:
 wcslib's <code>mjdobs</code>, so the scale is gone by then. casa-rs reads <code>MJD-OBS</code> or <code>DATE-OBS</code> in the scale <code>TIMESYS</code> names, UTC
 when it names none (<code>casa_coordinates::fits::from_fits_header</code>), so the
 round trip keeps the date.</p>
+<h2 id="imhead-displays-a-bogus-observation-date-after-calendar-overflow"><code>imhead</code> displays a bogus observation date after calendar overflow<a class="headerlink" href="#imhead-displays-a-bogus-observation-date-after-calendar-overflow" title="Permanent link">&para;</a></h2>
+<p>On a CASA image, CASA 6.7.6.14 accepts <code>imhead(mode='put', hdkey='epoch',
+hdvalue={'value': 1e20, 'unit': 'd'})</code> and then reports
+<code>-5884082/10/30/00:00:00.000000</code>. The stored MJD exceeds the signed integer
+range used by <code>MVTime::ymd</code> for the Julian day. casa-rs rejects the out-of-range
+edit before changing the image. Dates inside the representable range still
+work, including 1.01 billion MJD days, which both render as
+<code>2767144/12/15/00:00:00.000000</code> (#977).</p>
 <h2 id="feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes"><code>feather</code> fails on an image whose direction is not on its first two axes<a class="headerlink" href="#feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-30</li>
