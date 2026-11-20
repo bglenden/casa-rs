@@ -77,13 +77,17 @@ impl CorrelationSelection {
                 (RECEPTOR_PRODUCTS.contains(name) || *name == "I") && text.contains(*name)
             })
             .collect();
+        // CASA disables the clip agent when no stored product matches the
+        // in-row filter, before it interprets a visibility expression.
         let clip_products = if mode == FlagDataMode::Clip && !required.is_empty() {
             let visibility = if text.contains("ALL") {
                 modes
                     .iter()
                     .flatten()
                     .copied()
-                    .filter(|name| *name != "I")
+                    .filter(|name| {
+                        RECEPTOR_PRODUCTS.contains(name) || ["Q", "U", "V"].contains(name)
+                    })
                     .collect::<Vec<_>>()
                     .join(",")
             } else {

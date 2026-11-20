@@ -37,6 +37,14 @@ def make_inputs():
             pol.putcell("CORR_TYPE", 0, np.array(codes, dtype=np.int32))
             if name.startswith("cross-"):
                 pol.putcell("CORR_PRODUCT", 0, np.array([[0, 1], [1, 0]], dtype=np.int32))
+    copytree("circular.ms", "unused-product.ms")
+    with table("unused-product.ms/POLARIZATION", readonly=False, ack=False) as pol:
+        row = pol.nrows()
+        pol.addrows(1)
+        for name in pol.colnames():
+            if pol.iscelldefined(name, 0):
+                pol.putcell(name, row, pol.getcell(name, 0))
+        pol.putcell("CORR_TYPE", row, np.array([24, 24], dtype=np.int32))
     data = np.array([
         [0, 0.25j],
         [1, 1.5j],
@@ -44,7 +52,7 @@ def make_inputs():
         [np.nan, 3j],
     ], dtype=np.complex64)
     ddids = {}
-    for name in ("linear", "float", "mixed", *(name for name, _ in setups)):
+    for name in ("linear", "float", "mixed", "unused-product", *(name for name, _ in setups)):
         with table(f"{name}.ms", readonly=False, ack=False) as ms:
             for row in range(ms.nrows()):
                 ms.putcell("DATA", row, data if row % 2 == 0 else data[:, ::-1])
@@ -74,6 +82,8 @@ def compare_products(ddids):
         ("mixed", "ZZ", {}, whole, {}),
         ("linear", "ALL", {}, whole, {}),
         ("circular", "ALL", both, whole, {}),
+        ("unused-product", "ALL", both, whole, {}),
+        ("circular", "XX,QQ", {}, whole, {}),
         ("circular", "LLRR", both, whole, {}),
         ("duplicate", "XX", second, whole, {}),
         ("cross-linear", "XY", first, whole, {}),
@@ -124,12 +134,15 @@ def compare_preview_and_backup(vis):
     assert report["backup_version"] is None
     assert_preserved(vis, before, auxiliary)
 
-    for name, task in (("reference", casatasks.flagdata), ("native", tasks.flagdata)):
-        path = f"clip-backup-{name}.ms"
-        copytree(vis, path)
-        assert task(vis=path, mode="clip", correlation="XX,RR", clipminmax=[1, 2]) == {}
-        assert_same_visibilities(path, before)
-        assert Path(f"{path}.flagversions/flags.flagdata_1").is_dir()
+    no_matches = ((vis, "XX,RR"), ("circular.ms", "XX,QQ"))
+    for index, (source, expression) in enumerate(no_matches):
+        flags_before = snapshot(source)
+        for name, task in (("reference", casatasks.flagdata), ("native", tasks.flagdata)):
+            path = f"clip-backup-{index}-{name}.ms"
+            copytree(source, path)
+            assert task(vis=path, mode="clip", correlation=expression, clipminmax=[1, 2]) == {}
+            assert_same_visibilities(path, flags_before)
+            assert Path(f"{path}.flagversions/flags.flagdata_1").is_dir()
 
     for expression in ("ABS_XX", "IMAG_XX", "XX,QQ", "WVR"):
         try:
@@ -146,7 +159,7 @@ def main():
     with TemporaryDirectory(prefix="flagdata-clip-correlation-") as directory, chdir(directory):
         products = compare_products(make_inputs())
         compare_preview_and_backup("mixed.ms")
-    print(f"{products} clip products, one preview and one backup matched CASA 6.7.6.14, "
+    print(f"{products} clip products, one preview and two backups matched CASA 6.7.6.14, "
           "plus four guarded visibility expressions")
 
 
