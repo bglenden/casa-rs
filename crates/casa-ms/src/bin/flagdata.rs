@@ -222,9 +222,9 @@ fn clip_channel_bins(
         }
     }
     let width = |value: &ParameterValue| match value {
-        // CASA's parameter bridge casts the input to a 32-bit Int, then its
-        // channel iterator compares that value as an unsigned width.
-        ParameterValue::Integer(value) => Ok(*value as u32),
+        // Negative widths and oversized positive widths both cover the
+        // selected window. Avoid wraparound into smaller, active widths.
+        ParameterValue::Integer(value) => Ok(u32::try_from(*value).unwrap_or(u32::MAX)),
         _ => Err(
             TaskFailure::validation("chanbin must be an integer or integer vector").at("chanbin"),
         ),

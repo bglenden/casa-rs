@@ -9294,7 +9294,7 @@
       "id": "parameter.chanbin",
       "semantic_revision": 2,
       "casa_name": "chanbin",
-      "value_domain": {"kind": "variant"},
+      "value_domain": {"kind": "array", "element": {"kind": "integer"}, "min_items": 0, "max_items": null, "allow_scalar": true},
       "normalization": {"kind": "identity"},
       "base_constraints": [],
       "unit_dimension": null,

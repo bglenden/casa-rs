@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Channel averaging for clipping and propagation to the original samples.
 
-use std::ops::{AddAssign, Div, Mul};
+use std::{
+    cmp::Ordering,
+    ops::{AddAssign, Div, Mul},
+};
 
 use casa_types::ArrayValue;
 use ndarray::{Array2, ArrayD, ArrayView2, Ix2};
@@ -130,7 +133,12 @@ impl<'a> ChannelBins<'a> {
             }
             if matches!(method, ChannelReduction::Sum) {
                 sum
-            } else if normalization > F::default() {
+            } else if matches!(
+                normalization.partial_cmp(&F::default()),
+                Some(Ordering::Less | Ordering::Greater)
+            ) {
+                // Normalize by the real sum of weights. Squaring the sum
+                // as a complex norm can underflow for valid positive weights.
                 sum / normalization
             } else {
                 T::default()

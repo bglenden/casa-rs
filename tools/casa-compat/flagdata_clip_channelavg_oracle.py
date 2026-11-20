@@ -119,6 +119,79 @@ def compare_products():
     return len(cases)
 
 
+def compare_average_of_complex_visibilities():
+    source = "cancel.ms"
+    copytree("data.ms", source)
+    with table(source, readonly=False, ack=False) as ms:
+        values = ms.getcol("DATA")
+        values[:, :2, 0] = [1 + 2j, -1 - 2j]
+        ms.putcol("DATA", values)
+    for name, task in TASKS:
+        vis = f"cancel-{name}.ms"
+        copytree(source, vis)
+        assert task(vis=vis, **{**COMMON, "correlation": "ABS_XX"},
+                    chanbin=2, clipzeros=True) == {}
+        check_flags(source, vis, {0: (0, 1)})
+
+
+def compare_average_normalization():
+    for label, value in (("weak", 1e-25), ("negative", -1.0), ("zero", 0.0)):
+        source = f"statistical-weight-{label}.ms"
+        copytree("weighted.ms", source)
+        with table(source, readonly=False, ack=False) as ms:
+            weights = ms.getcol("WEIGHT_SPECTRUM")
+            weights[:] = value
+            ms.putcol("WEIGHT_SPECTRUM", weights)
+        for name, task in TASKS:
+            vis = f"statistical-weight-{label}-{name}.ms"
+            copytree(source, vis)
+            assert task(vis=vis, **COMMON, datacolumn="CORRECTED", chanbin=2, clipzeros=True) == {}
+            # All corrected means are strictly positive for nonzero constant
+            # weights. Pinned CASA loses the weak positive result to underflow.
+            clips = label == "zero" or (name == "casa" and label == "weak")
+            check_flags(source, vis, {0: (0, 1, 2, 3)} if clips else {})
+
+
+def check_width_boundaries():
+    source = "zero-width.ms"
+    copytree("weighted.ms", source)
+    with table(source, readonly=False, ack=False) as ms:
+        sigma = ms.getcol("SIGMA_SPECTRUM")
+        sigma[:, 0, 0] = 0
+        ms.putcol("SIGMA_SPECTRUM", sigma)
+    for name, task in TASKS:
+        for enabled in (False, True):
+            vis = f"zero-width-{name}-{enabled}.ms"
+            copytree(source, vis)
+            assert task(vis=vis, **{**COMMON, "channelavg": enabled}, chanbin=0, clipzeros=True) == {}
+            check_flags(source, vis, {0: (0,)} if name == "casa" and enabled else {})
+
+    two_windows = "two-unweighted.ms"
+    copytree("data.ms", two_windows)
+    add_second_window(Path(two_windows))
+    # The first two observed samples average to 2.0 and a whole window to
+    # 3.75. The large width must never wrap into an unintended smaller bin.
+    for index, (source, width) in enumerate((("data.ms", 2**32 + 2), (two_windows, [2**32 + 2, 0]))):
+        for name, task in TASKS:
+            vis = f"wide-{index}-{name}.ms"
+            copytree(source, vis)
+            assert task(vis=vis, **COMMON, chanbin=width, clipminmax=[1.9, 2.1]) == {}
+            check_flags(source, vis, {0: (0, 1)} if name == "casa" else {})
+
+
+def compare_clip_cli():
+    # Verify the ordinary CLI's text parsing as well as the Python runner's
+    # typed argument. The reference has different selected bins per window.
+    binary = tasks.run("flagdata", vis="two.ms", action="calculate").command[0]
+    for index, (width, masks) in enumerate((('2', {0: (0, 1), 1: (0, 1)}), ('[2,0]', {0: (0, 1)}))):
+        vis = f"cli-{index}.ms"
+        copytree("two.ms", vis)
+        run([binary, "--vis", vis, "--mode", "clip", "--correlation", "XX",
+             "--channelavg", "--chanbin", width, "--clipminmax", "2.59,2.61",
+             "--no-clipoutside", "--no-flagbackup"], check=True, capture_output=True, text=True)
+        check_flags("two.ms", vis, masks)
+
+
 def compare_refusals():
     cases = (
         ({"chanbin": [2, 3]}, RuntimeError, "Error parsing ChannelAverageTVI configuration"),
@@ -190,8 +263,12 @@ def main():
         refusals = compare_refusals()
         compare_preview_and_restore()
         check_strided_clip()
+        compare_average_of_complex_visibilities()
+        compare_average_normalization()
+        check_width_boundaries()
+        compare_clip_cli()
     print(f"{products} flag products, {refusals} refusals, a preview and two backups verified with CASA, "
-          "plus independently checked flags for its strided-selection abort")
+          "plus complex cancellation, weight limits, width boundaries, and two CLI products")
 
 
 if __name__ == "__main__":
