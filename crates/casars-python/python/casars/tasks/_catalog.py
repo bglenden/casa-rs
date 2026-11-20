@@ -470,7 +470,7 @@ def mstransform(
     preaverage: bool = False,
     timeaverage: bool = False,
     timebin: str = '0s',
-    timespan: str = '',
+    timespan: str | list[str] | tuple[str, ...] = '',
     maxuvwdistance: float = 0.0,
     docallib: bool = False,
     callib: StrPath = '',
@@ -495,11 +495,10 @@ def mstransform(
     ``realmodelcol``, ``combinespws``, ``hanning``, ``regridms``, ``mode``,
     ``nchan``, ``start``, ``width``, ``nspw``, ``interpolation``,
     ``phasecenter``, ``restfreq``, ``outframe``, ``veltype``,
-    ``preaverage``, ``timeaverage``, ``timebin``, ``timespan``,
-    ``maxuvwdistance``, ``docallib``, ``callib``, ``douvcontsub``,
-    ``fitspw``, ``fitorder``, ``want_cont``, ``denoising_lib``,
-    ``nthreads``, ``niter``, ``disableparallel``, ``ddistart``,
-    ``monolithic_processing``, ``reindex``.
+    ``preaverage``, ``docallib``, ``callib``, ``douvcontsub``, ``fitspw``,
+    ``fitorder``, ``want_cont``, ``denoising_lib``, ``nthreads``, ``niter``,
+    ``disableparallel``, ``ddistart``, ``monolithic_processing``,
+    ``reindex``.
     """
     return _call_casa(mstransform, locals())
 
@@ -522,7 +521,7 @@ def split(
     keepflags: bool = True,
     width: int | str | list[int] | tuple[int, ...] = 1,
     timebin: str = '0s',
-    combine: str = '',
+    combine: str | list[str] | tuple[str, ...] = '',
     *,
     msselect: str = '',
 ) -> Any:
@@ -530,7 +529,7 @@ def split(
 
     CASA's ``split``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``, ``timebin``, ``combine``.
+    ``keepmms``.
     """
     return _call_casa(split, locals())
 

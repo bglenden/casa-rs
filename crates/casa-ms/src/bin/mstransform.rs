@@ -7,13 +7,15 @@ use std::process::ExitCode;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MsTransformError, MsTransformRequest, MsTransformTaskOptions, TransformDataColumn,
-    ms_task_success, mstransform_task, mstransform_task_schema_bundle, task_selection_text,
+    MsTransformError, MsTransformRequest, MsTransformTaskOptions, TimeAverageOptions,
+    TransformDataColumn, ms_task_success, mstransform_task, mstransform_task_schema_bundle,
+    task_selection_text,
 };
 use casa_provider_contracts::{CasaValue, NumpyScalarType, ParameterValue, python_repr};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
+use casa_types::quanta::{Quantity, Unit};
 
 fn main() -> ExitCode {
     TaskFrontEnd::new_with_deferred_schema(
@@ -73,8 +75,63 @@ fn transform_request(
     let options = MsTransformTaskOptions {
         use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
         channel_widths,
+        time_averaging: time_average_options(task)?,
     };
     Ok((request, options))
+}
+
+fn time_average_options(
+    task: &TaskInvocation<'_>,
+) -> Result<Option<TimeAverageOptions>, TaskFailure> {
+    let split = task.surface() == "split";
+    if !split && !task.flag("timeaverage")? {
+        return Ok(None);
+    }
+    let interval = task.required_text("timebin")?;
+    let quantity = Quantity::read(&interval).map_err(|_| {
+        TaskFailure::execution(format!(
+            "Error in QuantumHolder::fromString with input string {interval:?}: Illegal input units or format"
+        )).at("timebin")
+    })?;
+    let seconds = Unit::new("s").expect("seconds are a defined unit");
+    let radians = Unit::new("rad").expect("radians are a defined unit");
+    let interval_seconds = quantity
+        .get_value_in(&seconds)
+        .or_else(|_| {
+            quantity
+                .get_value_in(&radians)
+                .map(|angle| angle * 43_200.0 / std::f64::consts::PI)
+        })
+        .unwrap_or_else(|_| quantity.get_si_value());
+    if interval_seconds <= 0.0 || !interval_seconds.is_finite() {
+        return if split {
+            Ok(None)
+        } else {
+            Err(
+                TaskFailure::validation("Parameter timebin must be > '0s' to do time averaging")
+                    .at("timebin"),
+            )
+        };
+    }
+    let parameter = if split { "combine" } else { "timespan" };
+    let span = match task.value(parameter) {
+        None => "",
+        Some(ParameterValue::String(span)) => span,
+        Some(_) => return Err(TaskFailure::execution(
+            "RecordRep::get_pointer - incorrect data type String   used for field timespan with type unknown",
+        ).at(parameter)),
+    };
+    Ok(Some(TimeAverageOptions {
+        interval_seconds,
+        span_scans: span.contains("scan"),
+        span_states: span.contains("state"),
+        span_fields: span.contains("field"),
+        max_uvw_distance: if split {
+            0.0
+        } else {
+            task.number("maxuvwdistance")?
+        },
+    }))
 }
 
 fn channel_parameter(task: &TaskInvocation<'_>) -> &'static str {

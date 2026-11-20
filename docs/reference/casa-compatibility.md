@@ -43,7 +43,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | imsubimage | imsubimage | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
-| mstransform | mstransform | yes | 55 | 55 | 0 | 36 | 0 | 0 |
+| mstransform | mstransform | yes | 55 | 55 | 0 | 32 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
 | plotms | plotms | yes | 102 | 102 | 0 | 13 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
@@ -52,7 +52,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | smoothcal | smoothcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
-| split | split | yes | 19 | 19 | 0 | 3 | 1 | 0 |
+| split | split | yes | 19 | 19 | 0 | 1 | 1 | 0 |
 | statwt | statwt | yes | 25 | 25 | 0 | 0 | 0 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 3 | 22 | 0 |
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
@@ -1057,7 +1057,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `realmodelcol`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
+- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `realmodelcol`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
 - Defaults that differ: none
@@ -2346,7 +2346,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `keepmms`, `timebin`, `combine`
+- Accepted only at CASA's default until #978: `keepmms`
 - casa-rs parameters CASA lacks: `msselect`
 - Shared parameters: 19, in CASA's order: yes
 - Defaults that differ: none

@@ -7325,6 +7325,25 @@ pixel maps are `[0, -2]`. casa-rs raises `RuntimeError` before applying
 either name. Passing the one visible axis name without a coordinate type
 renames that axis and preserves the stored removed-axis name (#1626).
 
+## Time averaging LAG_DATA and mixed FLOAT_DATA loses visibility information
+
+CASA 6.7.6.14 leaves LAG_DATA undefined while time averaging, and a LAG_DATA-only
+product can also have undefined FLAG cells and zero spectral weights. The
+native average retains the lag axis. It averages defined lag values using
+scalar weights, preferring rows with an unflagged frequency sample for the
+same correlation. It computes the frequency flags and statistics from the
+input frequency cells.
+
+With `datacolumn="all"` on a MeasurementSet containing both FLOAT_DATA and
+complex visibilities, `VbAvg::accumulateElementForCubes` can accumulate
+calibrated and single-dish weights into the same buffer. The resulting
+denominators attenuate CORRECTED_DATA, MODEL_DATA, and FLOAT_DATA. The same
+layout can substitute FLOAT_DATA for complex DATA. Native averaging uses
+the calibrated weights for corrected and model samples and the observed
+variance for DATA and FLOAT_DATA. The oracle verifies the independent lanes
+against CASA runs on the separate layouts and against an analytic lag sum.
+[Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## Channel-width argument variants can crash both MeasurementSet tasks
 
 CASA 6.7.6.14 `split` and `mstransform` leave a partial MeasurementSet after

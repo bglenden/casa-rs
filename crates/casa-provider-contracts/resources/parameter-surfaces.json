@@ -13511,8 +13511,7 @@
             "provider": {"field": "timeaverage"},
             "python": {"name": "timeaverage"},
             "presentation": {"label": "Time Average", "group": "Time", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "timebin",
@@ -13526,8 +13525,7 @@
             "provider": {"field": "timebin"},
             "python": {"name": "timebin"},
             "presentation": {"label": "Time Bin", "group": "Time", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "timespan",
@@ -13539,10 +13537,9 @@
           "projections": {
             "cli": {"flags": ["--timespan"], "metavar": "AXES"},
             "provider": {"field": "timespan"},
-            "python": {"name": "timespan"},
+            "python": {"name": "timespan", "type_hint": "str | list[str] | tuple[str, ...]"},
             "presentation": {"label": "Time Span", "group": "Time", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "maxuvwdistance",
@@ -13556,8 +13553,7 @@
             "provider": {"field": "maxuvwdistance"},
             "python": {"name": "maxuvwdistance"},
             "presentation": {"label": "Max UVW Distance", "group": "Time", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "equals", "parameter": "timeaverage", "value": {"kind": "bool", "value": true}}}
+          }
         },
         {
           "name": "docallib",
@@ -14060,12 +14056,11 @@
             "provider": {"field": "timebin"},
             "python": {"name": "timebin"},
             "presentation": {"label": "Time Bin", "group": "Averaging", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "combine",
-          "concept": {"id": "parameter.combine", "semantic_revision": 1},
+          "concept": {"id": "parameter.combine", "semantic_revision": 2},
           "order": 18,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -14073,10 +14068,9 @@
           "projections": {
             "cli": {"flags": ["--combine"], "metavar": "AXES"},
             "provider": {"field": "combine"},
-            "python": {"name": "combine"},
+            "python": {"name": "combine", "type_hint": "str | list[str] | tuple[str, ...]"},
             "presentation": {"label": "Combine", "group": "Averaging", "advanced": true}
-          },
-          "unimplemented": {"issue": 978, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "timebin", "value": {"kind": "string", "value": "0s"}}}}
+          }
         },
         {
           "name": "msselect",
