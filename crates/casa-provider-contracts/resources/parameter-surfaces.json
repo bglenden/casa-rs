@@ -23875,7 +23875,7 @@
         },
         {
           "name": "display",
-          "concept": {"id": "flagdata.display", "semantic_revision": 1},
+          "concept": {"id": "flagdata.display", "semantic_revision": 2},
           "order": 69,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -23886,7 +23886,7 @@
             "python": {"name": "display"},
             "presentation": {"label": "Display", "group": "Output", "advanced": true}
           },
-          "surface_note": "The headless provider applies or calculates the flags and returns the task result. Interactive viewing belongs to CASA's plotting backend."
+          "surface_note": "The headless provider applies or calculates flags and returns the task result. A nonempty display suppresses command saving for apply and calculate. Interactive viewing belongs to CASA's plotting backend."
         },
         {
           "name": "savepars",

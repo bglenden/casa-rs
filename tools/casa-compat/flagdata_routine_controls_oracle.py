@@ -3,11 +3,13 @@
 """Check iterator time chunks and headless display controls with pinned CASA."""
 
 from contextlib import chdir
+from json import dumps
 from pathlib import Path
 from shutil import copytree
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from time import time
 
 import casatasks
 from casacore.tables import table
@@ -15,6 +17,8 @@ import numpy as np
 
 from casars import tasks
 from flagdata_autocorr_oracle import assert_same_visibilities
+from flagdata_clip_range_oracle import make_input
+from flagdata_history_oracle import MJD_UNIX_EPOCH_S, compare_new_rows
 from flagdata_preview_oracle import assert_preserved, auxiliary_content
 from flagdata_summary_oracle import snapshot
 from ms_selection_tasks_oracle import casa_table
@@ -32,7 +36,8 @@ def flags(path):
 def check_time_chunks():
     cases = (("scan", 324), (1, 674), (20., 364), (40, 324),
              ("20s", 364), ("1min", 324), ("2ms", 324), ("0s", 324),
-             ("", 324), (np.int64(20), 364), (True, 674), (float("inf"), 324))
+             ("", 324), (np.int64(20), 364), (True, 674), (float("inf"), 324),
+             ("12h:", 324), ("--5s", 324), ("20s\0ignored", 364))
     for index, (ntime, count) in enumerate(cases):
         masks = []
         for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
@@ -119,34 +124,84 @@ def check_time_errors():
     cases = ((0, "apply", ValueError, True), (np.float64(-1), "apply", ValueError, True),
              ("nonsense", "apply", RuntimeError, True), ("SCAN", "calculate", RuntimeError, False),
              (0, "none", ValueError, False), ([2], "apply", AssertionError, False),
-             (np.array(2), "apply", AssertionError, False))
+             (np.array(2), "apply", AssertionError, False), ("12s:", "apply", RuntimeError, True))
     for index, (ntime, action, typ, backup) in enumerate(cases):
+        messages = []
         for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
             path = f"bad-time-{index}-{name}.ms"
             copytree("source.ms", path)
             before = snapshot(path)
             try:
                 task(vis=path, ntime=ntime, action=action)
-            except typ:
-                pass
+            except typ as error:
+                assert type(error) is typ, (name, type(error), typ)
+                messages.append(str(error))
             else:
                 raise AssertionError((name, ntime, action))
             assert_same_visibilities(path, before)
             assert Path(f"{path}.flagversions/flags.flagdata_1").exists() == backup
+        if typ is not AssertionError:
+            assert messages[0] == messages[1], (ntime, messages)
     return len(cases)
 
 
-def check_displays():
+def run_display_task(name, options):
+    if name == "native":
+        assert tasks.flagdata(**options) == {}
+        return
     # CASA attempts to start its separate viewer in the headless wheel.
-    execute = "import sys; from casatasks import flagdata; assert flagdata(vis=sys.argv[1], display=sys.argv[2], flagbackup=False) == {}"
-    for index, display in enumerate(("data", "report", "both", "unrecognized")):
+    execute = """
+import json
+import sys
+from casatasks import flagdata
+
+assert flagdata(**json.loads(sys.argv[1])) == {}
+"""
+    subprocess.run([sys.executable, "-c", execute, dumps(options)], check=True, timeout=10)
+
+
+def check_displays():
+    for index, display in enumerate(("data", "report", "both", "$unrecognized")):
         casa, native = (f"display-{index}-{name}.ms" for name in ("casa", "native"))
-        for path in (casa, native):
+        for path, name in ((casa, "casa"), (native, "native")):
             copytree("source.ms", path)
-        subprocess.run([sys.executable, "-c", execute, casa, display], check=True, timeout=10)
-        assert tasks.flagdata(vis=native, display=display, flagbackup=False) == {}
+            outfile = f"{path}.txt" if index % 2 else ""
+            if outfile:
+                Path(outfile).write_text("existing commands\n")
+            options = dict(vis=path, display=display, flagbackup=False, savepars=True, outfile=outfile)
+            run_display_task(name, options)
+            if outfile:
+                assert Path(outfile).read_text() == "existing commands\n"
+            with table(f"{path}/FLAG_CMD", ack=False) as commands:
+                assert commands.nrows() == 0
         for expected, actual in zip(flags(casa), flags(native), strict=True):
             np.testing.assert_array_equal(actual, expected)
+
+    commands = []
+    for name in ("casa", "native"):
+        path = f"display-command-{name}.ms"
+        copytree("source.ms", path)
+        before, auxiliary = snapshot(path), auxiliary_content(path)
+        options = dict(vis=path, display="data", flagbackup=False, savepars=True, action="calculate")
+        run_display_task(name, options)
+        assert_preserved(path, before, auxiliary)
+        outfile = f"{path}.txt"
+        options.update(action="none", outfile=outfile)
+        task = casatasks.flagdata if name == "casa" else tasks.flagdata
+        assert task(**options) == {}
+        commands.append(Path(outfile).read_text())
+        assert_preserved(path, before, auxiliary)
+    assert commands[0] == commands[1] and commands[0].strip()
+
+    make_input("display-float.ms", float_data=True)
+    with table("display-float.ms/HISTORY", ack=False) as history:
+        original_rows = history.nrows()
+    paths = ("display-float-casa.ms", "display-float-native.ms")
+    start = time() + MJD_UNIX_EPOCH_S
+    for name, path in zip(("casa", "native"), paths, strict=True):
+        copytree("display-float.ms", path)
+        run_display_task(name, dict(vis=path, display="unrecognized", savepars=True, flagbackup=False))
+    compare_new_rows(paths, original_rows, 1, (start, time() + MJD_UNIX_EPOCH_S))
 
     summary = casatasks.flagdata(vis="source.ms", mode="summary")
     original, auxiliary = snapshot("source.ms"), auxiliary_content("source.ms")

@@ -114,6 +114,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if matches!(display_option.as_str(), "data" | "report" | "both") {
         tracing::warn!(display = %display_option, "running flagdata with its headless provider");
     }
+    if save_parameters && !display_option.is_empty() {
+        tracing::warn!("Disabling savepars for the display");
+    }
     let path = task.path("vis")?;
     // The CASA task derives persistence from action, including when the
     // caller supplied its hidden writeflags argument explicitly.
@@ -143,12 +146,13 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
-    if save_parameters {
+    if save_parameters && display_option.is_empty() {
         save_flag_parameters(task, &path, &mode, &action)?;
     }
     if !calculate
         && request.mode != FlagDataMode::Summary
-        && let Err(error) = append_task_history(&path, &flagdata_history(task))
+        && let Err(error) =
+            append_task_history(&path, &flagdata_history(task, &path, &display_option))
     {
         tracing::error!(%error, "updating flagdata HISTORY");
     }
@@ -344,8 +348,16 @@ fn selector_string_repr(text: &str) -> String {
     result
 }
 
-fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
+fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> TransformTaskHistory {
     let rflag = matches!(task.value("mode"), Some(ParameterValue::String(mode)) if mode == "rflag");
+    // CASA's display agent can change these locals before writing HISTORY.
+    let float_display = !display.is_empty()
+        && matches!(task.value("datacolumn"), Some(ParameterValue::String(column)) if column.eq_ignore_ascii_case("DATA"))
+        && MeasurementSet::open(path).is_ok_and(|ms| {
+            ms.main_table()
+                .schema()
+                .is_some_and(|schema| schema.contains_column("FLOAT_DATA"))
+        });
     let mut bindings = task
         .session()
         .bundle()
@@ -376,6 +388,8 @@ fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
             let text = match (name, value) {
                 ("writeflags", _) => "True".to_string(),
                 ("flagbackup", _) => "False".to_string(),
+                ("savepars", _) if !display.is_empty() => "False".to_string(),
+                ("datacolumn", _) if float_display => "\"FLOAT_DATA\"".to_string(),
                 ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
                     "\"\"".to_string()
                 }
@@ -395,6 +409,9 @@ fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
                 }
                 ("mode", ParameterValue::String(value)) if value == "manualflag" => {
                     "\"manual\"".to_string()
+                }
+                ("ntime", ParameterValue::String(value)) => {
+                    format!("\"{}\"", value.split('\0').next().unwrap_or_default())
                 }
                 (_, ParameterValue::String(value)) => format!("\"{value}\""),
                 (_, value) => python_repr(value),
@@ -457,8 +474,12 @@ fn time_chunk_argument(task: &TaskInvocation<'_>) -> Result<Option<f64>, TaskFai
         Some(ParameterValue::String(text)) if text == "scan" => return Ok(None),
         Some(ParameterValue::String(text)) => {
             let text = text.split('\0').next().unwrap_or_default();
-            let quantity = Quantity::read(text)
-                .map_err(|error| TaskFailure::execution(error.to_string()).at("ntime"))?;
+            let quantity = Quantity::read(text).map_err(|_| {
+                TaskFailure::execution(format!(
+                    "Error in QuantumHolder::fromString with input string \"{text}\": Illegal input units or format\n in converting quantity"
+                ))
+                .at("ntime")
+            })?;
             let seconds = match quantity.unit().name() {
                 "" | "s" => quantity.value(),
                 "min" => quantity.get_si_value(),
@@ -467,6 +488,9 @@ fn time_chunk_argument(task: &TaskInvocation<'_>) -> Result<Option<f64>, TaskFai
                     return Ok(None);
                 }
             };
+            if seconds < 0.0 {
+                tracing::warn!(%seconds, "Provided time interval is negative");
+            }
             return Ok((seconds > 0.0 && seconds.is_finite()).then_some(seconds));
         }
         Some(ParameterValue::Float(value)) => *value,
@@ -476,6 +500,9 @@ fn time_chunk_argument(task: &TaskInvocation<'_>) -> Result<Option<f64>, TaskFai
     };
     if seconds <= 0.0 {
         return Err(TaskFailure::execution("Parameter ntime cannot be < = 0").at("ntime"));
+    }
+    if seconds.is_nan() {
+        tracing::warn!("Provided time interval is negative: nan");
     }
     Ok(seconds.is_finite().then_some(seconds))
 }

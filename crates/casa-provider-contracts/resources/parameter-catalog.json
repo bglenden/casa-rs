@@ -9748,10 +9748,10 @@
     },
     {
       "id": "flagdata.display",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "display",
       "value_domain": {"kind": "string"},
-      "normalization": {"kind": "identity"},
+      "normalization": {"kind": "casa_field"},
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "presentation",

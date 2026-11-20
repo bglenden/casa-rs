@@ -360,8 +360,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise KeyError("nreport") from error
             if completion.message == f"argument _{completion.parameter} must be a string":
                 raise TypeError(completion.message) from error
-            if completion.parameter == "ntime" and completion.message == "Parameter ntime cannot be < = 0":
-                raise ValueError(completion.message) from error
+            if completion.parameter == "ntime":
+                if completion.message == "Parameter ntime cannot be < = 0":
+                    raise ValueError(completion.message) from error
+                raise RuntimeError(completion.message) from error
             if completion.parameter in ("channelavg", "chanbin", "timeavg", "outfile"):
                 raise RuntimeError(completion.message) from error
             if completion.parameter == "outfile.not_found":
