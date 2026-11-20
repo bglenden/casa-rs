@@ -89,7 +89,7 @@ def creation_and_repair(work, vis, source, engines):
     for output in outputs:
         with opened(output) as table:
             assert table.info()['type'] == 'Calibration' and table.nrows() == 0
-            assert table.getkeyword('MSName') == str(output.parent)
+            assert table.getkeyword('MSName') == output.parent.name
     for condition in ('complete', 'column', 'subtable', 'both'):
         outputs = []
         for name, factory in zip(('casa', 'native'), engines, strict=True):
