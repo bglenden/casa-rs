@@ -831,7 +831,7 @@ def flagdata(
     clipoutside: bool | list[bool] = ...,
     channelavg: bool | list[bool] = ...,
     chanbin: int | list[int] = ...,
-    timeavg: bool = ...,
+    timeavg: bool | list[bool] = ...,
     timebin: str = ...,
     clipzeros: bool = ...,
     quackinterval: float | list[float] = ...,

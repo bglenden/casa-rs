@@ -3989,6 +3989,19 @@ length. A width of `4294967298` wraps into two channels, which can flag two
 samples even though the whole-window mean falls outside the clipping
 range. Native flagdata applies the same whole-window rule as other widths
 larger than the window, for both scalar and per-window forms.
+## Time-averaged clipping can substitute zeros for defined inputs
+
+In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping
+`RESIDUAL_DATA`, `FLOAT_DATA`, `WEIGHT` or `WEIGHT_SPECTRUM` on the paired
+fixture. It misses nonzero averaged values and flags the selected samples
+when clipping inside a narrow range around zero. The time clip oracle
+checks both effects against the same physical visibilities and statistics.
+
+Native flagdata averages observed visibilities with inverse variance,
+uses the same weights for the model when deriving an observed residual,
+and accumulates each weight spectrum over its actual contributing
+integrations. The test calculates the expected masks from the stored values,
+then compares flags and data using both CASA and casacore readback.
 
 ## Weight clipping can ignore defined channel weights
 

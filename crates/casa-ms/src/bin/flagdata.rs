@@ -57,7 +57,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let request = flagdata_request(task).or_else(|error| {
         if matches!(
             error.parameter.as_deref(),
-            Some("datacolumn" | "channelavg" | "chanbin")
+            Some("datacolumn" | "channelavg" | "chanbin" | "timeavg")
         ) {
             backup_before_failed_apply(task, &action)?;
         }
@@ -180,6 +180,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         clipminmax,
         clipoutside,
         clip_channel_bins: clip_channel_bins(task, mode)?,
+        clip_time_bin: clip_time_bin(task, mode)?,
         quackinterval,
         quackmode,
         quackincrement,
@@ -196,6 +197,25 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         growtime: task.number("growtime")?,
         growfreq: task.number("growfreq")?,
     })
+}
+
+fn clip_time_bin(
+    task: &TaskInvocation<'_>,
+    mode: FlagDataMode,
+) -> Result<Option<String>, TaskFailure> {
+    if mode != FlagDataMode::Clip {
+        return Ok(None);
+    }
+    match task.value("timeavg") {
+        Some(ParameterValue::Bool(false)) => Ok(None),
+        Some(ParameterValue::Bool(true)) => task.required_text("timebin").map(Some),
+        Some(ParameterValue::Array(_)) => {
+            Err(TaskFailure::execution("RecordInterface::asBool - invalid data type").at("timeavg"))
+        }
+        _ => Err(
+            TaskFailure::validation("timeavg must be a Boolean or Boolean vector").at("timeavg"),
+        ),
+    }
 }
 
 fn clip_channel_bins(
