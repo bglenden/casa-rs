@@ -1,0 +1,232 @@
+"""Classical statistics through the CASA-compatible image tool."""
+
+import os
+
+import numpy as np
+import pytest
+
+from casars import tools
+from test_image_workflow import _assert_value
+
+
+@pytest.fixture(scope="module")
+def casa():
+    package = pytest.importorskip("casatools")
+    assert package.version_string().replace("-", ".") == "6.7.6.14"
+    return package
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_lazy_statistics_reacquire_native_input_read_lock(casa, tmp_path):
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    for backend in (casa, tools):
+        source = backend.image()
+        path = str(tmp_path / f"{backend.__name__}.im")
+        assert source.fromarray(path, pixels)
+        assert source.done()
+        result = source.imagecalc(pixels=f'"{path}" + 1')
+        assert result.unlock()
+        np.testing.assert_array_equal(result.haslock(), [False, False])
+        np.testing.assert_array_equal(result.statistics()["sum"], [78.0])
+        np.testing.assert_array_equal(result.haslock(), [True, False])
+        assert result.done()
+
+
+@pytest.mark.parametrize("pixel_type", ["f", "d"])
+def test_statistics_records_and_display_axes(casa, pixel_type):
+    values = np.array([[[2.0, -3.0], [4.0, 7.0]], [[1.0, 9.0], [-2.0, 3.0]]])
+    rust, oracle = tools.image(), casa.image()
+    for image in rust, oracle:
+        assert image.statistics() == {}
+        assert image.fromshape(shape=list(values.shape), type=pixel_type)
+        assert image.putchunk(values)
+    for kwargs in (
+        {},
+        dict(axes=[1], robust=True),
+        dict(axes=[0, 1]),
+        dict(axes=[2, 1, 0], force=True, clmethod="framework"),
+        dict(includepix=[7.0, -2.0], robust=True),
+        dict(excludepix=[-7.0], clmethod="tiled"),
+        dict(includepix=[25.0, 33.0], robust=True),
+        dict(axes=[0], includepix=[7.0, 9.0], robust=True),
+        dict(axes=[0], mask="F", robust=True),
+        dict(mask=False),
+    ):
+        _assert_value(rust.statistics(**kwargs), oracle.statistics(**kwargs))
+    for image in rust, oracle:
+        with pytest.raises(RuntimeError, match="only give one"):
+            image.statistics(includepix=[2.0], excludepix=[3.0])
+        with pytest.raises(RuntimeError, match="Too many elements"):
+            image.statistics(includepix=[2.0, 3.0, 4.0])
+        with pytest.raises(RuntimeError, match="Invalid cursor axes"):
+            image.statistics(axes=[5])
+        assert image.done()
+
+
+def test_statistics_reads_persisted_masks_and_region(casa, tmp_path):
+    path = str(tmp_path / "statistics.im")
+    values = np.arange(60, dtype=np.float64).reshape(5, 4, 3)
+    creator = tools.image()
+    assert creator.fromarray(path, values)
+    assert creator.calcmask(f'"{path}" < 53', name="valid")
+    assert creator.setbrightnessunit("K")
+    assert creator.done()
+    rust, oracle = tools.image(), casa.image()
+    region = casa.regionmanager().box([1, 1, 0], [4, 3, 2])
+    for image in rust, oracle:
+        assert image.open(path)
+        assert image.unlock()
+    args = dict(region=region, mask=f'"{path}" > 21', robust=True)
+    actual = rust.statistics(**args)
+    expected = oracle.statistics(**args)
+    _assert_value(actual, expected)
+    selected = values[1:5, 1:4, :].ravel()
+    selected = selected[(selected > 21) & (selected < 53)]
+    _assert_value(actual["sum"], np.array([selected.sum()]))
+    _assert_value(actual["sigma"], np.array([selected.std(ddof=1)]))
+    for image in rust, oracle:
+        assert image.done()
+
+
+def test_statistics_strided_extrema_are_absolute_image_pixels(casa):
+    image = tools.image()
+    values = np.arange(24, dtype=np.float64).reshape(4, 3, 2)
+    assert image.fromarray(pixels=values)
+    region = casa.regionmanager().box([1, 1, 0], [3, 2, 1], [2, 1, 1])
+    result = image.statistics(region=region)
+    selected = values[1:4:2, 1:3, :]
+    _assert_value(image.getregion(region=region), selected)
+    _assert_value(result["npts"], np.array([selected.size], dtype=np.float64))
+    _assert_value(result["max"], np.array([selected.max()]))
+    _assert_value(result["maxpos"], np.array([3, 2, 1]))
+
+
+def test_statistics_breaks_extremum_ties_in_casa_pixel_order(casa):
+    values = np.array([[3., 1., 5.], [1., 5., 3.], [5., 3., 1.]])
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromarray(pixels=values)
+        for method in ("auto", "tiled", "framework"):
+            result = image.statistics(clmethod=method)
+            _assert_value(result["minpos"], np.array([1, 0]))
+            _assert_value(result["maxpos"], np.array([2, 0]))
+
+
+def test_statistics_include_all_pixels_with_linear_coordinates(tmp_path):
+    path = str(tmp_path / "linear.im")
+    values = np.arange(40, dtype=np.float32).reshape(5, 4, 2)
+    image = tools.image()
+    assert image.fromarray(path, values, linear=True) and image.done()
+    assert image.open(path)
+    result = image.statistics()
+    assert result["npts"][0] == values.size
+    assert result["sum"][0] == values.sum()
+    np.testing.assert_array_equal(result["trc"], [4, 3, 1])
+    assert image.done()
+
+
+def test_statistics_independent_moments_and_flux():
+    image = tools.image()
+    values = np.arange(24, dtype=np.float64).reshape(4, 3, 2)
+    assert image.fromarray(pixels=values)
+    assert image.setbrightnessunit("K")
+    result = image.statistics(axes=[0, 1], robust=True)
+    expected_mean = values.mean(axis=(0, 1))
+    _assert_value(result["mean"], expected_mean)
+    _assert_value(result["median"], np.median(values, axis=(0, 1)))
+    _assert_value(result["npts"], np.array([12.0, 12.0]))
+    _assert_value(result["flux"], values.sum(axis=(0, 1)) * 3600.0)
+
+
+def test_statistics_flux_depends_on_which_axes_are_collapsed(casa):
+    values = np.arange(72, dtype=np.float64).reshape(4, 3, 2, 3)
+    rust, oracle = tools.image(), casa.image()
+    for image in rust, oracle:
+        assert image.fromarray(pixels=values)
+        assert image.setbrightnessunit("Jy/beam")
+        assert image.setrestoringbeam(major="60arcsec", minor="60arcsec", pa="0deg")
+    for axes in ([], [0], [0, 1], [0, 1, 2], [0, 1, 3], [3]):
+        _assert_value(rust.statistics(axes=axes), oracle.statistics(axes=axes))
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(algorithm="biweight"),
+        dict(algorithm="Biw", axes=[1], niter=3, robust=True),
+        dict(algorithm="hinges-fences", axes=[1], fence=1.0, robust=True),
+        dict(algorithm="fit-half", center="mean", lside=False, robust=True),
+        dict(algorithm="fit-half", center="median", lside=False, robust=True),
+        dict(algorithm="fit-half", center="zero", lside=True, robust=True),
+        dict(algorithm="chauvenet", zscore=1.4, maxiter=2, robust=True),
+    ],
+)
+def test_statistics_sample_algorithms(casa, kwargs):
+    values = np.array([[-25., 2., 3.], [4., 5., 7.], [9., 11., 100.]])
+    rust, oracle = tools.image(), casa.image()
+    for image in rust, oracle:
+        assert image.fromarray(pixels=values)
+    _assert_value(rust.statistics(**kwargs), oracle.statistics(**kwargs))
+
+
+def test_statistics_handles_empty_biweight_sample():
+    image = tools.image()
+    assert image.fromshape(shape=[4, 3])
+    with pytest.raises(RuntimeError, match="at least two points"):
+        image.statistics(algorithm="biweight", mask="F")
+
+
+@pytest.mark.parametrize("algorithm", ["classic", "hinges-fences", "fit-half", "chauvenet"])
+def test_statistics_retains_variance_on_large_double_baseline(casa, algorithm):
+    pixels = 1e12 + np.arange(6.0).reshape(3, 2)
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromshape(shape=[3, 2], type="d")
+        assert image.putchunk(pixels)
+        result = image.statistics(algorithm=algorithm)
+        _assert_value(result["npts"], np.array([6.0]))
+        _assert_value(result["sigma"], np.array([np.std(np.arange(6.0), ddof=1)]))
+
+
+@pytest.mark.parametrize("algorithm", ["classic", "hinges-fences"])
+def test_statistics_filters_nan_and_uses_float_thresholds_on_double_data(casa, algorithm):
+    rust, oracle = tools.image(), casa.image()
+    finite = np.arange(6.0).reshape(3, 2)
+    nan_pixels = finite.copy()
+    nan_pixels[0, 1] = np.nan
+    for image in rust, oracle:
+        assert image.fromshape(shape=[3, 2], type="d")
+        assert image.putchunk(nan_pixels)
+    kwargs = dict(algorithm=algorithm, fence=100.0)
+    result = rust.statistics(includepix=[0.0, 10.0], **kwargs)
+    _assert_value(result, oracle.statistics(includepix=[0.0, 10.0], **kwargs))
+    _assert_value(result["npts"], np.array([5.0]))
+    for image in rust, oracle:
+        assert image.putchunk(1 + finite * 1e-8)
+    limits = [1.000000009, 1.000000031]
+    for name, count in (("includepix", 1.0), ("excludepix", 5.0)):
+        args = {name: limits, **kwargs}
+        result = rust.statistics(**args)
+        _assert_value(result, oracle.statistics(**args))
+        _assert_value(result["npts"], np.array([count]))
+
+
+def test_statistics_strided_direction_flux_and_fit_half_tie(casa):
+    values = np.array([[0., 3., 2.], [3., 2., 3.]])
+    region = casa.regionmanager().box([0, 0], [1, 2], [1, 2])
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromarray(pixels=values)
+        assert image.setbrightnessunit("K")
+        _assert_value(image.statistics(region=region)["flux"], np.array([57600.0]))
+        _assert_value(image.statistics(algorithm="fit-half", lside=False)["maxpos"], np.array([1, 0]))
+
+
+@pytest.mark.parametrize("invalid_unit", ["K/beam", "W/beam"])
+def test_statistics_omits_flux_for_incompatible_beam_units(casa, invalid_unit):
+    for make in (tools.image, casa.image):
+        image = make()
+        assert image.fromarray(pixels=np.ones((3, 2)))
+        assert image.setrestoringbeam(major="60arcsec", minor="60arcsec", pa="0deg")
+        assert image.setbrightnessunit(invalid_unit)
+        assert "flux" not in image.statistics()
