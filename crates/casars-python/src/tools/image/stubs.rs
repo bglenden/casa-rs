@@ -101,22 +101,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, axis = None, factor = None, method = None, region = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', axis=0, factor=1, method='copy', region='', mask='', overwrite=False, stretch=False)")]
-    fn decimate(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        axis: Option<&Bound<'_, PyAny>>,
-        factor: Option<&Bound<'_, PyAny>>,
-        method: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("decimate")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None, mask = None, simple = None, threshold = None, ncontour = None, minrange = None, naxis = None, fit = None, maxrms = None, maxretry = None, maxiter = None, convcriteria = None, stretch = None), text_signature = "($self, region={}, mask='', simple=False, threshold=-1.0, ncontour=11, minrange=1, naxis=2, fit=True, maxrms=-1.0, maxretry=-1, maxiter=256, convcriteria=0.0001, stretch=False)")]
     fn decompose(
         &self,

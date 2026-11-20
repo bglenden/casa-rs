@@ -6,6 +6,7 @@
 mod bounding_box;
 pub(super) mod coords;
 mod crop;
+mod decimate;
 mod insert;
 mod noise;
 mod pixel_edit;
@@ -21,6 +22,7 @@ pub use replace_masked::{
 
 pub use bounding_box::ImageRegionBounds;
 pub use crop::{ImageCrop, ImageCropOptions};
+pub use decimate::{DecimationMethod, ImageDecimation, ImageDecimationOptions};
 pub use insert::ImageInsertion;
 pub use noise::ImageNoise;
 pub use pixel_edit::ImagePixelSelection;

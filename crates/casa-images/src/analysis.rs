@@ -31,8 +31,9 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::{
-    ImageCrop, ImageCropOptions, ImageInsertion, ImagePixelSelection, ImageRegionBounds,
-    MaskReplacementOptions, MaskReplacementOutcome, SubimageOptions, SubimagePlan, SubimageRegion,
+    DecimationMethod, ImageCrop, ImageCropOptions, ImageDecimation, ImageDecimationOptions,
+    ImageInsertion, ImagePixelSelection, ImageRegionBounds, MaskReplacementOptions,
+    MaskReplacementOutcome, SubimageOptions, SubimagePlan, SubimageRegion,
     ensure_outfile_does_not_alias_input, put_image_region, replace_masked_complex_pixels,
     replace_masked_real_pixels, validate_put_region_shapes,
 };
