@@ -14,7 +14,7 @@ use crate::image_expr_lel::broadcast_shapes;
 use crate::{AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage};
 
 use super::{
-    mask_expression, mask_parse_error, open_mask_image, operand_path, stretch_axes,
+    mask_expression, mask_parse_error, open_mask_image, resolve_named_operand, stretch_axes,
     validate_mask_name,
 };
 
@@ -29,7 +29,10 @@ struct MaskGeometry {
 
 impl MaskGeometry {
     fn open(name: &str) -> Result<Self, ImageError> {
-        let (path, mask) = operand_path(name)?;
+        let base = std::env::current_dir().map_err(|error| ImageError::Io(error.to_string()))?;
+        let operand = resolve_named_operand(&base, name.to_owned())?;
+        let path = operand.path.as_path();
+        let mask = operand.mask.as_deref();
         if path.is_file() {
             if mask.is_some() {
                 return Err(ImageError::CasaSelection(format!(

@@ -20,13 +20,14 @@ const BEAM: &str = "avgPB";
 const STAGE_PREFIX: &str = ".ep-cache-";
 const JOURNAL: &str = "pending-slot";
 
-pub(super) struct EpCache {
+pub(crate) struct EpCache {
     root: PathBuf,
 }
 
-pub(super) struct EpCacheProducts {
+pub(crate) struct EpCacheProducts {
     pub average_beam: ArrayD<f32>,
     pub convolution: ArrayD<Complex32>,
+    pub convolution_coordinates: CoordinateSystem,
     pub weights: ArrayD<Complex32>,
     pub support: usize,
     pub sampling: usize,
@@ -40,7 +41,7 @@ struct Slot {
 }
 
 impl EpCache {
-    pub(super) fn open(path: &Path) -> MsResult<Self> {
+    pub(crate) fn open(path: &Path) -> MsResult<Self> {
         if path.as_os_str().is_empty() {
             return Err(invalid(
                 "Got null string for disk cache dir. in ConvFuncDiskCache::initCache()",
@@ -105,6 +106,7 @@ impl EpCache {
             },
         )
         .map_err(invalid)?;
+        let convolution_coordinates = convolution.coordinates().clone();
         let convolution = read_kernel(&convolution)?;
         let weights = read_kernel(&weights)?;
         let beam = PagedImage::<f32>::open(self.root.join(BEAM)).map_err(invalid)?;
@@ -124,6 +126,7 @@ impl EpCache {
         Ok(Some(EpCacheProducts {
             average_beam,
             convolution,
+            convolution_coordinates,
             weights,
             support: slot.support,
             sampling: slot.sampling,

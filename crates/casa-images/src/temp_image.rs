@@ -35,7 +35,7 @@ use std::path::Path;
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_lattices::{
     Lattice, LatticeError, LatticeMut, TempLattice, TempStoragePolicy, TraversalCacheHint,
-    TraversalCacheScope,
+    TraversalCacheScope, TraversalCursorIter, TraversalSpec,
 };
 use casa_types::{ArrayD, RecordValue};
 use ndarray::IxDyn;
@@ -45,7 +45,7 @@ use crate::image::{
     ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface,
     PagedImage, assign_mask_slice, slice_mask_array, validate_mask_slice_write,
 };
-use crate::image_expr::ImageExprBuilder;
+use crate::image_expr::{ImageExprBuilder, ImageExprValue, ImageExpression};
 use crate::image_info::ImageInfo;
 use crate::subimage::{SubImage, SubImageMut};
 
@@ -61,6 +61,7 @@ use crate::subimage::{SubImage, SubImageMut};
 /// policy through [`TempStoragePolicy`].
 pub struct TempImage<T: ImagePixel> {
     lattice: TempLattice<T>,
+    expression: Option<ReadOnlyExpression<T>>,
     coords: CoordinateSystem,
     units: String,
     misc_info: RecordValue,
@@ -69,6 +70,11 @@ pub struct TempImage<T: ImagePixel> {
     masks: Vec<(String, ArrayD<bool>)>,
     default_mask: Option<String>,
     history: Vec<ImageHistoryRow>,
+}
+
+struct ReadOnlyExpression<T: ImagePixel> {
+    source: Box<dyn ImageInterface<T> + Send + Sync>,
+    has_mask: bool,
 }
 
 // ---- Constructors -----------------------------------------------------------
@@ -83,6 +89,7 @@ impl<T: ImagePixel> TempImage<T> {
         let lattice = TempLattice::new(shape, policy)?;
         Ok(Self {
             lattice,
+            expression: None,
             coords,
             units: String::new(),
             misc_info: RecordValue::default(),
@@ -94,9 +101,51 @@ impl<T: ImagePixel> TempImage<T> {
         })
     }
 
+    /// Attach an expression as a read-only pixel source with editable image metadata.
+    /// Reads evaluate the requested region of the expression on demand.
+    ///
+    /// # Errors
+    /// Returns an error if the expression has no lattice shape.
+    pub fn from_expression(expression: ImageExpression<T>) -> Result<Self, ImageError>
+    where
+        T: ImageExprValue,
+    {
+        let mut image = Self::new(
+            vec![1; expression.ndim()],
+            expression.coordinates().clone(),
+            TempStoragePolicy::Memory,
+        )?;
+        image.units = expression.units().to_owned();
+        image.misc_info = expression.misc_info();
+        image.image_info = expression.image_info()?;
+        image.image_info_record = expression.raw_image_info();
+        image.expression = Some(ReadOnlyExpression {
+            has_mask: expression.may_have_mask(),
+            source: Box::new(expression),
+        });
+        Ok(image)
+    }
+
+    fn pixel_source(&self) -> &dyn Lattice<T> {
+        match &self.expression {
+            Some(expression) => expression.source.as_ref(),
+            None => &self.lattice,
+        }
+    }
+
+    fn require_writable_pixels(&self) -> Result<(), LatticeError> {
+        if self.is_writable() {
+            Ok(())
+        } else {
+            Err(LatticeError::Table(
+                "ImageExpr::putSlice - is not possible as ImageExpr is not writable".into(),
+            ))
+        }
+    }
+
     /// Returns `true` if the pixel data is held entirely in memory.
     pub fn is_in_memory(&self) -> bool {
-        self.lattice.is_in_memory()
+        self.expression.is_none() && self.lattice.is_in_memory()
     }
 }
 
@@ -105,17 +154,17 @@ impl<T: ImagePixel> TempImage<T> {
 impl<T: ImagePixel> TempImage<T> {
     /// Returns the shape of the image.
     pub fn shape(&self) -> &[usize] {
-        self.lattice.shape()
+        self.pixel_source().shape()
     }
 
     /// Returns the number of axes.
     pub fn ndim(&self) -> usize {
-        self.lattice.ndim()
+        self.pixel_source().ndim()
     }
 
     /// Returns the total number of pixels.
     pub fn nelements(&self) -> usize {
-        self.lattice.nelements()
+        self.pixel_source().nelements()
     }
 
     /// Returns `false` — temporary images are never persistent.
@@ -128,14 +177,18 @@ impl<T: ImagePixel> TempImage<T> {
         self.lattice.is_paged()
     }
 
-    /// Returns `true` — temporary images are always writable.
+    /// Reports whether this image's pixels are writable.
     pub fn is_writable(&self) -> bool {
-        true
+        self.expression.is_none()
     }
 
     /// Returns the casacore-style class name.
     pub fn image_type_name(&self) -> &'static str {
-        "TempImage"
+        if self.expression.is_some() {
+            "ImageExpr"
+        } else {
+            "TempImage"
+        }
     }
 
     /// Returns `None` — temporary images have no on-disk path.
@@ -145,13 +198,13 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Reads the full pixel array.
     pub fn get(&self) -> Result<ArrayD<T>, ImageError> {
-        Ok(self.lattice.get()?)
+        Ok(self.pixel_source().get()?)
     }
 
     /// Reads a rectangular slice (unit stride).
     pub fn get_slice(&self, start: &[usize], shape: &[usize]) -> Result<ArrayD<T>, ImageError> {
         let stride = vec![1; self.ndim()];
-        Ok(self.lattice.get_slice(start, shape, &stride)?)
+        Ok(self.pixel_source().get_slice(start, shape, &stride)?)
     }
 
     /// Reads a rectangular slice using an explicit stride.
@@ -161,26 +214,29 @@ impl<T: ImagePixel> TempImage<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<T>, ImageError> {
-        Ok(self.lattice.get_slice(start, shape, stride)?)
+        Ok(self.pixel_source().get_slice(start, shape, stride)?)
     }
 
     /// Reads a single pixel.
     pub fn get_at(&self, pos: &[usize]) -> Result<T, ImageError> {
-        Ok(self.lattice.get_at(pos)?)
+        Ok(self.pixel_source().get_at(pos)?)
     }
 
     /// Writes a rectangular slice at the given origin.
     pub fn put_slice(&mut self, data: &ArrayD<T>, start: &[usize]) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
         Ok(self.lattice.put_slice(data, start)?)
     }
 
     /// Writes a single pixel.
     pub fn put_at(&mut self, value: T, pos: &[usize]) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
         Ok(self.lattice.put_at(value, pos)?)
     }
 
     /// Sets all pixels to the same value.
     pub fn set(&mut self, value: T) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
         Ok(self.lattice.set(value)?)
     }
 }
@@ -321,6 +377,7 @@ impl<T: ImagePixel> TempImage<T> {
 
     /// Replaces a named mask.
     pub fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
         if data.shape() != self.shape() {
             return Err(ImageError::ShapeMismatch {
                 expected: self.shape().to_vec(),
@@ -343,13 +400,14 @@ impl<T: ImagePixel> TempImage<T> {
     /// mask if this is the first write for that name.
     ///
     /// # Errors
-    /// Returns an error if the origin or block is outside the image shape.
+    /// Returns an error for read-only storage or a block outside the image shape.
     pub fn put_mask_slice(
         &mut self,
         name: &str,
         data: &ArrayD<bool>,
         start: &[usize],
     ) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
         if let Some((_, mask)) = self
             .masks
             .iter_mut()
@@ -514,8 +572,29 @@ impl<T: ImagePixel> TempImage<T> {
     pub fn save_as(&self, path: impl AsRef<Path>) -> Result<PagedImage<T>, ImageError> {
         let path = path.as_ref();
         let mut paged = PagedImage::create(self.shape().to_vec(), self.coords.clone(), path)?;
-        let data = self.get()?;
-        paged.put_slice(&data, &vec![0; self.ndim()])?;
+        if let Some(expression) = &self.expression {
+            let shape = self.shape().to_vec();
+            let tile = paged.tile_shape().to_vec();
+            let stride = vec![1; self.ndim()];
+            for cursor in TraversalCursorIter::new(shape, tile.clone(), TraversalSpec::chunks(tile))
+            {
+                let cursor = cursor?;
+                let data = self.get_slice(&cursor.position, &cursor.shape)?;
+                paged.put_slice(&data, &cursor.position)?;
+                if expression.has_mask {
+                    let mask = self
+                        .get_mask_slice(&cursor.position, &cursor.shape, &stride)?
+                        .unwrap_or_else(|| ArrayD::from_elem(IxDyn(&cursor.shape), true));
+                    paged.put_mask_slice("mask0", &mask, &cursor.position)?;
+                }
+            }
+            if expression.has_mask {
+                paged.set_default_mask("mask0")?;
+            }
+        } else {
+            let data = self.get()?;
+            paged.put_slice(&data, &vec![0; self.ndim()])?;
+        }
         paged.set_units(self.units.clone())?;
         if let Some(record) = &self.image_info_record {
             paged.set_image_info_record(record.clone())?;
@@ -603,7 +682,7 @@ impl<T: ImagePixel> TempImage<T> {
 
 impl<T: ImagePixel> Lattice<T> for TempImage<T> {
     fn shape(&self) -> &[usize] {
-        self.lattice.shape()
+        self.pixel_source().shape()
     }
 
     fn is_persistent(&self) -> bool {
@@ -615,11 +694,11 @@ impl<T: ImagePixel> Lattice<T> for TempImage<T> {
     }
 
     fn is_writable(&self) -> bool {
-        true
+        TempImage::is_writable(self)
     }
 
     fn get_at(&self, position: &[usize]) -> Result<T, LatticeError> {
-        self.lattice.get_at(position)
+        self.pixel_source().get_at(position)
     }
 
     fn get_slice(
@@ -628,22 +707,22 @@ impl<T: ImagePixel> Lattice<T> for TempImage<T> {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<ArrayD<T>, LatticeError> {
-        self.lattice.get_slice(start, shape, stride)
+        self.pixel_source().get_slice(start, shape, stride)
     }
 
     fn get(&self) -> Result<ArrayD<T>, LatticeError> {
-        self.lattice.get()
+        self.pixel_source().get()
     }
 
     fn nice_cursor_shape(&self) -> Vec<usize> {
-        self.lattice.nice_cursor_shape()
+        self.pixel_source().nice_cursor_shape()
     }
 
     fn enter_traversal_cache_scope<'a>(
         &'a self,
         hint: &TraversalCacheHint,
     ) -> Result<Option<Box<dyn TraversalCacheScope + 'a>>, LatticeError> {
-        self.lattice.enter_traversal_cache_scope(hint)
+        self.pixel_source().enter_traversal_cache_scope(hint)
     }
 }
 
@@ -688,14 +767,17 @@ impl<T: ImagePixel> LatticeMut<T> for TempImage<T> {
     }
 
     fn put_at(&mut self, value: T, position: &[usize]) -> Result<(), LatticeError> {
+        self.require_writable_pixels()?;
         self.lattice.put_at(value, position)
     }
 
     fn put_slice(&mut self, data: &ArrayD<T>, start: &[usize]) -> Result<(), LatticeError> {
+        self.require_writable_pixels()?;
         self.lattice.put_slice(data, start)
     }
 
     fn set(&mut self, value: T) -> Result<(), LatticeError> {
+        self.require_writable_pixels()?;
         self.lattice.set(value)
     }
 }
@@ -752,10 +834,36 @@ impl<T: ImagePixel> ImageInterface<T> for TempImage<T> {
     }
 
     fn default_mask(&self) -> Result<Option<ArrayD<bool>>, ImageError> {
+        if let Some(expression) = &self.expression {
+            return expression.source.default_mask();
+        }
         match TempImage::default_mask_name(self) {
             Some(name) => Ok(Some(TempImage::get_named_mask(self, &name)?)),
             None => Ok(None),
         }
+    }
+
+    fn has_pixel_mask(&self) -> bool {
+        self.expression
+            .as_ref()
+            .map_or(self.default_mask.is_some(), |expression| {
+                expression.has_mask
+            })
+    }
+
+    fn get_mask_slice(
+        &self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        if let Some(expression) = &self.expression {
+            return expression.source.get_mask_slice(start, shape, stride);
+        }
+        self.default_mask
+            .as_deref()
+            .map(|name| self.get_named_mask_slice(name, start, shape, stride))
+            .transpose()
     }
 }
 
@@ -786,6 +894,7 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
         data: &ArrayD<bool>,
         start: &[usize],
     ) -> Result<(), ImageError> {
+        self.require_writable_pixels()?;
         validate_mask_slice_write(self.shape(), data.shape(), start)?;
         let index = self
             .masks
@@ -825,7 +934,7 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
 impl<T: ImagePixel> std::fmt::Debug for TempImage<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TempImage")
-            .field("shape", &self.lattice.shape())
+            .field("shape", &self.shape())
             .field("is_in_memory", &self.is_in_memory())
             .field("pixel_type", &T::PRIMITIVE_TYPE)
             .finish()
@@ -969,6 +1078,12 @@ mod tests {
         img.put_mask("quality", &modified).unwrap();
         let read = img.get_named_mask("quality").unwrap();
         assert!(!read[[0, 0]]);
+        let slice = img
+            .get_named_mask_slice("quality", &[0, 0], &[2, 1], &[2, 1])
+            .unwrap();
+        assert_eq!(slice.shape(), &[2, 1]);
+        assert!(!slice[[0, 0]]);
+        assert!(slice[[1, 0]]);
 
         // Remove mask.
         img.remove_mask("quality").unwrap();
@@ -1052,6 +1167,33 @@ mod tests {
 
         // Verify original TempImage is still valid.
         assert_eq!(img.get_at(&[0, 0]).unwrap(), 2.5);
+    }
+
+    #[test]
+    fn expression_attachment_materializes_values_and_validity() {
+        let mut source =
+            TempImage::<f32>::new(vec![3, 2], cs(), TempStoragePolicy::Memory).unwrap();
+        source.set(4.0).unwrap();
+        let mut mask = ArrayD::from_elem(IxDyn(&[3, 2]), true);
+        mask[[0, 1]] = false;
+        source.put_mask("source_mask", &mask).unwrap();
+        source.set_default_mask("source_mask").unwrap();
+        let expression = ImageExprBuilder::from_image(&source)
+            .unwrap()
+            .negate()
+            .compile()
+            .unwrap();
+        let mut view = TempImage::from_expression(expression).unwrap();
+        assert_eq!(view.image_type_name(), "ImageExpr");
+        assert!(view.set(1.0).is_err());
+        assert_eq!(view.get_slice(&[1, 0], &[1, 2]).unwrap()[[0, 0]], -4.0);
+        view.set_units("K").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let image = view.save_as(dir.path().join("result.im")).unwrap();
+        assert!(image.get().unwrap().iter().all(|value| *value == -4.0));
+        assert_eq!(image.default_mask_name().as_deref(), Some("mask0"));
+        assert_eq!(image.get_mask().unwrap().unwrap(), mask);
+        assert_eq!(image.units(), "K");
     }
 
     #[test]

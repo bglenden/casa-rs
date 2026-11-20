@@ -2,15 +2,16 @@
 //! CASA's direction-reference template mode.
 
 use casa_coordinates::{Coordinate, CoordinateSystem, DirectionCoordinate, ProjectionType};
-use casa_types::ArrayD;
 use casa_types::measures::{
     MeasFrame,
     direction::{DirectionRef, MDirection},
 };
-use ndarray::{Axis, IxDyn, NdFloat, ShapeBuilder, Slice};
+use casa_types::{ArrayD, PrimitiveType};
+use ndarray::{Axis, IxDyn, ShapeBuilder, Slice};
 
 use super::{
-    RegridMethod, Regridded, TaskRegridOptions, apply_direction, invalid, validate_decimation,
+    RegridMethod, RegridPixel, Regridded, TaskRegridOptions, apply_direction, invalid,
+    validate_decimation,
 };
 use crate::{ImageError, ImageInterface, ImagePixel};
 
@@ -63,7 +64,7 @@ pub(super) fn convert_angles(
     Ok([lon, lat])
 }
 
-pub(crate) fn regrid_direction_frame<T: ImagePixel + NdFloat>(
+pub(crate) fn regrid_direction_frame<T: RegridPixel>(
     image: &impl ImageInterface<T>,
     reference: DirectionRef,
     method: RegridMethod,
@@ -73,6 +74,17 @@ pub(crate) fn regrid_direction_frame<T: ImagePixel + NdFloat>(
     let (index, axis) = super::super::direction_of(coordinates)
         .ok_or_else(|| invalid("image must have two direction axes"))?;
     let direction = super::super::direction(coordinates, index);
+    let original = direction.direction_ref();
+    if original != reference && direction.projection().projection_type() == ProjectionType::SFL {
+        return Err(invalid(
+            "a direction coordinate with SFL projection cannot be rotated",
+        ));
+    }
+    // CASA's changed-frame path always ends in image.crop, which accepts
+    // only Float pixels. An identity template just copies the typed image.
+    if original != reference && T::PRIMITIVE_TYPE != PrimitiveType::Float32 {
+        return Err(invalid("This method only supports Float valued images"));
+    }
     let shape = image.shape();
     let mut result = Regridded {
         data: image.get()?,
@@ -83,7 +95,6 @@ pub(crate) fn regrid_direction_frame<T: ImagePixel + NdFloat>(
         template_coordinates: false,
         scale: 1.0,
     };
-    let original = direction.direction_ref();
     if original == reference {
         return Ok((result, 0.0));
     }
@@ -91,11 +102,6 @@ pub(crate) fn regrid_direction_frame<T: ImagePixel + NdFloat>(
     let absolute = [increments[0].abs(), increments[1].abs()];
     if (absolute[0] - absolute[1]).abs() > 2e-10 * absolute[0].max(absolute[1]) {
         return Err(invalid("direction rotation requires square pixels"));
-    }
-    if direction.projection().projection_type() == ProjectionType::SFL {
-        return Err(invalid(
-            "a direction coordinate with SFL projection cannot be rotated",
-        ));
     }
     let frame = observation_frame(coordinates);
     let center = [(shape[axis] / 2) as f64, (shape[axis + 1] / 2) as f64];
@@ -120,7 +126,7 @@ pub(crate) fn regrid_direction_frame<T: ImagePixel + NdFloat>(
     )
     .with_world_units([&units[0], &units[1]])?;
     if pad > 0 {
-        result.data = pad_direction(&result.data, axis, pad, T::zero());
+        result.data = pad_direction(&result.data, axis, pad, T::default_value());
         result.mask = pad_direction(&result.mask, axis, pad, false);
     }
     validate_decimation(decimate, dimensions, &[true, true], false)?;
