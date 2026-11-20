@@ -21,6 +21,7 @@ pub(super) struct PlotPanels {
 pub(super) struct Panel {
     pub(super) label: String,
     pub(super) series: Vec<PlotSeries>,
+    pub(super) overlay: Vec<PlotSeries>,
 }
 
 #[derive(Clone, Copy)]
@@ -163,6 +164,7 @@ impl PlotPanels {
             vec![Panel {
                 label: String::new(),
                 series,
+                overlay: Vec::new(),
             }]
         };
         Ok(Self {
@@ -242,6 +244,7 @@ fn split(table: &CalibrationTable, axis: IterationAxis, series: Vec<PlotSeries>)
             let group: &mut Panel = groups.entry(key).or_insert_with(|| Panel {
                 label: axis.name(key, table, &point.coordinates),
                 series: empty_series(),
+                overlay: Vec::new(),
             });
             group.series[index].points.push(point);
         }
@@ -250,6 +253,7 @@ fn split(table: &CalibrationTable, axis: IterationAxis, series: Vec<PlotSeries>)
         vec![Panel {
             label: String::new(),
             series: empty_series(),
+            overlay: Vec::new(),
         }]
     } else {
         groups.into_values().collect()

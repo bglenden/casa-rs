@@ -17,6 +17,7 @@ performance-tests = ["casa-test-support/performance-tests"]
 msv4 = ["dep:zarrs", "dep:zarrs_filesystem", "dep:bytemuck", "dep:unsafe_cell_slice"]
 
 [dependencies]
+casa-atmosphere = { path = "../casa-atmosphere" }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-logging = { path = "../casa-logging" }
 casa-measures-data = { path = "../casa-measures-data" }
