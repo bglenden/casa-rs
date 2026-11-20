@@ -15,7 +15,7 @@ use crate::{GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageType};
 mod beams;
 mod history;
 mod tool_import;
-pub(crate) use history::{history_entries, read_cards};
+pub(crate) use history::{history_rows, read_cards};
 pub use tool_import::FitsToolImport;
 
 /// A FITS image read into memory ([`read_fits_image`]).

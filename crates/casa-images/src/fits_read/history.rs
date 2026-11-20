@@ -9,12 +9,9 @@ use crate::{
     image::{ImageHistoryEntry, ImageHistoryRow},
 };
 
-pub(crate) fn history_entries(path: &Path) -> Result<Vec<ImageHistoryEntry>, ImageError> {
+pub(crate) fn history_rows(path: &Path) -> Result<Vec<ImageHistoryRow>, ImageError> {
     let cards = read_cards(path)?;
-    Ok(history_from_cards(&cards, false)
-        .into_iter()
-        .map(|row| row.entry)
-        .collect())
+    Ok(history_from_cards(&cards, false))
 }
 
 pub(super) fn history_from_cards(

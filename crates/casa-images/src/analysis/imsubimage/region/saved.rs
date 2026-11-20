@@ -73,7 +73,11 @@ pub(super) fn parse_saved_region(
             })
         }
         "LCSlicer" | "LCBox" => {
-            let (blc, trc) = decode_lc_box_or_slicer(region_name, rec, full_shape)?;
+            let (blc, trc) = if class_name == "LCSlicer" {
+                decode_lc_slicer(region_name, rec, target_coords, full_shape)?
+            } else {
+                decode_lc_box(region_name, rec, full_shape)?
+            };
             let shapes = if full_shape.len() >= 2 {
                 vec![
                     SpatialShape::Box([blc[plane[0]], blc[plane[1]], trc[plane[0]], trc[plane[1]]])
@@ -120,7 +124,117 @@ pub(super) fn parse_saved_region(
     }
 }
 
-fn decode_lc_box_or_slicer(
+fn decode_lc_slicer(
+    name: &str,
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+    full_shape: &[usize],
+) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
+    let numeric = |field| {
+        read_numeric_vec(rec.get(field)).ok_or_else(|| {
+            ImageError::InvalidMetadata(format!("saved region '{name}' missing numeric {field}"))
+        })
+    };
+    let one_rel = matches!(
+        rec.get("oneRel"),
+        Some(Value::Scalar(ScalarValue::Bool(true)))
+    );
+    let refpix = (0..coords.n_coordinates())
+        .flat_map(|i| coords.coordinate(i).reference_pixel())
+        .collect::<Vec<_>>();
+    let [lower, upper, step] = [numeric("blc")?, numeric("trc")?, numeric("inc")?];
+    let ndim = lower.len().max(upper.len()).max(step.len());
+    if ndim > full_shape.len() {
+        return Err(ImageError::ShapeMismatch {
+            expected: vec![full_shape.len()],
+            got: vec![ndim],
+        });
+    }
+    let resolve = |values: &[f64], fraction_key, mode_key, low| {
+        let fractions = read_bool_vec(rec.get(fraction_key), values.len());
+        let modes = numeric(mode_key)?;
+        if modes.len() != values.len() {
+            return Err(ImageError::InvalidMetadata(format!(
+                "saved region '{name}' has incorrect {mode_key} length"
+            )));
+        }
+        full_shape
+            .iter()
+            .enumerate()
+            .map(|(axis, &len)| {
+                let default = if low { 0 } else { len - 1 } as i64;
+                let Some(&stored) = values.get(axis) else {
+                    return Ok(default);
+                };
+                if is_mimic_source(stored) {
+                    return Ok(default);
+                }
+                let fractional = fractions[axis];
+                let mut pixel = stored as f32;
+                if fractional {
+                    pixel = pixel * len as f32 - if low { 0.0 } else { 1.0 };
+                }
+                pixel += match modes[axis] {
+                    1.0 if one_rel && !fractional => -1.0,
+                    1.0 => 0.0,
+                    2.0 => *refpix.get(axis).ok_or_else(|| {
+                        ImageError::InvalidMetadata(format!(
+                            "saved region '{name}' has no reference pixel on axis {axis}"
+                        ))
+                    })? as f32,
+                    3.0 => len as f32 / 2.0,
+                    _ => {
+                        return Err(ImageError::InvalidMetadata(format!(
+                            "saved region '{name}' has invalid {mode_key} on axis {axis}"
+                        )));
+                    }
+                };
+                if !pixel.is_finite() {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "saved region '{name}' has non-finite bounds on axis {axis}"
+                    )));
+                }
+                let pixel = (pixel + 0.5) as i64;
+                Ok(if low {
+                    pixel.max(0)
+                } else {
+                    pixel.min(default)
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let blc = resolve(&lower, "fracblc", "arblc", true)?;
+    let trc = resolve(&upper, "fractrc", "artrc", false)?;
+    if blc.iter().zip(&trc).any(|(lo, hi)| lo > hi) {
+        return Err(ImageError::CasaSelection(format!(
+            "saved region '{name}' lower bounds {blc:?} exceed upper bounds {trc:?}"
+        )));
+    }
+    let fractional_step = read_bool_vec(rec.get("fracinc"), step.len());
+    for (axis, (&stored, fractional)) in step.iter().zip(fractional_step).enumerate() {
+        let stride = if is_mimic_source(stored) {
+            1.0
+        } else if fractional {
+            stored as f32 * full_shape[axis] as f32
+        } else {
+            stored as f32
+        };
+        if !(1.0..2.0).contains(&(stride + 0.5)) {
+            return Err(ImageError::InvalidMetadata(format!(
+                "saved region '{name}' has non-unit stride {stride} on axis {axis}"
+            )));
+        }
+    }
+    let as_indices = |values: Vec<i64>| values.into_iter().map(|value| value as usize).collect();
+    Ok((as_indices(blc), as_indices(trc)))
+}
+
+fn is_mimic_source(value: f64) -> bool {
+    // The integer sentinel is imprecise in the record's Float32 representation.
+    value < -2_147_483_646.0 + 10.0
+}
+
+fn decode_lc_box(
     name: &str,
     rec: &RecordValue,
     full_shape: &[usize],

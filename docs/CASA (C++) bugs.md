@@ -7159,6 +7159,19 @@ The check is in casacore's `AxesSpecifier::apply`. casa-rs returns an
 out-of-range error before creating or replacing the output image. With
 `dropdeg=False`, CASA and casa-rs ignore `keepaxes`.
 
+The same abort occurs with the image tool's `ia.subimage(dropdeg=True,
+keepaxes=[5])` on a three-axis image. The shared casa-rs selection returns a
+Python `RuntimeError` and leaves any existing output intact.
+
+## An image subimage can replace its source history table
+
+CASA 6.7.6.14 can replace the source image's `logtable` when that path is
+passed to `ia.subimage(overwrite=True)`. The source history then fails to
+read because the table lacks the `TIME` column. If the history table is
+already open, CASA reports that it is in the table cache. Casa-rs rejects
+overwriting existing entries inside the source image before staging the
+cutout.
+
 ## imsubimage permutes coordinate labels after dropping transposed axes
 
 In CASA 6.7.6.14, take a cube in RA, Dec, Stokes, frequency order and

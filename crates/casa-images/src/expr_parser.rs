@@ -1673,7 +1673,7 @@ where
     result.into_mask(0)
 }
 
-pub(crate) fn parse_mixed_mask_expr<'a, T, R>(
+pub(crate) fn parse_subimage_mask_expr<'a, T, R>(
     expression: &str,
     real: &R,
     complex: &dyn ImageResolver<'a, Complex64>,
@@ -1686,13 +1686,16 @@ where
     parser.complex_resolver = Some(complex);
     let result = parser.parse_expression()?;
     parser.expect(&Token::Eof)?;
-    result
-        .into_mask(0)?
-        .compile()
-        .map_err(|error| ExprParseError {
-            message: error.to_string(),
-            position: 0,
-        })
+    let mask = match result {
+        ExprNode::Numeric(image) if !image.shape().is_empty() => {
+            image.compare_scalar(T::from_f64(0.5), ImageExprCompareOp::GreaterEqual)
+        }
+        other => other.into_mask(0)?,
+    };
+    mask.compile().map_err(|error| ExprParseError {
+        message: error.to_string(),
+        position: 0,
+    })
 }
 
 /// Parses and compiles a LEL mask expression into the canonical owned

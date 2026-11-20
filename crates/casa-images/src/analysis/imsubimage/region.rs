@@ -18,6 +18,8 @@ use crate::analysis::{
 };
 use crate::{ImageError, ImageInterface, ImagePixel};
 
+use super::SubimageRegion;
+
 mod saved;
 
 use saved::{load_saved_region, parse_saved_region};
@@ -98,14 +100,13 @@ impl SubimageSelection {
     pub(super) fn resolve<T: ImagePixel>(
         image: &dyn ImageInterface<T>,
         box_arg: Option<&str>,
-        region_arg: Option<&str>,
+        region_arg: Option<SubimageRegion<'_>>,
         chans_arg: Option<&str>,
         stokes_arg: Option<&str>,
     ) -> Result<Self, ImageError> {
         let ndim = image.ndim();
         let full_shape = image.shape().to_vec();
         let box_arg = box_arg.map(str::trim).filter(|s| !s.is_empty());
-        let region_arg = region_arg.map(str::trim).filter(|s| !s.is_empty());
         let plane = if box_arg.is_some() || region_arg.is_some() {
             direction_plane_axes(image)?
         } else {
@@ -125,8 +126,15 @@ impl SubimageSelection {
             }
         }
 
-        if let Some(reg_text) = region_arg {
-            let parsed = parse_region_argument(image, reg_text, &full_shape, plane)?;
+        if let Some(region) = region_arg {
+            let parsed = match region {
+                SubimageRegion::Text(text) => {
+                    parse_region_argument(image, text, &full_shape, plane)?
+                }
+                SubimageRegion::Record(record) => {
+                    parse_saved_region("region", record, image.coordinates(), &full_shape, plane)?
+                }
+            };
             if parsed.saved_bounds.is_some()
                 && (box_arg.is_some()
                     || [chans_arg, stokes_arg]
