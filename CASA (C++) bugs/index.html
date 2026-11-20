@@ -1638,6 +1638,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#legacy-mosaicft-can-crash-with-nonzero-feed-beam-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy MosaicFT can crash with nonzero FEED beam offsets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-simulators-mosaic-machine-is-not-tcleans" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4522,6 +4533,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#time-averaging-lag_data-and-mixed-float_data-loses-visibility-information" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Time averaging LAG_DATA and mixed FLOAT_DATA loses visibility information
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#channel-width-argument-variants-can-crash-both-measurementset-tasks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6373,6 +6395,19 @@ test retains the raw joint CASA outputs and checks that they still expose
 the defect. Its independent reference for these two cases is the sum of
 the separate CASA predictions, with the usual 0.001 normalized RMS limit;
 the limit is not relaxed to admit the defective joint output.</p>
+<h2 id="legacy-mosaicft-can-crash-with-nonzero-feed-beam-offsets">Legacy MosaicFT can crash with nonzero FEED beam offsets<a class="headerlink" href="#legacy-mosaicft-can-crash-with-nonzero-feed-beam-offsets" title="Permanent link">&para;</a></h2>
+<p>On CASA 6.7.6.14, a two-field heterogeneous ALMA MeasurementSet with
+nonzero receptor-zero <code>FEED.BEAM_OFFSET</code> caused the public legacy
+<code>imager.ft</code> call to exit with signal 11. The fixture has an ALT-AZ mount,
+explicit POINTING rows and the <code>mosaic</code> Fourier machine. casa-rs applies
+the first antenna's rotated feed offset to the buffer pointing and
+predicts the scratch and virtual models normally.</p>
+<p>The paired control calculates the rotation from the pinned CASA measures
+and writes the shifted directions into POINTING with zero feed offsets.
+The native scratch and virtual predictions matched this CASA control
+within 1.84e-6 normalized RMS. The fixture is in
+<code>tools/casa-compat/imager_mosaic_oracle.py</code>.
+<a href="https://github.com/bglenden/casa-rs/issues/1520">Calibration model outcome</a></p>
 <h2 id="the-simulators-mosaic-machine-is-not-tcleans">The simulator's mosaic machine is not tclean's<a class="headerlink" href="#the-simulators-mosaic-machine-is-not-tcleans" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
@@ -11335,6 +11370,22 @@ rejected call preserves the restoring beam and history. See
 pixel maps are <code>[0, -2]</code>. casa-rs raises <code>RuntimeError</code> before applying
 either name. Passing the one visible axis name without a coordinate type
 renames that axis and preserves the stored removed-axis name (#1626).</p>
+<h2 id="time-averaging-lag_data-and-mixed-float_data-loses-visibility-information">Time averaging LAG_DATA and mixed FLOAT_DATA loses visibility information<a class="headerlink" href="#time-averaging-lag_data-and-mixed-float_data-loses-visibility-information" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14 leaves LAG_DATA undefined while time averaging, and a LAG_DATA-only
+product can also have undefined FLAG cells and zero spectral weights. The
+native average retains the lag axis. It averages defined lag values using
+scalar weights, preferring rows with an unflagged frequency sample for the
+same correlation. It computes the frequency flags and statistics from the
+input frequency cells.</p>
+<p>With <code>datacolumn="all"</code> on a MeasurementSet containing both FLOAT_DATA and
+complex visibilities, <code>VbAvg::accumulateElementForCubes</code> can accumulate
+calibrated and single-dish weights into the same buffer. The resulting
+denominators attenuate CORRECTED_DATA, MODEL_DATA, and FLOAT_DATA. The same
+layout can substitute FLOAT_DATA for complex DATA. Native averaging uses
+the calibrated weights for corrected and model samples and the observed
+variance for DATA and FLOAT_DATA. The oracle verifies the independent lanes
+against CASA runs on the separate layouts and against an analytic lag sum.
+<a href="https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055">Owner decision</a></p>
 <h2 id="channel-width-argument-variants-can-crash-both-measurementset-tasks">Channel-width argument variants can crash both MeasurementSet tasks<a class="headerlink" href="#channel-width-argument-variants-can-crash-both-measurementset-tasks" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 <code>split</code> and <code>mstransform</code> leave a partial MeasurementSet after
 crashing on a zero-dimensional NumPy integer array or an active width list

@@ -38,8 +38,8 @@
 <a href=#38 id=38 data-nosnippet>38</a>        }
 <a href=#39 id=39 data-nosnippet>39</a>        previous.gridder = <span class="kw">match </span>machine.as_str() {
 <a href=#40 id=40 data-nosnippet>40</a>            <span class="string">"wproject" </span>=&gt; ImagerGridder::w_project(<span class="self">self</span>.planes),
-<a href=#41 id=41 data-nosnippet>41</a>            <span class="string">"mosaic" </span>| <span class="string">"pbwproject" </span>| <span class="string">"pbmosaic" </span>| <span class="string">"awproject" </span>| <span class="string">"mawproject" </span>| <span class="string">"sd" </span>| <span class="string">"both"
-<a href=#42 id=42 data-nosnippet>42</a>            </span>| <span class="string">"nift" </span>=&gt; {
+<a href=#41 id=41 data-nosnippet>41</a>            <span class="string">"mosaic" </span>=&gt; ImagerGridder::Mosaic,
+<a href=#42 id=42 data-nosnippet>42</a>            <span class="string">"pbwproject" </span>| <span class="string">"pbmosaic" </span>| <span class="string">"awproject" </span>| <span class="string">"mawproject" </span>| <span class="string">"sd" </span>| <span class="string">"both" </span>| <span class="string">"nift" </span>=&gt; {
 <a href=#43 id=43 data-nosnippet>43</a>                <span class="kw">return </span>not_yet_implemented_in(
 <a href=#44 id=44 data-nosnippet>44</a>                    <span class="string">"imager"</span>,
 <a href=#45 id=45 data-nosnippet>45</a>                    <span class="string">"setoptions for this Fourier machine"</span>,

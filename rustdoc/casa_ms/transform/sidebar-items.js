@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["MsTransformError","TransformDataColumn"],"fn":["mstransform","mstransform_task"],"struct":["MsTransformReport","MsTransformRequest","MsTransformTaskOptions"]};
+window.SIDEBAR_ITEMS = {"enum":["MsTransformError","TransformDataColumn"],"fn":["mstransform","mstransform_task"],"struct":["MsTransformReport","MsTransformRequest","MsTransformTaskOptions","TimeAverageOptions"]};

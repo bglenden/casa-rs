@@ -1748,7 +1748,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 811</li>
+<li>Concepts: 812</li>
 <li>Surfaces: 45 (45 task, 0 session)</li>
 <li>Surface bindings: 1089</li>
 </ul>
@@ -5333,7 +5333,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><code>timespan</code></td>
 <td><code>mstransform.timespan@r1</code></td>
-<td><code>string</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Time</td>
 <td>Let time averages span 'scan', 'state' or both.</td>
@@ -5627,11 +5627,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>combine</code></td>
-<td><code>parameter.combine@r1</code></td>
-<td><code>string</code></td>
+<td><code>parameter.combine@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Averaging</td>
-<td>Axes to combine.</td>
+<td>Let time averages span scan, field or state boundaries.</td>
 </tr>
 <tr>
 <td><code>msselect</code></td>
@@ -8392,7 +8392,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><code>quackinterval</code></td>
 <td><code>parameter.quackinterval@r1</code></td>
-<td><code>float</code></td>
+<td><code>variant</code></td>
 <td><code>1.0</code>; optional</td>
 <td>Quack</td>
 <td>Quack interval in seconds.</td>
@@ -8400,7 +8400,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><code>quackmode</code></td>
 <td><code>parameter.quackmode@r2</code></td>
-<td><code>choice (4 values)</code></td>
+<td><code>variant</code></td>
 <td><code>"beg"</code>; optional</td>
 <td>Quack</td>
 <td>Which part of each scan quack flags, as CASA names it: 'beg' its first quackinterval, 'endb' its last, 'end' all but its last, 'tail' all but its first.</td>
@@ -8408,7 +8408,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><code>quackincrement</code></td>
 <td><code>flagdata.quackincrement@r1</code></td>
-<td><code>bool</code></td>
+<td><code>variant</code></td>
 <td><code>false</code>; optional</td>
 <td>Quack</td>
 <td>Quack successive intervals, taking existing flags into account.</td>

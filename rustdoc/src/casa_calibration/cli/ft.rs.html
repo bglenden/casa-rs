@@ -175,164 +175,165 @@
 <a href=#175 id=175 data-nosnippet>175</a>        <span class="kw-2">&amp;</span>entries,
 <a href=#176 id=176 data-nosnippet>176</a>        request.incremental,
 <a href=#177 id=177 data-nosnippet>177</a>        <span class="bool-val">true</span>,
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw-2">&amp;mut </span>ms.lock,
-<a href=#179 id=179 data-nosnippet>179</a>    )
-<a href=#180 id=180 data-nosnippet>180</a>    .map_err(execution)
-<a href=#181 id=181 data-nosnippet>181</a>}
-<a href=#182 id=182 data-nosnippet>182</a>
-<a href=#183 id=183 data-nosnippet>183</a><span class="kw">fn </span>write_partition_scratch(
-<a href=#184 id=184 data-nosnippet>184</a>    task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#185 id=185 data-nosnippet>185</a>    parts: <span class="kw-2">&amp;mut </span>[OpenedMs],
-<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw-2">mut </span>selected: ResolvedMsSelection,
-<a href=#187 id=187 data-nosnippet>187</a>    request: <span class="kw-2">&amp;</span>ModelRequest,
-<a href=#188 id=188 data-nosnippet>188</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span>rows = std::mem::take(<span class="kw-2">&amp;mut </span>selected.selected_rows);
-<a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = rows.into_iter().peekable();
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span><span class="kw-2">mut </span>start = <span class="number">0</span>;
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">for </span>part <span class="kw">in </span>parts {
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">let </span>end = start + part.measurement_set.main_table().row_count();
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(row) = rows.next_if(|row| row.row_index &lt; end) {
-<a href=#195 id=195 data-nosnippet>195</a>            selected
-<a href=#196 id=196 data-nosnippet>196</a>                .selected_rows
-<a href=#197 id=197 data-nosnippet>197</a>                .push(casa_ms::ResolvedMsSelectionRow {
-<a href=#198 id=198 data-nosnippet>198</a>                    row_index: row.row_index - start,
-<a href=#199 id=199 data-nosnippet>199</a>                    ..row
-<a href=#200 id=200 data-nosnippet>200</a>                });
-<a href=#201 id=201 data-nosnippet>201</a>        }
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">if </span>!selected.selected_rows.is_empty() {
-<a href=#203 id=203 data-nosnippet>203</a>            <span class="kw">let </span>models = read_models(task, <span class="kw-2">&amp;</span>part.measurement_set, <span class="kw-2">&amp;</span>selected, request)<span class="question-mark">?</span>;
-<a href=#204 id=204 data-nosnippet>204</a>            write_scratch(part, <span class="kw-2">&amp;</span>selected, request, models)<span class="question-mark">?</span>;
-<a href=#205 id=205 data-nosnippet>205</a>            selected.selected_rows.clear();
-<a href=#206 id=206 data-nosnippet>206</a>        }
-<a href=#207 id=207 data-nosnippet>207</a>        start = end;
-<a href=#208 id=208 data-nosnippet>208</a>    }
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="kw">if </span>rows.next().is_some() {
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::execution(
-<a href=#211 id=211 data-nosnippet>211</a>            <span class="string">"selected Multi-MS row is outside its partitions"</span>,
-<a href=#212 id=212 data-nosnippet>212</a>        ));
-<a href=#213 id=213 data-nosnippet>213</a>    }
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="prelude-val">Ok</span>(())
-<a href=#215 id=215 data-nosnippet>215</a>}
-<a href=#216 id=216 data-nosnippet>216</a>
-<a href=#217 id=217 data-nosnippet>217</a><span class="kw">fn </span>write_virtual(
-<a href=#218 id=218 data-nosnippet>218</a>    root: <span class="kw-2">&amp;mut </span>OpenedMs,
-<a href=#219 id=219 data-nosnippet>219</a>    parts: <span class="kw-2">&amp;mut </span>[OpenedMs],
-<a href=#220 id=220 data-nosnippet>220</a>    request: <span class="kw-2">&amp;</span>ModelRequest,
-<a href=#221 id=221 data-nosnippet>221</a>    (entries, images): Models,
-<a href=#222 id=222 data-nosnippet>222</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
-<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">let </span>tables = std::iter::once(<span class="kw-2">&amp;</span>root.measurement_set)
-<a href=#224 id=224 data-nosnippet>224</a>        .chain(parts.iter().map(|part| <span class="kw-2">&amp;</span>part.measurement_set));
-<a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">let </span><span class="kw-2">mut </span>publication = VirtualFtPublication::new(
-<a href=#226 id=226 data-nosnippet>226</a>        tables,
-<a href=#227 id=227 data-nosnippet>227</a>        entries,
-<a href=#228 id=228 data-nosnippet>228</a>        images,
-<a href=#229 id=229 data-nosnippet>229</a>        request.incremental,
-<a href=#230 id=230 data-nosnippet>230</a>        !parts.is_empty(),
-<a href=#231 id=231 data-nosnippet>231</a>    )
-<a href=#232 id=232 data-nosnippet>232</a>    .map_err(execution)<span class="question-mark">?</span>;
-<a href=#233 id=233 data-nosnippet>233</a>    publication
-<a href=#234 id=234 data-nosnippet>234</a>        .publish(
-<a href=#235 id=235 data-nosnippet>235</a>            std::iter::once(root)
-<a href=#236 id=236 data-nosnippet>236</a>                .chain(parts)
-<a href=#237 id=237 data-nosnippet>237</a>                .map(|opened| (<span class="kw-2">&amp;mut </span>opened.measurement_set, <span class="kw-2">&amp;mut </span>opened.lock)),
-<a href=#238 id=238 data-nosnippet>238</a>        )
-<a href=#239 id=239 data-nosnippet>239</a>        .map_err(execution)
-<a href=#240 id=240 data-nosnippet>240</a>}
-<a href=#241 id=241 data-nosnippet>241</a>
-<a href=#242 id=242 data-nosnippet>242</a><span class="kw">fn </span>image_models(
-<a href=#243 id=243 data-nosnippet>243</a>    task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#244 id=244 data-nosnippet>244</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#245 id=245 data-nosnippet>245</a>    selected: <span class="kw-2">&amp;</span>ResolvedMsSelection,
-<a href=#246 id=246 data-nosnippet>246</a>    request: <span class="kw-2">&amp;</span>ModelRequest,
-<a href=#247 id=247 data-nosnippet>247</a>    no_components: bool,
-<a href=#248 id=248 data-nosnippet>248</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ImageModel&gt;, TaskFailure&gt; {
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">let </span>models = <span class="kw-2">&amp;</span>request.images;
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">let </span>terms = request.terms;
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">let </span>zero = request.scratch &amp;&amp; !request.incremental &amp;&amp; no_components;
-<a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">let </span>reference = <span class="kw">if </span>terms &gt; <span class="number">1 </span>{
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>quantity = task.text(<span class="string">"reffreq"</span>)<span class="question-mark">?</span>.unwrap_or_default();
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">let </span>explicit = <span class="kw">if </span>quantity.is_empty() {
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="number">0.0
-<a href=#256 id=256 data-nosnippet>256</a>        </span>} <span class="kw">else </span>{
-<a href=#257 id=257 data-nosnippet>257</a>            quantity
-<a href=#258 id=258 data-nosnippet>258</a>                .parse::&lt;Quantity&gt;()
-<a href=#259 id=259 data-nosnippet>259</a>                .map_err(|<span class="kw">_</span>| {
-<a href=#260 id=260 data-nosnippet>260</a>                    TaskFailure::execution(<span class="macro">format!</span>(
-<a href=#261 id=261 data-nosnippet>261</a>                        <span class="string">"In conversion of reffreq={quantity:?} to a numerical value"
-<a href=#262 id=262 data-nosnippet>262</a>                    </span>))
-<a href=#263 id=263 data-nosnippet>263</a>                    .at(<span class="string">"reffreq"</span>)
-<a href=#264 id=264 data-nosnippet>264</a>                })<span class="question-mark">?
-<a href=#265 id=265 data-nosnippet>265</a>                </span>.get_si_value()
-<a href=#266 id=266 data-nosnippet>266</a>        };
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="prelude-val">Some</span>(<span class="kw">if </span>explicit == <span class="number">0.0 </span>{
-<a href=#268 id=268 data-nosnippet>268</a>            reference_frequency(<span class="kw-2">&amp;</span>task.workspace().join(<span class="kw-2">&amp;</span>models[<span class="number">0</span>])).map_err(execution)<span class="question-mark">?
-<a href=#269 id=269 data-nosnippet>269</a>        </span>} <span class="kw">else </span>{
-<a href=#270 id=270 data-nosnippet>270</a>            explicit
-<a href=#271 id=271 data-nosnippet>271</a>        })
-<a href=#272 id=272 data-nosnippet>272</a>    } <span class="kw">else </span>{
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="prelude-val">None
-<a href=#274 id=274 data-nosnippet>274</a>    </span>};
-<a href=#275 id=275 data-nosnippet>275</a>    <span class="kw">let </span><span class="kw-2">mut </span>images = Vec::new();
-<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">for </span>(index, path) <span class="kw">in </span>models
-<a href=#277 id=277 data-nosnippet>277</a>        .iter()
-<a href=#278 id=278 data-nosnippet>278</a>        .enumerate()
-<a href=#279 id=279 data-nosnippet>279</a>        .filter(|(<span class="kw">_</span>, path)| !path.is_empty())
-<a href=#280 id=280 data-nosnippet>280</a>    {
-<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span>taylor = reference.map(|reference_hz| TaylorTerm {
-<a href=#282 id=282 data-nosnippet>282</a>            count: terms <span class="kw">as </span>i32,
-<a href=#283 id=283 data-nosnippet>283</a>            index: index <span class="kw">as </span>i32,
-<a href=#284 id=284 data-nosnippet>284</a>            reference_hz,
-<a href=#285 id=285 data-nosnippet>285</a>        });
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(model) = prepare_image(
-<a href=#287 id=287 data-nosnippet>287</a>            ms,
-<a href=#288 id=288 data-nosnippet>288</a>            selected,
-<a href=#289 id=289 data-nosnippet>289</a>            <span class="kw-2">&amp;</span>task.workspace().join(path),
-<a href=#290 id=290 data-nosnippet>290</a>            taylor,
-<a href=#291 id=291 data-nosnippet>291</a>            zero &amp;&amp; index == <span class="number">0</span>,
-<a href=#292 id=292 data-nosnippet>292</a>            request.scratch,
-<a href=#293 id=293 data-nosnippet>293</a>        )
-<a href=#294 id=294 data-nosnippet>294</a>        .map_err(execution)<span class="question-mark">?
-<a href=#295 id=295 data-nosnippet>295</a>        </span>{
-<a href=#296 id=296 data-nosnippet>296</a>            images.push(model);
-<a href=#297 id=297 data-nosnippet>297</a>        }
-<a href=#298 id=298 data-nosnippet>298</a>    }
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="prelude-val">Ok</span>(images)
-<a href=#300 id=300 data-nosnippet>300</a>}
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a><span class="kw">fn </span>selection(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;MsSelection, TaskFailure&gt; {
-<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">let </span>text = |name| {
-<a href=#304 id=304 data-nosnippet>304</a>        task.text(name)
-<a href=#305 id=305 data-nosnippet>305</a>            .map(|value| value.filter(|value| !value.is_empty()))
-<a href=#306 id=306 data-nosnippet>306</a>    };
-<a href=#307 id=307 data-nosnippet>307</a>    <span class="prelude-val">Ok</span>(MsSelection {
-<a href=#308 id=308 data-nosnippet>308</a>        field: text(<span class="string">"field"</span>)<span class="question-mark">?</span>,
-<a href=#309 id=309 data-nosnippet>309</a>        spw: text(<span class="string">"spw"</span>)<span class="question-mark">?</span>,
-<a href=#310 id=310 data-nosnippet>310</a>        timerange: text(<span class="string">"timerange"</span>)<span class="question-mark">?</span>,
-<a href=#311 id=311 data-nosnippet>311</a>        uvrange: text(<span class="string">"uvrange"</span>)<span class="question-mark">?</span>,
-<a href=#312 id=312 data-nosnippet>312</a>        antenna: text(<span class="string">"antenna"</span>)<span class="question-mark">?</span>,
-<a href=#313 id=313 data-nosnippet>313</a>        scan: text(<span class="string">"scan"</span>)<span class="question-mark">?</span>,
-<a href=#314 id=314 data-nosnippet>314</a>        observation: text(<span class="string">"observation"</span>)<span class="question-mark">?</span>,
-<a href=#315 id=315 data-nosnippet>315</a>        intent: text(<span class="string">"intent"</span>)<span class="question-mark">?</span>,
-<a href=#316 id=316 data-nosnippet>316</a>        ..MsSelection::default()
-<a href=#317 id=317 data-nosnippet>317</a>    })
-<a href=#318 id=318 data-nosnippet>318</a>}
-<a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a><span class="kw">fn </span>validate_terms(terms: i64, images: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
-<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">if </span>terms &lt; <span class="number">1 </span>{
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(
-<a href=#323 id=323 data-nosnippet>323</a>            TaskFailure::validation(<span class="string">"nterms must be greater than or equal to 1"</span>).at(<span class="string">"nterms"</span>),
-<a href=#324 id=324 data-nosnippet>324</a>        );
-<a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">if </span>terms &gt; <span class="number">1 </span>&amp;&amp; images != terms <span class="kw">as </span>usize {
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(
-<a href=#328 id=328 data-nosnippet>328</a>            <span class="string">"For nterms&gt;1, please provide a list of nterms model-image names"</span>,
-<a href=#329 id=329 data-nosnippet>329</a>        )
-<a href=#330 id=330 data-nosnippet>330</a>        .at(<span class="string">"model"</span>));
-<a href=#331 id=331 data-nosnippet>331</a>    }
-<a href=#332 id=332 data-nosnippet>332</a>    <span class="prelude-val">Ok</span>(())
-<a href=#333 id=333 data-nosnippet>333</a>}
-<a href=#334 id=334 data-nosnippet>334</a>
-<a href=#335 id=335 data-nosnippet>335</a><span class="kw">fn </span>execution(error: <span class="kw">impl </span>std::fmt::Display) -&gt; TaskFailure {
-<a href=#336 id=336 data-nosnippet>336</a>    TaskFailure::execution(error.to_string())
-<a href=#337 id=337 data-nosnippet>337</a>}
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="prelude-val">None</span>,
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw-2">&amp;mut </span>ms.lock,
+<a href=#180 id=180 data-nosnippet>180</a>    )
+<a href=#181 id=181 data-nosnippet>181</a>    .map_err(execution)
+<a href=#182 id=182 data-nosnippet>182</a>}
+<a href=#183 id=183 data-nosnippet>183</a>
+<a href=#184 id=184 data-nosnippet>184</a><span class="kw">fn </span>write_partition_scratch(
+<a href=#185 id=185 data-nosnippet>185</a>    task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#186 id=186 data-nosnippet>186</a>    parts: <span class="kw-2">&amp;mut </span>[OpenedMs],
+<a href=#187 id=187 data-nosnippet>187</a>    <span class="kw-2">mut </span>selected: ResolvedMsSelection,
+<a href=#188 id=188 data-nosnippet>188</a>    request: <span class="kw-2">&amp;</span>ModelRequest,
+<a href=#189 id=189 data-nosnippet>189</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
+<a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">let </span>rows = std::mem::take(<span class="kw-2">&amp;mut </span>selected.selected_rows);
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = rows.into_iter().peekable();
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">let </span><span class="kw-2">mut </span>start = <span class="number">0</span>;
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">for </span>part <span class="kw">in </span>parts {
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>end = start + part.measurement_set.main_table().row_count();
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(row) = rows.next_if(|row| row.row_index &lt; end) {
+<a href=#196 id=196 data-nosnippet>196</a>            selected
+<a href=#197 id=197 data-nosnippet>197</a>                .selected_rows
+<a href=#198 id=198 data-nosnippet>198</a>                .push(casa_ms::ResolvedMsSelectionRow {
+<a href=#199 id=199 data-nosnippet>199</a>                    row_index: row.row_index - start,
+<a href=#200 id=200 data-nosnippet>200</a>                    ..row
+<a href=#201 id=201 data-nosnippet>201</a>                });
+<a href=#202 id=202 data-nosnippet>202</a>        }
+<a href=#203 id=203 data-nosnippet>203</a>        <span class="kw">if </span>!selected.selected_rows.is_empty() {
+<a href=#204 id=204 data-nosnippet>204</a>            <span class="kw">let </span>models = read_models(task, <span class="kw-2">&amp;</span>part.measurement_set, <span class="kw-2">&amp;</span>selected, request)<span class="question-mark">?</span>;
+<a href=#205 id=205 data-nosnippet>205</a>            write_scratch(part, <span class="kw-2">&amp;</span>selected, request, models)<span class="question-mark">?</span>;
+<a href=#206 id=206 data-nosnippet>206</a>            selected.selected_rows.clear();
+<a href=#207 id=207 data-nosnippet>207</a>        }
+<a href=#208 id=208 data-nosnippet>208</a>        start = end;
+<a href=#209 id=209 data-nosnippet>209</a>    }
+<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">if </span>rows.next().is_some() {
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::execution(
+<a href=#212 id=212 data-nosnippet>212</a>            <span class="string">"selected Multi-MS row is outside its partitions"</span>,
+<a href=#213 id=213 data-nosnippet>213</a>        ));
+<a href=#214 id=214 data-nosnippet>214</a>    }
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="prelude-val">Ok</span>(())
+<a href=#216 id=216 data-nosnippet>216</a>}
+<a href=#217 id=217 data-nosnippet>217</a>
+<a href=#218 id=218 data-nosnippet>218</a><span class="kw">fn </span>write_virtual(
+<a href=#219 id=219 data-nosnippet>219</a>    root: <span class="kw-2">&amp;mut </span>OpenedMs,
+<a href=#220 id=220 data-nosnippet>220</a>    parts: <span class="kw-2">&amp;mut </span>[OpenedMs],
+<a href=#221 id=221 data-nosnippet>221</a>    request: <span class="kw-2">&amp;</span>ModelRequest,
+<a href=#222 id=222 data-nosnippet>222</a>    (entries, images): Models,
+<a href=#223 id=223 data-nosnippet>223</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">let </span>tables = std::iter::once(<span class="kw-2">&amp;</span>root.measurement_set)
+<a href=#225 id=225 data-nosnippet>225</a>        .chain(parts.iter().map(|part| <span class="kw-2">&amp;</span>part.measurement_set));
+<a href=#226 id=226 data-nosnippet>226</a>    <span class="kw">let </span><span class="kw-2">mut </span>publication = VirtualFtPublication::new(
+<a href=#227 id=227 data-nosnippet>227</a>        tables,
+<a href=#228 id=228 data-nosnippet>228</a>        entries,
+<a href=#229 id=229 data-nosnippet>229</a>        images,
+<a href=#230 id=230 data-nosnippet>230</a>        request.incremental,
+<a href=#231 id=231 data-nosnippet>231</a>        !parts.is_empty(),
+<a href=#232 id=232 data-nosnippet>232</a>    )
+<a href=#233 id=233 data-nosnippet>233</a>    .map_err(execution)<span class="question-mark">?</span>;
+<a href=#234 id=234 data-nosnippet>234</a>    publication
+<a href=#235 id=235 data-nosnippet>235</a>        .publish(
+<a href=#236 id=236 data-nosnippet>236</a>            std::iter::once(root)
+<a href=#237 id=237 data-nosnippet>237</a>                .chain(parts)
+<a href=#238 id=238 data-nosnippet>238</a>                .map(|opened| (<span class="kw-2">&amp;mut </span>opened.measurement_set, <span class="kw-2">&amp;mut </span>opened.lock)),
+<a href=#239 id=239 data-nosnippet>239</a>        )
+<a href=#240 id=240 data-nosnippet>240</a>        .map_err(execution)
+<a href=#241 id=241 data-nosnippet>241</a>}
+<a href=#242 id=242 data-nosnippet>242</a>
+<a href=#243 id=243 data-nosnippet>243</a><span class="kw">fn </span>image_models(
+<a href=#244 id=244 data-nosnippet>244</a>    task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#245 id=245 data-nosnippet>245</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#246 id=246 data-nosnippet>246</a>    selected: <span class="kw-2">&amp;</span>ResolvedMsSelection,
+<a href=#247 id=247 data-nosnippet>247</a>    request: <span class="kw-2">&amp;</span>ModelRequest,
+<a href=#248 id=248 data-nosnippet>248</a>    no_components: bool,
+<a href=#249 id=249 data-nosnippet>249</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ImageModel&gt;, TaskFailure&gt; {
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">let </span>models = <span class="kw-2">&amp;</span>request.images;
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">let </span>terms = request.terms;
+<a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">let </span>zero = request.scratch &amp;&amp; !request.incremental &amp;&amp; no_components;
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">let </span>reference = <span class="kw">if </span>terms &gt; <span class="number">1 </span>{
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">let </span>quantity = task.text(<span class="string">"reffreq"</span>)<span class="question-mark">?</span>.unwrap_or_default();
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>explicit = <span class="kw">if </span>quantity.is_empty() {
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="number">0.0
+<a href=#257 id=257 data-nosnippet>257</a>        </span>} <span class="kw">else </span>{
+<a href=#258 id=258 data-nosnippet>258</a>            quantity
+<a href=#259 id=259 data-nosnippet>259</a>                .parse::&lt;Quantity&gt;()
+<a href=#260 id=260 data-nosnippet>260</a>                .map_err(|<span class="kw">_</span>| {
+<a href=#261 id=261 data-nosnippet>261</a>                    TaskFailure::execution(<span class="macro">format!</span>(
+<a href=#262 id=262 data-nosnippet>262</a>                        <span class="string">"In conversion of reffreq={quantity:?} to a numerical value"
+<a href=#263 id=263 data-nosnippet>263</a>                    </span>))
+<a href=#264 id=264 data-nosnippet>264</a>                    .at(<span class="string">"reffreq"</span>)
+<a href=#265 id=265 data-nosnippet>265</a>                })<span class="question-mark">?
+<a href=#266 id=266 data-nosnippet>266</a>                </span>.get_si_value()
+<a href=#267 id=267 data-nosnippet>267</a>        };
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="prelude-val">Some</span>(<span class="kw">if </span>explicit == <span class="number">0.0 </span>{
+<a href=#269 id=269 data-nosnippet>269</a>            reference_frequency(<span class="kw-2">&amp;</span>task.workspace().join(<span class="kw-2">&amp;</span>models[<span class="number">0</span>])).map_err(execution)<span class="question-mark">?
+<a href=#270 id=270 data-nosnippet>270</a>        </span>} <span class="kw">else </span>{
+<a href=#271 id=271 data-nosnippet>271</a>            explicit
+<a href=#272 id=272 data-nosnippet>272</a>        })
+<a href=#273 id=273 data-nosnippet>273</a>    } <span class="kw">else </span>{
+<a href=#274 id=274 data-nosnippet>274</a>        <span class="prelude-val">None
+<a href=#275 id=275 data-nosnippet>275</a>    </span>};
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">let </span><span class="kw-2">mut </span>images = Vec::new();
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">for </span>(index, path) <span class="kw">in </span>models
+<a href=#278 id=278 data-nosnippet>278</a>        .iter()
+<a href=#279 id=279 data-nosnippet>279</a>        .enumerate()
+<a href=#280 id=280 data-nosnippet>280</a>        .filter(|(<span class="kw">_</span>, path)| !path.is_empty())
+<a href=#281 id=281 data-nosnippet>281</a>    {
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">let </span>taylor = reference.map(|reference_hz| TaylorTerm {
+<a href=#283 id=283 data-nosnippet>283</a>            count: terms <span class="kw">as </span>i32,
+<a href=#284 id=284 data-nosnippet>284</a>            index: index <span class="kw">as </span>i32,
+<a href=#285 id=285 data-nosnippet>285</a>            reference_hz,
+<a href=#286 id=286 data-nosnippet>286</a>        });
+<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(model) = prepare_image(
+<a href=#288 id=288 data-nosnippet>288</a>            ms,
+<a href=#289 id=289 data-nosnippet>289</a>            selected,
+<a href=#290 id=290 data-nosnippet>290</a>            <span class="kw-2">&amp;</span>task.workspace().join(path),
+<a href=#291 id=291 data-nosnippet>291</a>            taylor,
+<a href=#292 id=292 data-nosnippet>292</a>            zero &amp;&amp; index == <span class="number">0</span>,
+<a href=#293 id=293 data-nosnippet>293</a>            request.scratch,
+<a href=#294 id=294 data-nosnippet>294</a>        )
+<a href=#295 id=295 data-nosnippet>295</a>        .map_err(execution)<span class="question-mark">?
+<a href=#296 id=296 data-nosnippet>296</a>        </span>{
+<a href=#297 id=297 data-nosnippet>297</a>            images.push(model);
+<a href=#298 id=298 data-nosnippet>298</a>        }
+<a href=#299 id=299 data-nosnippet>299</a>    }
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="prelude-val">Ok</span>(images)
+<a href=#301 id=301 data-nosnippet>301</a>}
+<a href=#302 id=302 data-nosnippet>302</a>
+<a href=#303 id=303 data-nosnippet>303</a><span class="kw">fn </span>selection(task: <span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;MsSelection, TaskFailure&gt; {
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">let </span>text = |name| {
+<a href=#305 id=305 data-nosnippet>305</a>        task.text(name)
+<a href=#306 id=306 data-nosnippet>306</a>            .map(|value| value.filter(|value| !value.is_empty()))
+<a href=#307 id=307 data-nosnippet>307</a>    };
+<a href=#308 id=308 data-nosnippet>308</a>    <span class="prelude-val">Ok</span>(MsSelection {
+<a href=#309 id=309 data-nosnippet>309</a>        field: text(<span class="string">"field"</span>)<span class="question-mark">?</span>,
+<a href=#310 id=310 data-nosnippet>310</a>        spw: text(<span class="string">"spw"</span>)<span class="question-mark">?</span>,
+<a href=#311 id=311 data-nosnippet>311</a>        timerange: text(<span class="string">"timerange"</span>)<span class="question-mark">?</span>,
+<a href=#312 id=312 data-nosnippet>312</a>        uvrange: text(<span class="string">"uvrange"</span>)<span class="question-mark">?</span>,
+<a href=#313 id=313 data-nosnippet>313</a>        antenna: text(<span class="string">"antenna"</span>)<span class="question-mark">?</span>,
+<a href=#314 id=314 data-nosnippet>314</a>        scan: text(<span class="string">"scan"</span>)<span class="question-mark">?</span>,
+<a href=#315 id=315 data-nosnippet>315</a>        observation: text(<span class="string">"observation"</span>)<span class="question-mark">?</span>,
+<a href=#316 id=316 data-nosnippet>316</a>        intent: text(<span class="string">"intent"</span>)<span class="question-mark">?</span>,
+<a href=#317 id=317 data-nosnippet>317</a>        ..MsSelection::default()
+<a href=#318 id=318 data-nosnippet>318</a>    })
+<a href=#319 id=319 data-nosnippet>319</a>}
+<a href=#320 id=320 data-nosnippet>320</a>
+<a href=#321 id=321 data-nosnippet>321</a><span class="kw">fn </span>validate_terms(terms: i64, images: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">if </span>terms &lt; <span class="number">1 </span>{
+<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(
+<a href=#324 id=324 data-nosnippet>324</a>            TaskFailure::validation(<span class="string">"nterms must be greater than or equal to 1"</span>).at(<span class="string">"nterms"</span>),
+<a href=#325 id=325 data-nosnippet>325</a>        );
+<a href=#326 id=326 data-nosnippet>326</a>    }
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">if </span>terms &gt; <span class="number">1 </span>&amp;&amp; images != terms <span class="kw">as </span>usize {
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(TaskFailure::validation(
+<a href=#329 id=329 data-nosnippet>329</a>            <span class="string">"For nterms&gt;1, please provide a list of nterms model-image names"</span>,
+<a href=#330 id=330 data-nosnippet>330</a>        )
+<a href=#331 id=331 data-nosnippet>331</a>        .at(<span class="string">"model"</span>));
+<a href=#332 id=332 data-nosnippet>332</a>    }
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="prelude-val">Ok</span>(())
+<a href=#334 id=334 data-nosnippet>334</a>}
+<a href=#335 id=335 data-nosnippet>335</a>
+<a href=#336 id=336 data-nosnippet>336</a><span class="kw">fn </span>execution(error: <span class="kw">impl </span>std::fmt::Display) -&gt; TaskFailure {
+<a href=#337 id=337 data-nosnippet>337</a>    TaskFailure::execution(error.to_string())
+<a href=#338 id=338 data-nosnippet>338</a>}
 </code></pre></div></section></main></body></html>
