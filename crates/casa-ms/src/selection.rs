@@ -60,6 +60,7 @@ pub(crate) enum RowGrammar {
     Standard,
     Casa,
     Transform,
+    FlagData,
 }
 
 /// Builder for MS row selection criteria.
@@ -680,14 +681,29 @@ pub(crate) fn resolve_row_indices_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,
 ) -> MsResult<Vec<usize>> {
+    resolve_row_indices_with_grammar(ms, request, RowGrammar::Standard)
+}
+
+pub(crate) fn resolve_flagdata_row_indices_with_system_budget(
+    ms: &MeasurementSet,
+    request: &MsSelection,
+) -> MsResult<Vec<usize>> {
+    resolve_row_indices_with_grammar(ms, request, RowGrammar::FlagData)
+}
+
+fn resolve_row_indices_with_grammar(
+    ms: &MeasurementSet,
+    request: &MsSelection,
+    grammar: RowGrammar,
+) -> MsResult<Vec<usize>> {
     let budget = MsSelectionIoBudget::from_system_memory(
         2,
         std::mem::size_of::<ResolvedMsSelectionRow>(),
         None,
     )
     .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-    ms.resolve_selection(request, budget)
-        .map(|resolved| resolved.row_indices().collect())
+    ms.resolve_rows(request, budget, grammar)
+        .map(|(resolved, _)| resolved.row_indices().collect())
         .map_err(|error| match error {
             MsSelectionError::Domain(error) => error,
             other => MsError::InvalidInput(other.to_string()),

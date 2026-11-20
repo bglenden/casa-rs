@@ -16,6 +16,7 @@ pub(super) fn apply(
     ms: &MeasurementSet,
     mut compiled: CompiledMsSelection,
     options: &ListObsOptions,
+    flagdata: bool,
 ) -> MsResult<CompiledMsSelection> {
     if let Some(text) = options.spw.as_deref() {
         let spw = ms.resolve_spw_selector(text)?;
@@ -52,7 +53,11 @@ pub(super) fn apply(
         }
     }
     if let Some(text) = options.antenna.as_deref().filter(|text| !text.is_empty()) {
-        let baseline = ms.resolve_antenna_selector(text)?;
+        let baseline = if flagdata {
+            ms.resolve_flagdata_antenna_selector(text)?
+        } else {
+            ms.resolve_antenna_selector(text)?
+        };
         compiled.casa_taql_exprs.push(baseline_predicate(&baseline));
         compiled.casa_baseline = Some(baseline);
     }

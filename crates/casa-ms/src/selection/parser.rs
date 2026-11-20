@@ -29,7 +29,8 @@ pub(crate) fn selection_from_options(
     }
 
     if full_row_grammar {
-        selection = super::row_grammar::apply(ms, selection, options)?;
+        selection =
+            super::row_grammar::apply(ms, selection, options, grammar == RowGrammar::FlagData)?;
     } else {
         if let Some(spw) = options.spw.as_deref() {
             selection = selection.spw_selector(spw)?;

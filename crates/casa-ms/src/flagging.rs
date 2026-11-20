@@ -32,7 +32,7 @@ use thiserror::Error;
 use crate::ms::MeasurementSet;
 use crate::schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
-use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
+use crate::selection::{MsSelection, resolve_flagdata_row_indices_with_system_budget};
 use crate::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
     MeasurementSetMutationColumnBatch, MeasurementSetMutationColumnValues,
@@ -588,19 +588,27 @@ fn selected_rows(
         path: display_ms_path(ms),
         reason: format!("select rows: {source}"),
     };
-    let rows =
-        resolve_row_indices_with_system_budget(ms, &request.selection).map_err(selection_error)?;
-    if rows.is_empty()
-        && request.selection.selectdata
-        && let Some(field) = request
-            .selection
-            .field
-            .as_deref()
-            .filter(|text| !text.trim().is_empty())
-    {
+    let rows = resolve_flagdata_row_indices_with_system_budget(ms, &request.selection)
+        .map_err(selection_error)?;
+    let field = request
+        .selection
+        .field
+        .as_deref()
+        .filter(|text| !text.trim().is_empty());
+    let explicit_row_filter = [
+        field,
+        request.selection.scan.as_deref(),
+        request.selection.antenna.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|text| !text.is_empty());
+    if rows.is_empty() && request.selection.selectdata && explicit_row_filter {
         // An empty result can mean no matching FIELD metadata or simply no
         // selected MAIN rows. Keep separate diagnostics for the two cases.
-        ms.resolve_field_selector(field).map_err(selection_error)?;
+        if let Some(field) = field {
+            ms.resolve_field_selector(field).map_err(selection_error)?;
+        }
         return Err(FlaggingError::MutateFlags {
             path: display_ms_path(ms),
             reason: "MSSelectionNullSelection : The selected table has zero rows.".to_string(),
