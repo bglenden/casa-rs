@@ -299,17 +299,19 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
     cfloat = (float, int, np.float32, np.float64, np.int32, np.int64)
     cint = (int, np.int32, np.int64)
     errors: dict[str, list[str]] = {}
-    field_vector = False
-    if "field" in values:
-        field = values["field"]
-        if isinstance(field, str):
-            values["field"] = str(field)
-        elif field is None:
-            errors["field"] = ["null value not allowed"] * 3
-        elif _flagdata_string_vector(field):
-            field_vector = True
+    vector_selectors = []
+    for parameter in ("field", "scan", "antenna"):
+        if parameter not in values:
+            continue
+        value = values[parameter]
+        if isinstance(value, str):
+            values[parameter] = str(value)
+        elif value is None:
+            errors[parameter] = ["null value not allowed"] * 3
+        elif _flagdata_string_vector(value):
+            vector_selectors.append(parameter)
         else:
-            errors["field"] = ["must be of cStr type", "must be of cStrVec type"]
+            errors[parameter] = ["must be of cStr type", "must be of cStrVec type"]
     for parameter, default in (("clipoutside", True), ("quackincrement", False)):
         if parameter not in values:
             continue
@@ -364,10 +366,10 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> None:
             errors["clipminmax"] = [str(error)]
     if errors:
         raise AssertionError(str(dict(sorted(errors.items()))))
-    if field_vector:
-        if values.get("action") not in ("", "none"):
-            raise TypeError("argument _field must be a string")
-        del values["field"]
+    if vector_selectors and values.get("action") not in ("", "none"):
+        raise TypeError(f"argument _{vector_selectors[0]} must be a string")
+    for parameter in vector_selectors:
+        del values[parameter]
 
 
 def _flagdata_string_vector(value: Any) -> bool:
