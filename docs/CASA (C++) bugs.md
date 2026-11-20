@@ -7611,5 +7611,12 @@ SDGrid can include a cross-correlation when all of its UVW components
 are nonpositive. casa-rs applies the single-dish contribution to
 autocorrelations. In `both`, the ordinary GridFT path predicts the
 cross-correlations.
+
+For fast scans, CASA normally fits a natural cubic through each antenna's
+pointings. Its linear fallback can take neighboring rows from another
+antenna when the short sequence is interleaved. casa-rs interpolates over
+the recorded samples of the requested antenna. With an empty POINTING
+table, casa-rs applies the first feed's offset to the field direction.
+The paired test uses pinned measures to shift the field in its reference.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
 [`imager_single_dish_oracle.py`](../tools/casa-compat/imager_single_dish_oracle.py)

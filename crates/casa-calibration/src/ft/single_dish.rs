@@ -9,18 +9,25 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_operator::PolarizationRouting;
 use casa_imaging_runtime::{Demand, HostResources, ResourcePolicy, admit};
+use casa_imaging_singledish::{GridFunction, KernelParameters, KernelTable};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral};
-use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection};
-use casa_types::{Complex32, Correlation, RecordValue, ScalarValue, Value};
+use casa_ms::{
+    MeasurementSet, MsResult, ResolvedMsSelection, SubtableId,
+    convert_frequency_to_frame_with_frame,
+};
+use casa_numerics::{BeamPattern, PrimaryBeam};
+use casa_types::measures::frequency::FrequencyRef;
+use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::image::{
     ImageModel, coordinate_index, first_correlations, grid_stokes, match_channels,
-    polarization_coordinate, record_selection,
+    polarization_coordinate, record_selection, selection_mask,
 };
-use super::invalid;
+use super::moving_source::first_imager_row;
 use super::settings::{ImagerSingleDishKernel, PredictionGeometry};
+use super::{invalid, spectral_with_runtime};
 
 pub(super) fn prepare_model(
     ms: &MeasurementSet,
@@ -32,6 +39,7 @@ pub(super) fn prepare_model(
     scratch: bool,
 ) -> MsResult<Option<ImageModel>> {
     let image = PagedImage::<f32>::open(path).map_err(invalid)?;
+    validate_model(ms, selected, &image, kernel)?;
     let mut coordinates = image.coordinates().clone();
     let pol = coordinate_index(&coordinates, CoordinateType::Stokes)?;
     let CoordinateModel::Stokes(axis) = coordinates.coordinate(pol) else {
@@ -76,6 +84,94 @@ pub(super) fn prepare_model(
         )?;
         Ok((record, nonzero))
     })
+}
+
+fn validate_model(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    image: &PagedImage<f32>,
+    kernel: ImagerSingleDishKernel,
+) -> MsResult<()> {
+    let [nx, ny, ..] = *image.shape() else {
+        return Err(invalid("single-dish model needs direction axes"));
+    };
+    let function =
+        GridFunction::from_casa(kernel.name(), KernelParameters::DEFAULT).map_err(invalid)?;
+    let support = match function.support() {
+        Some(support) => support,
+        None => {
+            if ms.subtable(SubtableId::Pointing).is_some() {
+                let pointing = ms.pointing()?;
+                if pointing.row_count() != 0 {
+                    let first = first_imager_row(ms, selected)?;
+                    let ScalarValue::Float64(interval) = ms
+                        .main_table()
+                        .cell_accessor(first.row_index, "INTERVAL")?
+                        .scalar()?
+                    else {
+                        return Err(invalid("MAIN INTERVAL must be a double"));
+                    };
+                    let coordinates = pointing.single_dish_directions(&[(
+                        first.antenna1_id,
+                        first.time_mjd_seconds,
+                        *interval,
+                    )])?;
+                    if coordinates[0].is_none() {
+                        return Err(invalid(
+                            "single-dish PB prediction needs pointing information for the first visibility",
+                        ));
+                    }
+                }
+            }
+            let coordinates = image.coordinates();
+            let spatial = coordinate_index(coordinates, CoordinateType::Direction)?;
+            let spectral = coordinate_index(coordinates, CoordinateType::Spectral)?;
+            let CoordinateModel::Direction(direction) = coordinates.coordinate(spatial) else {
+                unreachable!("direction coordinate")
+            };
+            let CoordinateModel::Spectral(axis) = coordinates.coordinate(spectral) else {
+                unreachable!("spectral coordinate")
+            };
+            let frequency = axis
+                .clone()
+                .without_conversion()
+                .world_frequency_hz(0.)
+                .map_err(invalid)?;
+            let increment = direction.increment()[0];
+            let beam = default_beam(ms, frequency)?;
+            let host = HostResources::detect().map_err(invalid)?;
+            let _memory = admit(
+                &host,
+                &ResourcePolicy::Balanced,
+                &Demand {
+                    phase: "legacy single-dish primary beam validation",
+                    memory: function.forming_bytes(beam.support_pixels(increment, frequency)),
+                },
+            )
+            .map_err(invalid)?;
+            KernelTable::primary_beam(&beam, increment, frequency).support()
+        }
+    };
+    validate_support([nx, ny], support)
+}
+
+pub(crate) fn validate_support([nx, ny]: [usize; 2], radius: usize) -> MsResult<()> {
+    let width = radius.saturating_mul(2);
+    if nx.min(ny) <= width {
+        return Err(invalid(format!(
+            "single-dish model axes must exceed the gridding support of {width} pixels"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn default_beam(ms: &MeasurementSet, frequency: f64) -> MsResult<BeamPattern> {
+    let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
+    if let Some(beam) = PrimaryBeam::for_telescope(&telescope, frequency) {
+        return Ok(beam.pattern());
+    }
+    BeamPattern::for_dish_diameter(ms.antenna()?.dish_diameter(0)?)
+        .ok_or_else(|| invalid("no usable single-dish primary beam"))
 }
 
 fn write_planes(
@@ -182,13 +278,32 @@ fn model_record(
     let CoordinateModel::Spectral(spectral) = find(CoordinateType::Spectral)? else {
         unreachable!("spectral coordinate index");
     };
-    let axis = spectral.clone().without_conversion();
+    let axis = if geometry.frequency_frame_valid {
+        spectral_with_runtime(spectral)?.into_owned()
+    } else {
+        spectral.clone().without_conversion()
+    };
     let frequencies = (0..channels)
         .map(|channel| axis.world_frequency_hz(channel as f64).map_err(invalid))
         .collect::<MsResult<Vec<_>>>()?;
-    let buffer_frequencies = ms
-        .spectral_window()?
-        .chan_freq(selected.selected_rows[0].spectral_window_id as usize)?;
+    let first = first_imager_row(ms, selected)?;
+    let windows = ms.spectral_window()?;
+    let spw = first.spectral_window_id as usize;
+    let mut buffer_frequencies = windows.chan_freq(spw)?;
+    let engine = MsCalEngine::new(ms)?;
+    if geometry.frequency_frame_valid {
+        let frame =
+            engine.spectral_frame_observatory(first.time_mjd_seconds, first.field_id as usize)?;
+        let ratio = convert_frequency_to_frame_with_frame(
+            windows.frequency_reference(spw)?,
+            FrequencyRef::LSRK,
+            1.,
+            Some(&frame),
+        )?;
+        for frequency in &mut buffer_frequencies {
+            *frequency *= ratio;
+        }
+    }
     let buffer = FirstBuffer {
         field: -1,
         channel_map: match_channels(&axis, channels, &buffer_frequencies),
@@ -200,7 +315,6 @@ fn model_record(
             .map(|pol| pol.map_or(-1, i32::from))
             .collect(),
     };
-    let engine = MsCalEngine::new(ms)?;
     let (longitude, latitude, radius) = engine.observatory_position().as_spherical();
     let mut record = GridFt {
         disk_image: path,
@@ -234,6 +348,10 @@ fn model_record(
         Value::Scalar(ScalarValue::Int32(geometry.settings.threads)),
     );
     record_selection(&mut record, ms, selected, &axis, channels)?;
+    record.upsert(
+        "spwchanselflag",
+        Value::Array(ArrayValue::Int32(selection_mask(ms, selected)?)),
+    );
     Ok(record)
 }
 

@@ -1107,14 +1107,16 @@ pub(crate) fn match_channels(
 ) -> Vec<i32> {
     frequencies
         .iter()
-        .map(|&frequency| {
-            axis.pixel_at_frequency_hz(frequency)
-                .ok()
-                .map(f64::round)
-                .filter(|&index| (0.0..channels as f64).contains(&index))
-                .map_or(-1, |index| index as i32)
-        })
+        .map(|&frequency| match_channel(axis, channels, frequency))
         .collect()
+}
+
+pub(crate) fn match_channel(axis: &SpectralCoordinate, channels: usize, frequency: f64) -> i32 {
+    axis.pixel_at_frequency_hz(frequency)
+        .ok()
+        .map(f64::round)
+        .filter(|&index| (0.0..channels as f64).contains(&index))
+        .map_or(-1, |index| index as i32)
 }
 
 pub(super) fn record_selection(
@@ -1164,7 +1166,10 @@ pub(super) fn record_selection(
     Ok(())
 }
 
-fn selection_mask(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResult<ArrayD<i32>> {
+pub(super) fn selection_mask(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+) -> MsResult<ArrayD<i32>> {
     let windows = ms.spectral_window()?;
     let counts = (0..windows.row_count())
         .map(|spw| windows.num_chan(spw))

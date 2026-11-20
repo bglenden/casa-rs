@@ -33,6 +33,10 @@ struct FeedOffset {
 }
 
 impl FeedOffsets {
+    pub(super) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub(super) fn load(ms: &MeasurementSet) -> MsResult<Self> {
         let mut offsets = Self::default();
         if ms.subtable(SubtableId::Feed).is_none() {

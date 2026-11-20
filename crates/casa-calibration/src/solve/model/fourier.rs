@@ -421,22 +421,12 @@ impl PreparedFourierModel {
             if self.legacy_flags {
                 // Legacy GridFT restores VisBuffer's per-correlation flags.
                 // FTMachine::fromRecord discards the original channel mask.
-                let masked = self
-                    .channel_mask
-                    .as_ref()
-                    .zip(row.scratch_channels)
-                    .is_some_and(|(mask, [spw, start, count, stride])| {
-                        let Some(relative) = channel.checked_sub(start as usize) else {
-                            return true;
-                        };
-                        let compact = relative / stride as usize;
-                        compact >= count as usize
-                            || !relative.is_multiple_of(stride as usize)
-                            || (use_spectral_selection_mask
-                                && mask
-                                    .get([0, spw as usize, compact].as_slice())
-                                    .is_some_and(|&value| value != 1))
-                    });
+                let masked = scratch_channel_masked(
+                    self.channel_mask.as_ref(),
+                    row.scratch_channels,
+                    channel,
+                    use_spectral_selection_mask,
+                );
                 for (value, &raw_flag) in flags.iter_mut().zip(raw) {
                     *value = outside || masked || raw_flag;
                 }
@@ -548,7 +538,28 @@ impl PreparedFourierModel {
     }
 }
 
-fn lsrk_frequency_ratio(row: &FourierRow<'_>) -> Result<f64, GainSolveError> {
+pub(super) fn scratch_channel_masked(
+    mask: Option<&ArrayD<i32>>,
+    selection: Option<[i32; 4]>,
+    channel: usize,
+    use_spectral_selection_mask: bool,
+) -> bool {
+    mask.zip(selection)
+        .is_some_and(|(mask, [spw, start, count, stride])| {
+            let Some(relative) = channel.checked_sub(start as usize) else {
+                return true;
+            };
+            let compact = relative / stride as usize;
+            compact >= count as usize
+                || !relative.is_multiple_of(stride as usize)
+                || (use_spectral_selection_mask
+                    && mask
+                        .get([0, spw as usize, compact].as_slice())
+                        .is_some_and(|&value| value != 1))
+        })
+}
+
+pub(super) fn lsrk_frequency_ratio(row: &FourierRow<'_>) -> Result<f64, GainSolveError> {
     if row.frequency_ref == FrequencyRef::LSRK {
         return Ok(1.0);
     }
@@ -758,6 +769,13 @@ pub(super) fn open_complex_model_image(
     record: &RecordValue,
     ms: &MeasurementSet,
 ) -> Result<PagedImage<Complex32>, GainSolveError> {
+    PagedImage::open(complex_model_image_path(record, ms)?).map_err(model_error)
+}
+
+pub(super) fn complex_model_image_path(
+    record: &RecordValue,
+    ms: &MeasurementSet,
+) -> Result<PathBuf, GainSolveError> {
     let recorded = Path::new(record_text(record, "diskimage")?);
     let path = match (recorded.exists(), ms.path(), recorded.file_name()) {
         (false, Some(ms), Some(name)) => [ms.join("SOURCE").join(name), ms.join(name)]
@@ -766,7 +784,7 @@ pub(super) fn open_complex_model_image(
             .unwrap_or_else(|| recorded.to_path_buf()),
         _ => PathBuf::from(recorded),
     };
-    PagedImage::open(path).map_err(model_error)
+    Ok(path)
 }
 
 fn record_text<'a>(record: &'a RecordValue, field: &str) -> Result<&'a str, GainSolveError> {

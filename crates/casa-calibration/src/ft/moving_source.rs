@@ -69,6 +69,17 @@ pub(super) fn first_tracking_frame(
     selection: &ResolvedMsSelection,
     location: MPosition,
 ) -> MsResult<MeasFrame> {
+    let first = first_imager_row(ms, selection)?;
+    let engine = MsCalEngine::new(ms)?;
+    let frame =
+        engine.spectral_frame_observatory(first.time_mjd_seconds, first.field_id as usize)?;
+    Ok(frame.with_position(location))
+}
+
+pub(super) fn first_imager_row<'a>(
+    ms: &MeasurementSet,
+    selection: &'a ResolvedMsSelection,
+) -> MsResult<&'a casa_ms::ResolvedMsSelectionRow> {
     let arrays = ms.main_table().column_accessor("ARRAY_ID")?;
     let mut first = None;
     for rows in selection.selected_rows.chunks(1024) {
@@ -82,13 +93,12 @@ pub(super) fn first_tracking_frame(
             };
             // Imager::makeVisSet sorts the old iterator in this order.
             let key = (array, row.field_id, row.data_desc_id, row.time_mjd_seconds);
-            if first.is_none_or(|old| key < old) {
-                first = Some(key);
+            if first.as_ref().is_none_or(|(old, _)| key < *old) {
+                first = Some((key, row));
             }
         }
     }
-    let (_, field, _, epoch) = first.ok_or_else(|| invalid("moving source needs selected data"))?;
-    let engine = MsCalEngine::new(ms)?;
-    let frame = engine.spectral_frame_observatory(epoch, field as usize)?;
-    Ok(frame.with_position(location))
+    first
+        .map(|(_, row)| row)
+        .ok_or_else(|| invalid("the imager needs a selected visibility"))
 }

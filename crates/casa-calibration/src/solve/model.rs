@@ -39,6 +39,7 @@ pub(super) struct ModelInputs {
     finite_fields: BTreeSet<i32>,
     model_buffers: BTreeMap<usize, Arc<ModelBuffer>>,
     single_dish_pointings: Option<BTreeMap<usize, MDirection>>,
+    single_dish_feeds: FeedOffsets,
 }
 
 struct ModelBuffer {
@@ -157,6 +158,7 @@ impl ModelInputs {
             finite_fields: BTreeSet::new(),
             model_buffers: BTreeMap::new(),
             single_dish_pointings: None,
+            single_dish_feeds: FeedOffsets::default(),
         }
     }
 
@@ -212,8 +214,13 @@ impl ModelInputs {
                 .iter()
                 .any(|entry| matches!(entry.prediction, Prediction::SingleDish(_)))
         }) {
-            let pointing = ms.pointing().map_err(|error| read_error(ms, error))?;
-            if pointing.row_count() > 0 {
+            let pointing = ms
+                .subtable(SubtableId::Pointing)
+                .is_some()
+                .then(|| ms.pointing())
+                .transpose()
+                .map_err(|error| read_error(ms, error))?;
+            if let Some(pointing) = pointing.filter(|pointing| pointing.row_count() > 0) {
                 let selected: Vec<_> = rows
                     .iter()
                     .filter(|row| row.antenna1 == row.antenna2 && !row.flag_row)
@@ -234,6 +241,9 @@ impl ModelInputs {
                         })
                         .collect(),
                 );
+            } else {
+                self.single_dish_feeds =
+                    FeedOffsets::load(ms).map_err(|error| read_error(ms, error))?;
             }
         }
         Ok(())
@@ -416,23 +426,6 @@ impl ModelInputs {
             .with_direction(field.clone());
         let uvw = uvw(ms, row.row_index)?;
         let (frequencies, frequency_ref) = &self.frequencies[&row.data_spw_id];
-        let (basis, offset) = match correlations.first().copied() {
-            Some(5..=8) => (Polarisation::Circular, 5),
-            Some(9..=12) => (Polarisation::Linear, 9),
-            _ => {
-                return Err(model_error(
-                    "virtual component prediction requires linear or circular correlations",
-                ));
-            }
-        };
-        if correlations
-            .iter()
-            .any(|&code| !(offset..offset + 4).contains(&code))
-        {
-            return Err(model_error(
-                "virtual component prediction requires one correlation basis",
-            ));
-        }
         let shape = [correlations.len(), frequencies.len()];
         let mut model = match previous {
             Some(model) if model.shape() != shape => {
@@ -482,8 +475,19 @@ impl ModelInputs {
                     components
                 }
                 Prediction::SingleDish(dish) => {
+                    if row.antenna1 != row.antenna2 || row.flag_row {
+                        continue;
+                    }
+                    let corrected;
                     let pointing = match &self.single_dish_pointings {
                         Some(pointings) => pointings.get(&row.row_index),
+                        None if !self.single_dish_feeds.is_empty() => {
+                            corrected = self
+                                .single_dish_feeds
+                                .direction(ms, engine, row, Some(field.clone()))?
+                                .direction;
+                            Some(&corrected)
+                        }
                         None => Some(&field),
                     };
                     if let Some(direction) = pointing {
@@ -511,6 +515,7 @@ impl ModelInputs {
                     continue;
                 }
             };
+            let (basis, offset) = component_basis(correlations)?;
             for component in components.iter() {
                 let projection =
                     UvwMachine::with_frame(component.shape().reference_direction(), &field, &frame)
@@ -535,6 +540,27 @@ impl ModelInputs {
         }
         Ok(Some(model))
     }
+}
+
+fn component_basis(correlations: &[i32]) -> Result<(Polarisation, i32), GainSolveError> {
+    let (basis, offset) = match correlations.first().copied() {
+        Some(5..=8) => (Polarisation::Circular, 5),
+        Some(9..=12) => (Polarisation::Linear, 9),
+        _ => {
+            return Err(model_error(
+                "virtual component prediction requires linear or circular correlations",
+            ));
+        }
+    };
+    if correlations
+        .iter()
+        .any(|&code| !(offset..offset + 4).contains(&code))
+    {
+        return Err(model_error(
+            "virtual component prediction requires one correlation basis",
+        ));
+    }
+    Ok((basis, offset))
 }
 
 fn decode_entries(record: &RecordValue) -> Result<Vec<Entry>, GainSolveError> {
