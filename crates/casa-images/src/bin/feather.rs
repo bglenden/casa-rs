@@ -25,6 +25,8 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         highres: task.input_path("highres")?,
         lowres: task.input_path("lowres")?,
         sdfactor: task.number("sdfactor")? as f32,
+        effdishdiam: task.number("effdishdiam")? as f32,
+        lowpassfiltersd: task.flag("lowpassfiltersd")?,
         overwrite: task.flag("overwrite")?,
     };
     image_task_success(feather(&request).map(ImageAnalysisTaskResult::Feather))

@@ -45,7 +45,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 5 | <code>image_analysis</code> | 12 | Extract a CASA-style image section |
 | [Image Math](#surface-immath)<br><code>immath</code> | task | 5 | <code>image_analysis</code> | 16 | Evaluate mathematical expressions and spectral or polarization operations on images |
 | [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 6 | <code>image_analysis</code> | 10 | Regrid a CASA image onto a template image |
-| [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
+| [Feather](#surface-feather)<br><code>feather</code> | task | 6 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
 | [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 6 | <code>image_analysis</code> | 9 | Import a FITS image into a CASA image |
 | [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 11 | Convert between MeasurementSet v2 and MSv4, in either direction. |
 | [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 2 | <code>simanalyze</code> | 32 | Image and analyze a simulated observation: CASA's simanalyze |
@@ -1284,7 +1284,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Feather (<code>feather</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Combine high-resolution and low-resolution images in the Fourier domain
