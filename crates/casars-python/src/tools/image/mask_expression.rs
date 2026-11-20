@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use casa_images::analysis::evaluate_image_tool_mask;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
+use casa_images::analysis::evaluate_image_tool_mask;
 use casa_images::{
     AnyPagedImage, ImageInterface,
     expr_parser::{ExprValueConvert, HashMapResolver, parse_mask_expr, referenced_images},
