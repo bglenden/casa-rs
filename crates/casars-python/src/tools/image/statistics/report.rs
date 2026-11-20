@@ -8,7 +8,7 @@ use casa_coordinates::display::{
     format_latitude_dms_with_precision, format_longitude_hours_with_precision, format_stream_value,
     format_stream_value_with_precision,
 };
-use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, StokesType};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
 use casa_lattices::{StatisticsAlgorithm, StatisticsAlgorithmKind};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
@@ -91,6 +91,9 @@ impl StatisticsReport<'_> {
             return lines;
         }
         lines.push("Values --- ".into());
+        if let Some(&flux) = self.numbers("flux").first() {
+            lines.push(self.flux_summary(flux));
+        }
         let sumsq_unit = if self.units.is_empty() {
             String::new()
         } else {
@@ -197,6 +200,42 @@ impl StatisticsReport<'_> {
         lines
     }
 
+    fn flux_summary(&self, flux: f64) -> String {
+        let mut unit = self
+            .units
+            .strip_suffix("/beam")
+            .unwrap_or(self.units)
+            .to_owned();
+        if self.units.contains('K') {
+            unit.push_str(".arcsec2");
+        }
+        if let Some(index) = self.coordinates.find_coordinate(CoordinateType::Spectral)
+            && let CoordinateModel::Spectral(spectral) = self.coordinates.coordinate(index)
+        {
+            let axis: usize = (0..index)
+                .map(|index| self.coordinates.coordinate(index).n_pixel_axes())
+                .sum();
+            if self.chunk.size[axis] > 1 {
+                unit.push('.');
+                if spectral.rest_frequency() > 0.0 {
+                    unit.push_str("km/s");
+                } else {
+                    unit.push_str(&self.coordinates.coordinate(index).axis_units()[0]);
+                }
+                return summary_number(
+                    "         -- flux [flux]:                            ",
+                    flux,
+                    Some(&unit),
+                );
+            }
+        }
+        summary_number(
+            "         -- flux density [flux]:                    ",
+            flux,
+            Some(&unit),
+        )
+    }
+
     pub(super) fn publish(
         &self,
         path: &str,
@@ -215,26 +254,26 @@ impl StatisticsReport<'_> {
                 .open(path)
                 .map(BufWriter::new)
         });
-        let mut write_line = |prefix: &str, line: &str| {
+        let mut write_line = |prefix: &str, line: &str, suffix: &str| {
             if let Some(Ok(writer)) = &mut file
-                && let Err(error) = writeln!(writer, "{prefix}{line}")
+                && let Err(error) = write!(writer, "{prefix}{line}{suffix}")
             {
                 file = Some(Err(error));
             }
         };
         if list {
             for line in self.summary(columns.is_empty()) {
-                write_line("# ", &line);
+                write_line("# ", &line, "\n");
                 log.push(LogLine::info(line));
             }
         }
         if self.numbers("npts").is_empty() {
             let message = "NO UNMASKED POINTS FOUND, NO STATISTICS WERE COMPUTED";
-            write_line("", message);
+            write_line("", message, "");
             log.push(LogLine::warning(message));
         } else if !path.is_empty() || verbose {
             self.details(&columns, |line, header| {
-                write_line(if header { "#" } else { " " }, &line);
+                write_line(if header { "#" } else { " " }, &line, "\n");
                 if verbose {
                     log.push(LogLine::info(line));
                 }

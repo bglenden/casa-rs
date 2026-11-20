@@ -89,7 +89,7 @@ def test_empty_and_unwritable_reports_preserve_numeric_results(casa, tmp_path):
         logfile = tmp_path / f"empty-{index}.txt"
         result = image.statistics(excludepix=[0, 5], logfile=str(logfile))
         assert result["npts"].size == 0
-        assert logfile.read_text() == "NO UNMASKED POINTS FOUND, NO STATISTICS WERE COMPUTED\n"
+        assert logfile.read_text() == "NO UNMASKED POINTS FOUND, NO STATISTICS WERE COMPUTED"
         result = image.statistics(logfile=str(tmp_path / "missing" / "log.txt"))
         assert result["sum"][0] == 15
         assert image.done()
@@ -100,7 +100,27 @@ def test_statistics_only_writes_a_report_when_a_path_is_supplied(tmp_path):
     assert image.fromarray(pixels=np.array([[1.0, 2.0]], dtype=np.float32))
     logfile = tmp_path / "report.txt"
     image.statistics(logfile=str(logfile))
-    text = logfile.read_text()
+    text = "existing report text\n"
+    logfile.write_text(text)
     image.statistics(append=False)
     assert logfile.read_text() == text
     assert image.done()
+
+
+@pytest.mark.parametrize("shape,unit", [((4, 3), "Jy"), ((4, 3, 1, 4), "Jy.km/s")])
+def test_statistics_report_labels_the_flux_and_its_units(casa, tmp_path, shape, unit):
+    values = np.ones(shape, dtype=np.float32)
+    flux_lines = []
+    for index, backend in enumerate((tools, casa)):
+        image = backend.image()
+        assert image.fromarray(pixels=values)
+        assert image.setbrightnessunit("Jy/beam")
+        assert image.setrestoringbeam(major="2arcmin", minor="1arcmin", pa="0deg")
+        logfile = tmp_path / f"flux-{index}.txt"
+        result = image.statistics(logfile=str(logfile), list=True)
+        line, = (line for line in logfile.read_text().splitlines() if "[flux]" in line)
+        assert line.endswith(" " + unit)
+        assert float(line.split()[-2]) == pytest.approx(result["flux"][0], rel=5e-6)
+        flux_lines.append(line)
+        assert image.done()
+    assert flux_lines[0] == flux_lines[1]
