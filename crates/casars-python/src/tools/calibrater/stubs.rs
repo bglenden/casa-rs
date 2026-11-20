@@ -82,19 +82,6 @@ impl PyCalibrater {
         not_yet_implemented_in("calibrater", "fluxscale", 1528)
     }
 
-    #[pyo3(signature = (wtmode = None, dowtsp = None, tsystable = None, gainfield = None, interp = None, spwmap = None), text_signature = "($self, wtmode='nyq', dowtsp=False, tsystable='', gainfield='', interp='', spwmap=[])")]
-    fn initweights(
-        &self,
-        wtmode: Option<&Bound<'_, PyAny>>,
-        dowtsp: Option<&Bound<'_, PyAny>>,
-        tsystable: Option<&Bound<'_, PyAny>>,
-        gainfield: Option<&Bound<'_, PyAny>>,
-        interp: Option<&Bound<'_, PyAny>>,
-        spwmap: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        not_yet_implemented_in("calibrater", "initweights", 1524)
-    }
-
     #[pyo3(signature = (tablein = None, tableout = None, fields = None), text_signature = "($self, tablein='', tableout='', fields=[])")]
     fn linpolcor(
         &self,

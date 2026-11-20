@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_coordinates::tabular::TabularEdit;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_types::quanta::{Quantity, Unit};
 use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PySystemError, PyTypeError};
@@ -131,7 +132,7 @@ fn apply_location(
                 .collect(),
             model => vec![None; model.n_world_axes()],
         });
-    let mut updated = state.record.clone();
+    let mut updated = state.editable_record()?;
     for (axis, ((pixel, value), unit)) in pixels.into_iter().zip(canonical).zip(units).enumerate() {
         if !(use_all || mask[axis])
             || coordinates.pixel_axis_type(axis) == Some(CoordinateType::Stokes)
@@ -139,14 +140,10 @@ fn apply_location(
             continue;
         }
         let value = declared_value(value, unit.as_deref())?;
-        CoordinateSystem::set_reference_pixel_in_record(&mut updated, axis, pixel)
-            .map_err(raised)?;
-        CoordinateSystem::set_reference_value_in_record(&mut updated, axis, value)
-            .map_err(raised)?;
+        state.edit_record_axis(&mut updated, axis, TabularEdit::ReferencePixel(pixel))?;
+        state.edit_record_axis(&mut updated, axis, TabularEdit::ReferenceValue(value))?;
     }
-    let mut edited = CoordinateState::from_record(updated)?;
-    edited.parent_name = std::mem::take(&mut state.parent_name);
-    *state = edited;
+    state.apply_edited_record(updated)?;
     Ok(true)
 }
 
@@ -185,7 +182,7 @@ fn apply_edit(
     let mut values = value
         .values_with_defaults(state, selected.zip(one_coordinate.as_ref()), defaults)?
         .into_iter();
-    let mut updated = state.record.clone();
+    let mut updated = state.editable_record()?;
     for (index, placement) in CoordinateSystem::record_coordinates(&state.record)
         .map_err(raised)?
         .into_iter()
@@ -206,23 +203,17 @@ fn apply_edit(
             if old_values.get(local) == Some(&value) {
                 continue;
             }
-            match edit {
-                WorldEdit::Reference => {
-                    CoordinateSystem::set_reference_value_in_record(&mut updated, axis, value)
-                }
-                WorldEdit::Increment => {
-                    CoordinateSystem::set_increment_in_record(&mut updated, axis, value)
-                }
-            }
-            .map_err(raised)?;
+            let parameter = match edit {
+                WorldEdit::Reference => TabularEdit::ReferenceValue(value),
+                WorldEdit::Increment => TabularEdit::Increment(value),
+            };
+            state.edit_record_axis(&mut updated, axis, parameter)?;
         }
     }
     if values.next().is_some() {
         return Err(raised("World and pixel axes do not align"));
     }
-    let mut edited = CoordinateState::from_record(updated)?;
-    edited.parent_name = std::mem::take(&mut state.parent_name);
-    *state = edited;
+    state.apply_edited_record(updated)?;
     Ok(true)
 }
 

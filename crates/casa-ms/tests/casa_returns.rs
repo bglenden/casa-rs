@@ -411,12 +411,12 @@ fn casa_values_not_implemented_yet_are_refused_naming_978() {
             json!({"mode": "rflag", "action": "calculate"}),
             "action",
         ),
-        // An unimplemented CASA parameter, refused at any value but its
-        // default where CASA reads it: channel averaging in clip mode.
+        // Clip now averages channels. Automatic RFlag still tracks that
+        // capability as part of the automatic flagging outcome.
         (
             FLAGDATA,
             "flagdata",
-            json!({"mode": "clip", "channelavg": true}),
+            json!({"mode": "rflag", "channelavg": true}),
             "channelavg",
         ),
         // CASA parses ntime before it runs any mode, and refuses

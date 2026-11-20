@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 822
+- Concepts: 828
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -1058,14 +1058,14 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>inpfile</code> | <code>flagdata.inpfile@r1</code> | <code>string</code> | <code>""</code>; optional | Input | File, files or list of flag commands to apply in list mode. |
 | <code>reason</code> | <code>flagdata.reason@r1</code> | <code>string</code> | <code>"any"</code>; optional | Input | Select list-mode flag commands by their reason. |
 | <code>tbuff</code> | <code>flagdata.tbuff@r1</code> | <code>float</code> | <code>0.0</code>; optional | Input | Time buffer in seconds that pads each flag command's time range. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
-| <code>antenna</code> | <code>ms.selection.antenna@r2</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA antenna (baseline) selection, exact text |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range selector. |
-| <code>timerange</code> | <code>ms.selection.timerange@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA time selection passed to the MeasurementSet parser as literal text. |
+| <code>spw</code> | <code>ms.selection.spw@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata spw selector. |
+| <code>field</code> | <code>ms.selection.field@r8</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata field selector. |
+| <code>antenna</code> | <code>ms.selection.antenna@r7</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata antenna selector. |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
+| <code>timerange</code> | <code>ms.selection.timerange@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata timerange selector. |
 | <code>correlation</code> | <code>ms.selection.correlation@r3</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagging agent correlation selection.<br><em>Surface:</em> Selects stored correlation planes for manual, unflag, quack, summary and clip. Clip supports ABS, REAL, IMAG, ARG and NORM on receptor labels and WVR. Its default skips stored-I buffers. Summary counts stored flags for an operator expression. Derived Stokes and other mode combinations remain on #978. |
-| <code>scan</code> | <code>ms.selection.scan@r2</code> | <code>string</code> | <code>""</code>; optional | Selection | Syntax-preserving numeric scan selection |
-| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
+| <code>scan</code> | <code>ms.selection.scan@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata scan selector. |
+| <code>intent</code> | <code>ms.selection.intent@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA flagdata intent selector. |
 | <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
 | <code>observation</code> | <code>ms.selection.observation@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts selector text or an observation ID. Preserve the input type for HISTORY. |
 | <code>feed</code> | <code>ms.selection.feed@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA feed IDs and feed pair selection.<br><em>Surface:</em> Selects the requested feed IDs or pairs. CASA 6.7.6.14 flagdata silently ignores this selector. |

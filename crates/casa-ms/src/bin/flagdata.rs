@@ -23,6 +23,18 @@ use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
 
+const STRING_SELECTORS: [&str; 9] = [
+    "field",
+    "spw",
+    "array",
+    "feed",
+    "scan",
+    "antenna",
+    "uvrange",
+    "timerange",
+    "intent",
+];
+
 fn main() -> ExitCode {
     TaskFrontEnd::new_with_deferred_schema(
         "flagdata",
@@ -42,6 +54,7 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
+    let vector_selector = selector_argument(task)?;
     check_correlation_argument(task, &action)?;
     let mode = task.required_text("mode")?;
     let save_parameters = task.flag("savepars")? && mode != "summary";
@@ -73,6 +86,12 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             ));
         }
     };
+    if let Some(selector) = vector_selector {
+        backup_before_failed_apply(task, &action)?;
+        return Err(
+            TaskFailure::execution(format!("argument _{selector} must be a string")).at(selector),
+        );
+    }
     let request = flagdata_request(task, channel_bins).or_else(|error| {
         let parameter = error.parameter.as_deref();
         if matches!(parameter, Some("datacolumn" | "field" | "spw"))
@@ -132,27 +151,24 @@ fn save_flag_parameters(
     action: &str,
 ) -> Result<(), TaskFailure> {
     let mut arguments = Vec::new();
-    for name in [
-        "field",
-        "spw",
-        "array",
-        "feed",
-        "scan",
-        "antenna",
-        "uvrange",
-        "timerange",
-        "intent",
-    ] {
+    for name in STRING_SELECTORS {
         if let Some(text) = task.argument_text(name) {
             arguments.push(format!("{name}={text}"));
             continue;
         }
-        let text = if let Some(ParameterValue::String(value)) = task.session().given(name) {
-            value.clone()
+        if let Some(ParameterValue::Array(values)) = task.session().given(name) {
+            let values = values
+                .iter()
+                .map(|value| match value {
+                    ParameterValue::String(text) => selector_string_repr(text),
+                    _ => unreachable!("selector types were validated"),
+                })
+                .collect::<Vec<_>>();
+            arguments.push(format!("{name}=[{}]", values.join(", ")));
         } else {
-            task_selection_text(task, name)?
-        };
-        push_command_argument(&mut arguments, name, &ParameterValue::String(text));
+            let text = task_selection_text(task, name)?;
+            push_command_argument(&mut arguments, name, &ParameterValue::String(text));
+        }
     }
     if let Some(observation) = observation_text(task)? {
         push_command_argument(
@@ -284,6 +300,35 @@ fn push_command_argument(arguments: &mut Vec<String>, name: &str, value: &Parame
     arguments.push(format!("{name}={text}"));
 }
 
+fn selector_string_repr(text: &str) -> String {
+    use std::fmt::Write as _;
+
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut result = String::from(quote);
+    for character in text.chars() {
+        match character {
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\\' => result.push_str("\\\\"),
+            character if character == quote => {
+                result.push('\\');
+                result.push(character);
+            }
+            character if character.is_control() && u32::from(character) <= 0xff => {
+                write!(result, "\\x{:02x}", u32::from(character)).expect("write to String");
+            }
+            character => result.push(character),
+        }
+    }
+    result.push(quote);
+    result
+}
+
 fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
     let rflag = matches!(task.value("mode"), Some(ParameterValue::String(mode)) if mode == "rflag");
     let mut bindings = task
@@ -366,6 +411,29 @@ fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result
                 .at("correlation"),
         ),
     }
+}
+
+fn selector_argument(task: &TaskInvocation<'_>) -> Result<Option<&'static str>, TaskFailure> {
+    let mut first_vector = None;
+    for name in STRING_SELECTORS {
+        match task.value(name) {
+            None | Some(ParameterValue::String(_)) => {}
+            Some(ParameterValue::Array(items))
+                if items
+                    .iter()
+                    .all(|item| matches!(item, ParameterValue::String(_))) =>
+            {
+                first_vector.get_or_insert(name);
+            }
+            _ => {
+                return Err(TaskFailure::validation(format!(
+                    "{name} must be a string or string vector"
+                ))
+                .at(name));
+            }
+        }
+    }
+    Ok(first_vector)
 }
 
 fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
