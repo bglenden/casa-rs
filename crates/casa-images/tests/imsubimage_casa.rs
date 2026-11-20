@@ -250,6 +250,8 @@ fn subimage_matches_casa_6_7_6_14() {
                 "saved_box_conflict" | "saved_chans_conflict" | "saved_stokes_conflict" => {
                     "saved region cannot be combined"
                 }
+                "saved_relative_disjoint" => "does not intersect the image",
+                "saved_relative_wide" => "SIN deproject: point outside unit circle",
                 "drop_all" => "cannot drop all axes",
                 "empty" => "outfile must be specified",
                 unexpected => panic!("no assertion for error case {unexpected}"),
