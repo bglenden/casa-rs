@@ -762,10 +762,7 @@ fn typed_reads_follow_the_surface_and_name_the_parameter_at_fault() {
     ] {
         session.set(name, value).unwrap();
     }
-    let task = TaskInvocation {
-        session: &session,
-        workspace: Path::new("."),
-    };
+    let task = TaskInvocation::new(&session, Path::new("."));
     assert_eq!(task.paths("imagename").unwrap().len(), 2);
     let many = task.path("imagename").unwrap_err();
     assert_eq!(many.parameter.as_deref(), Some("imagename"));
@@ -779,10 +776,7 @@ fn typed_reads_follow_the_surface_and_name_the_parameter_at_fault() {
     // An adapter's explicit absence ("none") reads as no value.
     let imstat =
         crate::ParameterSession::defaults(builtin_surface_bundle("imstat").unwrap()).unwrap();
-    let task = TaskInvocation {
-        session: &imstat,
-        workspace: Path::new("."),
-    };
+    let task = TaskInvocation::new(&imstat, Path::new("."));
     assert_eq!(task.text("box").unwrap(), None);
     assert!(task.required_text("box").is_err());
 
@@ -791,10 +785,7 @@ fn typed_reads_follow_the_surface_and_name_the_parameter_at_fault() {
     let mut flagdata =
         crate::ParameterSession::defaults(builtin_surface_bundle("flagdata").unwrap()).unwrap();
     {
-        let task = TaskInvocation {
-            session: &flagdata,
-            workspace: Path::new("."),
-        };
+        let task = TaskInvocation::new(&flagdata, Path::new("."));
         assert_eq!(task.optional_number("timedev").unwrap(), None);
     }
     flagdata
@@ -809,10 +800,7 @@ fn typed_reads_follow_the_surface_and_name_the_parameter_at_fault() {
             casa_provider_contracts::ParameterValue::String("none".into()),
         )
         .unwrap();
-    let task = TaskInvocation {
-        session: &flagdata,
-        workspace: Path::new("."),
-    };
+    let task = TaskInvocation::new(&flagdata, Path::new("."));
     assert_eq!(task.optional_number("timedev").unwrap(), Some(1.5));
     assert_eq!(task.optional_number("freqdev").unwrap(), None);
     let wrong = task.optional_number("mode").unwrap_err();

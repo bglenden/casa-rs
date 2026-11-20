@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+import errno
 import functools
 from http import HTTPStatus
 import inspect
-from json import JSONDecodeError, loads
-from math import isnan
+from json import JSONDecodeError, dumps, loads
+from math import isfinite, isnan
 import os
 from os import PathLike
 from pathlib import Path
@@ -323,13 +324,24 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         except (TypeError, ValueError) as error:
             raise AssertionError(str(error)) from error
     if name == "flagdata":
+        argument_text = None
+        if arguments["savepars"] is True:
+            _validate_required_path(values, "vis", arguments["vis"])
+            argument_text = _flagdata_saved_argument_text(arguments)
         correlation_vector = _coerce_flagdata_options(values)
         try:
+            if argument_text:
+                workspace = Path.cwd()
+                resolved = TaskParameters.defaults(name, workspace=workspace)
+                resolved.set_many(values)
+                return _execute_task(name, resolved, workspace, None, argument_text=argument_text).value
             return run(name, **values).value
         except TaskParameterError as error:
             completion = error.completion
             if (completion.parameter == "datacolumn"
                     and completion.message == "Failed to parse parameters for mode clip"):
+                raise ValueError(completion.message) from error
+            if completion.parameter in ("vis", "outfile"):
                 raise ValueError(completion.message) from error
             raise
         except TaskExecutionError as error:
@@ -339,8 +351,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AttributeError(f"'{correlation_vector}' object has no attribute 'upper'") from error
                 if completion.message == "no flagdata summary report for the selected correlations":
                     raise KeyError("nreport") from error
-            if completion.parameter in ("channelavg", "chanbin", "timeavg"):
+            if completion.parameter in ("channelavg", "chanbin", "timeavg", "outfile"):
                 raise RuntimeError(completion.message) from error
+            if completion.parameter == "outfile.not_found":
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), arguments["outfile"]) from error
             raise
     return run(name, **values).value
 
@@ -447,6 +461,33 @@ def _bandpass_statistics(value):
     return value
 
 
+def _flagdata_saved_argument_text(arguments: Mapping[str, Any]) -> dict[str, str]:
+    """Spell the CASA values whose conversion for the flagger loses their form."""
+    import numpy as np
+
+    text = {}
+    for name in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
+        value = arguments[name]
+        if isinstance(value, (list, tuple, np.ndarray)) and _flagdata_string_vector(value):
+            text[name] = (str(value) if isinstance(value, np.ndarray) and value.ndim == 0
+                          else repr([str(item) for item in value]))
+    for name in ("autocorr", "clipoutside", "channelavg", "timeavg", "clipzeros", "quackincrement"):
+        if isinstance(arguments[name], np.bool_):
+            text[name] = str(bool(arguments[name]))
+    width = arguments["chanbin"]
+    if isinstance(width, np.ndarray) and width.ndim == 0:
+        text["chanbin"] = str(width)
+    clip = arguments["clipminmax"]
+    if isinstance(clip, (list, tuple, np.ndarray)) and not (isinstance(clip, np.ndarray) and clip.ndim != 1) and len(clip) == 2:
+        if all(isinstance(item, (int, float, np.integer, np.floating)) for item in clip):
+            if any(isinstance(item, (float, np.floating)) and not isfinite(item) for item in clip):
+                text["clipminmax"] = str([float(item) for item in clip])
+    interval = arguments["quackinterval"]
+    if isinstance(interval, (float, np.floating)) and not isfinite(interval):
+        text["quackinterval"] = str(float(interval))
+    return text
+
+
 def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
     import numpy as np
 
@@ -455,7 +496,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
     errors: dict[str, list[str]] = {}
     vector_selectors = []
     correlation_vector = None
-    for parameter in ("field", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
+    for parameter in ("field", "spw", "array", "feed", "scan", "antenna", "uvrange", "timerange", "intent"):
         if parameter not in values:
             continue
         value = values[parameter]
@@ -1195,9 +1236,14 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
 
 def _execute_task(
     task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None,
-    *, bandpass_completed_pages: int | None = None,
+    *, bandpass_completed_pages: int | None = None, argument_text: Mapping[str, str] | None = None,
 ) -> TaskCompletion:
     invocation = resolved.provider_invocation()
+    if argument_text:
+        assert invocation.stdin is not None
+        request = loads(invocation.stdin)
+        request["argument_text"] = argument_text
+        invocation = replace(invocation, stdin=dumps(request))
     if task == "plotms" and resolved.get("callib"):
         command = (_task_executable("calibrate"), "plotms", *invocation.args)
     else:
@@ -1284,7 +1330,6 @@ def _execute_task(
     if not completion.successful:
         raise TaskExecutionError(completion)
     if task == "plotbandpass" and bandpass_completed_pages is None:
-        from json import loads
         from ._bandpass_plot import render_bandpass
 
         reply = loads(stdout)["result"]
