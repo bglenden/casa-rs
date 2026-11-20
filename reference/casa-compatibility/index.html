@@ -2076,6 +2076,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#callibrary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        callibrary
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9025,6 +9036,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#callibrary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        callibrary
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -14395,7 +14417,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">102</td>
 <td style="text-align: right;">102</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">14</td>
+<td style="text-align: right;">13</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -16624,14 +16646,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
 <li>Accepted only at CASA's default until #1032: <code>rowindex</code>, <code>colindex</code>, <code>plotindex</code>, <code>xframe</code>, <code>xinterp</code>, <code>yframe</code>, <code>yinterp</code>, <code>phasecenter</code>, <code>extendflag</code>, <code>extcorr</code>, <code>extchannel</code>, <code>clearplots</code></li>
-<li>Accepted only at CASA's default until #1526: <code>callib</code>, <code>colorizeoverlay</code></li>
+<li>Accepted only at CASA's default until #1526: <code>colorizeoverlay</code></li>
 <li>casa-rs parameters CASA lacks: none</li>
 <li>Shared parameters: 102, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
 </ul>
 <h4 id="plotms-parameter-implementation">plotms parameter implementation<a class="headerlink" href="#plotms-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>e775bd07a6e5b9ebfbb4b812844564b063dc78e9</code>. Status counts: Default only: 14, Implemented: 24, Not implemented: 2, Partial: 62, Unassessed: 0.</p>
+<p>Audit baseline: <code>e775bd07a6e5b9ebfbb4b812844564b063dc78e9</code>. Status counts: Default only: 13, Implemented: 24, Not implemented: 2, Partial: 63, Unassessed: 0.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -16715,7 +16737,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code>; <code>xdatacolumn</code> → <code>xdatacolumn</code></td>
 <td>Partial</td>
 <td>Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. <a href="#plotms-behavior-coordinates">coordinates</a><br>Catalog domain: <code>model</code>, <code>corrected</code>, <code>data-model_vector</code>, <code>data-model</code>, <code>corrected/model_vector</code>, <code>residual</code>, <code>corrected-model</code>, <code>data/model</code>, <code>data/model_scalar</code>, <code>float</code>, <code>corrected/model_scalar</code>, <code>corrected/model</code>, <code>`,</code>corrected-model_vector<code>,</code>data-model_scalar<code>,</code>corrected-model_scalar<code>,</code>data<code>,</code>data/model_vector`</td>
-<td><a href="#plotms-evidence-paired">paired</a></td>
+<td><a href="#plotms-evidence-paired">paired</a>, <a href="#plotms-evidence-callibrary">callibrary</a></td>
 </tr>
 <tr>
 <td><code>xframe</code></td>
@@ -16747,7 +16769,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code>; <code>ydatacolumn</code> → <code>ydatacolumn</code></td>
 <td>Partial</td>
 <td>Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. <a href="#plotms-behavior-coordinates">coordinates</a><br>Catalog domain: <code>variant</code></td>
-<td><a href="#plotms-evidence-paired">paired</a></td>
+<td><a href="#plotms-evidence-paired">paired</a>, <a href="#plotms-evidence-callibrary">callibrary</a></td>
 </tr>
 <tr>
 <td><code>yframe</code></td>
@@ -17417,9 +17439,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>callib</code></td>
 <td><code>[]</code></td>
 <td><code>[]</code>; <code>callib</code> → <code>callib</code></td>
-<td>Default only</td>
-<td>Calibration library string or filename for on-the-fly calibration. <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: list[<code>string</code>], length 0..many; scalar allowed; Non-default refused when always (#1526)</td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated scalar or spectral weights. Iterated figures and additional calibration plotting controls remain open. <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: list[<code>string</code>], length 0..many; scalar allowed</td>
+<td><a href="#plotms-evidence-callibrary">callibrary</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>headeritems</code></td>
@@ -17478,7 +17500,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h5 id="project-axes-and-flags">Project axes and flags<a class="headerlink" href="#project-axes-and-flags" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.</p>
 <p>Pointing-coordinate axes and advanced per-axis MS data columns are open.</p>
-<p>Evidence: <a href="#plotms-evidence-paired">paired</a>, <a href="#plotms-evidence-selectors">selectors</a>.</p>
+<p>Evidence: <a href="#plotms-evidence-paired">paired</a>, <a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-callibrary">callibrary</a>.</p>
 <p><a id="plotms-behavior-averaging"></a></p>
 <h5 id="average-solution-points">Average solution points<a class="headerlink" href="#average-solution-points" title="Permanent link">&para;</a></h5>
 <p><strong>Implemented</strong> — Apply weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache.</p>
@@ -17495,14 +17517,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p>Evidence: <a href="#plotms-evidence-paired">paired</a>.</p>
 <p><a id="plotms-behavior-export"></a></p>
 <h5 id="save-and-publish-selected-plot-products">Save and publish selected plot products<a class="headerlink" href="#save-and-publish-selected-plot-products" title="Permanent link">&para;</a></h5>
-<p><strong>Partial</strong> — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false.</p>
+<p><strong>Partial</strong> — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and single-panel figures.</p>
 <p>More export, multi-plot state and interactive display forms remain open.</p>
-<p>Evidence: <a href="#plotms-evidence-paired">paired</a>.</p>
+<p>Evidence: <a href="#plotms-evidence-paired">paired</a>, <a href="#plotms-evidence-callibrary">callibrary</a>.</p>
 <p><a id="plotms-behavior-advanced"></a></p>
 <h5 id="advanced-calibration-plotting-controls">Advanced calibration plotting controls<a class="headerlink" href="#advanced-calibration-plotting-controls" title="Permanent link">&para;</a></h5>
-<p><strong>Partial</strong> — Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet callibrary, overlays, transforms and interactive flag controls.</p>
+<p><strong>Partial</strong> — Apply calibration libraries to MeasurementSet plots in memory and compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.</p>
 <p>The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.</p>
-<p>Evidence: <a href="#plotms-evidence-atmosphere">atmosphere</a>, <a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a>.</p>
+<p>Evidence: <a href="#plotms-evidence-atmosphere">atmosphere</a>, <a href="#plotms-evidence-selectors">selectors</a>, <a href="#plotms-evidence-remaining">remaining</a>, <a href="#plotms-evidence-callibrary">callibrary</a>.</p>
 <h4 id="plotms-deviations-and-unfinished-work">plotms deviations and unfinished work<a class="headerlink" href="#plotms-deviations-and-unfinished-work" title="Permanent link">&para;</a></h4>
 <h5 id="disable-selection-proposed">disable-selection: Proposed<a class="headerlink" href="#disable-selection-proposed" title="Permanent link">&para;</a></h5>
 <ul>
@@ -17511,9 +17533,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>CASA: Raises Exception with message updateImmediately must be a boolean.</li>
 <li>casa-rs: Displays and exports all available solution points without applying the selector text.</li>
 <li>Rationale: Make the documented selection switch work when it is false.</li>
-<li>User impact: The native request produces all 160 available points in the paired fixture.</li>
+<li>User impact: The native request produces all 160 available points in the paired fixture. The same fallback preserves all 1,920 points in the unfiltered callibrary case.</li>
 <li>Owner decision: Pending; not an accepted deviation.</li>
-<li>Evidence: <a href="#plotms-evidence-paired">paired</a>.</li>
+<li>Evidence: <a href="#plotms-evidence-paired">paired</a>, <a href="#plotms-evidence-callibrary">callibrary</a>.</li>
 </ul>
 <h5 id="calibration-selection-diagnostics-proposed">calibration-selection-diagnostics: Proposed<a class="headerlink" href="#calibration-selection-diagnostics-proposed" title="Permanent link">&para;</a></h5>
 <ul>
@@ -17556,6 +17578,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>d3571932be189f719e83e2626ba7fab982d23d33</code>; CASA: <code>6.7.6.14</code>.</li>
 <li>Command: <code>casa-python tools/casa-compat/plotms_calibration_oracle.py --work &lt;new-dir&gt; --native-bin &lt;msexplore&gt;</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/plotms-calibration-selectors-20261119.json</code>.</li>
+</ul>
+<p><a id="plotms-evidence-callibrary"></a></p>
+<h5 id="callibrary">callibrary<a class="headerlink" href="#callibrary" title="Permanent link">&para;</a></h5>
+<p><strong>Same-input callibrary plots — passed.</strong> 43 public text exports, 874 points, one missing-library error and 12 rendered coordinates matched. The paired averages cover selected and strided channels and calibrated per-channel weights. Source visibilities, stored corrections, flags and weights were preserved. The disabled selector fallback matched 1,920 CASA points. CASA 6.7.6.14 and casaplotms 2.9.1 on identical MeasurementSets with file and inline callibraries, independent data columns and averaged channel and time coordinates.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py">https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py</a></li>
+<li>Revision: <code>f9215c62670dfc19138bd9d65a949d22065f1c59</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>casa-python tools/casa-compat/plotms_callibrary_oracle.py --work &lt;new-dir&gt; --native-bin &lt;calibrate&gt;</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/plotms-callibrary-20261119.json</code>.</li>
 </ul>
 <h3 id="plotweather">plotweather<a class="headerlink" href="#plotweather" title="Permanent link">&para;</a></h3>
 <ul>

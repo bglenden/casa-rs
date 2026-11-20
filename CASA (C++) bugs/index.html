@@ -4554,6 +4554,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#plotms-averages-disjoint-channel-selections-on-a-compressed-sample-grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PlotMS averages disjoint channel selections on a compressed sample grid
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -11273,6 +11284,13 @@ and call <code>rename()</code> on the first tool. CASA can move the table, then 
 the old name and can abort while closing that stale handle. casa-rs refuses
 the move before changing either path while another tool holds the image.
 See <a href="https://github.com/bglenden/casa-rs/issues/1625">#1625</a>.</p>
+<h2 id="plotms-averages-disjoint-channel-selections-on-a-compressed-sample-grid">PlotMS averages disjoint channel selections on a compressed sample grid<a class="headerlink" href="#plotms-averages-disjoint-channel-selections-on-a-compressed-sample-grid" title="Permanent link">&para;</a></h2>
+<p>With CASA 6.7.6.14, a callibrary, <code>spw='0:0~2;5~7'</code> and
+<code>avgchannel='2'</code>, PlotMS retains frequency bins for original
+channels 0–1 and 5–6. It averages visibility samples from original
+channels 0–1 and 2 and 5, in the order of its compressed channel
+buffer. casa-rs preserves the paired text coordinates and sample
+values so existing PlotMS diagnostics can be compared directly (#1526).</p>
 
 
 
