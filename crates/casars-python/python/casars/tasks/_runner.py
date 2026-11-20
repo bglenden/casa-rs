@@ -715,6 +715,28 @@ def _call_initweights(values: dict[str, Any]) -> Any:
 
 
 def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
+    import numpy as np
+
+    for name in ("field", "spw", "scan", "antenna", "timerange"):
+        if name not in values or isinstance(values[name], str):
+            continue
+        original = values[name]
+        candidate = original
+        if not isinstance(original, np.ndarray):
+            try:
+                candidate = list(original)
+            except TypeError:
+                pass
+        converted, record_type = _ms_transform_selector_variant(name, candidate)
+        # Preserve scalar NumPy provenance even for a value whose tool
+        # record CASA omits, or whose split selector is read as text.
+        scalar_array = isinstance(original, np.ndarray) and original.ndim == 0
+        values[name] = original if record_type is None or scalar_array else converted
+        if not (task == "split" and name != "timerange") and record_type is not None:
+            raise RuntimeError(
+                "RecordRep::get_pointer - incorrect data type String   "
+                f"used for field {name} with type {record_type:<8}"
+            )
     if "correlation" in values:
         values["correlation"] = _ms_transform_string_or_vector("correlation", values["correlation"])
     for name in ("observation", "intent", "array", "uvrange", "feed"):

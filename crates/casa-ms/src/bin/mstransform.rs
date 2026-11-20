@@ -68,7 +68,7 @@ fn transform_request(
     let request = MsTransformRequest {
         input_ms: task.path("vis")?,
         output_ms: task.path("outputvis")?,
-        spw: task_selection_text(task, "spw")?,
+        spw: variant_selector(task, "spw")?.unwrap_or_default(),
         width,
         data_column: data_column(&task.required_text("datacolumn")?)?,
         selection: selection(task)?,
@@ -126,7 +126,7 @@ fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
                     if value == "none"
                         && matches!(
                             binding.name.as_str(),
-                            "field" | "scan" | "antenna" | "timerange"
+                            "field" | "spw" | "scan" | "antenna" | "timerange"
                         ) =>
                 {
                     r#""""#.into()
@@ -143,6 +143,17 @@ fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
                         })
                         .collect::<Vec<_>>();
                     format!("\"{}\"", labels.join(", "))
+                }
+                ParameterValue::ScalarArray(value)
+                    if matches!(
+                        binding.name.as_str(),
+                        "field" | "spw" | "scan" | "antenna" | "timerange"
+                    ) =>
+                {
+                    match value.as_ref() {
+                        ParameterValue::String(text) => text.clone(),
+                        value => python_repr(value),
+                    }
                 }
                 ParameterValue::NumpyScalar { value, .. } => python_repr(value),
                 ParameterValue::EmptyArray { .. } => "[]".into(),
@@ -324,10 +335,10 @@ fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
         "taql"
     };
     let mut selection = MsSelection {
-        field: selector("field")?,
-        scan: selector("scan")?,
-        antenna: selector("antenna")?,
-        timerange: selector("timerange")?,
+        field: variant_selector(task, "field")?,
+        scan: variant_selector(task, "scan")?,
+        antenna: variant_selector(task, "antenna")?,
+        timerange: variant_selector(task, "timerange")?,
         observation: task.value("observation").and_then(variant_selector_text),
         intent: task.text("intent")?.filter(|text| !text.is_empty()),
         correlation: variant_selector(task, "correlation")?,
@@ -350,7 +361,24 @@ fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<Stri
     let Some(value) = task.value(name) else {
         return Ok(None);
     };
-    if task.surface() == "split" && matches!(name, "array" | "feed") {
+    if let ParameterValue::String(raw) = value {
+        if matches!(name, "field" | "spw" | "scan" | "antenna" | "timerange") {
+            let text = task_selection_text(task, name)?;
+            let present = if name == "spw" {
+                !text.is_empty()
+            } else {
+                !text.trim().is_empty()
+            };
+            return Ok(present.then_some(text));
+        }
+        return Ok((!raw.is_empty()).then(|| raw.clone()));
+    }
+    if task.surface() == "split"
+        && matches!(
+            name,
+            "array" | "feed" | "field" | "spw" | "scan" | "antenna"
+        )
+    {
         return Ok(variant_selector_text(value));
     }
     if task.surface() == "split" && name == "correlation" {
@@ -371,7 +399,6 @@ fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<Stri
         }
     }
     let record_type = match value {
-        ParameterValue::String(text) => return Ok((!text.is_empty()).then(|| text.clone())),
         ParameterValue::NumpyScalar {
             dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
             ..

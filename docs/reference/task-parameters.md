@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 812
+- Concepts: 817
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -530,12 +530,12 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>separationaxis</code> | <code>mstransform.separationaxis@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Axis a multi-MS is partitioned along. |
 | <code>numsubms</code> | <code>mstransform.numsubms@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Number of sub-MeasurementSets in a multi-MS: 'auto' or a count. |
 | <code>tileshape</code> | <code>mstransform.tileshape@r1</code> | <code>array&lt;integer&gt;</code> | <code>[0]</code>; optional | Output | Tile shape of the output data columns. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>field</code> | <code>ms.selection.field@r7</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA field selection for MeasurementSet transforms. |
+| <code>spw</code> | <code>ms.selection.spw@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA spw selection for MeasurementSet transforms. |
+| <code>scan</code> | <code>ms.selection.scan@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA scan selection for MeasurementSet transforms. |
+| <code>antenna</code> | <code>ms.selection.antenna@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA antenna selection for MeasurementSet transforms. |
 | <code>correlation</code> | <code>ms.selection.correlation@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA correlation product selection with optional spectral-window qualifiers. |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>timerange</code> | <code>ms.selection.timerange@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA timerange selection for MeasurementSet transforms. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
@@ -595,12 +595,12 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
 | <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
 | <code>keepmms</code> | <code>parameter.keepmms@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Preserve MMS structure. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>field</code> | <code>ms.selection.field@r7</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA field selection for MeasurementSet transforms. |
+| <code>spw</code> | <code>ms.selection.spw@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA spw selection for MeasurementSet transforms. |
+| <code>scan</code> | <code>ms.selection.scan@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA scan selection for MeasurementSet transforms. |
+| <code>antenna</code> | <code>ms.selection.antenna@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA antenna selection for MeasurementSet transforms. |
 | <code>correlation</code> | <code>ms.selection.correlation@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA correlation product selection with optional spectral-window qualifiers. |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>timerange</code> | <code>ms.selection.timerange@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA timerange selection for MeasurementSet transforms. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
