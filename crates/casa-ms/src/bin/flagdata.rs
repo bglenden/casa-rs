@@ -9,9 +9,9 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
-    FlagSummaryOptions, QuackMode, calculate_flagdata_path, flagdata_empty_record,
+    FlagSummaryOptions, MeasurementSet, QuackMode, calculate_flagdata_path, flagdata_empty_record,
     flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
-    task_selection_text,
+    save_next_flag_backup, task_selection_text,
 };
 use casa_provider_contracts::{NumpyScalarType, ParameterValue, python_repr};
 use casa_task_runtime::{
@@ -37,6 +37,7 @@ fn main() -> ExitCode {
 
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
+    check_correlation_argument(task, &action)?;
     let calculate = match action.as_str() {
         "apply" => false,
         "calculate" => true,
@@ -76,11 +77,40 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     ms_task_success(value, &Some(report))
 }
 
+fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
+    match task.value("correlation") {
+        None | Some(ParameterValue::String(_)) => Ok(()),
+        Some(ParameterValue::Array(items))
+            if items
+                .iter()
+                .all(|item| matches!(item, ParameterValue::String(_))) =>
+        {
+            // CASA accepts a string vector at parameter validation. A default
+            // apply saves the original flags before calling .upper() on it.
+            if action == "apply"
+                && task.required_text("mode")? != "summary"
+                && task.flag("flagbackup")?
+            {
+                let ms = MeasurementSet::open(task.path("vis")?)
+                    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+                save_next_flag_backup(&ms, "flagdata")
+                    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+            }
+            Err(TaskFailure::execution("'list' object has no attribute 'upper'").at("correlation"))
+        }
+        _ => Err(
+            TaskFailure::validation("correlation must be a string or string vector")
+                .at("correlation"),
+        ),
+    }
+}
+
 /// The resolved run as a [`FlagDataRequest`]; the parameters the surface
 /// does not carry keep their defaults.
 fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
     let spw = task_selection_text(task, "spw")?;
+    let correlation = task_selection_text(task, "correlation")?;
     let clipminmax = match task.numbers("clipminmax")?.as_slice() {
         [minimum, maximum] => Some([*minimum, *maximum]),
         _ => None,
@@ -109,6 +139,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         selection: selection(task, &spw)?,
         casa_row_selection: true,
         spw: (!spw.is_empty()).then_some(spw),
+        correlation: (!correlation.is_empty()).then_some(correlation),
         mode,
         action,
         autocorr: task.flag("autocorr")?,
