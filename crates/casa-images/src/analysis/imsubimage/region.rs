@@ -94,6 +94,7 @@ pub(in crate::analysis) struct SubimageSelection {
     pub(in crate::analysis) stokes_axis: Option<usize>,
     pub(in crate::analysis) stokes_indices: Option<Vec<usize>>,
     pub(in crate::analysis) selected_stokes: Option<Vec<StokesType>>,
+    pub(in crate::analysis) has_multiple_regions: bool,
 }
 
 impl SubimageSelection {
@@ -126,12 +127,14 @@ impl SubimageSelection {
             }
         }
 
+        let mut saved_union = false;
         if let Some(region) = region_arg {
             let parsed = match region {
                 SubimageRegion::Text(text) => {
                     parse_region_argument(image, text, &full_shape, plane)?
                 }
                 SubimageRegion::Record(record) => {
+                    saved_union = record.get("regions").is_some();
                     parse_saved_region("region", record, image.coordinates(), &full_shape, plane)?
                 }
             };
@@ -200,6 +203,14 @@ impl SubimageSelection {
             &mut shape,
         )?;
 
+        let has_multiple_regions = saved_union
+            || regions.len() > 1
+            || channel_axis
+                .zip(channel_indices.as_ref())
+                .is_some_and(|(a, v)| v.len() != shape[a])
+            || stokes_axis
+                .zip(stokes_indices.as_ref())
+                .is_some_and(|(a, v)| v.len() != shape[a]);
         Ok(Self {
             start,
             shape,
@@ -219,6 +230,7 @@ impl SubimageSelection {
             stokes_axis: stokes_axis.or_else(|| image.find_axis(CoordinateType::Stokes)),
             stokes_indices,
             selected_stokes,
+            has_multiple_regions,
         })
     }
 

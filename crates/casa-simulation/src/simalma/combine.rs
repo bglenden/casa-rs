@@ -77,7 +77,7 @@ pub(super) fn execute(
 fn pbcor(image: &Path, pb: &Path, output: &Path, mode: &str) -> Result<(), SimobserveError> {
     impbcor(&ImpbcorRequest {
         imagename: image.to_path_buf(),
-        pbimage: pb.to_path_buf(),
+        pbimage: pb.to_path_buf().into(),
         outfile: output.to_path_buf(),
         mode: mode.to_owned(),
         cutoff: -1.,

@@ -765,15 +765,33 @@
       "persistence_class": "profile"
     },
     {
-      "id": "impbcor.mode",
+      "id": "impbcor.region",
       "semantic_revision": 1,
+      "casa_name": "region",
+      "value_domain": {
+        "kind": "variant"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CRTF text, region file, or casacore region record.",
+        "details": null,
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "impbcor.mode",
+      "semantic_revision": 2,
       "casa_name": "mode",
       "value_domain": {
-        "kind": "choice",
-        "values": [
-          "divide",
-          "multiply"
-        ]
+        "kind": "string"
       },
       "normalization": {
         "kind": "identity"
@@ -783,7 +801,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Correction mode",
-        "details": null,
+        "details": "CASA selects division or multiplication by the first nonblank letter, ignoring case.",
         "examples": [
           "divide"
         ]
@@ -2393,10 +2411,10 @@
     },
     {
       "id": "parameter.cutoff",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "cutoff",
       "value_domain": {
-        "kind": "float"
+        "kind": "variant"
       },
       "normalization": {
         "kind": "identity"
@@ -2405,8 +2423,8 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Minimum PB value to keep; negative disables cutoff masking",
-        "details": null,
+        "summary": "Primary-beam cutoff for division or multiplication",
+        "details": "Division keeps values at or above the cutoff. Multiplication keeps values at or below it. Negative and NaN cutoffs disable cutoff masking.",
         "examples": [
           "-1.0"
         ]
@@ -5391,27 +5409,20 @@
     },
     {
       "id": "parameter.pbimage",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "pbimage",
       "value_domain": {
-        "kind": "array",
-        "element": {
-          "kind": "path",
-          "resource_kind": "image"
-        },
-        "min_items": 0,
-        "max_items": 1,
-        "allow_scalar": true
+        "kind": "variant"
       },
       "normalization": {
-        "kind": "path"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Primary-beam CASA image path; CASA's [] default means it must be given",
-        "details": "CASA's pbimage is an image name or the beam itself as a numeric pixel array. casa-rs takes the name only: an array of numbers is refused, before the task starts, until #977.",
+        "summary": "Primary-beam image name or floating-point pixel array",
+        "details": "A pixel array must match the input image shape or its two direction axes. A direction-plane beam is extended across other axes.",
         "examples": []
       },
       "persistence_class": "profile"

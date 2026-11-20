@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 808
+- Concepts: 809
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -40,7 +40,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 8 | <code>msexplore</code> | 102 | Plot selected MeasurementSet or calibration table data. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 5 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
-| [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 5 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
+| [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 6 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA or FITS image |
 | [Position Velocity](#surface-impv)<br><code>impv</code> | task | 5 | <code>image_analysis</code> | 16 | Extract a CASA-style position-velocity image |
 | [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 5 | <code>image_analysis</code> | 12 | Extract a CASA-style image section |
 | [Image Math](#surface-immath)<br><code>immath</code> | task | 5 | <code>image_analysis</code> | 16 | Evaluate mathematical expressions and spectral or polarization operations on images |
@@ -1153,24 +1153,24 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Primary Beam Correction (<code>impbcor</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Images
 - Provider family: `image_analysis`
-- Summary: Apply primary-beam correction to a CASA image
+- Summary: Apply primary-beam correction to a CASA or FITS image
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
-| <code>pbimage</code> | <code>parameter.pbimage@r2</code> | <code>array&lt;path (image)&gt;</code> | <code>[]</code>; required | Input | Primary-beam CASA image path; CASA's [] default means it must be given |
+| <code>pbimage</code> | <code>parameter.pbimage@r3</code> | <code>variant</code> | <code>[]</code>; required | Input | Primary-beam image name or floating-point pixel array |
 | <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Pixel box. |
-| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>region</code> | <code>impbcor.region@r1</code> | <code>variant</code> | <code>""</code>; optional | Selection | CRTF text, region file, or casacore region record. |
 | <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
 | <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
-| <code>mode</code> | <code>impbcor.mode@r1</code> | <code>choice (2 values)</code> | <code>"divide"</code>; optional | Correction | Correction mode |
-| <code>cutoff</code> | <code>parameter.cutoff@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Correction | Minimum PB value to keep; negative disables cutoff masking |
+| <code>mode</code> | <code>impbcor.mode@r2</code> | <code>string</code> | <code>"divide"</code>; optional | Correction | Correction mode |
+| <code>cutoff</code> | <code>parameter.cutoff@r2</code> | <code>variant</code> | <code>-1.0</code>; optional | Correction | Primary-beam cutoff for division or multiplication |
 | <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
 
 <a id="surface-impv"></a>

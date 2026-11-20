@@ -54,7 +54,7 @@ pub struct SubimagePlan {
     pub coordinates: casa_coordinates::CoordinateSystem,
     /// Native coordinate representation when it differs from the typed model.
     pub coordinate_record: Option<RecordValue>,
-    image_info: ImageInfo,
+    pub(in crate::analysis) image_info: ImageInfo,
 }
 
 impl SubimagePlan {
@@ -87,7 +87,7 @@ impl SubimagePlan {
         )
     }
 
-    fn from_selection<T: ImagePixel>(
+    pub(in crate::analysis) fn from_selection<T: ImagePixel>(
         image: &dyn ImageInterface<T>,
         native_coordinates: Option<RecordValue>,
         selection: SubimageSelection,
