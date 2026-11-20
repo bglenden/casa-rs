@@ -575,6 +575,285 @@
       "fits_history": [],
       "task_history": true
     },
+    "round_direction_strings": {
+      "fitsimage": "spectrum.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "12h34m56.78901s",
+          "-2.50001234deg",
+          "",
+          "I"
+        ]
+      },
+      "shape": [
+        1,
+        1,
+        1,
+        3
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        0.0,
+        1.0,
+        2.0
+      ],
+      "mask": [
+        true,
+        true,
+        true
+      ],
+      "unit": "",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "deg",
+        "deg",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        188.73666666666668,
+        -2.5,
+        1.0,
+        1420000000.0
+      ],
+      "increment": [
+        -0.016666666666666666,
+        0.016666666666666666,
+        1.0,
+        2000000.0
+      ],
+      "last_world": [
+        188.73666666666668,
+        -2.5,
+        1.0,
+        1424000000.0
+      ],
+      "rest_frequency": [
+        0.0
+      ],
+      "stokes": [
+        "I"
+      ],
+      "beam": {},
+      "fits_history": [],
+      "task_history": true
+    },
+    "zero_frequency": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          "0Hz",
+          "I"
+        ]
+      },
+      "shape": [
+        3,
+        2,
+        1,
+        1
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        1.0,
+        0.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        1.0,
+        1000.0
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329,
+        1.0,
+        0.0
+      ],
+      "rest_frequency": [
+        0.0
+      ],
+      "stokes": [
+        "I"
+      ],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "zero_frequency_float": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          0.0,
+          "I"
+        ]
+      },
+      "shape": [
+        3,
+        2,
+        1,
+        1
+      ],
+      "pixel_type": "float",
+      "pixels": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        0.0,
+        6.0
+      ],
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "unit": "Jy/beam",
+      "names": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "units": [
+        "rad",
+        "rad",
+        "",
+        "Hz"
+      ],
+      "reference": [
+        1.9198621771937625,
+        0.7330382858376184,
+        1.0,
+        0.0
+      ],
+      "increment": [
+        -0.00017453292519943296,
+        0.00017453292519943296,
+        1.0,
+        1000.0
+      ],
+      "last_world": [
+        1.91939238893216,
+        0.733212763899329,
+        1.0,
+        0.0
+      ],
+      "rest_frequency": [
+        0.0
+      ],
+      "stokes": [
+        "I"
+      ],
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 144.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 72.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 12.0
+        }
+      },
+      "fits_history": [
+        "Fixture origin"
+      ],
+      "task_history": true
+    },
+    "integer_frequency": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          100,
+          "I"
+        ]
+      },
+      "created_on_error": false,
+      "error": "RuntimeError",
+      "message": "Unrecognized format for world coordinate "
+    },
+    "negative_frequency": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "defaultaxes": true,
+        "defaultaxesvalues": [
+          "",
+          "",
+          "-100Hz",
+          "I"
+        ]
+      },
+      "created_on_error": false,
+      "error": "RuntimeError",
+      "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/coordinates/Coordinates/SpectralCoordinate.cc : 1144) Failed AlwaysAssert restFrequencies(i)>=0.0"
+    },
     "reorder_axes_and_mask": {
       "fitsimage": "permuted.fits",
       "params": {
@@ -1633,6 +1912,7 @@
           "Q"
         ]
       },
+      "created_on_error": false,
       "error": "RuntimeError",
       "message": "Non-standard direction axes. Cannot add default axes."
     },
@@ -1646,8 +1926,35 @@
           "1GHz"
         ]
       },
+      "created_on_error": false,
       "error": "TypeError",
       "message": "When defaultaxes==True, parameter defaultaxesvalues must be provided as a list of 4 values: RA, Dec, Freq, Stokes,"
+    },
+    "time_beam_angle": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "beam": [
+          "5arcsec",
+          "2arcsec",
+          "1h"
+        ]
+      },
+      "created_on_error": true,
+      "error": "RuntimeError",
+      "message": "Exception: Position angle must have angular units (h is not).."
+    },
+    "time_beam_bad_order": {
+      "fitsimage": "plane.fits",
+      "params": {
+        "beam": [
+          "2arcsec",
+          "5arcsec",
+          "1h"
+        ]
+      },
+      "created_on_error": false,
+      "error": "TypeError",
+      "message": "Parameter beam[2] is invalid (major axis must be >= minor axis): ['2arcsec', '5arcsec', '1h']"
     },
     "invalid_beam_order": {
       "fitsimage": "plane.fits",
@@ -1658,6 +1965,7 @@
           "35deg"
         ]
       },
+      "created_on_error": false,
       "error": "TypeError",
       "message": "Parameter beam[2] is invalid (major axis must be >= minor axis): ['7arcsec', '11arcsec', '35deg']"
     },
@@ -1672,6 +1980,7 @@
           "I"
         ]
       },
+      "created_on_error": false,
       "error": "RuntimeError",
       "message": "Quantum::assure non-conforming unit type ''"
     }

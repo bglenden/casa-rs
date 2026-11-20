@@ -8,7 +8,11 @@ use casa_coordinates::{
 use casa_provider_contracts::ParameterValue;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
-use casa_types::quanta::{Quantity, Unit, casacore::get_conformant_value};
+use casa_types::quanta::{
+    Quantity, Unit,
+    casacore::{get_conformant_value, get_value},
+    format::{ANGLE, format_angle},
+};
 use casa_types::{ArrayValue, RecordValue, Value};
 
 use super::{ImportFitsRequest, invalid_type, reject};
@@ -215,6 +219,9 @@ fn axis_default(value: &ParameterValue, label: &str, unit: &str) -> Result<f64, 
         ))
     };
     let number = match value {
+        ParameterValue::Integer(_) if unit == "Hz" => {
+            return Err(reject("Unrecognized format for world coordinate"));
+        }
         ParameterValue::Integer(value) => *value as f64,
         ParameterValue::Float(value) => *value,
         ParameterValue::String(text) => {
@@ -226,14 +233,20 @@ fn axis_default(value: &ParameterValue, label: &str, unit: &str) -> Result<f64, 
                 ));
             }
             let target = Unit::new(unit).expect("built-in CASA axis unit");
-            if unit == "deg"
-                && quantity
-                    .unit()
-                    .conformant(&Unit::new("s").expect("built-in time unit"))
-            {
-                get_conformant_value(&quantity, &Unit::new("h").expect("built-in time unit"))
-                    .map_err(|_| invalid())?
-                    * 15.0
+            if unit == "deg" {
+                let radians = Unit::new("rad").expect("built-in angle unit");
+                let seconds = Unit::new("s").expect("built-in time unit");
+                if !quantity.value().is_finite()
+                    || !(quantity.unit().conformant(&radians)
+                        || quantity.unit().conformant(&seconds))
+                {
+                    return Err(invalid());
+                }
+                // The CASA task sends strings through qa.angle() and parses
+                // the default whole-arcsecond representation.
+                let angle = format_angle(get_value(&quantity, &radians), ANGLE, 0);
+                let rounded = Quantity::read(&angle).map_err(|_| invalid())?;
+                get_conformant_value(&rounded, &target).map_err(|_| invalid())?
             } else {
                 get_conformant_value(&quantity, &target).map_err(|_| invalid())?
             }

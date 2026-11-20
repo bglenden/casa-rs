@@ -37,6 +37,14 @@ CASES = {
         "spectrum.fits",
         {"defaultaxes": True, "defaultaxesvalues": [202.5, -2.5, 0, "I"]},
     ),
+    "round_direction_strings": (
+        "spectrum.fits",
+        {"defaultaxes": True, "defaultaxesvalues": ["12h34m56.78901s", "-2.50001234deg", "", "I"]},
+    ),
+    "zero_frequency": ("plane.fits", {"defaultaxes": True, "defaultaxesvalues": ["", "", "0Hz", "I"]}),
+    "zero_frequency_float": ("plane.fits", {"defaultaxes": True, "defaultaxesvalues": ["", "", 0.0, "I"]}),
+    "integer_frequency": ("plane.fits", {"defaultaxes": True, "defaultaxesvalues": ["", "", 100, "I"]}),
+    "negative_frequency": ("plane.fits", {"defaultaxes": True, "defaultaxesvalues": ["", "", "-100Hz", "I"]}),
     "reorder_axes_and_mask": ("permuted.fits", REORDER),
     "extension_default_axes": ("extensions.fits", {"whichhdu": 1, **DEFAULT_AXES}),
     "inactive_axis_values": ("plane.fits", {"defaultaxesvalues": ["ignored"]}),
@@ -54,6 +62,8 @@ CASES = {
     "double_fits": ("double.fits", {"zeroblanks": False}),
     "nonstandard_direction": ("galactic.fits", DEFAULT_AXES),
     "axis_count": ("plane.fits", {"defaultaxes": True, "defaultaxesvalues": ["", "", "1GHz"]}),
+    "time_beam_angle": ("plane.fits", {"beam": ["5arcsec", "2arcsec", "1h"]}),
+    "time_beam_bad_order": ("plane.fits", {"beam": ["2arcsec", "5arcsec", "1h"]}),
     "invalid_beam_order": ("plane.fits", {"beam": ["7arcsec", "11arcsec", "35deg"]}),
     "nonquantity_axis_string": (
         "spectrum.fits",
@@ -152,9 +162,9 @@ def main():
                 try:
                     result = importfits(source, product, **params)
                 except (RuntimeError, TypeError) as error:
-                    assert not Path(product).exists()
+                    case["created_on_error"] = Path(product).exists()
                     case["error"] = type(error).__name__
-                    case["message"] = str(error).splitlines()[0]
+                    case["message"] = str(error).splitlines()[0].split("\t")[-1]
                 else:
                     assert result is None
                     case.update(snapshot(product))

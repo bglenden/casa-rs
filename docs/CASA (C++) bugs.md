@@ -7121,8 +7121,10 @@ empty HDU and accepts both ways to select the extension. See
 
 CASA 6.7.6.14 removes `imagename` as soon as it sees `overwrite=True`. A
 subsequent validation error, such as a beam whose major axis is smaller
-than its minor axis, leaves the old image gone. The task uses the same
-early deletion when the output path contains the input FITS file.
+than its minor axis, leaves the old image gone. A beam position angle
+given in time units can fail after publishing the replacement image.
+The task also deletes the output path early when it contains the input
+FITS file.
 casa-rs stages the native image and exchanges it only after the new
 product is complete. It refuses output paths containing the FITS input
 and nonempty directories that are not native images (#977).

@@ -61,6 +61,8 @@ def test_importfits_preserves_existing_output_on_failure(tmp_path):
         tasks.importfits(fits, product)
     with pytest.raises(TypeError, match="valid|angle"):
         tasks.importfits(fits, product, beam=["0.5mas", "0.3mas", "invalid"], overwrite=True)
+    with pytest.raises(RuntimeError, match="Position angle must have angular units"):
+        tasks.importfits(fits, product, beam=["5arcsec", "2arcsec", "1h"], overwrite=True)
     assert (product / "table.dat").read_bytes() == data
     tasks.importfits(fits, product, beam=["11arcsec", "7arcsec", "35deg"], overwrite=True)
     tool = tools.image()

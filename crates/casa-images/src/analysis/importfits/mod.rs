@@ -9,7 +9,7 @@ use casa_coordinates::CoordinateSystem;
 use casa_provider_contracts::{ParameterValue, python_repr};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableOptions};
-use casa_types::quanta::{Quantity, Unit};
+use casa_types::quanta::{Quantity, Unit, casacore::convert};
 use casa_types::{RecordValue, Value};
 
 use super::{FitsImportSummary, ImportFitsRequest};
@@ -134,10 +134,15 @@ fn restoring_beam(values: &[ParameterValue]) -> Result<Option<StoredGaussianBeam
         ));
     };
     let radians = Unit::new("rad").expect("built-in angle unit");
+    let seconds = Unit::new("s").expect("built-in time unit");
+    let arcseconds = Unit::new("arcsec").expect("built-in angle unit");
     let angle = |text: &str| {
         Quantity::read(text)
             .ok()
-            .filter(|angle| angle.value().is_finite() && angle.unit().conformant(&radians))
+            .filter(|angle| {
+                angle.value().is_finite()
+                    && (angle.unit().conformant(&radians) || angle.unit().conformant(&seconds))
+            })
             .ok_or_else(|| {
                 invalid_type(
                     "beam",
@@ -148,6 +153,31 @@ fn restoring_beam(values: &[ParameterValue]) -> Result<Option<StoredGaussianBeam
     let major = angle(major)?;
     let minor = angle(minor)?;
     let pa = angle(pa)?;
+    let as_arcseconds = |value: &Quantity| {
+        convert(value, Some(&arcseconds))
+            .map(|converted| converted.value())
+            .map_err(|error| invalid_type("beam", error.to_string()))
+    };
+    if as_arcseconds(&major)? < as_arcseconds(&minor)? {
+        return Err(invalid_type(
+            "beam",
+            "major axis must be greater or equal to minor axis",
+        ));
+    }
+    // qa.toangle accepts time during validation, but ia.setrestoringbeam
+    // receives the original units.
+    for (label, angle) in [
+        ("Major axis", &major),
+        ("Minor axis", &minor),
+        ("Position angle", &pa),
+    ] {
+        if !angle.unit().conformant(&radians) {
+            return Err(reject(format!(
+                "Exception: {label} must have angular units ({} is not)..",
+                angle.unit().name()
+            )));
+        }
+    }
     if major.value() <= 0.0 || minor.value() <= 0.0 {
         return Err(reject(
             "Both the major and minor axes must be non-negative.",
