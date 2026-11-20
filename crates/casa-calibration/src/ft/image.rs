@@ -713,12 +713,24 @@ impl ImageTransform {
                 let CoordinateModel::Direction(direction) = coords.coordinate(index) else {
                     unreachable!("direction coordinate");
                 };
-                Ok::<_, casa_ms::MsError>((
-                    beam.pattern(),
-                    beam.separations(&self.window.direction(direction), [nx, ny])?,
-                ))
+                let direction = self.window.direction(direction);
+                let separations = beam.separations(&direction, [nx, ny])?;
+                Ok::<_, casa_ms::MsError>((beam, direction, separations))
             })
             .transpose()?;
+        let squint = beam.as_ref().is_some_and(|(beam, _, _)| beam.has_squint());
+        if squint {
+            let index = coordinate_index(image.coordinates(), CoordinateType::Stokes)?;
+            let CoordinateModel::Stokes(stokes) = image.coordinates().coordinate(index) else {
+                unreachable!("Stokes coordinate");
+            };
+            use StokesType::{I, Q, U, V};
+            if !matches!(stokes.stokes(), [I] | [I, Q, U, V]) {
+                return Err(invalid(
+                    "legacy voltage-pattern squint for these Stokes axes is pending #1520",
+                ));
+            }
+        }
         let grid_pols = self.operator.polarization().grid_pols();
         let settings = self.options.settings;
         let plane_bytes = gx.saturating_mul(gy).saturating_mul(8);
@@ -748,6 +760,24 @@ impl ImageTransform {
         let work_bytes = model_plane_memory([nx, ny], npol, [gx, gy], grid_pols);
         let (workers, reservation) =
             model_workers(self.options.native_threads, channels, work_bytes);
+        let _squint_memory = if squint && npol == 4 {
+            let host = HostResources::detect().map_err(invalid)?;
+            Some(
+                admit(
+                    &host,
+                    &ResourcePolicy::Balanced,
+                    &Demand {
+                        phase: "legacy voltage-pattern squint image",
+                        memory: (nx as u64)
+                            .saturating_mul(ny as u64)
+                            .saturating_mul((2 * size_of::<f64>() * workers) as u64),
+                    },
+                )
+                .map_err(invalid)?,
+            )
+        } else {
+            None
+        };
         let (_reservation, team) = match WorkerTeam::new(workers) {
             Ok(team) => (reservation, team),
             Err(_) => {
@@ -771,18 +801,42 @@ impl ImageTransform {
             },
             |plane, values| {
                 let frequency = self.frequencies[plane];
-                let beam = beam
-                    .as_ref()
-                    .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
+                let shifted = if squint && npol == 4 {
+                    let (beam, direction, _) = beam.as_ref().expect("squinted beam");
+                    beam.shifted_separations(direction, [nx, ny], frequency)?
+                } else {
+                    None
+                };
+                let beam = beam.as_ref().map(|(beam, _, separation)| {
+                    (beam.pattern().at_frequency(frequency), separation)
+                });
                 let images = (0..npol)
                     .map(|pol| {
                         Array2::from_shape_fn((ny, nx), |(y, x)| {
-                            let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
-                                let radius =
-                                    separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
-                                pattern.power(radius)
-                            });
-                            values[[x, y, pol, 0]] * scale
+                            beam.as_ref()
+                                .map_or(values[[x, y, pol, 0]], |(pattern, separation)| {
+                                    if let Some([right, left]) = &shifted
+                                        && matches!(pol, 0 | 3)
+                                    {
+                                        let power = |distance: f64| {
+                                            pattern.power(
+                                                distance.to_degrees() * 60.0 * frequency / 1e9,
+                                            )
+                                        };
+                                        let i = values[[x, y, 0, 0]];
+                                        let v = values[[x, y, 3, 0]];
+                                        let right = (i + v) * power(right[[y, x]]);
+                                        let left = (i - v) * power(left[[y, x]]);
+                                        return if pol == 0 {
+                                            0.5 * (right + left)
+                                        } else {
+                                            0.5 * (right - left)
+                                        };
+                                    }
+                                    let radius =
+                                        separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
+                                    values[[x, y, pol, 0]] * pattern.power(radius)
+                                })
                         })
                     })
                     .collect();
@@ -798,6 +852,7 @@ impl ImageTransform {
                     ),
                     None => self.operator.prepare_model(&model, ModelPrescale::Unit),
                 }
+                .map_err(invalid)
             },
             |plane, grid| self.write_plane(&mut output, grid, plane),
         )?;
@@ -977,12 +1032,7 @@ fn prepare_model_planes(
     team: &WorkerTeam,
     channels: usize,
     mut read: impl FnMut(usize) -> MsResult<ArrayD<f32>>,
-    prepare: impl Fn(
-        usize,
-        &ArrayD<f32>,
-    ) -> Result<PreparedModelGrids, casa_imaging_operator::OperatorError>
-    + Send
-    + Sync,
+    prepare: impl Fn(usize, &ArrayD<f32>) -> MsResult<PreparedModelGrids> + Send + Sync,
     mut write: impl FnMut(usize, &PreparedModelGrids) -> MsResult<()>,
 ) -> MsResult<bool> {
     let mut nonzero = false;
@@ -997,9 +1047,8 @@ fn prepare_model_planes(
         }
         team.for_each_mut(&mut planes, |index, (values, grid)| {
             *grid = Some(prepare(first_plane + index, values)?);
-            Ok::<_, casa_imaging_operator::OperatorError>(())
-        })
-        .map_err(invalid)?;
+            Ok::<_, casa_ms::MsError>(())
+        })?;
         for (index, (_, grid)) in planes.into_iter().enumerate() {
             write(
                 first_plane + index,

@@ -11,6 +11,7 @@ use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, SubtableId, voltage_pattern};
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_tables::{Table, TableOptions};
+use casa_types::measures::ephemeris::offset_true_angle;
 use casa_types::measures::{MeasFrame, direction::MDirection};
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::Array2;
@@ -141,6 +142,8 @@ pub(super) fn legacy_radial_pattern(path: &Path, telescope: &str) -> MsResult<Pr
 pub struct ImagerVoltagePattern {
     /// Custom pattern table. With no table, use the telescope's default.
     pub table: Option<PathBuf>,
+    /// Apply the default circular-feed beam squint to polarized models.
+    pub squint: bool,
 }
 
 #[derive(Clone)]
@@ -148,6 +151,7 @@ pub(super) struct PreparedVoltagePattern {
     pattern: Arc<Admitted<BeamPattern>>,
     centre: MDirection,
     frame: MeasFrame,
+    squint: Option<(PrimaryBeam, f64, f64)>,
 }
 
 impl ImagerVoltagePattern {
@@ -177,12 +181,20 @@ impl ImagerVoltagePattern {
             .string(usize::try_from(array).map_err(invalid)?, "TELESCOPE_NAME")?;
         let host = HostResources::detect().map_err(invalid)?;
         let reservation = reserve_radial_lookup(&host)?;
+        let default_beam = self
+            .table
+            .is_none()
+            .then(|| -> MsResult<_> {
+                let frequency = ms.spectral_window()?.ref_frequency(0)?;
+                Ok(PrimaryBeam::for_telescope(&telescope, frequency).map(|beam| (beam, frequency)))
+            })
+            .transpose()?
+            .flatten();
         let pattern = if let Some(path) = &self.table {
             legacy_radial_pattern(path, &telescope)?.pattern()
         } else {
-            let frequency = ms.spectral_window()?.ref_frequency(0)?;
-            match PrimaryBeam::for_telescope(&telescope, frequency) {
-                Some(pattern) => pattern.pattern(),
+            match default_beam {
+                Some((pattern, _)) => pattern.pattern(),
                 None => BeamPattern::for_dish_diameter(ms.antenna()?.dish_diameter(0)?)
                     .ok_or_else(|| {
                         invalid("no usable dish diameter for a default voltage pattern")
@@ -203,6 +215,21 @@ impl ImagerVoltagePattern {
                 .observation_direction_j2000(time, usize::try_from(field).map_err(invalid)?)?,
         };
         let frame = engine.spectral_frame_observatory_direction(time, centre.clone())?;
+        let squint = if self.squint {
+            if self.table.is_some() || telescope != "VLA" {
+                return Err(invalid(
+                    "this legacy voltage-pattern squint is pending #1520",
+                ));
+            }
+            let (beam, frequency) = default_beam
+                .filter(|(pattern, _)| pattern.squints())
+                .ok_or_else(|| invalid("this VLA band has no supported squint (#1520)"))?;
+            let angle =
+                engine.feed_parallactic_angle(time, field as usize, first.antenna2_id as usize)?;
+            Some((beam, frequency, angle))
+        } else {
+            None
+        };
         Ok(PreparedVoltagePattern {
             pattern: Arc::new(Admitted {
                 value: pattern,
@@ -210,6 +237,7 @@ impl ImagerVoltagePattern {
             }),
             centre,
             frame,
+            squint,
         })
     }
 }
@@ -244,6 +272,7 @@ impl PreparedVoltagePattern {
             }),
             centre: MDirection::from_angles(1., 0.4, DirectionRef::J2000),
             frame: MeasFrame::new(),
+            squint: None,
         }
     }
 
@@ -252,8 +281,37 @@ impl PreparedVoltagePattern {
         direction: &DirectionCoordinate,
         [nx, ny]: [usize; 2],
     ) -> MsResult<Array2<f64>> {
-        let centre = self
-            .centre
+        self.separations_from(direction, [nx, ny], &self.centre)
+    }
+
+    pub(super) fn has_squint(&self) -> bool {
+        self.squint.is_some()
+    }
+
+    pub(super) fn shifted_separations(
+        &self,
+        direction: &DirectionCoordinate,
+        shape: [usize; 2],
+        frequency: f64,
+    ) -> MsResult<Option<[Array2<f64>; 2]>> {
+        let Some((beam, reference, angle)) = self.squint else {
+            return Ok(None);
+        };
+        let shifted = |right| {
+            let offset = beam.squint_displacement_rad(reference, frequency, angle, right);
+            let centre = offset_true_angle(&self.centre, offset).map_err(invalid)?;
+            self.separations_from(direction, shape, &centre)
+        };
+        Ok(Some([shifted(true)?, shifted(false)?]))
+    }
+
+    fn separations_from(
+        &self,
+        direction: &DirectionCoordinate,
+        [nx, ny]: [usize; 2],
+        centre: &MDirection,
+    ) -> MsResult<Array2<f64>> {
+        let centre = centre
             .convert_to(direction.direction_ref(), &self.frame)
             .map_err(invalid)?;
         let (lon0, lat0) = centre.as_angles();

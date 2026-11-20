@@ -335,7 +335,7 @@ impl PyImager {
         };
         let parallactic = angle(&parangleinc, 360.)?;
         let threshold = angle(&skyposthreshold, 180.)?;
-        if dovp && (dosquint || (parallactic, threshold) != (360., 180.)) {
+        if dovp && (parallactic, threshold) != (360., 180.) {
             return not_yet_implemented_in(
                 "imager",
                 "setvp for varying or squinted voltage patterns",
@@ -347,6 +347,7 @@ impl PyImager {
         self.with_state(py, |state| {
             let pattern = (dovp || !usedefaultvp).then(|| ImagerVoltagePattern {
                 table: (!usedefaultvp).then(|| PathBuf::from(vptable)),
+                squint: dosquint,
             });
             state
                 .prediction

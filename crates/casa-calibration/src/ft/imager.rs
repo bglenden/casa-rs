@@ -534,6 +534,17 @@ impl ImagerPrediction {
             return Ok(None);
         }
         let mosaic = matches!(self.options.gridder, ImagerGridder::Mosaic);
+        if self.apply_voltage_pattern
+            && self
+                .voltage_pattern
+                .as_ref()
+                .is_some_and(|pattern| pattern.squint)
+            && (mosaic || self.options.single_dish.is_some())
+        {
+            return Err(invalid(
+                "this legacy beam-squint Fourier mode is pending #1520",
+            ));
+        }
         // MosaicFT uses its convolution beam directly.
         let pattern = self
             .voltage_pattern
