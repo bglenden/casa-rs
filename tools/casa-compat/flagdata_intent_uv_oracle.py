@@ -64,8 +64,11 @@ def compare_products(vis, metadata):
         ({"intent": "0,99"}, states_0),
         ({"intent": "OBSERVE*,missing"}, states_0),
         ({"intent": "missing,OBSERVE*"}, states_0),
+        ({"intent": "OBSERVE*, "}, states_0),
+        ({"intent": "OBSERVE*, \t"}, states_0),
         ({"intent": "OBSERVE*&missing,1"}, states_1),
         ({"intent": ">0&<1,0"}, states_0),
+        ({"intent": ">1,0"}, states_0),
         ({"intent": "OBSERVE*\u00a0,CALIBRATE_BAND*"}, states_0),
         ({"intent": "OBSERVE*\x00$ignored"}, states_0),
         ({"intent": "\x00"}, all_rows),
@@ -112,9 +115,16 @@ def compare_reports(vis, metadata):
         assert want["total"] == sum(before[row][1].size for row in np.flatnonzero(selected))
         assert tasks.flagdata(**args) == want, options
         assert_preserved(vis, before, auxiliary)
-    warning = tasks.run("flagdata", vis=vis, mode="summary", intent="missing,OBSERVE*")
-    assert 'State Expression: No match found for "missing"' in warning.stderr
-    assert_preserved(vis, before, auxiliary)
+    for intent, message in (
+        ("missing,OBSERVE*", 'No match found for "missing"'),
+        ("OBSERVE*, ", 'No match found for " "'),
+        (">1,0", "No state ID found >1"),
+        (">0&<1,0", "No state found in the range [0,1]"),
+        ("0,99", "Partial or no match for State ID list [99]"),
+    ):
+        warning = tasks.run("flagdata", vis=vis, mode="summary", intent=intent)
+        assert "State Expression: " + message in warning.stderr, warning.stderr
+        assert_preserved(vis, before, auxiliary)
 
     options = {"intent": "1", "uvrange": ">10m", "spw": "1:1~2"}
     reference = "preview-reference.ms"
@@ -152,6 +162,9 @@ def compare_refusals(vis):
         ({"intent": "none"}, RuntimeError, "No match found for state expression:"),
         ({"intent": "auto"}, RuntimeError, "No match found for state expression:"),
         ({"intent": "OBSERVE*,"}, RuntimeError, None),
+        ({"intent": "OBSERVE*,\t"}, RuntimeError, None),
+        ({"intent": "OBSERVE*,\n"}, RuntimeError, None),
+        ({"intent": "OBSERVE*,,1"}, RuntimeError, None),
         ({"intent": "0&1"}, RuntimeError, None),
         ({"intent": ["OBSERVE*"]}, TypeError, None),
         ({"intent": []}, TypeError, None),
@@ -220,12 +233,31 @@ def compare_unicode(vis, metadata):
             assert_preserved(named, before, auxiliary)
 
 
+def compare_blank_mode(vis, metadata):
+    _, _, states, _, _ = metadata
+    blank = "blank-state.ms"
+    copytree(vis, blank)
+    with table(f"{blank}/STATE", readonly=False, ack=False) as state:
+        state.putcell("OBS_MODE", 0, "")
+    before = snapshot(blank)
+    selected = set(np.flatnonzero(states == 1))
+    for index, intent in enumerate(("/.*/", '"*"')):
+        reference, native = f"blank-reference-{index}.ms", f"blank-native-{index}.ms"
+        for path, module in ((reference, casatasks), (native, tasks)):
+            copytree(blank, path)
+            assert module.flagdata(vis=path, intent=intent, flagbackup=False) == {}
+        assert_equal(reference, native)
+        assert_flags(native, before, selected)
+    return 2
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="flagdata-intent-uv-") as work, chdir(work):
         vis = "data.ms"
         facts = make_fixture(vis)
         products = compare_products(vis, facts)
+        products += compare_blank_mode(vis, facts)
         compare_reports(vis, facts)
         refusals = compare_refusals(vis)
         compare_unicode(vis, facts)
