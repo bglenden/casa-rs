@@ -15,6 +15,7 @@ import numpy as np
 from applycal_oracle import copy_ms
 from calibration_initweights_oracle import UNCHANGED, add_spectra, compare, fixture, main_columns, opened
 from calibration_initweights_tsys_oracle import make_table
+from calibration_scratch_oracle import referenced_tables
 
 
 def outcome(tool, *args, **options):
@@ -90,13 +91,38 @@ def compare_selection(root, seed, engines, options, resets):
             np.testing.assert_array_equal(model[..., ~selected], 1. if resets else 53.)
 
 
+def compare_mms(root, seed, engines, tsys):
+    states = []
+    for name, factory in zip(('casa', 'native'), engines, strict=True):
+        dataset = root / f'{name}.mms'
+        casatasks.partition(str(seed), str(dataset), separationaxis='scan', numsubms=2,
+                            disableparallel=True, flagbackup=False, datacolumn='all')
+        members = referenced_tables(dataset)
+        assert len(members) == 2
+        tool = factory()
+        assert tool.open(str(dataset), False, False, False)
+        assert tool.initweights('delwtsp') is True
+        assert tool.initweights('ones', True) is True
+        before = [main_columns(path) for path in members]
+        assert all(np.all(data['WEIGHT'] == 1.) for _, data in before)
+        assert tool.close() and tool.open(str(dataset), False, False, False)
+        assert outcome(tool, 'delwtsp') == (RuntimeError, 'Error in Calibrater::initWeights.')
+        for path, prior in zip(members, before, strict=True):
+            compare(prior, main_columns(path))
+        assert tool.initweights('tsys', True, tsys) is True
+        assert tool.done()
+        states.append([main_columns(path) for path in members])
+    for reference, actual in zip(*states, strict=True):
+        compare(reference, actual, rtol=5e-7)
+
+
 def run(root):
     from casars.tools import calibrater as native
 
     assert casatasks.version_string() == '6.7.6.14'
     root.mkdir(parents=True)
     engines = (calibrater, native)
-    assert inspect.signature(calibrater.initweights) == inspect.signature(native.initweights)
+    assert inspect.signature(calibrater().initweights) == inspect.signature(native().initweights)
     controls = compare_arguments(engines)
     with TemporaryDirectory(dir=root) as attempt:
         work = Path(attempt)
@@ -134,7 +160,9 @@ def run(root):
         ]
         for options, resets in selection:
             compare_selection(work, seed, engines, options, resets)
-    results = {'persisted_cases': 2 * len(cases), 'selection_cases': len(selection), 'argument_cases': controls}
+        compare_mms(work, seed, engines, tsys)
+    results = {'persisted_cases': 2 * len(cases), 'selection_cases': len(selection),
+               'argument_cases': controls, 'multi_ms_cases': 4}
     print(results, flush=True)
     (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 

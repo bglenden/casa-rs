@@ -7,6 +7,7 @@ use casa_ms::MsError;
 use casa_tables::{Table, TableOptions};
 
 use crate::initweights::{Mode, initialize, initialize_tsys};
+use crate::weight_spectra::{SIGMA_SPECTRUM, WEIGHT_SPECTRUM, has_column};
 use crate::{ApplyCalibrationTableSpec, ApplyInterpolationMode, GainFieldSelector};
 
 use super::{
@@ -39,9 +40,13 @@ impl CalibraterLifecycle {
                     MsError::InvalidInput(format!("Unrecognized wtmode specified: {wtmode}"))
                 })
                 .and_then(|mode| {
-                    let mut opened = OpenedMs::open(equation.attachment.path())?;
-                    initialize(&mut opened.measurement_set, mode, dowtsp, &mut opened.lock)?;
-                    opened.release()
+                    initialize_attachment(
+                        equation.attachment.path(),
+                        |table| has_column(table, mode.removed_column()),
+                        |opened| {
+                            initialize(&mut opened.measurement_set, mode, dowtsp, &mut opened.lock)
+                        },
+                    )
                 })
         };
         if result.is_err() {
@@ -81,13 +86,50 @@ fn initialize_with_tsys(
     spec.gainfield = GainFieldSelector::parse_casa(gainfield);
     spec.interp = ApplyInterpolationMode::parse_casa(interp).map_err(MsError::InvalidInput)?;
     spec.spwmap = spwmap;
-    let mut opened = OpenedMs::open(equation.attachment.path())?;
-    initialize_tsys(
-        &mut opened.measurement_set,
-        spec,
-        by_exposure,
-        dowtsp,
-        &mut opened.lock,
-    )?;
+    initialize_attachment(
+        equation.attachment.path(),
+        |table| !dowtsp && !has_column(table, WEIGHT_SPECTRUM) && has_column(table, SIGMA_SPECTRUM),
+        |opened| {
+            initialize_tsys(
+                &mut opened.measurement_set,
+                spec.clone(),
+                by_exposure,
+                dowtsp,
+                &mut opened.lock,
+            )
+        },
+    )
+}
+
+fn initialize_attachment(
+    path: &Path,
+    removes_column: impl Fn(&Table) -> bool,
+    update: impl Fn(&mut OpenedMs) -> Result<(), MsError>,
+) -> Result<(), MsError> {
+    let mut opened = OpenedMs::open(path)?;
+    let table = opened.measurement_set.main_table();
+    if table.info().sub_type != "CONCATENATED" {
+        update(&mut opened)?;
+        return opened.release();
+    }
+
+    let parts = Table::concatenated_source_paths(path)?
+        .ok_or_else(|| MsError::InvalidInput("Multi-MS has no concatenation".into()))?;
+    let reject_removal = |table: &Table| {
+        if removes_column(table) {
+            Err(MsError::InvalidInput(
+                "ConcatTable cannot remove columns".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    reject_removal(table)?;
+    for part in parts {
+        let mut member = OpenedMs::open(&part)?;
+        reject_removal(member.measurement_set.main_table())?;
+        update(&mut member)?;
+        member.release()?;
+    }
     opened.release()
 }

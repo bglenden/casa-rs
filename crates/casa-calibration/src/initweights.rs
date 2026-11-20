@@ -32,7 +32,7 @@ impl Mode {
         })
     }
 
-    fn removed_column(self) -> &'static str {
+    pub(crate) fn removed_column(self) -> &'static str {
         match self {
             Self::DeleteWeightSpectrum => WEIGHT_SPECTRUM,
             _ => SIGMA_SPECTRUM,
