@@ -612,6 +612,8 @@ fn selected_rows(
                 request.selection.antenna.as_deref(),
                 request.selection.timerange.as_deref(),
                 request.selection.observation.as_deref(),
+                request.selection.array.as_deref(),
+                request.selection.feed.as_deref(),
             ]
             .into_iter()
             .flatten()

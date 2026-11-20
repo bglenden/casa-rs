@@ -3929,6 +3929,17 @@ casa-rs refuses out-of-range observation IDs before writing flags. The
 paired oracle applies both selectors in CASA to verify which rows change
 and checks that casa-rs preserves the input flags. [Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## `flagdata` can flag other feeds when a feed is selected
+
+CASA 6.7.6.14's `flagdata` accepts a feed expression but does not apply it to
+the row selection. In a MeasurementSet containing same-feed and cross-feed
+rows, `flagdata(feed="0&2")` flags both kinds of row without a warning.
+
+casa-rs applies the feed selection before calculating or writing flags.
+The paired oracle reproduces the extra writes in CASA and verifies the
+native row selection against CASA `split` and the explicit feed pairs.
+[Owner approval](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## `flagdata`'s summary aborts on a correlation it cannot name
 
 - Date noted: 2026-10-29

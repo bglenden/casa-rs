@@ -23216,7 +23216,7 @@
         },
         {
           "name": "array",
-          "concept": {"id": "ms.selection.array", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.array", "semantic_revision": 2},
           "order": 14,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -23224,10 +23224,9 @@
           "projections": {
             "cli": {"flags": ["--array"], "metavar": "SELECTOR"},
             "provider": {"field": "array"},
-            "python": {"name": "array"},
+            "python": {"name": "array", "type_hint": "str"},
             "presentation": {"label": "Array", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "observation",
@@ -23245,18 +23244,18 @@
         },
         {
           "name": "feed",
-          "concept": {"id": "ms.selection.feed", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.feed", "semantic_revision": 2},
           "order": 16,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
+          "surface_note": "Selects the requested feed IDs or pairs. CASA 6.7.6.14 flagdata silently ignores this selector.",
           "projections": {
             "cli": {"flags": ["--feed"], "metavar": "SELECTOR"},
             "provider": {"field": "feed"},
-            "python": {"name": "feed"},
+            "python": {"name": "feed", "type_hint": "str"},
             "presentation": {"label": "Feed", "group": "Selection", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "clipminmax",
