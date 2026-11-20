@@ -7804,6 +7804,24 @@ track in the image frame.
 [`imager_single_dish_spectral_oracle.py`](../tools/casa-compat/imager_single_dish_spectral_oracle.py) ·
 [`imager_single_dish_beam_oracle.py`](../tools/casa-compat/imager_single_dish_beam_oracle.py)
 
+## Legacy `pbwproject` virtual recipes lack a machine name
+
+CASA 6.7.6.14 predicts nonzero complex model visibilities in the legacy
+VLA single-W-plane case with a new or existing convolution cache.
+`nPBWProjectFT::toRecord` saves an image and
+transform geometry. It omits the Fourier-machine name and the convolution
+needed to repeat the prediction. Pinned `ms.uvsub` refuses that record
+with `field name is unknown`. Its virtual-model reader also lacks an
+`nPBWProjectFT` constructor.
+
+Casa-rs shares the cache generator with the legacy EP workflow and
+retains the Fourier image and its convolution in a native recipe.
+The CASA image tool opens both images. Native `ms.uvsub` reopens the model
+after the original cache is removed from its path. Both readers refuse
+the incomplete pinned recipe before subtracting a visibility model.
+[`imager_legacy_pbw_oracle.py`](../tools/casa-compat/imager_legacy_pbw_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
 ## FITS export can change axis lengths or abort while removing axes
 
 With CASA 6.7.6.14, export a float image of shape `[3, 4, 2, 1]` with a
