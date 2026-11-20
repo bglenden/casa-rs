@@ -48,6 +48,7 @@ use casa_numerics::solve_weighted_least_squares;
 mod clip;
 mod clip_average;
 mod clip_columns;
+mod clip_models;
 mod clip_time;
 mod command;
 mod correlation;
@@ -821,14 +822,17 @@ fn apply_clip_flags(
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
     let path = display_ms_path(ms);
-    if request.clipoutside.is_some() {
-        clip_columns::require_physical_model(ms, request.data_column, selected_rows, &path)?;
-    }
     let widths = request.clip_channel_bins.as_deref();
     let time_average = request.clip_time_bin.as_deref().map(time_bin_seconds);
     let average = time_average.is_some_and(|interval| interval.is_some())
         || widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
-    let Some(mut columns) = ClipColumns::bind(ms.main_table(), request.data_column, average)?
+    let models = if request.clipoutside.is_some() {
+        clip_models::ClipModels::for_selection(ms, request.data_column, selected_rows, &path)?
+    } else {
+        None
+    };
+    let Some(mut columns) =
+        ClipColumns::bind(ms.main_table(), request.data_column, average, models)?
     else {
         return Ok(ChangeSet::default());
     };
@@ -893,7 +897,7 @@ fn apply_clip_flags(
         } else {
             None
         };
-        let data_cells = columns.read(table, rows, ddids.as_deref(), &ddid_to_spw, &path)?;
+        let data_cells = columns.read(ms, rows, ddids.as_deref(), &ddid_to_spw, &path)?;
         for (row_slot, &row) in rows.iter().enumerate() {
             let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
                 Some(ArrayValue::Bool(values)) => values,

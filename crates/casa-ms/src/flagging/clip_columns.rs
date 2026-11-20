@@ -9,44 +9,14 @@ use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType};
 use ndarray::{ArrayD, IxDyn};
 
 use super::clip_average::{ChannelBins, ChannelReduction};
-use super::{FlagDataColumn, FlaggingError, checked_row_data, load_i32_cells};
+use super::clip_models::ClipModels;
+use super::{FlagDataColumn, FlaggingError, checked_row_data};
 use crate::MeasurementSet;
-use crate::scratch_columns::virtual_model_fields;
-
-pub(super) fn require_physical_model(
-    ms: &MeasurementSet,
-    column: FlagDataColumn,
-    selected_rows: &[usize],
-    path: &str,
-) -> Result<(), FlaggingError> {
-    if !matches!(
-        column,
-        FlagDataColumn::ModelData | FlagDataColumn::Residual | FlagDataColumn::ResidualData
-    ) {
-        return Ok(());
-    }
-    let virtual_fields = virtual_model_fields(ms);
-    if !virtual_fields.is_empty() {
-        for rows in selected_rows.chunks(65_536) {
-            if let Some(field) = load_i32_cells(ms.main_table(), rows, "FIELD_ID", path)?
-                .into_iter()
-                .find(|field| virtual_fields.contains(field))
-            {
-                return Err(FlaggingError::MutateFlags {
-                    path: path.to_string(),
-                    reason: format!(
-                        "clipping a virtual model for FIELD_ID {field} is unimplemented (#1617)"
-                    ),
-                });
-            }
-        }
-    }
-    Ok(())
-}
 
 pub(super) struct ClipColumns {
     primary: ClipColumn,
     subtract: Option<&'static str>,
+    models: Option<ClipModels>,
     average_weights: Option<ClipColumn>,
     average: bool,
     inverse_sigma: bool,
@@ -58,6 +28,7 @@ impl ClipColumns {
         table: &Table,
         column: FlagDataColumn,
         average: bool,
+        models: Option<ClipModels>,
     ) -> Result<Option<Self>, FlaggingError> {
         let has_column = |name| {
             table
@@ -78,7 +49,7 @@ impl ClipColumns {
             FlagDataColumn::Weight => (column.name(), None, true),
             _ => (column.name(), None, false),
         };
-        if subtract.is_some_and(|name| !has_column(name)) {
+        if subtract.is_some_and(|name| !has_column(name)) && models.is_none() {
             return Err(FlaggingError::MissingClipColumn);
         }
         if !has_column(primary) {
@@ -119,6 +90,7 @@ impl ClipColumns {
                 ClipColumn::array(primary)
             },
             subtract,
+            models,
             average_weights,
             average,
             inverse_sigma,
@@ -149,10 +121,12 @@ impl ClipColumns {
         let mut bytes = primary;
         // Account for the input columns and room to assemble a residual row.
         if let Some(name) = self.subtract {
-            bytes += 2 * size_of(name)?;
-            if self.average {
-                bytes += size_of(name)?;
-            }
+            let model = if self.models.is_some() {
+                std::mem::size_of::<Complex64>()
+            } else {
+                size_of(name)?
+            };
+            bytes += if self.average { 3 * model } else { 2 * model };
         }
         if let Some(scalar) = self.primary.scalar_fallback {
             bytes += size_of(scalar)?;
@@ -208,14 +182,24 @@ impl ClipColumns {
 
     pub(super) fn read<'a>(
         &'a mut self,
-        table: &Table,
+        ms: &MeasurementSet,
         rows: &[usize],
         ddids: Option<&[i32]>,
         ddid_to_spw: &BTreeMap<i32, i32>,
         path: &str,
     ) -> Result<ClipColumnCells<'a>, FlaggingError> {
-        let read = |name: &str| {
-            table
+        let mut model = self
+            .models
+            .as_mut()
+            .map(|models| models.read(ms, rows, path))
+            .transpose()?;
+        let mut read = |name: &str| {
+            if name == "MODEL_DATA"
+                && let Some(cells) = model.take()
+            {
+                return Ok(cells);
+            }
+            ms.main_table()
                 .column_accessor(name)
                 .and_then(|column| column.array_cells_owned(rows))
                 .map_err(|source| FlaggingError::MutateFlags {
@@ -224,11 +208,11 @@ impl ClipColumns {
                 })
         };
         Ok(ClipColumnCells {
-            primary: self.primary.read(&read, ddids, ddid_to_spw, path)?,
+            primary: self.primary.read(&mut read, ddids, ddid_to_spw, path)?,
             average_weights: self
                 .average_weights
                 .as_mut()
-                .map(|weights| weights.read(&read, ddids, ddid_to_spw, path))
+                .map(|weights| weights.read(&mut read, ddids, ddid_to_spw, path))
                 .transpose()?,
             subtract: self.subtract.map(read).transpose()?,
             model_name: self.subtract,
@@ -271,7 +255,7 @@ impl ClipColumn {
 
     fn read<'a>(
         &'a mut self,
-        read: &impl Fn(&str) -> Result<Vec<Option<ArrayValue>>, FlaggingError>,
+        read: &mut impl FnMut(&str) -> Result<Vec<Option<ArrayValue>>, FlaggingError>,
         ddids: Option<&[i32]>,
         ddid_to_spw: &BTreeMap<i32, i32>,
         path: &str,
