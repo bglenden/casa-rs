@@ -998,7 +998,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "restoringbeam",
