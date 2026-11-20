@@ -11,7 +11,7 @@ use pyo3::types::PyDict;
 use crate::tools::{LogLine, componentlist::image_component_model, emit, table::casa_record};
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, raised, with_storage};
+use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::{Region, mask_argument};
 
 fn check_native_write(path: &Path, history: bool) -> std::io::Result<()> {

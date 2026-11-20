@@ -8,7 +8,7 @@ use std::path::Path;
 use casa_tables::publication::{check_write_access, rename_without_replacing};
 use pyo3::prelude::*;
 
-use super::attachment::{AttachedImage, registry};
+use super::attachment::AttachedImage;
 use super::handle::raised;
 
 pub(super) fn rename(
@@ -99,7 +99,7 @@ pub(super) fn rename(
         }
     }
 
-    let attachment = AttachedImage::open(&mut registry(), &output)
+    let attachment = AttachedImage::open(&output)
         .map_err(|_| raised(format!("Exception: Unable to open image {name}.")))?;
     if history {
         attachment.lock().append_history_at(
