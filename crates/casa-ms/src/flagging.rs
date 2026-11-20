@@ -143,7 +143,7 @@ pub struct FlagDataRequest {
     pub casa_row_selection: bool,
     /// CASA-style SPW/channel selector.
     pub spw: Option<String>,
-    /// CASA agent correlation selection for manual and quack edits and summaries.
+    /// CASA agent selection of stored correlation planes.
     pub correlation: Option<String>,
     /// Mode to execute.
     pub mode: FlagDataMode,
@@ -435,9 +435,13 @@ fn flagdata_with_persistence(
                 SelectedFlagRowPolicy::ChangedSamples
             },
         )?,
-        FlagDataMode::Clip => {
-            apply_clip_flags(ms, &selected_rows, channel_selections.as_ref(), request)?
-        }
+        FlagDataMode::Clip => apply_clip_flags(
+            ms,
+            &selected_rows,
+            channel_selections.as_ref(),
+            correlations.as_ref(),
+            request,
+        )?,
         FlagDataMode::Quack => apply_quack_flags(
             ms,
             &selected_rows,
@@ -776,6 +780,7 @@ fn apply_clip_flags(
     ms: &mut MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    correlations: Option<&CorrelationSelection>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
     let Some(outside) = request.clipoutside else {
@@ -789,6 +794,7 @@ fn apply_clip_flags(
             .clipminmax
             .map(|bounds| bounds.map(|limit| f64::from(limit as f32))),
         outside,
+        planes: None,
     };
     // CASA flags non-finite data and, with clipzeros, near-zero samples.
     let path = display_ms_path(ms);
@@ -797,12 +803,8 @@ fn apply_clip_flags(
     let mut flagged_samples = 0usize;
     let mut total_samples = 0usize;
     let mut row_changes = Vec::<(usize, usize)>::new();
-    let read_plan = clip_read_plan(
-        ms,
-        selected_rows.len(),
-        request.data_column,
-        channel_selections.is_some(),
-    )?;
+    let include_ddid = channel_selections.is_some() || correlations.is_some();
+    let read_plan = clip_read_plan(ms, selected_rows.len(), request.data_column, include_ddid)?;
     for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
         let table = ms.main_table();
         let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
@@ -824,7 +826,7 @@ fn apply_clip_flags(
                 path: path.clone(),
                 reason: format!("read selected FLAG rows: {source}"),
             })?;
-        let ddids = if channel_selections.is_some() {
+        let ddids = if include_ddid {
             Some(load_i32_cells(table, rows, "DATA_DESC_ID", &path)?)
         } else {
             None
@@ -845,6 +847,15 @@ fn apply_clip_flags(
                     });
                 }
             };
+            total_samples += flags.len();
+            flagged_samples += flags.iter().filter(|flag| **flag).count();
+            let ddid = ddids.as_ref().map(|values| values[row_slot]);
+            let planes = correlations
+                .zip(ddid)
+                .map(|(selection, ddid)| selection.planes(ddid));
+            if planes.is_some_and(|planes| planes.is_empty()) {
+                continue;
+            }
             let column = request.data_column.name();
             let data_value = checked_row_data(data_cells.get(row_slot), flags, row, column, &path)?;
             if flags.ndim() != 2 {
@@ -854,28 +865,23 @@ fn apply_clip_flags(
                 });
             }
             let nchan = flags.shape()[1];
-            total_samples += flags.len();
-            flagged_samples += flags.iter().filter(|flag| **flag).count();
             let channels =
-                if let Some(ddids) = ddids.as_ref() {
-                    let ddid = ddids[row_slot];
+                if let Some((selectors, ddid)) = channel_selections.zip(ddid) {
                     let spw = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
                         FlaggingError::MutateFlags {
                             path: path.clone(),
                             reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
                         }
                     })?;
-                    Some(
-                        match channel_selections.and_then(|selectors| selectors.get(&spw)) {
-                            Some(selection) => selection.indices(nchan).map_err(|source| {
-                                FlaggingError::MutateFlags {
-                                    path: path.clone(),
-                                    reason: format!("resolve SPW {spw} channels: {source}"),
-                                }
-                            })?,
-                            None => (0..nchan).collect(),
-                        },
-                    )
+                    Some(match selectors.get(&spw) {
+                        Some(selection) => selection.indices(nchan).map_err(|source| {
+                            FlaggingError::MutateFlags {
+                                path: path.clone(),
+                                reason: format!("resolve SPW {spw} channels: {source}"),
+                            }
+                        })?,
+                        None => (0..nchan).collect(),
+                    })
                 } else {
                     None
                 };
@@ -884,7 +890,7 @@ fn apply_clip_flags(
                 data_value,
                 flags,
                 channels.as_deref(),
-                options,
+                ClipOptions { planes, ..options },
                 &path,
                 row,
                 &mut row_changes,
@@ -1830,17 +1836,18 @@ fn push_sample(
 /// flags a NaN always, and with `zeros` an amplitude at or below
 /// `f32::EPSILON` too.
 #[derive(Debug, Clone, Copy)]
-struct ClipOptions {
+struct ClipOptions<'a> {
     zeros: bool,
     bounds: Option<[f64; 2]>,
     outside: bool,
+    planes: Option<&'a [usize]>,
 }
 
 fn apply_clip_array(
     data: &ArrayValue,
     flags: &ArrayD<bool>,
     channels: Option<&[usize]>,
-    options: ClipOptions,
+    options: ClipOptions<'_>,
     path: &str,
     row: usize,
     changed: &mut Vec<(usize, usize)>,
@@ -1856,6 +1863,7 @@ fn apply_clip_array(
         zeros,
         bounds,
         outside,
+        planes,
     } = options;
     let matches_range = |value: f64, [lower, upper]: [f64; 2]| {
         if outside {
@@ -1865,22 +1873,30 @@ fn apply_clip_array(
         }
     };
     match data {
-        ArrayValue::Complex32(values) => clip_cells(values, flags, channels, changed, |value| {
-            is_casa_clip_complex32(value, zeros)
-                || bounds.is_some_and(|bounds| matches_range(f64::from(value.norm()), bounds))
-        }),
-        ArrayValue::Complex64(values) => clip_cells(values, flags, channels, changed, |value| {
-            is_casa_clip_complex64(value, zeros)
-                || bounds.is_some_and(|bounds| matches_range(value.norm(), bounds))
-        }),
-        ArrayValue::Float32(values) => clip_cells(values, flags, channels, changed, |value| {
-            is_casa_clip(f64::from(value).abs(), zeros)
-                || bounds.is_some_and(|bounds| matches_range(f64::from(value), bounds))
-        }),
-        ArrayValue::Float64(values) => clip_cells(values, flags, channels, changed, |value| {
-            is_casa_clip(value.abs(), zeros)
-                || bounds.is_some_and(|bounds| matches_range(value, bounds))
-        }),
+        ArrayValue::Complex32(values) => {
+            clip_cells(values, flags, channels, planes, changed, |value| {
+                is_casa_clip_complex32(value, zeros)
+                    || bounds.is_some_and(|bounds| matches_range(f64::from(value.norm()), bounds))
+            })
+        }
+        ArrayValue::Complex64(values) => {
+            clip_cells(values, flags, channels, planes, changed, |value| {
+                is_casa_clip_complex64(value, zeros)
+                    || bounds.is_some_and(|bounds| matches_range(value.norm(), bounds))
+            })
+        }
+        ArrayValue::Float32(values) => {
+            clip_cells(values, flags, channels, planes, changed, |value| {
+                is_casa_clip(f64::from(value).abs(), zeros)
+                    || bounds.is_some_and(|bounds| matches_range(f64::from(value), bounds))
+            })
+        }
+        ArrayValue::Float64(values) => {
+            clip_cells(values, flags, channels, planes, changed, |value| {
+                is_casa_clip(value.abs(), zeros)
+                    || bounds.is_some_and(|bounds| matches_range(value, bounds))
+            })
+        }
         _ => Ok(()),
     }
     .map_err(|source| FlaggingError::MutateFlags {
@@ -1894,6 +1910,7 @@ fn clip_cells<T: Copy>(
     values: &ArrayD<T>,
     flags: ndarray::ArrayView2<'_, bool>,
     channels: Option<&[usize]>,
+    planes: Option<&[usize]>,
     changed: &mut Vec<(usize, usize)>,
     clip: impl Fn(T) -> bool,
 ) -> Result<(), ndarray::ShapeError> {
@@ -1904,6 +1921,9 @@ fn clip_cells<T: Copy>(
         }
     };
     for corr in 0..values.shape()[0] {
+        if planes.is_some_and(|planes| !planes.contains(&corr)) {
+            continue;
+        }
         match channels {
             Some(channels) => channels.iter().for_each(|&chan| visit(corr, chan)),
             None => (0..values.shape()[1]).for_each(|chan| visit(corr, chan)),
@@ -3540,10 +3560,11 @@ fn _complex_norm64(value: Complex64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    const CLIP_ZEROS: ClipOptions = ClipOptions {
+    const CLIP_ZEROS: ClipOptions<'static> = ClipOptions {
         zeros: true,
         bounds: None,
         outside: true,
+        planes: None,
     };
 
     use super::*;
