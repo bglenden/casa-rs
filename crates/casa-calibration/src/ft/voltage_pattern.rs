@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare the legacy imager's voltage pattern on the model image.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,7 +23,7 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
 
 use super::invalid;
-use crate::execute::single_receptor_angle;
+use crate::execute::{load_parallactic_angle_state, single_receptor_angle};
 
 const MANAGED_VP_TABLE: &str = "CASARS_VOLTAGE_PATTERNS";
 
@@ -174,7 +173,32 @@ pub(super) fn scratch_voltage_batches<'a>(
     ms: &MeasurementSet,
     selection: &'a ResolvedMsSelection,
     increment: f64,
+    local_pointings: bool,
 ) -> MsResult<impl Iterator<Item = Vec<ResolvedMsSelectionRow>> + use<'a>> {
+    let host = HostResources::detect().map_err(invalid)?;
+    let order_bytes = size_of::<((i32, i32, i32), &ResolvedMsSelectionRow)>()
+        + 2 * size_of::<usize>()
+        + size_of::<ResolvedMsSelectionRow>();
+    let order_charge = admit(
+        &host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy voltage-pattern scratch batches",
+            memory: (selection.selected_rows.len() as u64).saturating_mul(order_bytes as u64),
+        },
+    )
+    .map_err(invalid)?;
+    let feed_rows = ms.feed().map_or(0, |feed| feed.row_count());
+    // Include hash buckets and the vector capacity for antenna/feed keys.
+    let _feed_charge = admit(
+        &host,
+        &ResourcePolicy::Balanced,
+        &Demand {
+            phase: "legacy voltage-pattern feed angles",
+            memory: (feed_rows as u64).saturating_mul(256),
+        },
+    )
+    .map_err(invalid)?;
     let main = ms.main_table();
     let key = |row: &ResolvedMsSelectionRow| -> MsResult<_> {
         let ScalarValue::Int32(array) = main.cell_accessor(row.row_index, "ARRAY_ID")?.scalar()?
@@ -194,46 +218,61 @@ pub(super) fn scratch_voltage_batches<'a>(
             .then_with(|| left.row_index.cmp(&right.row_index))
     });
     let feed_geometry = load_parallactic_angle_state(ms)?;
+    let pointing = local_pointings.then(|| ms.pointing()).transpose()?;
     let mut buffer = None;
     let mut held = None;
-    let mut angles = BTreeMap::new();
     let mut starts = Vec::new();
     for (index, &((array, field, dd), row)) in ordered.iter().enumerate() {
         let time = row.time_mjd_seconds;
         let current = (array, field, dd, time);
-        if buffer != Some(current) {
-            angles.clear();
-            buffer = Some(current);
+        // CubeSkyEquation's internal-change probe stops at row zero in this
+        // path. The other rows in a legacy visibility buffer share its beam.
+        if buffer == Some(current) {
+            continue;
         }
-        let mut angle = |antenna, column| -> MsResult<f32> {
+        buffer = Some(current);
+        let angle = |antenna, column| -> MsResult<f32> {
             let ScalarValue::Int32(feed) = main.cell_accessor(row.row_index, column)?.scalar()?
             else {
                 return Err(invalid(format!("{column} must be Int32")));
             };
-            let key = (antenna, *feed);
-            if let Some(&angle) = angles.get(&key) {
-                return Ok(angle);
-            }
-            let angle = feed_geometry
+            Ok(feed_geometry
                 .feed_parallactic_angle(time, field, antenna, *feed, row.spectral_window_id)
-                .map_err(invalid)? as f32;
-            angles.insert(key, angle);
-            Ok(angle)
+                .map_err(invalid)? as f32)
         };
         let first = angle(row.antenna1_id, "FEED1")?;
         let second = angle(row.antenna2_id, "FEED2")?;
-        let refresh = held.is_none_or(|(held_array, held_field, held_angle): (_, _, f32)| {
-            (array, field) != (held_array, held_field)
-                || f64::from((first - held_angle).abs()) > increment
-                || f64::from((second - held_angle).abs()) > increment
+        let refresh = held.as_ref().is_none_or(|state: &HeldVoltageState| {
+            (array, field) != state.field
+                || (state.local && time != state.time)
+                || f64::from((first - state.angle).abs()) > increment
+                || f64::from((second - state.angle).abs()) > increment
         });
         if refresh {
             starts.push(index);
-            held = Some((array, field, second));
+            let local = if let Some(pointing) = &pointing {
+                pointing
+                    .legacy_direction(row.antenna2_id, time)?
+                    .is_some_and(|direction| is_local_direction(direction.refer()))
+            } else {
+                false
+            };
+            held = Some(HeldVoltageState {
+                field: (array, field),
+                time,
+                angle: second,
+                local,
+            });
         }
     }
     starts.push(ordered.len());
+    tracing::debug!(
+        batches = starts.len() - 1,
+        rows = ordered.len(),
+        "planned voltage-pattern refreshes"
+    );
     Ok((0..starts.len() - 1).map(move |batch| {
+        let _charge = &order_charge;
         let mut rows = ordered[starts[batch]..starts[batch + 1]]
             .iter()
             .map(|(_, row)| (**row).clone())
@@ -241,6 +280,43 @@ pub(super) fn scratch_voltage_batches<'a>(
         rows.sort_unstable_by_key(|row| row.row_index);
         rows
     }))
+}
+
+struct HeldVoltageState {
+    field: (i32, i32),
+    time: f64,
+    angle: f32,
+    local: bool,
+}
+
+pub(super) fn pointing_may_use_local_frame(ms: &MeasurementSet) -> bool {
+    let Some(pointing) = ms.subtable(SubtableId::Pointing) else {
+        return false;
+    };
+    if pointing.row_count() == 0 {
+        return false;
+    }
+    let Some(Value::Record(info)) = pointing
+        .column_keywords("DIRECTION")
+        .and_then(|keywords| keywords.get("MEASINFO"))
+    else {
+        return false;
+    };
+    info.get("VarRefCol").is_some()
+        || text(info, "Ref")
+            .and_then(|reference| reference.parse().ok())
+            .is_some_and(is_local_direction)
+}
+
+fn is_local_direction(reference: DirectionRef) -> bool {
+    matches!(
+        reference,
+        DirectionRef::HADEC
+            | DirectionRef::AZEL
+            | DirectionRef::AZELSW
+            | DirectionRef::AZELGEO
+            | DirectionRef::AZELSWGEO
+    )
 }
 
 impl ImagerVoltagePattern {
@@ -323,14 +399,7 @@ impl ImagerVoltagePattern {
                 ));
             }
             if scratch
-                && matches!(
-                    centre.refer(),
-                    DirectionRef::HADEC
-                        | DirectionRef::AZEL
-                        | DirectionRef::AZELSW
-                        | DirectionRef::AZELGEO
-                        | DirectionRef::AZELSWGEO
-                )
+                && is_local_direction(centre.refer())
                 && selected
                     .selected_rows
                     .iter()

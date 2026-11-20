@@ -28,7 +28,9 @@ use super::settings::{
 };
 use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
-use super::voltage_pattern::{ImagerVoltagePattern, scratch_voltage_batches};
+use super::voltage_pattern::{
+    ImagerVoltagePattern, pointing_may_use_local_frame, scratch_voltage_batches,
+};
 use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
 
 /// Geometry installed by the imager before creating a model image.
@@ -480,22 +482,25 @@ impl ImagerPrediction {
             if scratch && !has_column(ms, ModelData) {
                 return Ok(false);
             }
-            if self.apply_voltage_pattern && self.voltage_angle_increment != TAU {
-                if !matches!(self.options.gridder, ImagerGridder::Spheroidal | ImagerGridder::Boxcar)
-                    || self.options.single_dish.is_some()
-                    || self.legacy_pbw.is_some()
-                    || self.legacy_aw.is_some()
-                    || self.facet_count() > 1
-                    || self.taylor.0 > 1
-                {
+            let supported_voltage_geometry = matches!(self.options.gridder, ImagerGridder::Spheroidal | ImagerGridder::Boxcar)
+                && self.options.single_dish.is_none()
+                && self.legacy_pbw.is_none()
+                && self.legacy_aw.is_none()
+                && self.facet_count() <= 1
+                && self.taylor.0 <= 1;
+            let local_pointings = self.apply_voltage_pattern && scratch && supported_voltage_geometry && pointing_may_use_local_frame(ms);
+            if self.apply_voltage_pattern && (self.voltage_angle_increment != TAU || local_pointings) {
+                if !supported_voltage_geometry {
                     return Err(AttachmentError::PredictionPreparation(invalid(
                         "changing voltage patterns for this legacy Fourier mode are pending #1520",
                     )));
                 }
                 if scratch {
-                    let groups = scratch_voltage_batches(ms, selection, self.voltage_angle_increment)
+                    let groups = scratch_voltage_batches(ms, selection, self.voltage_angle_increment, local_pointings)
                         .map_err(AttachmentError::PredictionPreparation)?;
                     let mut batch = selection.clone();
+                    batch.selected_rows = Vec::new();
+                    batch.row_blocks.clear();
                     for rows in groups {
                         batch.selected_rows = rows;
                         let Some((mut components, mut images)) = self
