@@ -74,7 +74,15 @@ pub(super) fn parse_saved_region(
         }
         "LCSlicer" | "LCBox" => {
             let (blc, trc) = if class_name == "LCSlicer" {
-                decode_lc_slicer(region_name, rec, target_coords, full_shape)?
+                let section = decode_lc_slicer(region_name, rec, target_coords, full_shape)?;
+                if let Some((axis, stride)) =
+                    section.stride.iter().enumerate().find(|&(_, &s)| s != 1)
+                {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "saved region '{region_name}' has non-unit stride {stride} on axis {axis}"
+                    )));
+                }
+                (section.lower, section.upper)
             } else {
                 decode_lc_box(region_name, rec, full_shape)?
             };
@@ -118,18 +126,31 @@ pub(super) fn parse_saved_region(
                 saved_bounds: Some((blc, shape)),
             })
         }
+        "WCEllipsoid" => Ok(ParsedRegion {
+            shapes: vec![
+                decode_wc_ellipsoid(region_name, rec, target_coords, full_shape, plane)?.into(),
+            ],
+            saved_polygon_mask: None,
+            saved_bounds: None,
+        }),
         other => Err(ImageError::InvalidMetadata(format!(
             "unsupported saved region '{region_name}' of class {other:?}"
         ))),
     }
 }
 
-fn decode_lc_slicer(
+pub(in crate::analysis::imsubimage) struct SlicerSection {
+    pub(in crate::analysis::imsubimage) lower: Vec<usize>,
+    pub(in crate::analysis::imsubimage) upper: Vec<usize>,
+    pub(in crate::analysis::imsubimage) stride: Vec<usize>,
+}
+
+pub(in crate::analysis::imsubimage) fn decode_lc_slicer(
     name: &str,
     rec: &RecordValue,
     coords: &CoordinateSystem,
     full_shape: &[usize],
-) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
+) -> Result<SlicerSection, ImageError> {
     let numeric = |field| {
         read_numeric_vec(rec.get(field)).ok_or_else(|| {
             ImageError::InvalidMetadata(format!("saved region '{name}' missing numeric {field}"))
@@ -211,6 +232,7 @@ fn decode_lc_slicer(
         )));
     }
     let fractional_step = read_bool_vec(rec.get("fracinc"), step.len());
+    let mut strides = vec![1; full_shape.len()];
     for (axis, (&stored, fractional)) in step.iter().zip(fractional_step).enumerate() {
         let stride = if is_mimic_source(stored) {
             1.0
@@ -219,14 +241,19 @@ fn decode_lc_slicer(
         } else {
             stored as f32
         };
-        if !(1.0..2.0).contains(&(stride + 0.5)) {
+        if !stride.is_finite() || stride < 0.5 {
             return Err(ImageError::InvalidMetadata(format!(
-                "saved region '{name}' has non-unit stride {stride} on axis {axis}"
+                "saved region '{name}' requires a positive stride on axis {axis}"
             )));
         }
+        strides[axis] = (stride + 0.5) as usize;
     }
     let as_indices = |values: Vec<i64>| values.into_iter().map(|value| value as usize).collect();
-    Ok((as_indices(blc), as_indices(trc)))
+    Ok(SlicerSection {
+        lower: as_indices(blc),
+        upper: as_indices(trc),
+        stride: strides,
+    })
 }
 
 fn is_mimic_source(value: f64) -> bool {
@@ -300,38 +327,7 @@ fn decode_wc_box(
     coords: &CoordinateSystem,
     full_shape: &[usize],
 ) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
-    let origin = usize::from(matches!(
-        rec.get("oneRel"),
-        Some(Value::Scalar(ScalarValue::Bool(true)))
-    ));
-    let Some(Value::Record(source_record)) = rec.get("coordinates") else {
-        return Err(ImageError::InvalidMetadata(
-            "WCBox has no coordinate system".into(),
-        ));
-    };
-    let saved_coords = CoordinateSystem::from_record(source_record)?;
-    let names = |system: &CoordinateSystem| {
-        (0..system.n_coordinates())
-            .flat_map(|i| system.coordinate(i).axis_names())
-            .collect::<Vec<_>>()
-    };
-    let saved_names = names(&saved_coords);
-    let target_names = names(coords);
-    let axes = read_numeric_vec(rec.get("pixelAxes"))
-        .ok_or_else(|| ImageError::InvalidMetadata("WCBox has no pixelAxes".into()))?
-        .into_iter()
-        .map(|axis| {
-            (axis as usize)
-                .checked_sub(origin)
-                .and_then(|i| saved_names.get(i))
-                .and_then(|name| target_names.iter().position(|candidate| candidate == name))
-                .ok_or_else(|| {
-                    ImageError::InvalidMetadata(format!(
-                        "WCBox {name:?} has an unmatched pixel axis {axis}"
-                    ))
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let (axes, origin) = wc_pixel_axes(name, "WCBox", rec, coords)?;
     let mut modes = read_numeric_vec(rec.get("absrel")).unwrap_or_default();
     if modes.is_empty() {
         modes.resize(axes.len(), 1.0);
@@ -362,6 +358,146 @@ fn decode_wc_box(
         )));
     }
     Ok((blc, trc))
+}
+
+fn wc_pixel_axes(
+    name: &str,
+    class: &str,
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+) -> Result<(Vec<usize>, usize), ImageError> {
+    let origin = usize::from(matches!(
+        rec.get("oneRel"),
+        Some(Value::Scalar(ScalarValue::Bool(true)))
+    ));
+    let Some(Value::Record(source_record)) = rec.get("coordinates") else {
+        return Err(ImageError::InvalidMetadata(format!(
+            "{class} has no coordinate system"
+        )));
+    };
+    let saved_coords = CoordinateSystem::from_record(source_record)?;
+    let names = |system: &CoordinateSystem| {
+        (0..system.n_coordinates())
+            .flat_map(|i| system.coordinate(i).axis_names())
+            .collect::<Vec<_>>()
+    };
+    let saved_names = names(&saved_coords);
+    let target_names = names(coords);
+    let axes = read_numeric_vec(rec.get("pixelAxes"))
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("{class} has no pixelAxes")))?
+        .into_iter()
+        .map(|axis| {
+            (axis as usize)
+                .checked_sub(origin)
+                .and_then(|i| saved_names.get(i))
+                .and_then(|name| target_names.iter().position(|candidate| candidate == name))
+                .ok_or_else(|| {
+                    ImageError::InvalidMetadata(format!(
+                        "{class} {name:?} has an unmatched pixel axis {axis}"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((axes, origin))
+}
+
+fn decode_wc_ellipsoid(
+    name: &str,
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+    shape: &[usize],
+    plane: [usize; 2],
+) -> Result<SpatialShape, ImageError> {
+    let invalid =
+        || ImageError::InvalidMetadata(format!("invalid direction-plane WCEllipsoid {name:?}"));
+    let (axes, origin) = wc_pixel_axes(name, "WCEllipsoid", rec, coords)?;
+    if axes != plane
+        || !matches!(
+            rec.get("absrel"),
+            Some(Value::Scalar(ScalarValue::Int32(1)))
+        )
+    {
+        return Err(invalid());
+    }
+    let [x, y] = plane;
+    let center = read_quantum_list(rec.get("center"))?;
+    let [first, second] = center.as_slice() else {
+        return Err(invalid());
+    };
+    let rad = Unit::new("rad").expect("radians are a built-in unit");
+    let in_radians = |quantity: &Quantity| quantity.get_value_in(&rad).map_err(|_| invalid());
+    let [cx, cy] = if matches!(first.unit().name(), "pix" | "frac")
+        && matches!(second.unit().name(), "pix" | "frac")
+    {
+        let pixel = |q: &Quantity, axis: usize| match q.unit().name() {
+            "frac" => q.value() * shape[axis] as f64,
+            _ => q.value() - origin as f64,
+        };
+        [pixel(first, x), pixel(second, y)]
+    } else {
+        let mut world = (0..coords.n_coordinates())
+            .flat_map(|i| coords.coordinate(i).reference_value())
+            .collect::<Vec<_>>();
+        world[x] = in_radians(first)?;
+        world[y] = in_radians(second)?;
+        let pixel = coords.to_pixel(&world)?;
+        [pixel[x], pixel[y]]
+    };
+    let scales = super::direction_pixel_scales(coords, plane).ok_or_else(invalid)?;
+    let radius = |q: &Quantity, axis: usize| {
+        let size = if q.unit().name() == "pix" {
+            q.value()
+        } else {
+            in_radians(q)? / scales[axis]
+        };
+        if !size.is_finite() || size <= 0.0 {
+            return Err(invalid());
+        }
+        Ok(size)
+    };
+    match rec.get("type") {
+        Some(Value::Scalar(ScalarValue::Int32(1))) => {
+            let Some(Value::Record(value)) = rec.get("radius") else {
+                return Err(invalid());
+            };
+            let r = radius(&crate::beam::quantity_from_record(value)?, 0)?;
+            Ok(SpatialShape::Circle {
+                cx,
+                cy,
+                rx: r,
+                ry: r,
+            })
+        }
+        Some(Value::Scalar(ScalarValue::Int32(0 | 2))) => {
+            let values = read_quantum_list(rec.get("radii"))?;
+            let [major, minor] = values.as_slice() else {
+                return Err(invalid());
+            };
+            let (a, b) = (radius(major, 0)?, radius(minor, 1)?);
+            if matches!(rec.get("type"), Some(Value::Scalar(ScalarValue::Int32(0)))) {
+                return Ok(SpatialShape::Circle {
+                    cx,
+                    cy,
+                    rx: a,
+                    ry: b,
+                });
+            }
+            let Some(Value::Record(value)) = rec.get("theta") else {
+                return Err(invalid());
+            };
+            let pa = in_radians(&crate::beam::quantity_from_record(value)?)?
+                - std::f64::consts::FRAC_PI_2;
+            Ok(SpatialShape::Ellipse {
+                cx,
+                cy,
+                semi_major: a,
+                semi_minor: b,
+                cos_pa: pa.cos(),
+                sin_pa: pa.sin(),
+            })
+        }
+        _ => Err(invalid()),
+    }
 }
 
 fn wc_box_corner(
@@ -426,7 +562,7 @@ fn wc_box_corner(
 fn read_quantum_list(val: Option<&Value>) -> Result<Vec<Quantity>, ImageError> {
     let Some(Value::Record(rec)) = val else {
         return Err(ImageError::InvalidMetadata(
-            "WCBox missing blc/trc record".into(),
+            "saved region is missing a quantity list".into(),
         ));
     };
     rec.fields()
@@ -434,7 +570,7 @@ fn read_quantum_list(val: Option<&Value>) -> Result<Vec<Quantity>, ImageError> {
         .map(|field| match &field.value {
             Value::Record(value) => crate::beam::quantity_from_record(value),
             _ => Err(ImageError::InvalidMetadata(
-                "invalid WCBox quantum value".into(),
+                "invalid saved region quantity".into(),
             )),
         })
         .collect()

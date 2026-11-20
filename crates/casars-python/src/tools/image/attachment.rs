@@ -92,8 +92,15 @@ impl AttachedImage {
             return Err(raised("Exception: new file name must be specified."));
         }
         let Some(source) = &self.key else {
-            if self.lock().fits().is_some() {
-                return Err(stub("rename").unwrap_err());
+            let fits_path = {
+                let image = self.lock();
+                image
+                    .fits()
+                    .and_then(|_| image.path())
+                    .map(Path::to_path_buf)
+            };
+            if let Some(old_name) = fits_path {
+                return super::fits_rename::rename(&old_name, name, overwrite, history);
             }
             return Err(raised(
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
@@ -263,7 +270,11 @@ pub(super) fn remove_file(path: &Path) -> PyResult<bool> {
     Ok(true)
 }
 
-fn conflicting_images(registry: &OpenImages, path: &Path, expected_at_path: usize) -> bool {
+pub(super) fn conflicting_images(
+    registry: &OpenImages,
+    path: &Path,
+    expected_at_path: usize,
+) -> bool {
     registry.iter().any(|(open_path, image)| {
         if open_path == path {
             image.strong_count() > expected_at_path
@@ -317,7 +328,10 @@ fn remove_native_table(name: &Path, path: &Path, expected: Option<&TableUseLock>
     Ok(())
 }
 
-fn lock_table_tree(path: &Path, leases: &mut BTreeMap<PathBuf, TableWriteLock>) -> PyResult<()> {
+pub(super) fn lock_table_tree(
+    path: &Path,
+    leases: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> PyResult<()> {
     let not_writable = |name: &Path| {
         raised(format!(
             "Cannot delete file {} because table is not writable",

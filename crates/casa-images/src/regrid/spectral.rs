@@ -19,15 +19,17 @@
 //! tclean model): only the mask says they were not sampled.
 
 use casa_coordinates::{CoordinateModel, CoordinateType};
-use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Zip};
+use ndarray::{ArrayD, Axis, IxDyn, NdFloat, ShapeBuilder, Zip};
 
+use super::RegridMethod;
 use crate::ImagePixel;
 
 /// How the spectral axis is regridded: its pixel axis and the input pixel
 /// at each output channel, `None` where the conversion fails.
 pub(super) struct SpectralPlan {
     axis: usize,
-    positions: Vec<Option<f32>>,
+    positions: Vec<Option<f64>>,
+    method: RegridMethod,
 }
 
 impl SpectralPlan {
@@ -83,10 +85,21 @@ impl SpectralPlan {
                     .and_then(|frequency| ours.pixel_at_frequency_hz(frequency))
                     .ok()
                     .filter(|pixel| pixel.is_finite())
-                    .map(|pixel| pixel as f32)
             })
             .collect();
-        Ok(Self { axis, positions })
+        Ok(Self::from_positions(axis, positions, RegridMethod::Linear))
+    }
+
+    pub(super) fn from_positions(
+        axis: usize,
+        positions: Vec<Option<f64>>,
+        method: RegridMethod,
+    ) -> Self {
+        Self {
+            axis,
+            positions,
+            method,
+        }
     }
 
     /// `data` and its `mask` (true where good) regridded along the spectral
@@ -100,7 +113,33 @@ impl SpectralPlan {
     where
         T: ImagePixel + Into<f64> + From<f32> + Copy,
     {
-        let mut out_data = ArrayD::<T>::from_elem(IxDyn(shape).f(), T::from(0.0));
+        self.apply_with(
+            data,
+            mask,
+            shape,
+            |value| Into::<f64>::into(value) as f32,
+            T::from,
+        )
+    }
+
+    pub(super) fn apply_precise<T: ImagePixel + NdFloat>(
+        &self,
+        data: &ArrayD<T>,
+        mask: &ArrayD<bool>,
+        shape: &[usize],
+    ) -> (ArrayD<T>, ArrayD<bool>) {
+        self.apply_with(data, mask, shape, |value| value, |value| value)
+    }
+
+    fn apply_with<T: ImagePixel + Copy, F: NdFloat>(
+        &self,
+        data: &ArrayD<T>,
+        mask: &ArrayD<bool>,
+        shape: &[usize],
+        read: impl Fn(T) -> F,
+        write: impl Fn(F) -> T,
+    ) -> (ArrayD<T>, ArrayD<bool>) {
+        let mut out_data = ArrayD::<T>::from_elem(IxDyn(shape).f(), T::default_value());
         let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(shape).f(), false);
         let axis = Axis(self.axis);
         Zip::from(out_data.lanes_mut(axis))
@@ -108,16 +147,22 @@ impl SpectralPlan {
             .and(data.lanes(axis))
             .and(mask.lanes(axis))
             .for_each(|mut out, mut good, line, line_mask| {
+                let at = |k| (read(line[k]), line_mask[k]);
+                let derivatives = (self.method == RegridMethod::Cubic && line.len() > 1)
+                    .then(|| second_derivatives(|k| at(k).0, line.len()));
                 for (channel, position) in self.positions.iter().enumerate() {
-                    let Some(position) = position else {
+                    let Some(position) = position.and_then(F::from) else {
                         continue;
                     };
-                    let (value, valid) = linear(
-                        *position,
-                        |k| (Into::<f64>::into(line[k]) as f32, line_mask[k]),
-                        line.len(),
-                    );
-                    out[channel] = T::from(value);
+                    let (value, valid) = match (self.method, &derivatives) {
+                        _ if line.len() == 1 => at(0),
+                        (RegridMethod::Nearest, _) => nearest(position, at, line.len()),
+                        (RegridMethod::Cubic, Some(derivatives)) => {
+                            spline(position, at, derivatives)
+                        }
+                        _ => linear(position, at, line.len()),
+                    };
+                    out[channel] = write(value);
                     good[channel] = valid;
                 }
             });
@@ -125,33 +170,78 @@ impl SpectralPlan {
     }
 }
 
-/// casacore `InterpolateArray1D::interpolatePtr`'s `linear` case with
-/// flags, `goodIsTrue` and no extrapolation, over input pixels `0..count`
-/// (`count` at least two): the value at `x` and whether it is good.
-fn linear(x: f32, at: impl Fn(usize) -> (f32, bool), count: usize) -> (f32, bool) {
-    // `binarySearchBrackets` over 0, 1, …: the input at `x`, else the
-    // first beyond it.
-    let bracket = if x <= 0.0 {
-        0
-    } else {
-        (x.ceil() as usize).min(count)
-    };
+fn nearest<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), count: usize) -> (F, bool) {
+    let last = number::<F>((count - 1) as f64);
+    let channel = index((x - number::<F>(0.5)).ceil(), count - 1);
+    let (value, valid) = at(channel);
+    (value, valid && (F::zero()..=last).contains(&x))
+}
+
+fn second_derivatives<F: NdFloat>(at: impl Fn(usize) -> F, count: usize) -> Vec<F> {
+    let mut coefficients = vec![F::zero(); count];
+    let mut result = vec![F::zero(); count];
+    for i in 1..count - 1 {
+        let diagonal = number::<F>(4.0) - coefficients[i - 1];
+        let difference = (at(i + 1) - at(i)) - (at(i) - at(i - 1));
+        coefficients[i] = F::one() / diagonal;
+        result[i] = (number::<F>(6.0) * difference - result[i - 1]) / diagonal;
+    }
+    // InterpolateArray1D back-substitutes down through index 2.
+    for i in (2..count - 1).rev() {
+        result[i] = result[i] - coefficients[i] * result[i + 1];
+    }
+    result
+}
+
+fn spline<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), derivatives: &[F]) -> (F, bool) {
+    let last = derivatives.len() - 1;
+    let right = index(x.ceil(), last).max(1);
+    let left = right - 1;
+    let a = number::<F>((right) as f64) - x;
+    let b = F::one() - a;
+    let (y1, good1) = at(left);
+    let (y2, good2) = at(right);
+    let value = a * y1
+        + b * y2
+        + (a * a * a - a) * derivatives[left] / number::<F>(6.0)
+        + (b * b * b - b) * derivatives[right] / number::<F>(6.0);
+    (
+        value,
+        good1 && good2 && (F::zero()..=number::<F>((last) as f64)).contains(&x),
+    )
+}
+
+/// casacore `InterpolateArray1D::interpolatePtr`'s `linear` case with flags,
+/// goodIsTrue and no extrapolation, over `0..count` with at least two pixels.
+fn linear<F: NdFloat>(x: F, at: impl Fn(usize) -> (F, bool), count: usize) -> (F, bool) {
+    let bracket = index(x.ceil(), count);
     let (right, discard) = match bracket {
-        0 => (1, x != 0.0),
+        0 => (1, x != F::zero()),
         n if n == count => (count - 1, true),
         n => (n, false),
     };
     let left = right - 1;
     let ((y1, good1), (y2, good2)) = (at(left), at(right));
-    let frac = (x - left as f32) / ((right - left) as f32);
-    let limit = f32::EPSILON;
-    if frac > limit && frac < 1.0 - limit {
+    let frac = x - number::<F>((left) as f64);
+    let limit = F::epsilon();
+    if frac > limit && frac < F::one() - limit {
         (y1 + frac * (y2 - y1), !discard && good1 && good2)
     } else if frac <= limit {
         (y1, !discard && good1)
     } else {
         (y2, !discard && good2)
     }
+}
+
+fn number<F: NdFloat>(value: f64) -> F {
+    F::from(value).expect("finite index or constant")
+}
+
+fn index<F: NdFloat>(x: F, max: usize) -> usize {
+    x.max(F::zero())
+        .min(number::<F>((max) as f64))
+        .to_usize()
+        .unwrap_or(max)
 }
 
 #[cfg(test)]
@@ -175,7 +265,7 @@ mod tests {
             SpectralCoordinate::new(FrequencyRef::LSRK, 1.05, 0.1, 0.0, 1.4).with_unit("GHz"),
         ));
         let plan = SpectralPlan::new((&input, 4), (&output, 3), 0).unwrap();
-        for (actual, expected) in plan.positions.iter().zip([0.5_f32, 1.5, 2.5]) {
+        for (actual, expected) in plan.positions.iter().zip([0.5_f64, 1.5, 2.5]) {
             assert!((actual.unwrap() - expected).abs() < 1e-5);
         }
     }

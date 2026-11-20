@@ -44,6 +44,11 @@ Use `cs.setnames(values)` to replace the world-axis labels in order, or
 pass `type` to replace one coordinate's labels. `cs.setstokes(values)`
 sets the polarization labels in pixel order.
 
+Use `cs.referencevalue()` and `cs.increment()` to read the world-axis
+reference values and spacing. Pass `type` to select a coordinate, or combine
+`n`, `q`, `s`, and `m` in `format` to request numbers, quantities, display
+strings, and CASA measures.
+
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
 Use `addcoordinate` to append axes and `fromrecord` to restore a coordinate
@@ -69,12 +74,37 @@ Use `ia.open("example.im")` to reopen the product. Use
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.summary(list=False)` to read the shape, coordinate axes, mask names
+and restoring beams and return the two report messages. The default
+`list=True` sends the report to the logger.
+Use `ia.makecomplex("output.im", "imaginary.im")` to combine the attached
+real image with a conformant real image of matching precision. A supplied
+region selects the same section from both inputs. The output copies the real
+image's metadata and uses the intersection of the input masks.
+Use `ia.isconform("other.im")` to check whether a float image has the same
+shape and compatible coordinates as a native float or complex image.
+Use `ia.convertflux(value, major, minor)` to convert a Gaussian's integrated
+flux to peak brightness. Pass `topeak=False` for the reverse conversion and
+select the channel and polarization for an image with per-plane beams.
+Use `ia.deconvolvecomponentlist(cl.torecord())` to remove the restoring beam
+from Gaussian components on an attached float or complex image. Point
+components are returned intact. For a per-plane beam grid, select the
+channel and polarization on each nondegenerate axis.
+Use `ia.modify(cl.torecord(), subtract=False)` to add a component model to a
+float image. The default subtracts the model. A region limits the pixel
+section. CASA validates an explicit mask and applies the edit to the stored
+pixels in that section.
+Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
+float or complex image. Use `update=True` to validate the selected native
+pixel mask after replacement.
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
 
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
-from a FITS file. Metadata edits on this attachment last until `ia.done()`.
+from a FITS file. Metadata edits apply for the life of the attachment.
+Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
+reopens the moved file and reads its stored metadata again.
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
 writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.
@@ -89,6 +119,11 @@ single-precision pixels and starts a new history.
 
 The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
+
+Use `ia.maketestimage()` to load `demo/Images/imagetestimage.fits` as a
+temporary image. Pass `outfile` to write a native image. The tool searches
+the working directory, `CASA_RS_MEASURESPATH`, and the CASA installation's
+`data` directory when `CASAPATH` or `AIPSPATH` identifies it.
 
 ### Extract a subimage
 

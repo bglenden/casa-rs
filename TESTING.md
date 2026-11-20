@@ -113,38 +113,39 @@ Verification: just docs-check (policy); applicable domain gates below (code)
   Rust packages, use `scripts/test-workspace.sh -p PACKAGE` and repeat `-p`
   for additional packages.
 
-### GitHub Actions coverage
+### Local validation and exceptional CI
 
-Every PR run reports its selected checks. Architecture, SPDX and formatting
-checks run on every change. Drafts run those checks and selected Rust package
-or developer-tool tests where applicable. Marking a PR ready selects the
-merge checks for that revision. The draft summary uses a separate status.
+Opening, pushing or marking a PR ready does not start CI. Validate the
+affected behavior locally and record the commands, results and required
+review in the PR. Use the corresponding checks for affected interfaces and
+consumers, including the CASA, casacore, performance and resource gates
+required by the change. Merge after the evidence is green.
 
-| Change | Additional checks on a ready PR |
-|---|---|
-| Prose documentation | Repository docs and generated reference checks |
-| Rust source or crate resources | Clippy, tests and doctests for changed packages and their direct Cargo consumers |
-| Rust tests, examples or benchmarks | Clippy and tests for the owning packages |
-| Python bindings, package, provider schema or task runtime | Rust and editable Python package checks |
-| CASA compatibility references and oracle scripts | Compatibility and evidence checks in the architecture gate, plus any needed domain checks |
-| Developer tools covered by `test-perf-tools.sh` | Performance and oracle tool tests |
-| Workspace or package build configuration, CI infrastructure, or an unclassified path | Full CI |
+Dispatch hosted checks only when a required platform, CI workflow, toolchain,
+packaging or integration result cannot be established locally, or when the
+owner requests it. Name the missing evidence in the PR. Reuse any current
+green evidence for the same coverage.
 
-The selection uses the PR merge commit's diff against its first parent and
-Cargo's workspace dependency graph, including direct normal, build and dev
-dependencies. Mixed changes combine coverage. An incomplete diff or dependency
-graph uses full coverage on a ready PR. Broader integration failures may first
-surface in nightly CI. Paired CASA, casacore interchange, real-data, performance
-and platform-specific gates still follow their domain rules below.
+For an affected run on a PR branch in this repository, fetch its base and
+head, then use the full SHA of their merge base.
 
-`lint_test` reports the selected Rust, Python and docs results. It retains
-its required status alongside `python_package` and `docs`. A deliberately
-unselected job reports as skipped. The suite installer and performance-tool
-jobs remain informational for PR merges. Nightly and manual CI run the full
-workspace, editable Python, wheel and sdist, strict public and private rustdoc,
-MkDocs, tool and installer checks. The docs deployment still runs on `main`
-pushes. Version tags run the full CI suite plus smoke and coverage. Release
-asset publication waits for all of those checks to pass.
+```bash
+gh workflow run ci.yml --ref <pr-branch> -f scope=affected -f base_sha=<merge-base-sha>
+```
+
+The affected run selects jobs from the diff against the supplied ancestor
+and Cargo's direct dependency graph. Unknown paths, build configuration or
+an incomplete package graph select full coverage. An invalid base fails the
+run. Use `scope=static` for formatting, SPDX, architecture and docs checks
+only, or `scope=full` when the named gap requires all jobs. Check the run's
+event, tested head SHA, selected jobs and conclusion before merging with
+`--match-head-commit`. For fork PRs that need hosted validation, use a
+same-repository branch of the reviewed revision only with authorization.
+
+Nightly CI tests `main` broadly. Version tags run that full suite plus smoke
+and coverage. Release asset publication waits for all of those checks to
+pass. The documentation site builds and publishes from `main` nightly
+and can be refreshed with a manual run on `main`.
 
 ## Evidence source and turnaround
 
@@ -156,11 +157,10 @@ a failure, resolve genuine platform-specific uncertainty, or satisfy an
 explicit user request. A narrower hosted job cannot stand in for a broader
 required gate such as `just verify`.
 
-Work while hosted checks run follows AGENTS.md's bounded assignment and
-progress-check rules. Take only a listed independent behavior; otherwise
-stop active model work with one short pending-result handoff. Retain PR
-ownership and handle reported failures on resumption;
-a passing local result does not waive investigating a reported failure.
+Follow AGENTS.md's "Continuation and Blockers" while checks run. Continue
+actionable work in the assigned queue, verify required results and handle
+reported failures. A passing local result does not waive investigating a
+reported failure.
 
 Green evidence remains valid until a code, test, build, dependency, or
 runtime-configuration change could affect that gate. Review inspects the

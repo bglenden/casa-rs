@@ -76,26 +76,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (format = None, r#type = None), text_signature = "($self, format='n', type='')")]
-    fn increment(
-        &self,
-        format: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("increment")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (format = None, r#type = None), text_signature = "($self, format='n', type='')")]
-    fn referencevalue(
-        &self,
-        format: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("referencevalue")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn reorder(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("reorder")

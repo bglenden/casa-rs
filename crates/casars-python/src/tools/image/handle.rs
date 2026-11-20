@@ -7,7 +7,7 @@ use casa_coordinates::CoordinateSystem;
 use casa_images::{
     AnyPagedImage, ImageError, ImagePixel, ImagePixelType, PagedImage, ScratchSpace, TempImage,
     TempStoragePolicy,
-    fits_read::{FitsSectionReader, FitsToolImport},
+    fits_read::{FitsSectionReader, FitsToolImport, fits_section_image},
 };
 use casa_types::{RecordValue, Value};
 use ndarray::ArrayD;
@@ -28,23 +28,43 @@ pub(super) struct FitsAttachment {
     path: PathBuf,
     hdu: usize,
     pub(super) shape: Vec<usize>,
+    pub(super) tile_shape: Vec<usize>,
+    pub(super) has_mask: bool,
     pixels: OnceCell<FitsSectionReader>,
 }
 
 impl FitsAttachment {
+    pub(super) fn image_view<'a>(
+        &'a self,
+        metadata: &'a TempImage<f32>,
+    ) -> impl casa_images::ImageInterface<f32> + 'a {
+        fits_section_image(&self.shape, metadata, &self.path, |start, count, stride| {
+            self.read_pixels(start, count, stride)
+        })
+    }
+
     pub(super) fn read(
         &self,
         start: &[usize],
         count: &[usize],
         stride: &[usize],
     ) -> PyResult<ArrayD<f32>> {
+        self.read_pixels(start, count, stride).map_err(raised)
+    }
+
+    fn read_pixels(
+        &self,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<f32>, ImageError> {
         // CASA opens the pixel stream on the first read and retains it
         // across subsequent reads even if the filename is moved or removed.
         if let Some(reader) = self.pixels.get() {
-            return reader.read(start, count, stride).map_err(raised);
+            return reader.read(start, count, stride);
         }
-        let reader = FitsSectionReader::open(&self.path, self.hdu, &self.shape).map_err(raised)?;
-        let section = reader.read(start, count, stride).map_err(raised)?;
+        let reader = FitsSectionReader::open(&self.path, self.hdu, &self.shape)?;
+        let section = reader.read(start, count, stride)?;
         let _ = self.pixels.set(reader);
         Ok(section)
     }
@@ -116,6 +136,8 @@ impl ImageHandle {
             path: path.to_path_buf(),
             hdu: source.hdu_index(),
             shape: source.shape().to_vec(),
+            tile_shape: source.tile_shape(),
+            has_mask: source.has_implicit_mask(),
             pixels: OnceCell::new(),
         };
         source.misc_info.remove("object");
@@ -251,6 +273,23 @@ impl<T: ImagePixel> Storage<T> {
         match self {
             Self::Paged(image) => image.save(),
             Self::Temp { .. } => Ok(()),
+        }
+    }
+}
+
+impl Storage<f32> {
+    pub(super) fn with_float_view<R>(
+        &self,
+        use_image: impl FnOnce(&dyn casa_images::ImageInterface<f32>) -> R,
+    ) -> R {
+        match self {
+            Self::Paged(image) => use_image(image.as_ref()),
+            Self::Temp {
+                image,
+                fits: Some(fits),
+                ..
+            } => use_image(&fits.image_view(image)),
+            Self::Temp { image, .. } => use_image(image.as_ref()),
         }
     }
 }

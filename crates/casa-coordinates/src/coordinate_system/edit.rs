@@ -11,7 +11,11 @@ use crate::{Coordinate, CoordinateError, CoordinateType};
 fn refresh_direction_pole(record: &mut RecordValue) -> Result<(), CoordinateError> {
     let direction = crate::DirectionCoordinate::from_record(record)?;
     let pole = direction.native_pole()[1];
-    if ["CAR", "SFL", "MER", "AIT"].contains(&direction.projection().name()) {
+    if [
+        "CAR", "SFL", "MER", "AIT", "PAR", "MOL", "PCO", "TSC", "CSC", "QSC",
+    ]
+    .contains(&direction.projection().name())
+    {
         let latitude = direction.reference_value()[1].to_degrees();
         let longitude = direction.longpole().to_degrees();
         // WCSLIB checks the *unclamped* candidate pole latitude in degrees.
@@ -494,9 +498,9 @@ impl CoordinateSystem {
 
     /// Change the first direction coordinate's projection, preserving axis maps.
     ///
-    /// Returns the old projection when it changed. Supports standard zenithal
-    /// projections and CAR, SFL, MER, and AIT when no frame conversion or
-    /// nonzero projection parameters are present.
+    /// Returns the old projection when it changed. Supports standard zenithal,
+    /// cylindrical, pseudocylindrical, and quadrilateralized cube projections
+    /// with default parameters. A separate direction conversion frame is preserved.
     ///
     /// # Errors
     ///
@@ -522,7 +526,8 @@ impl CoordinateSystem {
             .ok_or_else(|| CoordinateError::InvalidRecord("no direction coordinate".into()))?;
         let name = projection.to_ascii_uppercase();
         let supported = [
-            "SIN", "TAN", "ARC", "ZEA", "STG", "CAR", "SFL", "MER", "AIT",
+            "SIN", "TAN", "ARC", "ZEA", "STG", "CAR", "SFL", "MER", "AIT", "PAR", "MOL", "PCO",
+            "TSC", "CSC", "QSC",
         ];
         if name == "NCP" {
             return Err(CoordinateError::InvalidRecord(format!(
@@ -538,12 +543,6 @@ impl CoordinateSystem {
         if old == name {
             return Ok((system, None));
         }
-        let Some(Value::Record(stored)) = record.get(&field) else {
-            return Err(CoordinateError::InvalidRecord(
-                "missing direction record".into(),
-            ));
-        };
-        let conversion = crate::record_utils::get_optional_string(stored, "conversionSystem");
         if !supported.contains(&old.as_str())
             || !supported.contains(&name.as_str())
             || direction
@@ -551,9 +550,6 @@ impl CoordinateSystem {
                 .parameters()
                 .iter()
                 .any(|value| *value != 0.0)
-            || conversion.is_some_and(|frame| {
-                !frame.eq_ignore_ascii_case(direction.direction_ref().as_str())
-            })
         {
             return Err(CoordinateError::InvalidRecord(
                 "projection transition is not implemented (#977)".into(),
@@ -1147,11 +1143,13 @@ impl CoordinateSystem {
             }
             if field == "cdelt"
                 && let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
-                && direction.increment().iter().any(|value| !value.is_normal())
+                && direction
+                    .increment()
+                    .iter()
+                    .any(|value| !value.is_finite() || *value == 0.0)
             {
                 return Err(CoordinateError::InvalidRecord(
-                    "zero, non-finite, or subnormal direction increments are unsupported (#977)"
-                        .into(),
+                    "direction increments must be finite and nonzero".into(),
                 ));
             }
         }

@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 809
+- Concepts: 817
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
@@ -40,12 +40,12 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 8 | <code>msexplore</code> | 102 | Plot selected MeasurementSet or calibration table data. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 5 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
-| [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 5 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
-| [Position Velocity](#surface-impv)<br><code>impv</code> | task | 5 | <code>image_analysis</code> | 16 | Extract a CASA-style position-velocity image |
+| [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 6 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA or FITS image |
+| [Position Velocity](#surface-impv)<br><code>impv</code> | task | 6 | <code>image_analysis</code> | 16 | Extract a CASA-style position-velocity image |
 | [Subimage](#surface-imsubimage)<br><code>imsubimage</code> | task | 5 | <code>image_analysis</code> | 12 | Extract a CASA-style image section |
 | [Image Math](#surface-immath)<br><code>immath</code> | task | 5 | <code>image_analysis</code> | 16 | Evaluate mathematical expressions and spectral or polarization operations on images |
-| [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 5 | <code>image_analysis</code> | 10 | Regrid a CASA image onto a template image |
-| [Feather](#surface-feather)<br><code>feather</code> | task | 5 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
+| [Image Regrid](#surface-imregrid)<br><code>imregrid</code> | task | 6 | <code>image_analysis</code> | 10 | Regrid a CASA image onto a template image |
+| [Feather](#surface-feather)<br><code>feather</code> | task | 6 | <code>image_analysis</code> | 7 | Combine high-resolution and low-resolution images in the Fourier domain |
 | [Import FITS](#surface-importfits)<br><code>importfits</code> | task | 6 | <code>image_analysis</code> | 9 | Import a FITS image into a CASA image |
 | [MS Convert](#surface-msconvert)<br><code>msconvert</code> | task | 1 | <code>msconvert</code> | 11 | Convert between MeasurementSet v2 and MSv4, in either direction. |
 | [SimAnalyze](#surface-simanalyze)<br><code>simanalyze</code> | task | 2 | <code>simanalyze</code> | 32 | Image and analyze a simulated observation: CASA's simanalyze |
@@ -530,12 +530,12 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>separationaxis</code> | <code>mstransform.separationaxis@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Axis a multi-MS is partitioned along. |
 | <code>numsubms</code> | <code>mstransform.numsubms@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Output | Number of sub-MeasurementSets in a multi-MS: 'auto' or a count. |
 | <code>tileshape</code> | <code>mstransform.tileshape@r1</code> | <code>array&lt;integer&gt;</code> | <code>[0]</code>; optional | Output | Tile shape of the output data columns. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>field</code> | <code>ms.selection.field@r7</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA field selection for MeasurementSet transforms. |
+| <code>spw</code> | <code>ms.selection.spw@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA spw selection for MeasurementSet transforms. |
+| <code>scan</code> | <code>ms.selection.scan@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA scan selection for MeasurementSet transforms. |
+| <code>antenna</code> | <code>ms.selection.antenna@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA antenna selection for MeasurementSet transforms. |
 | <code>correlation</code> | <code>ms.selection.correlation@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA correlation product selection with optional spectral-window qualifiers. |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>timerange</code> | <code>ms.selection.timerange@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA timerange selection for MeasurementSet transforms. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
@@ -563,7 +563,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>preaverage</code> | <code>regridms.preaverage@r1</code> | <code>bool</code> | <code>false</code>; optional | Spectral | Average channels before regridding to wider ones. |
 | <code>timeaverage</code> | <code>mstransform.timeaverage@r1</code> | <code>bool</code> | <code>false</code>; optional | Time | Average in time over timebin. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Time | Averaging time bin, a time quantity as CASA writes it. |
-| <code>timespan</code> | <code>mstransform.timespan@r1</code> | <code>string</code> | <code>""</code>; optional | Time | Let time averages span 'scan', 'state' or both. |
+| <code>timespan</code> | <code>mstransform.timespan@r1</code> | <code>variant</code> | <code>""</code>; optional | Time | Let time averages span 'scan', 'state' or both. |
 | <code>maxuvwdistance</code> | <code>mstransform.maxuvwdistance@r1</code> | <code>float</code> | <code>0.0</code>; optional | Time | Largest UVW change, in metres, a time average may span. |
 | <code>docallib</code> | <code>mstransform.docallib@r1</code> | <code>bool</code> | <code>false</code>; optional | Calibration | Apply calibration from callib on the fly. |
 | <code>callib</code> | <code>parameter.callib@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Calibration | CASA callibrary file describing the calibration-table chain |
@@ -595,12 +595,12 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms. |
 | <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>""</code>; required | Output | Output MeasurementSet path.<br><em>Surface:</em> Canonical outputvis maps to provider field out. |
 | <code>keepmms</code> | <code>parameter.keepmms@r1</code> | <code>bool</code> | <code>true</code>; optional | Output | Preserve MMS structure. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated scan numbers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
+| <code>field</code> | <code>ms.selection.field@r7</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA field selection for MeasurementSet transforms. |
+| <code>spw</code> | <code>ms.selection.spw@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA spw selection for MeasurementSet transforms. |
+| <code>scan</code> | <code>ms.selection.scan@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA scan selection for MeasurementSet transforms. |
+| <code>antenna</code> | <code>ms.selection.antenna@r6</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA antenna selection for MeasurementSet transforms. |
 | <code>correlation</code> | <code>ms.selection.correlation@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA correlation product selection with optional spectral-window qualifiers. |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Inclusive TIME range in MJD seconds |
+| <code>timerange</code> | <code>ms.selection.timerange@r5</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA timerange selection for MeasurementSet transforms. |
 | <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 | <code>array</code> | <code>ms.selection.array@r2</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA subarray selection by ARRAY_ID. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r4</code> | <code>variant</code> | <code>""</code>; optional | Selection | Accepts a CASA variant and converts it to selector text during MeasurementSet selection. |
@@ -610,7 +610,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
 | <code>width</code> | <code>ms.transform.width@r2</code> | <code>variant</code> | <code>1</code>; optional | Selection | Channel-averaging width as an integer, numeric string, or per-SPW integer list. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Averaging | Averaging time bin, a time quantity as CASA writes it. |
-| <code>combine</code> | <code>parameter.combine@r1</code> | <code>string</code> | <code>""</code>; optional | Averaging | Axes to combine. |
+| <code>combine</code> | <code>parameter.combine@r2</code> | <code>variant</code> | <code>""</code>; optional | Averaging | Let time averages span scan, field or state boundaries. |
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors<br><em>Surface:</em> casa-rs's own control: CASA's split has no msselect parameter. |
 
 <a id="surface-applycal"></a>
@@ -1069,17 +1069,17 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated ARRAY_ID integers |
 | <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
 | <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed selector. |
-| <code>clipminmax</code> | <code>flagdata.clipminmax@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Clip | Range of data values that clip mode keeps; values outside it are flagged. |
+| <code>clipminmax</code> | <code>flagdata.clipminmax@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Clip | Two values define the closed clipping range. Other lengths leave the range unset. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"DATA"</code>; optional | Data | Visibility data column used by the surface.<br><em>Surface:</em> Used as the visibility data column for automatic flagging modes. |
-| <code>clipoutside</code> | <code>flagdata.clipoutside@r1</code> | <code>bool</code> | <code>true</code>; optional | Clip | Clip outside clipminmax's range rather than inside it. |
+| <code>clipoutside</code> | <code>flagdata.clipoutside@r1</code> | <code>variant</code> | <code>true</code>; optional | Clip | Flag samples outside the closed clip range when true, or inside it when false. |
 | <code>channelavg</code> | <code>flagdata.channelavg@r1</code> | <code>bool</code> | <code>false</code>; optional | Clip | Average channels before clipping. |
 | <code>chanbin</code> | <code>parameter.chanbin@r1</code> | <code>integer</code> | <code>1</code>; optional | Clip | Channel bin mode. |
 | <code>timeavg</code> | <code>flagdata.timeavg@r1</code> | <code>bool</code> | <code>false</code>; optional | Clip | Average time before clipping. |
 | <code>timebin</code> | <code>parameter.timebin@r2</code> | <code>string</code> | <code>"0s"</code>; optional | Clip | Averaging time bin, a time quantity as CASA writes it. |
 | <code>clipzeros</code> | <code>parameter.clipzeros@r1</code> | <code>bool</code> | <code>false</code>; optional | Flagging | Flag exact zero amplitudes in clip mode. |
-| <code>quackinterval</code> | <code>parameter.quackinterval@r1</code> | <code>float</code> | <code>1.0</code>; optional | Quack | Quack interval in seconds. |
-| <code>quackmode</code> | <code>parameter.quackmode@r2</code> | <code>choice (4 values)</code> | <code>"beg"</code>; optional | Quack | Which part of each scan quack flags, as CASA names it: 'beg' its first quackinterval, 'endb' its last, 'end' all but its last, 'tail' all but its first. |
-| <code>quackincrement</code> | <code>flagdata.quackincrement@r1</code> | <code>bool</code> | <code>false</code>; optional | Quack | Quack successive intervals, taking existing flags into account. |
+| <code>quackinterval</code> | <code>parameter.quackinterval@r1</code> | <code>variant</code> | <code>1.0</code>; optional | Quack | Quack interval in seconds. |
+| <code>quackmode</code> | <code>parameter.quackmode@r2</code> | <code>variant</code> | <code>"beg"</code>; optional | Quack | Which part of each scan quack flags, as CASA names it: 'beg' its first quackinterval, 'endb' its last, 'end' all but its last, 'tail' all but its first. |
+| <code>quackincrement</code> | <code>flagdata.quackincrement@r1</code> | <code>variant</code> | <code>false</code>; optional | Quack | Quack successive intervals, taking existing flags into account. |
 | <code>tolerance</code> | <code>flagdata.tolerance@r1</code> | <code>float</code> | <code>0.0</code>; optional | Shadow | Shadowing in metres that shadow mode tolerates. |
 | <code>addantenna</code> | <code>flagdata.addantenna@r1</code> | <code>string</code> | <code>""</code>; optional | Shadow | Antennas, from a file or dictionary, that shadow mode adds. |
 | <code>lowerlimit</code> | <code>flagdata.lowerlimit@r1</code> | <code>float</code> | <code>0.0</code>; optional | Elevation | Lowest elevation, in degrees, that elevation mode keeps. |
@@ -1153,24 +1153,24 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Primary Beam Correction (<code>impbcor</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Images
 - Provider family: `image_analysis`
-- Summary: Apply primary-beam correction to a CASA image
+- Summary: Apply primary-beam correction to a CASA or FITS image
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
-| <code>pbimage</code> | <code>parameter.pbimage@r2</code> | <code>array&lt;path (image)&gt;</code> | <code>[]</code>; required | Input | Primary-beam CASA image path; CASA's [] default means it must be given |
+| <code>pbimage</code> | <code>parameter.pbimage@r3</code> | <code>variant</code> | <code>[]</code>; required | Input | Primary-beam image name or floating-point pixel array |
 | <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 | <code>box</code> | <code>image.selection.box@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Pixel box. |
-| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>region</code> | <code>impbcor.region@r1</code> | <code>variant</code> | <code>""</code>; optional | Selection | CRTF text, region file, or casacore region record. |
 | <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
 | <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
-| <code>mode</code> | <code>impbcor.mode@r1</code> | <code>choice (2 values)</code> | <code>"divide"</code>; optional | Correction | Correction mode |
-| <code>cutoff</code> | <code>parameter.cutoff@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Correction | Minimum PB value to keep; negative disables cutoff masking |
+| <code>mode</code> | <code>impbcor.mode@r2</code> | <code>string</code> | <code>"divide"</code>; optional | Correction | Correction mode |
+| <code>cutoff</code> | <code>parameter.cutoff@r2</code> | <code>variant</code> | <code>-1.0</code>; optional | Correction | Primary-beam cutoff for division or multiplication |
 | <code>stretch</code> | <code>parameter.stretch@r2</code> | <code>bool</code> | <code>false</code>; optional | Selection | Stretch the mask along the image's other axes if necessary and possible. |
 
 <a id="surface-impv"></a>
@@ -1178,7 +1178,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Position Velocity (<code>impv</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Extract a CASA-style position-velocity image
@@ -1187,16 +1187,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
 | <code>outfile</code> | <code>parameter.outfile@r1</code> | <code>path (image)</code> | <code>""</code>; required | Output | Output image. |
-| <code>mode</code> | <code>impv.mode@r1</code> | <code>choice (2 values)</code> | <code>"coords"</code>; optional | Slice | How the slice is given: by start and end, or by center, length and position angle. |
-| <code>start</code> | <code>parameter.start@r1</code> | <code>string</code> | <code>""</code>; required | Slice | Cube-axis start channel, frequency, or velocity |
-| <code>end</code> | <code>parameter.end@r1</code> | <code>string</code> | <code>""</code>; required | Slice | End pixel coordinate |
-| <code>center</code> | <code>pv.center@r1</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Slice | Center of the slice in the direction plane, given with length and pa. |
-| <code>length</code> | <code>impv.length@r1</code> | <code>string</code> | <code>""</code>; optional | Slice | Length of the slice in the direction plane, given with center and pa. |
-| <code>pa</code> | <code>impv.pa@r1</code> | <code>string</code> | <code>""</code>; optional | Slice | Position angle of the slice, north through east, given with center and length. |
-| <code>width</code> | <code>impv.width@r1</code> | <code>integer</code> | <code>1</code>; optional | Slice | Averaging width in pixels |
+| <code>mode</code> | <code>impv.mode@r2</code> | <code>string</code> | <code>"coords"</code>; optional | Slice | How the slice is given: by start and end, or by center, length and position angle. |
+| <code>start</code> | <code>parameter.start@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | Cube-axis start channel, frequency, or velocity |
+| <code>end</code> | <code>parameter.end@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | End pixel coordinate |
+| <code>center</code> | <code>pv.center@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | Center of the slice in the direction plane, given with length and pa. |
+| <code>length</code> | <code>impv.length@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | Length of the slice in the direction plane, given with center and pa. |
+| <code>pa</code> | <code>impv.pa@r2</code> | <code>variant</code> | <code>""</code>; optional | Slice | Position angle of the slice, north through east, given with center and length. |
+| <code>width</code> | <code>impv.width@r2</code> | <code>variant</code> | <code>1</code>; optional | Slice | Odd averaging width in pixels or an angular width. |
 | <code>unit</code> | <code>impv.unit@r1</code> | <code>string</code> | <code>"arcsec"</code>; optional | Output | Angular unit of the output's offset axis. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
-| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Region file or expression. |
+| <code>region</code> | <code>impv.region@r1</code> | <code>variant</code> | <code>""</code>; optional | Selection | CASA region text, image region name, or a region record. Direction-axis cropping is refused. |
 | <code>chans</code> | <code>image.selection.chans@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Channel selector. |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Stokes selector. |
 | <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Mask expression. |
@@ -1261,7 +1261,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Regrid (<code>imregrid</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Regrid a CASA image onto a template image
@@ -1269,12 +1269,12 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path |
-| <code>template</code> | <code>parameter.template@r1</code> | <code>path (image)</code> | <code>"get"</code>; required | Input | Template CASA image path |
-| <code>output</code> | <code>imregrid.output@r1</code> | <code>path (image)</code> | <code>""</code>; required when not (template="get") | Output | Output CASA image path |
+| <code>template</code> | <code>parameter.template@r2</code> | <code>variant</code> | <code>"get"</code>; optional | Input | Template CASA image path, get selector, or coordinate and shape record |
+| <code>output</code> | <code>imregrid.output@r1</code> | <code>path (image)</code> | <code>""</code>; optional | Output | Output CASA image path |
 | <code>asvelocity</code> | <code>imregrid.asvelocity@r1</code> | <code>bool</code> | <code>true</code>; optional | Regrid | Regrid the spectral axis in velocity rather than frequency. |
 | <code>axes</code> | <code>regrid.axes@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Regrid | Pixel axes to regrid; [-1] regrids them all. |
 | <code>shape</code> | <code>imregrid.shape@r1</code> | <code>array&lt;integer&gt;</code> | <code>[-1]</code>; optional | Regrid | Output image shape; [-1] takes the template's along the regridded axes. |
-| <code>interpolation</code> | <code>parameter.interpolation@r1</code> | <code>choice (2 values; surface-narrowed)</code> | <code>"linear"</code>; optional | Regrid | Spectral interpolation mode for cube gridding |
+| <code>interpolation</code> | <code>parameter.interpolation@r1</code> | <code>choice (3 values; surface-narrowed)</code> | <code>"linear"</code>; optional | Regrid | Spectral interpolation mode for cube gridding |
 | <code>decimate</code> | <code>imregrid.decimate@r1</code> | <code>integer</code> | <code>10</code>; optional | Regrid | Decimation factor of the coordinate grid computation. |
 | <code>replicate</code> | <code>imregrid.replicate@r1</code> | <code>bool</code> | <code>false</code>; optional | Regrid | Replicate the image rather than regrid it. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
@@ -1284,7 +1284,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Feather (<code>feather</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Combine high-resolution and low-resolution images in the Fourier domain

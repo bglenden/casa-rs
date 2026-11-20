@@ -43,7 +43,7 @@ fn beam_quantity(value: &Variant, label: &str) -> PyResult<Quantity> {
     Ok(value)
 }
 
-fn beam_for_units(
+pub(super) fn beam_for_units(
     image: &ImageHandle,
     channel: i64,
     polarization: i64,

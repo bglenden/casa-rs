@@ -7,6 +7,7 @@
 
 use num_complex::Complex32;
 
+use super::spline::SplineScratch;
 use super::stencil::Stencil;
 use super::{NativeRow, Order, Sampling, SpectralAxis, SpectralResampler, is_autocorrelation};
 use super::{RowPlacing, locate_sample};
@@ -42,6 +43,8 @@ pub struct PredictionScratch {
     slots: Vec<u32>,
     /// The native terms of the batch's rows.
     terms: Vec<NativeTerm>,
+    /// The tridiagonal system for the legacy spline's image planes.
+    spline: SplineScratch,
 }
 
 impl PredictionScratch {
@@ -58,6 +61,7 @@ impl PredictionScratch {
             sources: Vec::with_capacity(samples),
             slots: Vec::with_capacity(slots),
             terms: Vec::with_capacity(terms),
+            spline: SplineScratch::default(),
         }
     }
 
@@ -84,6 +88,7 @@ impl PredictionScratch {
             + self.sources.capacity() * size_of::<Source>()
             + self.slots.capacity() * size_of::<u32>()
             + self.terms.capacity() * size_of::<NativeTerm>()) as u64
+            + self.spline.capacity_bytes()
     }
 
     /// Start a batch of rows of `npol` correlations, clearing every buffer.
@@ -206,6 +211,14 @@ impl Source {
     }
 }
 
+fn index_sources(slots: &mut Vec<u32>, sources: &[Source], count: usize) {
+    slots.clear();
+    slots.resize(count, NO_CELL);
+    for source in sources {
+        slots[source.slots()].fill(source.placement);
+    }
+}
+
 /// The largest difference of phase-centre phase, in radians, at which two
 /// samples that read the same taps of the same model share one placement:
 /// 2⁻³⁰, 64 times below the resolution of an `f32` unit phasor (2⁻²⁴), so a
@@ -257,25 +270,19 @@ impl Gathered {
 /// in the halo the maximum is −2 and CASA's unsigned loop flags nothing, so
 /// every channel is degridded. `None` when nothing maps.
 fn degridded_channels(
-    (axis, order): (&SpectralAxis, Order),
-    native: &[f64],
+    planes: u32,
+    native: impl Iterator<Item = f64> + Clone,
+    map: impl Fn(f64) -> i64,
 ) -> Option<std::ops::RangeInclusive<u32>> {
-    let native_width_hz = native[1] - native[0];
-    let map = |frequency_hz: f64| match axis.nearest_channel(frequency_hz) {
-        Some(channel) => i64::from(channel),
-        None if axis.in_halo(frequency_hz, native_width_hz, order) => -2,
-        None => -1,
-    };
-    let maximum = native.iter().map(|frequency_hz| map(*frequency_hz)).max()?;
+    let maximum = native.clone().map(&map).max()?;
     if maximum == -1 {
         return None;
     }
     if maximum == -2 {
-        return Some(0..=axis.channels - 1);
+        return Some(0..=planes - 1);
     }
     let minimum = native
-        .iter()
-        .map(|frequency_hz| match map(*frequency_hz) {
+        .map(|frequency_hz| match map(frequency_hz) {
             -1 => maximum,
             channel => channel,
         })
@@ -316,7 +323,7 @@ impl SpectralResampler {
 
     /// Reusable buffers for predicting batches of `rows` rows of at most
     /// `channels` channels of `npol` correlations, allocated once at
-    /// [`PredictionScratch::bytes`] for every resampler in `resamplers`.
+    /// [`Self::prediction_scratch_bytes`] for every resampler in `resamplers`.
     #[must_use]
     pub fn prediction_scratch<'r>(
         resamplers: impl IntoIterator<Item = &'r Self>,
@@ -324,8 +331,11 @@ impl SpectralResampler {
         channels: usize,
         rows: usize,
     ) -> PredictionScratch {
-        let (samples, slots) = Self::prediction_extent(resamplers, channels);
-        PredictionScratch::with_capacity(npol, rows * samples, slots, rows * channels)
+        let (samples, slots, spline) = Self::prediction_extent(resamplers, channels);
+        let mut scratch =
+            PredictionScratch::with_capacity(npol, rows * samples, slots, rows * channels);
+        scratch.spline = SplineScratch::with_capacity(spline, npol);
+        scratch
     }
 
     /// Bytes [`Self::prediction_scratch`] holds for the same arguments.
@@ -336,27 +346,33 @@ impl SpectralResampler {
         channels: usize,
         rows: usize,
     ) -> u64 {
-        let (samples, slots) = Self::prediction_extent(resamplers, channels);
+        let (samples, slots, spline) = Self::prediction_extent(resamplers, channels);
         PredictionScratch::bytes(npol, rows * samples, slots, rows * channels)
+            + SplineScratch::bytes(spline, npol)
     }
 
     /// The most samples any of `resamplers` predicts with for rows of at
     /// most `channels` channels, and the most output or native channels of
-    /// one row.
+    /// one row and the largest legacy spline.
     fn prediction_extent<'r>(
         resamplers: impl IntoIterator<Item = &'r Self>,
         channels: usize,
-    ) -> (usize, usize) {
+    ) -> (usize, usize, usize) {
         resamplers
             .into_iter()
-            .fold((0, channels), |(samples, slots), resampler| {
-                let linear = match &resampler.sampling {
+            .fold((0, channels, 0), |(samples, slots, spline), resampler| {
+                let planes = match &resampler.sampling {
                     Sampling::Interpolated(axis, _) => axis.channels as usize,
                     Sampling::Direct | Sampling::Nearest(_) => 0,
                 };
                 (
                     samples.max(resampler.prediction_samples_per_row(channels)),
-                    slots.max(linear),
+                    slots.max(planes),
+                    if resampler.uses_legacy_spline() {
+                        spline.max(planes)
+                    } else {
+                        spline
+                    },
                 )
             })
     }
@@ -422,13 +438,98 @@ impl SpectralResampler {
         self.finish_prediction_with_coverage(operator, row, placed, scratch, output)
     }
 
+    fn prediction_channels<'a>(&self, native: &'a [f64]) -> impl Iterator<Item = f64> + Clone + 'a {
+        let [start, count, step] = self
+            .legacy_prediction_map
+            .as_ref()
+            .and_then(|mapping| mapping.selection)
+            .unwrap_or([0, native.len(), 1]);
+        native
+            .iter()
+            .copied()
+            .skip(start)
+            .step_by(step.max(1))
+            .take(count)
+    }
+
+    fn prediction_width(&self, native: &[f64]) -> f64 {
+        let mut selected = self.prediction_channels(native);
+        selected
+            .next()
+            .zip(selected.next())
+            .map_or(0., |(first, next)| next - first)
+    }
+
+    fn prediction_channel(
+        &self,
+        axis: &SpectralAxis,
+        order: Order,
+        frequency: f64,
+        width: f64,
+    ) -> i64 {
+        if let Some(mapping) = self.legacy_prediction_map.as_ref() {
+            mapping
+                .axis
+                .legacy_prediction_channel(frequency, width, order)
+        } else if let Some(channel) = axis.nearest_channel(frequency) {
+            i64::from(channel)
+        } else if axis.in_halo(frequency, width, order) {
+            -2
+        } else {
+            -1
+        }
+    }
+
+    fn interpolated_planes(
+        &self,
+        axis: &SpectralAxis,
+        order: Order,
+        native: &[f64],
+    ) -> Option<std::ops::RangeInclusive<u32>> {
+        let width = self.prediction_width(native);
+        let map = |frequency| self.prediction_channel(axis, order, frequency, width);
+        degridded_channels(axis.channels, self.prediction_channels(native), map)
+    }
+
+    /// Validate CASA's four-image-plane minimum for live cubic prediction
+    /// before a caller opens the scratch writer. Single-channel and entirely
+    /// unmapped buffers bypass interpolation.
+    /// # Errors
+    /// This is an active legacy cubic buffer with fewer than four image planes.
+    pub fn validate_legacy_prediction(&self, native: &[f64]) -> Result<(), OperatorError> {
+        if let Sampling::Interpolated(axis, Order::Cubic) = &self.sampling
+            && self.legacy_prediction_map.is_some()
+            && !self.uses_legacy_spline()
+            && (2..4).contains(&axis.channels)
+            && self.prediction_channels(native).nth(1).is_some()
+            && self
+                .interpolated_planes(axis, Order::Cubic, native)
+                .is_some()
+        {
+            return Err(OperatorError::SpectralAxis {
+                reason: "legacy cubic scratch prediction requires at least four image channels",
+            });
+        }
+        Ok(())
+    }
+
+    fn matching_axis<'a>(&'a self, axis: &'a SpectralAxis) -> &'a SpectralAxis {
+        self.legacy_prediction_map
+            .as_ref()
+            .map_or(axis, |mapping| &mapping.axis)
+    }
+
     /// The axis and order by which `row`'s prediction interpolates
     /// degridded output channels to its native channels, when it does (see
     /// [`Self::predict_row`]).
     fn interpolated_prediction(&self, row: &NativeRow<'_>) -> Option<(&SpectralAxis, Order)> {
         match &self.sampling {
             Sampling::Interpolated(axis, order)
-                if axis.channels > 1 && row.frequencies_hz.len() > 1 =>
+                if axis.channels > 1
+                    && self
+                        .prediction_channels(row.frequencies_hz)
+                        .nth(1)
+                        .is_some() =>
             {
                 Some((axis, *order))
             }
@@ -543,7 +644,7 @@ impl SpectralResampler {
                     let plane = match &self.sampling {
                         Sampling::Direct => Some(0),
                         Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => {
-                            axis.nearest_channel(*frequency_hz)
+                            self.matching_axis(axis).nearest_channel(*frequency_hz)
                         }
                     };
                     if let Some(plane) = plane {
@@ -551,8 +652,8 @@ impl SpectralResampler {
                     }
                 }
             }
-            Some(interpolation @ (axis, _)) => {
-                if let Some(channels) = degridded_channels(interpolation, native) {
+            Some((axis, order)) => {
+                if let Some(channels) = self.interpolated_planes(axis, order, native) {
                     for channel in channels {
                         place(channel, axis.centre_hz(channel), channel as usize);
                     }
@@ -591,7 +692,7 @@ impl SpectralResampler {
             let plane = match &self.sampling {
                 Sampling::Direct => Some(0),
                 Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => {
-                    axis.nearest_channel(native[channel])
+                    self.matching_axis(axis).nearest_channel(native[channel])
                 }
             }
             .filter(|plane| prepared.contains(*plane))?;
@@ -663,6 +764,9 @@ impl SpectralResampler {
     /// cell whose channel is off the output axis and its halo, or whose row
     /// placed nothing, gets the zero model; a flagged correlation keeps it
     /// zero.
+    ///
+    /// # Panics
+    /// Active legacy spline interpolation needs [`Self::finish_prediction`].
     pub fn native_terms(
         &self,
         row: &NativeRow<'_>,
@@ -717,13 +821,7 @@ impl SpectralResampler {
             }
             return;
         };
-        let mut index_slots = |count: usize| {
-            slots.clear();
-            slots.resize(count, NO_CELL);
-            for source in sources {
-                slots[source.slots()].fill(source.placement);
-            }
-        };
+        assert!(!self.uses_legacy_spline(), "a spline needs host prediction");
         // `FTMachine::interpolateFrequencyFromgrid`: the output-channel
         // predictions on CASA's image-frequency grid, refined to
         // `floor(width ratio)` repeated points per channel when output
@@ -731,9 +829,15 @@ impl SpectralResampler {
         // channel that maps to the axis or lies in its halo (`chanMap` 0… or
         // −2; −1 stays zero); the end points extrapolate (casacore
         // `InterpolateArray1D`, linear or cubic).
-        index_slots(axis.channels as usize);
-        let width = (axis.increment_hz / (native[1] - native[0])).abs();
-        let per_channel = axis.fine_samples_per_plane(width);
+        index_sources(slots, sources, axis.channels as usize);
+        let native_width_hz = self.prediction_width(native);
+        let width = (axis.increment_hz / native_width_hz).abs();
+        let legacy = self.legacy_prediction_map.is_some();
+        let per_channel = if legacy {
+            1
+        } else {
+            axis.fine_samples_per_plane(width)
+        };
         let fine_increment = axis.increment_hz / per_channel as f64;
         let fine_start = if per_channel > 1 {
             axis.first_hz - axis.increment_hz / 2.0 + fine_increment / 2.0
@@ -742,21 +846,19 @@ impl SpectralResampler {
         };
         let points = axis.channels as usize * per_channel;
         let point = |index: usize| {
-            if width <= 1.0 && (axis.reporting_axis.is_some() || axis.tabular.is_some()) {
+            if legacy || (width <= 1.0 && (axis.reporting_axis.is_some() || axis.tabular.is_some()))
+            {
                 axis.centre_hz(index as u32)
             } else {
                 fine_start + index as f64 * fine_increment
             }
         };
-        let native_width_hz = native[1] - native[0];
         for (channel, frequency_hz) in native.iter().enumerate() {
-            if axis.nearest_channel(*frequency_hz).is_none()
-                && !axis.in_halo(*frequency_hz, native_width_hz, order)
-            {
+            if self.prediction_channel(axis, order, *frequency_hz, native_width_hz) == -1 {
                 term(channel, &[]);
                 continue;
             }
-            let position = if width <= 1.0 {
+            let position = if legacy || width <= 1.0 {
                 axis.tabular_pixel(*frequency_hz)
             } else {
                 None
@@ -823,25 +925,55 @@ impl SpectralResampler {
                 reason: "the prediction holds one value per selected sample",
             });
         }
+        if coverage
+            .as_ref()
+            .is_some_and(|bits| bits.len() != out.len())
+        {
+            return Err(OperatorError::NativeRow {
+                reason: "coverage holds one bit per selected sample",
+            });
+        }
+        if self.uses_legacy_spline()
+            && let Some((axis, _)) = self.interpolated_prediction(row)
+        {
+            self.finish_spline(axis, row, placed, scratch, (out, coverage));
+            return Ok(());
+        }
         let npol = operator.polarization().correlations().len();
         let first = scratch.terms.len();
         self.native_terms(row, npol, placed, scratch, 0);
         if let Some(coverage) = coverage {
-            if coverage.len() != out.len() {
-                return Err(OperatorError::NativeRow {
-                    reason: "coverage holds one bit per selected sample",
-                });
-            }
             let polarization = operator.polarization().pol_map();
-            for (term, covered) in scratch.terms[first..]
+            let legacy = self
+                .legacy_prediction_map
+                .as_ref()
+                .and(self.interpolated_prediction(row))
+                .map(|(axis, order)| {
+                    (
+                        axis,
+                        order,
+                        self.prediction_width(row.frequencies_hz),
+                        self.interpolated_planes(axis, order, row.frequencies_hz)
+                            .is_some(),
+                    )
+                });
+            for (channel, (term, covered)) in scratch.terms[first..]
                 .iter()
                 .zip(coverage.chunks_exact_mut(npol))
+                .enumerate()
             {
                 let has_sample = term.points.iter().any(|&point| point != NO_CELL);
+                // Legacy swapyz copies its values even if the degrid skipped
+                // a row or correlation. In that case the updated model is zero.
+                let legacy_assignment = legacy.map(|(axis, order, width, reaches_grid)| {
+                    reaches_grid
+                        && self.prediction_channel(axis, order, row.frequencies_hz[channel], width)
+                            != -1
+                });
                 for (index, value) in covered.iter_mut().enumerate() {
-                    *value = has_sample
-                        && polarization[index].is_some()
-                        && term.flags & (1 << index) == 0;
+                    let assigned =
+                        legacy_assignment.unwrap_or(has_sample && polarization[index].is_some());
+                    *value = assigned && term.flags & (1 << index) == 0;
                 }
             }
         }
@@ -855,6 +987,59 @@ impl SpectralResampler {
         );
         scratch.terms.truncate(first);
         Ok(())
+    }
+
+    fn finish_spline(
+        &self,
+        axis: &SpectralAxis,
+        row: &NativeRow<'_>,
+        placed: PlacedRow,
+        scratch: &mut PredictionScratch,
+        (out, mut coverage): (&mut [Complex32], Option<&mut [bool]>),
+    ) {
+        out.fill(Complex32::default());
+        if let Some(bits) = coverage.as_deref_mut() {
+            bits.fill(false);
+        }
+        let native = row.frequencies_hz;
+        if self
+            .interpolated_planes(axis, Order::Cubic, native)
+            .is_none()
+        {
+            return;
+        }
+        let npol = scratch.npol;
+        let sources = &scratch.sources[placed.start..placed.end];
+        let PredictionScratch {
+            slots,
+            spline,
+            predicted,
+            ..
+        } = scratch;
+        index_sources(slots, sources, axis.channels as usize);
+        let value = |plane: usize, pol: usize| match slots[plane] {
+            NO_CELL => Complex32::default(),
+            sample => predicted[sample as usize * npol + pol],
+        };
+        if !sources.is_empty() {
+            spline.prepare(axis, npol, value);
+        }
+        let width = self.prediction_width(native);
+        for (channel, &frequency) in native.iter().enumerate() {
+            if self.prediction_channel(axis, Order::Cubic, frequency, width) == -1 {
+                continue;
+            }
+            let start = channel * npol;
+            let flags = &row.flags[start..start + npol];
+            if let Some(bits) = coverage.as_deref_mut() {
+                for (covered, &flag) in bits[start..start + npol].iter_mut().zip(flags) {
+                    *covered = !flag;
+                }
+            }
+            if !sources.is_empty() {
+                spline.evaluate(axis, frequency, value, flags, &mut out[start..start + npol]);
+            }
+        }
     }
 }
 

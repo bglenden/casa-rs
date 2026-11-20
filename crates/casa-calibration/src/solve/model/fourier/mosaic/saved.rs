@@ -3,10 +3,26 @@
 
 use std::borrow::Cow;
 
-use casa_imaging_operator::{MosaicWindow, SavedMosaicPlanes};
+use casa_imaging_operator::{MosaicRules, MosaicWindow, SavedMosaicPlanes};
 use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 
 use super::super::{GainSolveError, model_error, record_text};
+
+pub(super) fn rules(machine: &RecordValue, beam: &RecordValue) -> MosaicRules {
+    // The older HetArrayConvFunc keys its cache by MS and SPW. The newer
+    // Fourier machines include the selected native channel count as well.
+    // Some tclean records carry the older machine name as an alias.
+    if record_text(machine, "name").is_ok_and(|name| name == "MosaicFT")
+        && record_text(beam, "key0").map_or_else(
+            |_| machine.get("usepointingtable").is_none(),
+            |key| key.split('_').count() == 2,
+        )
+    {
+        MosaicRules::Simulator
+    } else {
+        MosaicRules::Tclean
+    }
+}
 
 pub(super) fn planes<'a>(
     machine: &RecordValue,

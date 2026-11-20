@@ -19,13 +19,7 @@ pub(super) fn projection_header(direction: &DirectionCoordinate) -> String {
         cpp_number(parameters[0]),
         cpp_number(parameters[1])
     );
-    let declination = direction.projection_reference()[1];
-    let ncp_parameter = 1.0 / declination.tan();
-    if parameters[0] == 0.0
-        && declination != 0.0
-        && (parameters[1] - ncp_parameter).abs()
-            <= 1e-13 * parameters[1].abs().max(ncp_parameter.abs())
-    {
+    if direction.is_ncp() {
         result.push_str(": NCP");
     }
     result

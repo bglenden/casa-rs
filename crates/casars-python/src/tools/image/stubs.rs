@@ -120,21 +120,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None, major = None, minor = None, r#type = None, topeak = None, channel = None, polarization = None), text_signature = "($self, value=[], major=[], minor=[], type='Gaussian', topeak=True, channel=-1, polarization=-1)")]
-    fn convertflux(
-        &self,
-        value: Option<&Bound<'_, PyAny>>,
-        major: Option<&Bound<'_, PyAny>>,
-        minor: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        topeak: Option<&Bound<'_, PyAny>>,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("convertflux")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, kernel = None, scale = None, region = None, mask = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', kernel=[], scale=-1.0, region={}, mask='', overwrite=False, stretch=False)")]
     fn convolve(
         &self,
@@ -234,17 +219,6 @@ impl PyImageTool {
         stretch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("decompose")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (complist, channel = None, polarization = None), text_signature = "($self, complist, channel=-1, polarization=-1)")]
-    fn deconvolvecomponentlist(
-        &self,
-        complist: &Bound<'_, PyAny>,
-        channel: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("deconvolvecomponentlist")
     }
 
     /// Not yet implemented in casa-rs.
@@ -555,12 +529,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (other), text_signature = "($self, other)")]
-    fn isconform(&self, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("isconform")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (writelock = None, nattempts = None), text_signature = "($self, writelock=False, nattempts=0)")]
     fn lock(
         &self,
@@ -568,28 +536,6 @@ impl PyImageTool {
         nattempts: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("lock")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile, imag, region = None, overwrite = None), text_signature = "($self, outfile, imag, region={}, overwrite=False)")]
-    fn makecomplex(
-        &self,
-        outfile: &Bound<'_, PyAny>,
-        imag: &Bound<'_, PyAny>,
-        region: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("makecomplex")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, overwrite = None), text_signature = "($self, outfile='', overwrite=False)")]
-    fn maketestimage(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("maketestimage")
     }
 
     /// Not yet implemented in casa-rs.
@@ -603,20 +549,6 @@ impl PyImageTool {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("maxfit")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (model, region = None, mask = None, subtract = None, list = None, stretch = None), text_signature = "($self, model, region={}, mask='', subtract=True, list=True, stretch=False)")]
-    fn modify(
-        &self,
-        model: &Bound<'_, PyAny>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        subtract: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("modify")
     }
 
     /// Not yet implemented in casa-rs.
@@ -776,20 +708,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels = None, region = None, mask = None, update = None, list = None, stretch = None), text_signature = "($self, pixels=[], region={}, mask='', update=False, list=False, stretch=False)")]
-    fn replacemaskedpixels(
-        &self,
-        pixels: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        update: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("replacemaskedpixels")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outfile = None, shape = None, pa = None, region = None, mask = None, method = None, decimate = None, replicate = None, dropdeg = None, overwrite = None, stretch = None), text_signature = "($self, outfile='', shape=[-1], pa=[], region={}, mask='', method='cubic', decimate=0, replicate=False, dropdeg=False, overwrite=False, stretch=False)")]
     fn rotate(
         &self,
@@ -870,18 +788,6 @@ impl PyImageTool {
         niter: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("statistics")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (doppler = None, list = None, pixelorder = None, verbose = None), text_signature = "($self, doppler='RADIO', list=True, pixelorder=True, verbose=False)")]
-    fn summary(
-        &self,
-        doppler: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        pixelorder: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("summary")
     }
 
     /// Not yet implemented in casa-rs.

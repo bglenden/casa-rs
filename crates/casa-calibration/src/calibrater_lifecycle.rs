@@ -20,6 +20,11 @@ use crate::{
     solve_calibration_with_output_mode,
 };
 
+mod ep_cache;
+mod legacy_ep;
+
+use legacy_ep::LegacyEpSolver;
+
 /// State shared by the calibrater's model, apply and solve operations.
 #[derive(Default)]
 pub struct CalibraterLifecycle {
@@ -31,7 +36,12 @@ struct VisibilityEquation {
     attachment: CalibrationAttachment,
     model: CalibraterModel,
     apply: ApplyTerms,
-    solve: Option<(CalibrationSolveRequest, CalibrationOutputMode)>,
+    solve: Option<ConfiguredSolve>,
+}
+
+enum ConfiguredSolve {
+    Task(Box<CalibrationSolveRequest>, CalibrationOutputMode),
+    LegacyEp(Box<LegacyEpSolver>),
 }
 
 #[derive(Default)]
@@ -56,6 +66,18 @@ pub enum CalibraterLifecycleError {
     /// No solver is configured in the current visibility equation.
     #[error("Please run setsolve before attempting to solve.")]
     NoSolver,
+    /// The image setter requires a configured solver.
+    #[error("Calibrater::setmodel() called before Calibrater::setsolve()")]
+    ImageNeedsSolver,
+    /// Only the legacy EP solver can own an image model.
+    #[error("Internal error: setModel() not yet supported for non EPJones type.")]
+    ImageNeedsEp,
+    /// The EP solver uses the original visibility iterator.
+    #[error("Error in Calibrater::setsolve.")]
+    EpNeedsLegacyIterator,
+    /// Executing the full EP solve is owned by the solver-tool implementation.
+    #[error("calibrater.solve with EP is pending in #1528")]
+    EpSolvePending,
     /// A point model must contain at most four finite CASA Stokes values.
     #[error("a point model requires up to four finite Stokes values")]
     InvalidPointModel,
@@ -414,7 +436,45 @@ impl CalibraterLifecycle {
         request: CalibrationSolveRequest,
         mode: CalibrationOutputMode,
     ) -> Result<(), CalibraterLifecycleError> {
-        self.equation_mut()?.solve = Some((request, mode));
+        self.equation_mut()?.solve = Some(ConfiguredSolve::Task(Box::new(request), mode));
+        Ok(())
+    }
+
+    /// Configure the EP solver and its disk cache on the legacy iterator.
+    /// # Errors
+    /// The iterator is not legacy, no dataset is attached, or the cache
+    /// configuration fails.
+    pub fn set_ep_solve(
+        &mut self,
+        table: &Path,
+        cache: &Path,
+        angle_deg: f64,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let legacy_iterator = self.legacy_iterator;
+        let equation = self.equation_mut()?;
+        if !legacy_iterator {
+            tracing::error!("EP not yet supported via EPJones(msmc)");
+            return Err(CalibraterLifecycleError::EpNeedsLegacyIterator);
+        }
+        let solver = LegacyEpSolver::new(table, cache, angle_deg).map_err(AttachmentError::from)?;
+        equation.solve = Some(ConfiguredSolve::LegacyEp(Box::new(solver)));
+        Ok(())
+    }
+
+    /// Prepare the configured EP solver's Fourier model and convolution.
+    /// # Errors
+    /// No EP solver is configured or model and convolution preparation fail.
+    pub fn set_image_model(&mut self, path: &Path) -> Result<(), CalibraterLifecycleError> {
+        let Some(equation) = self.equation.as_mut() else {
+            return Err(CalibraterLifecycleError::ImageNeedsSolver);
+        };
+        match equation.solve.as_mut() {
+            Some(ConfiguredSolve::LegacyEp(solver)) => {
+                solver.set_model(&equation.attachment, path)?
+            }
+            Some(ConfiguredSolve::Task(..)) => return Err(CalibraterLifecycleError::ImageNeedsEp),
+            None => return Err(CalibraterLifecycleError::ImageNeedsSolver),
+        }
         Ok(())
     }
 
@@ -443,10 +503,13 @@ impl CalibraterLifecycle {
     /// when the solve fails.
     pub fn solve(&self) -> Result<CalibrationSolveResult, CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let (mut request, mode) = equation
-            .solve
-            .clone()
-            .ok_or(CalibraterLifecycleError::NoSolver)?;
+        let (mut request, mode) = match equation.solve.as_ref() {
+            Some(ConfiguredSolve::Task(request, mode)) => ((**request).clone(), *mode),
+            Some(ConfiguredSolve::LegacyEp(_)) => {
+                return Err(CalibraterLifecycleError::EpSolvePending);
+            }
+            None => return Err(CalibraterLifecycleError::NoSolver),
+        };
         let (model_source, stokes) = match equation.model {
             CalibraterModel::FromMeasurementSet => {
                 (GainSolveModelSource::FromMeasurementSet, [1., 0., 0., 0.])

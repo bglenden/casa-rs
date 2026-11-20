@@ -3,16 +3,21 @@
 
 pub(crate) mod image;
 mod imager;
+mod imager_definition;
+pub(crate) mod moving_source;
 pub(crate) mod settings;
 pub(crate) mod virtual_publication;
 mod voltage_pattern;
 
 pub use imager::{ImagerImageDefinition, ImagerPrediction, ImagerPredictionModel};
+pub use imager_definition::{ImagerDefinitionRequest, ImagerPhaseCentre, ImagerSpectralAxis};
 pub use voltage_pattern::ImagerVoltagePattern;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use casa_coordinates::SpectralCoordinate;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::virtual_model::selected_model_combinations;
 use casa_ms::write_session::{
@@ -30,6 +35,26 @@ use crate::model_columns::{ScratchDestination, scratch_write_plan};
 use crate::solve::grouping::VisibilityModels;
 
 const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
+
+/// Restore the measures provider after reading a saved conversion frame.
+/// The CASA record carries the epoch, direction, and observatory only.
+pub(crate) fn spectral_with_runtime(
+    spectral: &SpectralCoordinate,
+) -> MsResult<Cow<'_, SpectralCoordinate>> {
+    match (
+        spectral.conversion_frequency_ref(),
+        spectral.conversion_frame(),
+    ) {
+        (Some(target), Some(frame)) if target != spectral.frequency_ref() => {
+            let measures = casa_ms::open_measures_runtime().map_err(invalid)?;
+            Ok(Cow::Owned(spectral.clone().with_conversion(
+                target,
+                frame.clone().with_measures(measures),
+            )))
+        }
+        _ => Ok(Cow::Borrowed(spectral)),
+    }
+}
 
 pub(crate) fn model_entry(
     ms: &MeasurementSet,
@@ -74,13 +99,18 @@ pub(crate) fn write_model_scratch(
     entries: &[VirtualModelEntry],
     incremental: bool,
     clear_virtual: bool,
+    prepared: Option<VisibilityModels>,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     if entries.is_empty() || selected.selected_rows.is_empty() {
         return Ok(());
     }
-    let models =
-        VisibilityModels::from_entries(ms, &selected.selected_rows, entries).map_err(invalid)?;
+    let models = match prepared {
+        Some(models) => models,
+        None => {
+            VisibilityModels::from_entries(ms, &selected.selected_rows, entries).map_err(invalid)?
+        }
+    };
     let polarizations = ms.polarization()?;
     let correlations = (0..polarizations.row_count())
         .map(|id| Ok((id as i32, polarizations.corr_type(id)?)))
@@ -118,6 +148,38 @@ pub(crate) fn write_model_scratch(
     })
     .map_err(invalid)?;
     Ok(())
+}
+
+fn prepare_mosaic_models(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    entries: &[VirtualModelEntry],
+    scratch: bool,
+) -> MsResult<VisibilityModels> {
+    let models =
+        VisibilityModels::from_entries(ms, &selected.selected_rows, entries).map_err(invalid)?;
+    let polarizations = ms.polarization()?;
+    let flags = ms.main_table().column_accessor("FLAG")?;
+    let mut layouts = BTreeSet::new();
+    for row in &selected.selected_rows {
+        if layouts.insert((row.field_id, row.data_desc_id)) {
+            let correlations = polarizations.corr_type(row.polarization_id as usize)?;
+            let Some(ArrayValue::Bool(flags)) = flags
+                .array_cells_owned_uncached(&[row.row_index])?
+                .pop()
+                .flatten()
+            else {
+                return Err(invalid("FLAG is not a defined Bool array"));
+            };
+            if scratch {
+                models.predict_scratch(ms, row.row_index, &correlations, &flags, None)
+            } else {
+                models.predict(ms, row.row_index, &correlations, &flags)
+            }
+            .map_err(invalid)?;
+        }
+    }
+    Ok(models)
 }
 
 struct Prediction<'a> {

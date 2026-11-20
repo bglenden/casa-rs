@@ -296,11 +296,23 @@ mod tests {
                     .provider
                     .as_ref()
                     .map(|projection| &projection.adapter);
-                // A later revision (tclean's selectors, one per
-                // MeasurementSet; its scan and observation keep their exact
-                // text, so `none` is a value the native parser refuses)
-                // passes its value as it is.
-                if binding.concept.semantic_revision.0 > 1 {
+                // These transform selectors still omit the absent value
+                // after their domains widened to accept CASA variants.
+                let transform_variant = matches!(surface.id(), "mstransform" | "split")
+                    && matches!(
+                        binding.name.as_str(),
+                        "field" | "spw" | "scan" | "antenna" | "timerange"
+                    );
+                if transform_variant {
+                    assert_eq!(default, absence, "{}.{}", surface.id(), binding.name);
+                    assert_eq!(
+                        adapter,
+                        Some(&crate::ValueAdapter::OmitNone),
+                        "{}.{}",
+                        surface.id(),
+                        binding.name
+                    );
+                } else if binding.concept.semantic_revision.0 > 1 {
                     assert_eq!(
                         adapter,
                         Some(&crate::ValueAdapter::Identity),

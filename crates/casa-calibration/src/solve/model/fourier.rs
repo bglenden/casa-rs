@@ -34,6 +34,7 @@ use mosaic::MosaicLayout;
 pub(super) struct FourierModel {
     record: RecordValue,
     mosaic: bool,
+    legacy_mosaic: bool,
     refocus: bool,
     prepared: Mutex<FourierCache>,
 }
@@ -42,13 +43,14 @@ pub(super) struct FourierModel {
 struct FourierCache {
     grids: Option<Arc<PreparedModelGrids>>,
     layouts: BTreeMap<Option<i32>, BTreeMap<Vec<i32>, PreparedFourierModel>>,
+    virtual_anchor: Option<MDirection>,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum FourierMerge {
+pub(super) enum FourierMerge<'a> {
     VirtualSum,
     ScratchSum,
     ScratchReplaceComponents,
+    ScratchAccumulate(&'a mut [Complex32]),
 }
 
 pub(super) struct FourierRow<'a> {
@@ -64,6 +66,7 @@ pub(super) struct FourierRow<'a> {
     pub(super) frame: &'a MeasFrame,
     pub(super) uvw: [f64; 3],
     pub(super) focus_rows: &'a [FocusSample],
+    pub(super) legacy_mosaic_pointing: Option<&'a super::MosaicPointing>,
     pub(super) scratch_channels: Option<[i32; 4]>,
 }
 
@@ -74,10 +77,12 @@ impl FourierModel {
             _ => &record,
         };
         let mosaic = mosaic::is_mosaic(first_term);
+        let legacy_mosaic = mosaic && mosaic::is_legacy_mosaic(first_term);
         let refocus = record_number(first_term, "distance").is_some_and(|distance| distance != 0.0);
         Self {
             record,
             mosaic,
+            legacy_mosaic,
             refocus,
             prepared: Mutex::default(),
         }
@@ -87,29 +92,38 @@ impl FourierModel {
         self.refocus
     }
 
+    pub(super) fn uses_legacy_mosaic_pointing(&self) -> bool {
+        self.legacy_mosaic
+    }
+
     pub(super) fn predict(
         &self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
-        merge: FourierMerge,
+        merge: FourierMerge<'_>,
     ) -> Result<(), GainSolveError> {
         let mut prepared = self
             .prepared
             .lock()
             .expect("solve model is single consumer");
-        let FourierCache { grids, layouts } = &mut *prepared;
+        let FourierCache {
+            grids,
+            layouts,
+            virtual_anchor,
+        } = &mut *prepared;
         let layouts = layouts
             .entry(self.mosaic.then_some(row.row.data_spw_id))
             .or_default();
         if !layouts.contains_key(row.correlations) {
-            let model = PreparedFourierModel::load(&self.record, &row, grids.clone())?;
+            let scratch = !matches!(merge, FourierMerge::VirtualSum);
+            let model = PreparedFourierModel::load(&self.record, &row, grids.clone(), scratch)?;
             *grids = Some(Arc::clone(&model.grids));
             layouts.insert(row.correlations.to_vec(), model);
         }
         layouts
             .get_mut(row.correlations)
             .expect("correlation layout was prepared")
-            .predict(row, output, merge)
+            .predict(row, output, merge, virtual_anchor)
     }
 }
 
@@ -127,6 +141,7 @@ struct PreparedFourierModel {
     scale: Option<setjy::FluxScale>,
     legacy_taylor: Option<(i32, f64)>,
     legacy_flags: bool,
+    live_interpolation: bool,
     channel_mask: Option<ArrayD<i32>>,
     continuum_axis: Option<SpectralAxis>,
     convert_frequencies: bool,
@@ -145,6 +160,7 @@ impl PreparedFourierModel {
         record: &RecordValue,
         row: &FourierRow<'_>,
         cached_grids: Option<Arc<PreparedModelGrids>>,
+        scratch: bool,
     ) -> Result<Self, GainSolveError> {
         let (terms, continuum_basis) = grid_terms(record)?;
         let images = terms
@@ -193,18 +209,26 @@ impl PreparedFourierModel {
             let (kernels, layout) = MosaicLayout::load(
                 terms[0],
                 row,
-                direction,
-                &geometry,
-                &polarization,
+                (direction, coords.obs_info().telescope.contains("VLA")),
+                (&geometry, &polarization),
                 axis.first_hz(),
                 matches!(
                     record.get("freqframevalid"),
                     Some(Value::Scalar(ScalarValue::Bool(true)))
                 ),
+                scratch,
             )?;
             (kernels, Some(layout))
         } else {
             (grid_kernel(terms[0], &geometry, &polarization)?, None)
+        };
+        let resampler = if mosaic
+            .as_ref()
+            .is_some_and(|layout| layout.autocorrelations)
+        {
+            resampler.predicting_autocorrelations()
+        } else {
+            resampler
         };
         let operator =
             MeasurementOperator::new(geometry, basis, polarization, kernels, GridPrecision::F32);
@@ -240,6 +264,7 @@ impl PreparedFourierModel {
             scale,
             legacy_taylor: legacy_taylor_term(record)?,
             legacy_flags,
+            live_interpolation: record.get("casars_live_image_frequency").is_some(),
             channel_mask,
             continuum_axis: (channels == 1).then_some(axis),
             convert_frequencies: matches!(
@@ -261,14 +286,24 @@ impl PreparedFourierModel {
         &mut self,
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
-        merge: FourierMerge,
+        merge: FourierMerge<'_>,
+        virtual_anchor: &mut Option<MDirection>,
     ) -> Result<(), GainSolveError> {
-        let shift = self
+        let legacy_tracking = self
+            .tracking
+            .as_ref()
+            .is_some_and(tracking::Tracking::is_legacy);
+        let reinitialize = matches!(merge, FourierMerge::VirtualSum).then_some(virtual_anchor);
+        let observed = self
             .tracking
             .as_mut()
-            .map(|tracking| tracking.shift(&row))
-            .transpose()?
-            .unwrap_or([0.; 2]);
+            .map(|tracking| tracking.observe(&row, reinitialize))
+            .transpose()?;
+        let projection_frame = observed
+            .as_ref()
+            .filter(|_| legacy_tracking)
+            .map_or(row.frame, |(frame, _)| frame);
+        let shift = observed.as_ref().map_or([0.; 2], |(_, shift)| *shift);
         let tracked_centre = self
             .tracking
             .as_ref()
@@ -290,13 +325,23 @@ impl PreparedFourierModel {
         } else {
             row.field
         };
-        let (projection, pointing_offset_rad, antenna_types) = match &self.mosaic {
+        let (projection, pointing_offset_rad, antenna_types) = match &mut self.mosaic {
+            Some(layout) if legacy_tracking => (
+                GridFtProjection::legacy_tracked_mosaic_with_frame(
+                    field,
+                    &self.phase_centre,
+                    shift.map(|angle| -angle),
+                    projection_frame,
+                ),
+                layout.pointing_offset(&row, [0.; 2])?,
+                layout.antenna_types(&row)?,
+            ),
             Some(layout) => (
                 GridFtProjection::tracked_mosaic_with_frame(
                     field,
                     &self.phase_centre,
                     shift,
-                    row.frame,
+                    projection_frame,
                 ),
                 layout.pointing_offset(&row, shift)?,
                 layout.antenna_types(&row)?,
@@ -305,14 +350,18 @@ impl PreparedFourierModel {
                 GridFtProjection::faceted_between_directions_with_frame(
                     field,
                     phase_centre,
-                    row.frame,
+                    projection_frame,
                 ),
-                [0.0; 2],
+                Some([0.0; 2]),
                 [0; 2],
             ),
             None => (
-                GridFtProjection::between_directions_with_frame(field, phase_centre, row.frame),
-                [0.0; 2],
+                GridFtProjection::between_directions_with_frame(
+                    field,
+                    phase_centre,
+                    projection_frame,
+                ),
+                Some([0.0; 2]),
                 [0; 2],
             ),
         };
@@ -327,6 +376,16 @@ impl PreparedFourierModel {
             ));
         }
         let cells = row.frequencies.len() * row.correlations.len();
+        let is_scratch = self.legacy_flags && !matches!(merge, FourierMerge::VirtualSum);
+        let Some(pointing_offset_rad) = pointing_offset_rad else {
+            // MosaicFT::get returns with the visibility buffer untouched.
+            self.output.resize(cells, Complex32::default());
+            self.output.fill(Complex32::default());
+            self.covered.resize(cells, false);
+            self.covered.fill(false);
+            self.accumulate(row, output, 1.0, is_scratch.then_some(merge));
+            return Ok(());
+        };
         self.data.resize(cells, Complex32::new(0.0, 0.0));
         self.output.resize(cells, Complex32::new(0.0, 0.0));
         self.weights.resize(cells, 1.0);
@@ -344,6 +403,10 @@ impl PreparedFourierModel {
         self.frequencies.clear();
         self.frequencies
             .extend(row.frequencies.iter().map(|frequency| frequency * ratio));
+        let interpolation_channels = row
+            .scratch_channels
+            .map_or(row.frequencies.len(), |[_, _, count, _]| count as usize);
+        let use_spectral_selection_mask = !self.live_interpolation || interpolation_channels <= 1;
         for (channel, ((flags, raw), &frequency)) in self
             .flags
             .chunks_exact_mut(row.correlations.len())
@@ -369,9 +432,10 @@ impl PreparedFourierModel {
                         let compact = relative / stride as usize;
                         compact >= count as usize
                             || !relative.is_multiple_of(stride as usize)
-                            || mask
-                                .get([0, spw as usize, compact].as_slice())
-                                .is_some_and(|&value| value != 1)
+                            || (use_spectral_selection_mask
+                                && mask
+                                    .get([0, spw as usize, compact].as_slice())
+                                    .is_some_and(|&value| value != 1))
                     });
                 for (value, &raw_flag) in flags.iter_mut().zip(raw) {
                     *value = outside || masked || raw_flag;
@@ -380,9 +444,16 @@ impl PreparedFourierModel {
                 flags.fill(outside || raw.iter().any(|flag| *flag));
             }
         }
+        // A one-plane legacy FT matches channels in the converted frame,
+        // then uses VisBuffer::frequency directly for its Fourier phase.
+        let wavelength_scale = if self.legacy_flags && self.continuum_axis.is_some() {
+            ratio.recip()
+        } else {
+            1.0
+        };
         let native = NativeRow {
-            uvw_m,
-            phase_shift_m,
+            uvw_m: uvw_m.map(|coordinate| coordinate * wavelength_scale),
+            phase_shift_m: phase_shift_m * wavelength_scale,
             pointing_offset_rad,
             frequencies_hz: &self.frequencies,
             values: &self.data,
@@ -400,11 +471,14 @@ impl PreparedFourierModel {
                 spectral_window: row.row.data_spw_id as u32,
             },
         };
-        let is_scratch = self.legacy_flags && !matches!(merge, FourierMerge::VirtualSum);
         let coverage = is_scratch.then(|| {
             self.covered.resize(cells, false);
             &mut self.covered[..]
         });
+        self.resampler
+            .set_legacy_prediction_selection(row.scratch_channels.map(
+                |[_, start, count, stride]| [start as usize, count as usize, stride as usize],
+            ));
         self.resampler
             .predict_row_with_coverage(
                 &self.operator,
@@ -424,7 +498,7 @@ impl PreparedFourierModel {
         row: FourierRow<'_>,
         output: &mut ArrayD<Complex32>,
         lsrk_ratio: f64,
-        scratch: Option<FourierMerge>,
+        mut scratch: Option<FourierMerge<'_>>,
     ) {
         let correlations = row.correlations.len();
         let destination = output
@@ -449,7 +523,13 @@ impl PreparedFourierModel {
             for correlation in 0..correlations {
                 let index = channel * correlations + correlation;
                 let assigned = scratch.is_none() || self.covered[index];
-                if matches!(scratch, Some(FourierMerge::ScratchReplaceComponents)) {
+                if let Some(FourierMerge::ScratchAccumulate(buffer)) = &mut scratch {
+                    if assigned {
+                        buffer[index] = self.output[index];
+                    }
+                    buffer[index] *= factor * taylor;
+                    destination[index] += buffer[index];
+                } else if matches!(scratch, Some(FourierMerge::ScratchReplaceComponents)) {
                     if assigned {
                         destination[index] = self.output[index] * (factor * taylor);
                     }
@@ -521,11 +601,21 @@ fn spectral_layout(
     }
     // FTMachine::fromRecord sets nearest neighbour when reopening a
     // prediction grid, even if the original tclean used another method.
-    let kernel = match (record.get("tovis"), record.get("freqinterpmethod")) {
+    let live_frequencies = match record.get("casars_live_image_frequency") {
+        Some(Value::Array(ArrayValue::Float64(frequencies))) => Some(frequencies),
+        _ => None,
+    };
+    let to_vis = record.get("tovis");
+    let interpolation = record.get("freqinterpmethod");
+    let spline = live_frequencies.is_some()
+        && !matches!(to_vis, Some(Value::Scalar(ScalarValue::Bool(true))))
+        && matches!(interpolation, Some(Value::Scalar(ScalarValue::Int32(3))));
+    let kernel = match (to_vis, interpolation) {
         (Some(Value::Scalar(ScalarValue::Bool(true))), _)
         | (_, Some(Value::Scalar(ScalarValue::Int32(0)))) => SpectralKernel::Nearest,
         (_, Some(Value::Scalar(ScalarValue::Int32(1)))) => SpectralKernel::Linear,
         (_, Some(Value::Scalar(ScalarValue::Int32(2)))) => SpectralKernel::Cubic,
+        (_, Some(Value::Scalar(ScalarValue::Int32(3)))) if spline => SpectralKernel::Cubic,
         _ => {
             return Err(model_error(
                 "unsupported virtual grid spectral interpolation",
@@ -533,10 +623,24 @@ fn spectral_layout(
         }
     };
     let basis = Basis::ChannelLocal { planes: channels };
-    Ok((
-        basis,
-        SpectralResampler::channel_local(axis.clone(), kernel),
-    ))
+    let resampler = if let Some(frequencies) = live_frequencies {
+        let frequencies = frequencies.iter().copied().collect::<Vec<_>>();
+        if frequencies.len() != channels as usize {
+            return Err(model_error(
+                "legacy imager interpolation axis length does not match its model",
+            ));
+        }
+        let increment = frequencies[1] - frequencies[0];
+        let grid = SpectralAxis::tabular(&frequencies, increment).map_err(model_error)?;
+        if spline {
+            SpectralResampler::legacy_spline(grid, axis.clone())
+        } else {
+            SpectralResampler::channel_local(grid, kernel).with_legacy_prediction_axis(axis.clone())
+        }
+    } else {
+        SpectralResampler::channel_local(axis.clone(), kernel)
+    };
+    Ok((basis, resampler))
 }
 
 fn image_spectral_axis(
@@ -551,6 +655,7 @@ fn image_spectral_axis(
             _ => None,
         })
         .ok_or_else(|| model_error("virtual grid image has no spectral coordinate"))?;
+    let spectral = crate::ft::spectral_with_runtime(spectral).map_err(model_error)?;
     let frequency = |channel| {
         spectral
             .world_frequency_hz(channel as f64)

@@ -153,6 +153,8 @@ impl Returns {
 pub(crate) enum Status {
     /// Implemented.
     Implemented,
+    /// Available with documented gaps in supported values or workflows.
+    Partial,
     /// Raises `NotImplementedError`, naming the issue that records it.
     NotYetImplemented,
     /// Disabled in CASA itself: logs CASA's error and returns `False`.
@@ -165,6 +167,7 @@ impl Status {
     fn name(self) -> &'static str {
         match self {
             Self::Implemented => "implemented",
+            Self::Partial => "partial",
             Self::NotYetImplemented => "not_yet_implemented",
             Self::DisabledInCasa => "disabled_in_casa",
             Self::DeprecatedInCasa => "deprecated_in_casa",

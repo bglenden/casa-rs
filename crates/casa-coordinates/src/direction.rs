@@ -375,6 +375,21 @@ impl DirectionCoordinate {
         &self.projection
     }
 
+    /// Whether this slant SIN projection uses the North Celestial Pole form.
+    pub fn is_ncp(&self) -> bool {
+        let declination = self.projection_reference()[1];
+        let parameters = self.projection.parameters();
+        if self.projection.projection_type() != ProjectionType::SIN
+            || parameters.len() != 2
+            || parameters[0] != 0.0
+            || declination == 0.0
+        {
+            return false;
+        }
+        let cotangent = 1.0 / declination.tan();
+        (parameters[1] - cotangent).abs() <= 1e-13 * parameters[1].abs().max(cotangent.abs())
+    }
+
     /// Returns the celestial reference frame.
     pub fn direction_ref(&self) -> DirectionRef {
         self.direction_ref
@@ -578,8 +593,8 @@ impl DirectionCoordinate {
     /// # Errors
     ///
     /// A direction the projection cannot place (behind a TAN image's
-    /// tangent plane, for instance), a singular PC matrix, or a frame
-    /// conversion requiring context that is not yet available (#977).
+    /// tangent plane, for instance), a nonfinite pixel, a singular PC matrix,
+    /// or a frame conversion requiring context that is not yet available (#977).
     pub fn world_to_pixel(&self, world: [f64; 2]) -> Result<[f64; 2], CoordinateError> {
         let world = self.convert_frame(world, self.conversion_ref, self.direction_ref)?;
         let (phi, theta) = self.celestial_to_native(world[0], world[1]);
@@ -648,7 +663,13 @@ impl DirectionCoordinate {
         let dx = (self.pc[[1, 1]] * sx - self.pc[[0, 1]] * sy) / det;
         let dy = (-self.pc[[1, 0]] * sx + self.pc[[0, 0]] * sy) / det;
 
-        Ok((dx + self.crpix[0], dy + self.crpix[1]))
+        let pixel = (dx + self.crpix[0], dy + self.crpix[1]);
+        if !pixel.0.is_finite() || !pixel.1.is_finite() {
+            return Err(CoordinateError::ConversionFailed(
+                "direction has no finite pixel coordinate".into(),
+            ));
+        }
+        Ok(pixel)
     }
 
     /// Native spherical (phi, theta) to celestial (lon, lat) using the

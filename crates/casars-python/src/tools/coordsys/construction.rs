@@ -78,7 +78,7 @@ fn native_coordinate_field(name: &str) -> Option<(&str, usize)> {
     }
 }
 
-fn validate_coordinate_indices(record: &RecordValue) -> PyResult<()> {
+pub(in crate::tools) fn validate_coordinate_indices(record: &RecordValue) -> PyResult<usize> {
     let mut indices = Vec::new();
     for field in record.fields() {
         let Some((kind, index)) = native_coordinate_field(&field.name) else {
@@ -97,7 +97,7 @@ fn validate_coordinate_indices(record: &RecordValue) -> PyResult<()> {
             "Coordinate record numbering must be contiguous and unique",
         ));
     }
-    Ok(())
+    Ok(indices.len())
 }
 
 impl CoordinateState {

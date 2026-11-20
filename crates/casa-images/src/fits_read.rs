@@ -16,7 +16,7 @@ mod beams;
 mod history;
 mod tool_import;
 pub(crate) use history::{history_rows, read_cards};
-pub use tool_import::{FitsSectionReader, FitsToolImport};
+pub use tool_import::{FitsSectionReader, FitsToolImport, fits_section_image};
 
 /// A FITS image read into memory ([`read_fits_image`]).
 #[derive(Debug, Clone)]
@@ -34,6 +34,36 @@ pub struct FitsImage {
     /// The pixels in Fortran order, as single precision: casacore's
     /// `FITSImage` reads every `BITPIX` as `Float`.
     pub pixels: ArrayD<f32>,
+}
+
+/// FITSImage uses TiledFileAccess's 32768-pixel tile shape.
+pub(crate) fn fits_tile_shape(shape: &[usize]) -> Vec<usize> {
+    let mut remaining = 32768_f32;
+    let mut result = vec![1; shape.len()];
+    for (axis, &length) in shape.iter().enumerate() {
+        if length as f32 <= remaining {
+            result[axis] = length;
+            remaining /= length as f32;
+        } else {
+            let ideal = (remaining + 0.5) as usize;
+            if length % ideal == 0 {
+                result[axis] = ideal;
+            } else {
+                for offset in 1..ideal.min(length - ideal + 1) {
+                    if length % (ideal - offset) == 0 {
+                        result[axis] = ideal - offset;
+                        break;
+                    }
+                    if length % (ideal + offset) == 0 {
+                        result[axis] = ideal + offset;
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    result
 }
 
 /// Read the primary image's axis lengths without allocating its pixels.

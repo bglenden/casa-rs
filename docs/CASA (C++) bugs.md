@@ -164,6 +164,7 @@ Flagging behaviours casa-rs does not follow:
 [a re-saved version's comment](#flagmanager-gives-the-version-a-save-renames-the-new-comment),
 [re-saving a flag version through an alias](#flagmanager-can-overwrite-a-saved-version-through-an-alias),
 [an unrecognized flag merge choice](#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice),
+[the choice of samples to clip](#flagdata-can-choose-the-wrong-samples-when-float_data-is-present),
 [a summary of correlations it cannot name](#flagdatas-summary-aborts-on-a-correlation-it-cannot-name).
 Coordinate behaviours casa-rs does not follow:
 [a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
@@ -213,6 +214,18 @@ On `refim_mawproject` (CASA 6.7.6.14, Stokes I, `wbawp=True`,
 `conjbeams=True`) the two pairings differ by 3.06e-3 normalised RMS in the
 dirty image. casa-rs compiles CASA's pairing (`casa-imaging-operator`,
 `aw::routing` into `MuellerRouting`) and agrees with CASA to 2e-7.
+
+
+## FLAG_CMD rewrites may truncate a longer saved command
+
+CASA 6.7.6.14 reads FLAG_CMD.COMMAND into a NumPy string array during
+`split` and `mstransform` post-processing. The array holds strings no longer
+than the longest original command. Replacing a spectral selector with a longer
+one can cut off later arguments before the table is written. The paired
+`ms_flag_commands_oracle.py` test reproduces the truncation when an inactive
+channel bin is negative and checks the complete rewritten command independently.
+casa-rs writes the full command to the variable-length table column.
+[Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
 ## AW-projection predicts with the unrotated w
 
@@ -1839,6 +1852,52 @@ produced SIGBUS during cleanup on one run. The isolated child writes its
 reference DATA before cleanup; the parent accepts only these identified
 cleanup failures and records the process exit separately from prediction.
 
+## Legacy imager cleanup aborts after common-beam prediction
+
+CASA 6.7.6.14 returns success from `imager.ft` with
+`setoptions(ftmachine='mosaic')` on a 1.5 GHz VLA MeasurementSet. Both
+scratch and virtual predictions reach disk. The next `imager.done()`
+call raises SIGABRT with “pure virtual method called.” A separate CASA
+process reopens the virtual recipe and reads its model through `uvsub`.
+The same cleanup failure occurs with ATCA, GMRT, WSRT, GBT, NRAO140FT,
+and the `NONE` telescope pattern.
+
+casa-rs publishes both products and closes the tool normally. The
+common-beam oracle verifies that CASA finished prediction before the
+cleanup failure and checks live and reopened output against their own
+references.
+[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Legacy MosaicFT cannot reopen a DEFAULT telescope beam
+
+CASA 6.7.6.14 selects `SimplePBConvFunc` for the literal telescope name
+`DEFAULT`. Its live `VPSkyJones` uses a numeric beam from the first dish
+diameter. The virtual writer records the telescope name. On reopening,
+`MosaicFT::fromRecord` looks up the name through `PBMath` and rejects the
+recipe with “Failed to recovermosaic FTmachine” when the lookup is unknown.
+
+casa-rs uses the first dish's numeric beam when reopening the record.
+The paired oracle uses the pinned live prediction as that beam's reference
+and checks the documented failure from the CASA reader.
+[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Legacy nift can abort while preparing a virtual model
+
+In CASA 6.7.6.14, `imager.setoptions(ftmachine='nift')` constructs an
+`rGridFT`. Live scratch prediction agrees with GridFT for the paired
+visibility fixtures. `CubeSkyEquation::init` falls through to a `GridFT`
+cast for the `rGridFT` object. Some virtual and faceted scratch runs
+abort during `ft` in that path.
+
+casa-rs uses the shared interferometric prediction and publishes a
+`GridFT` virtual recipe. CASA reads that recipe through `uvsub`. The
+paired oracle checks the scratch prediction against pinned `nift` and
+the virtual prediction against a readable pinned GridFT reference.
+[`imager_nift_oracle.py`](../tools/casa-compat/imager_nift_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
 ## Mosaic multi-image prediction depends on image order
 
 - Date noted: 2026-11-11
@@ -1873,6 +1932,44 @@ test retains the raw joint CASA outputs and checks that they still expose
 the defect. Its independent reference for these two cases is the sum of
 the separate CASA predictions, with the usual 0.001 normalized RMS limit;
 the limit is not relaxed to admit the defective joint output.
+
+## Legacy MosaicFT can crash with nonzero FEED beam offsets
+
+On CASA 6.7.6.14, a two-field heterogeneous ALMA MeasurementSet with
+nonzero receptor-zero `FEED.BEAM_OFFSET` caused the public legacy
+`imager.ft` call to exit with signal 11. The fixture has an ALT-AZ mount,
+explicit POINTING rows and the `mosaic` Fourier machine. casa-rs applies
+the first antenna's rotated feed offset to the buffer pointing and
+predicts the scratch and virtual models normally.
+
+The paired control calculates the rotation from the pinned CASA measures
+and writes the shifted directions into POINTING with zero feed offsets.
+The native scratch and virtual predictions matched this CASA control
+within 1.84e-6 normalized RMS. The fixture is in
+`tools/casa-compat/imager_mosaic_oracle.py`.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Faceted MosaicFT can omit its first facet in later scratch buffers
+
+With CASA 6.7.6.14, `imager.defineimage(facets=2)` and
+`imager.setoptions(ftmachine='mosaic')` assign MosaicFT to the first
+facet and ordinary GridFT to the others. In a heterogeneous ALMA
+MeasurementSet with measured POINTING rows, a bulk scratch prediction
+retained the MosaicFT contribution in its first integration and omitted
+it in the other eleven. The GridFT contribution was present throughout.
+
+`CubeSkyEquation::getSlice` gives the per-facet transforms a copy of the
+visibility buffer. The copy constructor does not initialize or copy the
+first antenna's cached direction flag. The original buffer's first
+direction is available to the initialization and the virtual reader.
+
+casa-rs evaluates the first antenna's pointing for each integration and
+keeps the working visibility buffer across facet transforms. The oracle
+compares a native bulk scratch prediction with independent CASA calls
+selecting one integration each. It also compares both virtual writers
+and readers against a CASA virtual prediction over both fields.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_facets_oracle.py`](../tools/casa-compat/imager_facets_oracle.py)
 
 ## The simulator's mosaic machine is not tclean's
 
@@ -3796,6 +3893,21 @@ for both `FLAG` and `FLAG_ROW`. It also verifies `replace`, `or`, and
 `and` against independent flag patterns. casa-rs raises `ValueError` for
 an unrecognized choice and preserves the working flags.
 
+## `flagdata` can choose the wrong samples when FLOAT_DATA is present
+
+CASA 6.7.6.14 can evaluate the magnitude of `FLOAT_DATA` when
+`flagdata(mode="clip", datacolumn="DATA")` opens an MS containing both
+physical columns. The paired fixture holds complex DATA within the requested
+range and puts signed floats outside it. CASA flags the samples from the
+float column. casa-rs computes the range from the requested complex DATA.
+
+With `datacolumn="FLOAT_DATA", clipzeros=True`, CASA also flags finite
+negative values outside the zero tolerance. casa-rs applies the zero
+tolerance to the magnitude of each sample. An explicit inside or outside
+range on FLOAT_DATA uses the signed values, as CASA does. The
+`tools/casa-compat/flagdata_clip_range_oracle.py` comparison verifies both
+choices with independent expected flags.
+
 ## `flagdata`'s summary aborts on a correlation it cannot name
 
 - Date noted: 2026-10-29
@@ -4000,6 +4112,16 @@ UTC, 37 seconds later. Where the scale is lost was not pinned down:
 wcslib's `mjdobs`, so the scale is gone by then. casa-rs reads `MJD-OBS` or `DATE-OBS` in the scale `TIMESYS` names, UTC
 when it names none (`casa_coordinates::fits::from_fits_header`), so the
 round trip keeps the date.
+
+## `imhead` displays a bogus observation date after calendar overflow
+
+On a CASA image, CASA 6.7.6.14 accepts `imhead(mode='put', hdkey='epoch',
+hdvalue={'value': 1e20, 'unit': 'd'})` and then reports
+`-5884082/10/30/00:00:00.000000`. The stored MJD exceeds the signed integer
+range used by `MVTime::ymd` for the Julian day. casa-rs rejects the out-of-range
+edit before changing the image. Dates inside the representable range still
+work, including 1.01 billion MJD days, which both render as
+`2767144/12/15/00:00:00.000000` (#977).
 
 ## `feather` fails on an image whose direction is not on its first two axes
 
@@ -7283,6 +7405,25 @@ pixel maps are `[0, -2]`. casa-rs raises `RuntimeError` before applying
 either name. Passing the one visible axis name without a coordinate type
 renames that axis and preserves the stored removed-axis name (#1626).
 
+## Time averaging LAG_DATA and mixed FLOAT_DATA loses visibility information
+
+CASA 6.7.6.14 leaves LAG_DATA undefined while time averaging, and a LAG_DATA-only
+product can also have undefined FLAG cells and zero spectral weights. The
+native average retains the lag axis. It averages defined lag values using
+scalar weights, preferring rows with an unflagged frequency sample for the
+same correlation. It computes the frequency flags and statistics from the
+input frequency cells.
+
+With `datacolumn="all"` on a MeasurementSet containing both FLOAT_DATA and
+complex visibilities, `VbAvg::accumulateElementForCubes` can accumulate
+calibrated and single-dish weights into the same buffer. The resulting
+denominators attenuate CORRECTED_DATA, MODEL_DATA, and FLOAT_DATA. The same
+layout can substitute FLOAT_DATA for complex DATA. Native averaging uses
+the calibrated weights for corrected and model samples and the observed
+variance for DATA and FLOAT_DATA. The oracle verifies the independent lanes
+against CASA runs on the separate layouts and against an analytic lag sum.
+[Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## Channel-width argument variants can crash both MeasurementSet tasks
 
 CASA 6.7.6.14 `split` and `mstransform` leave a partial MeasurementSet after
@@ -7395,3 +7536,50 @@ channels 0–1 and 5–6. It averages visibility samples from original
 channels 0–1 and 2 and 5, in the order of its compressed channel
 buffer. casa-rs preserves the paired text coordinates and sample
 values so existing PlotMS diagnostics can be compared directly (#1526).
+
+## `impv` can lose overlap on small rotated strips
+
+In CASA 6.7.6.14, a 12-by-12 direction plane can report that the input and
+rotated output do not overlap even when both endpoints are at least two
+pixels from the edges. Examples are a reversed horizontal cut from
+`[8,6]` to `[3,6]` and a vertical cut from `[5,3]` to `[5,8]`. Padding the
+input direction plane before the same sky-coordinate cut restores the CASA
+result. casa-rs interpolates only the requested strip and agrees with the
+padded CASA reference without requiring callers to pad the input (#1024).
+
+## imregrid drops brightness units and the beam when broadcasting a channel
+
+In CASA 6.7.6.14, `imregrid` with a one-channel input, an explicitly selected
+spectral axis and a multi-channel output replicates the data and mask. During
+that copy it loses the brightness unit and restoring beam. The `singleton`
+case in `crates/casa-images/tests/data/imregrid/expected.json` records a
+`Jy/beam` image with a 4 by 3 arcsec beam becoming a unitless image without a
+beam. casa-rs matches the samples, mask and template frequency grid and retains
+the original units and beam. Copying channels does not change the calibration
+of the pixels being copied.
+
+## Legacy MosaicFT rejects split voltage-pattern image records
+
+The CASA 6.7.6.14 legacy `HetArrayConvFunc::findAntennaSizes` checks
+for `realimage` and `imagimage` in a custom `IMAGE` record. It reads
+the imaginary image from `imagim`. `vpmanager.setpbimage` saves the
+standard field `imagimage`. The public `imager.ft` then reports that
+`imagim` is unknown and returns false.
+
+The same responses packaged as complex Jones images work through the
+public legacy imager. Adding `imagim` as an alias in the split records
+also works and gives the same CASA prediction. casa-rs reads the standard
+field for native prediction. For virtual interoperation, the Fourier grid
+owns a copy of the voltage-pattern table with the alias. A real-only
+pattern uses a zero-valued imaginary image owned by the same grid.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
+
+## A zero-stride region aborts `image.modify`
+
+CASA 6.7.6.14 terminates with SIGABRT and an uncaught
+`casacore::ArraySlicerError` when `image.modify` uses an LCSlicer record
+whose increment is zero. A scratch probe used a 7 × 7 float image and a
+point component, with the first increment of a region covering [1, 1]
+through [5, 5] set to zero. Casa-rs raises a Python error during region
+validation and preserves the stored pixels and history (#1625).

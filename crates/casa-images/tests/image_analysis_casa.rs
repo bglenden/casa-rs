@@ -597,7 +597,7 @@ fn impbcor_immath_and_feather_match_casa() {
         let outfile = out.path().join(name);
         casa_images::impbcor(&ImpbcorRequest {
             imagename: images.paths[case["input"].as_str().unwrap()].clone(),
-            pbimage: images.paths[case["pb"].as_str().unwrap()].clone(),
+            pbimage: images.paths[case["pb"].as_str().unwrap()].clone().into(),
             outfile: outfile.clone(),
             mode: case["mode"].as_str().unwrap().into(),
             cutoff: case["cutoff"].as_f64().unwrap(),
@@ -633,6 +633,8 @@ fn impbcor_immath_and_feather_match_casa() {
         highres: images.paths["int_cube"].clone(),
         lowres: images.paths["sd_low"].clone(),
         sdfactor: 1.0,
+        effdishdiam: -1.0,
+        lowpassfiltersd: false,
         overwrite: false,
     })
     .unwrap();
