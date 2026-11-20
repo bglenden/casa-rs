@@ -27,6 +27,10 @@ pub enum CoordinateError {
     #[error("conversion failed: {0}")]
     ConversionFailed(String),
 
+    /// A coordinate's linear transformation has no inverse.
+    #[error("conversion failed: {0}")]
+    SingularTransform(&'static str),
+
     /// The requested projection type is not implemented.
     #[error("unsupported projection: {0}")]
     UnsupportedProjection(String),

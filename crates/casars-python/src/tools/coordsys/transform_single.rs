@@ -569,7 +569,7 @@ impl PyCoordsys {
     pub(in crate::tools) fn image_pixel(&self, value: WorldArgument) -> PyResult<CasaValue> {
         let state = self.state();
         let world = value.values(&state)?;
-        let pixel = state.coordinates.to_pixel(&world).map_err(raised)?;
+        let pixel = state.coordinates.to_pixel_or_nan(&world).map_err(raised)?;
         Ok(CasaValue::record([
             ("numeric", CasaValue::floats(pixel)),
             ("pw_type", CasaValue::Text("pixel".into())),

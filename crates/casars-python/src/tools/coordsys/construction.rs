@@ -294,6 +294,11 @@ fn restore(mut record: RecordValue, parent_name: String) -> PyResult<CoordinateS
         let model = coordinates.coordinate(model_index);
         let value = if model.coordinate_type() == CoordinateType::Stokes {
             model.to_record().into()
+        } else if let Some(Value::Record(original)) = record.get(&field)
+            && let Some(normalized) =
+                super::linear_transform::normalize_restored_matrix(original, model)?
+        {
+            Value::Record(normalized)
         } else {
             record.get(&field).expect("coordinate field exists").clone()
         };
