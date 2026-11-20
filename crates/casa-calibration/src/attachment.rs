@@ -223,21 +223,41 @@ impl CalibrationAttachment {
     ///
     /// Returns an error if the table or selection cannot be read.
     pub fn replace_selection(&mut self, selection: MsSelection) -> Result<bool, AttachmentError> {
+        match self.select(selection) {
+            Ok(()) => Ok(true),
+            Err(
+                AttachmentError::EmptySelection
+                | AttachmentError::Selection(MsSelectionError::Domain(
+                    casa_ms::MsError::InvalidInput(_) | casa_ms::MsError::VersionError(_),
+                )),
+            ) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(crate) fn select(&mut self, selection: MsSelection) -> Result<(), AttachmentError> {
         let ms = MeasurementSet::open(&self.path)?;
         self.state = SelectionState::Rejected;
         self.uv_ranges.clear();
-        match resolve_casa_calibration_selection(&ms, &selection) {
-            Ok(selected) if !selected.selected_rows.is_empty() => {
-                self.selection = selection;
-                self.state = SelectionState::Selected;
-                Ok(true)
-            }
-            Ok(_)
-            | Err(MsSelectionError::Domain(
-                casa_ms::MsError::InvalidInput(_) | casa_ms::MsError::VersionError(_),
-            )) => Ok(false),
-            Err(error) => Err(error.into()),
+        if resolve_casa_calibration_selection(&ms, &selection)?
+            .selected_rows
+            .is_empty()
+        {
+            return Err(AttachmentError::EmptySelection);
         }
+        self.selection = selection;
+        self.state = SelectionState::Selected;
+        Ok(())
+    }
+
+    pub(crate) fn selection(&self) -> &MsSelection {
+        &self.selection
+    }
+
+    pub(crate) fn reset_selection(&mut self) {
+        self.selection = MsSelection::default();
+        self.state = SelectionState::Initial;
+        self.uv_ranges.clear();
     }
 
     /// Narrow the current selection using strict wavelength bounds.

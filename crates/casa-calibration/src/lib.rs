@@ -24,6 +24,7 @@ mod accumulate;
 mod antpos_vla;
 mod attachment;
 mod bandpass;
+mod calibrater_lifecycle;
 mod calibration_service;
 mod callib;
 mod casa_return;
@@ -82,6 +83,7 @@ pub use accumulate::{CalibrationAccumulationRequest, accumulate_calibration};
 pub use attachment::{
     AttachmentError, AttachmentMode, AttachmentOptions, CalibrationAttachment, ImagerAttachments,
 };
+pub use calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
 pub use output::CalibrationOutputMode;
 pub use table_maintenance::{create_calibration_table, update_calibration_table};
 
