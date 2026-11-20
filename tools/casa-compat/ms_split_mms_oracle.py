@@ -11,6 +11,7 @@ from casatools import ms
 import numpy as np
 
 from casars import tasks
+from ms_channel_average_oracle import SPECTRA, add_statistics
 from ms_selection_tasks_oracle import MAIN, SUBTABLES, add_second_window, casa_table, make_input
 
 
@@ -143,6 +144,31 @@ def compare_mms_reuse(root, casa_input, native_input):
     return 4
 
 
+def compare_mms_spectra(root):
+    source = root / "spectra.ms"
+    make_input(source, channels=4)
+    add_second_window(source)
+    add_statistics(source)
+    partitioned = root / "spectra.mms"
+    assert casatasks.partition(vis=str(source), outputvis=str(partitioned), separationaxis="scan",
+                               numsubms=2, datacolumn="all", flagbackup=False) is None
+    columns = MAIN + SPECTRA + ("CORRECTED_DATA", "MODEL_DATA")
+    for keep in (True, False):
+        for width, timebin in ((1, "0s"), (2, "25s")):
+            label = f"spectra-{keep}-{width}"
+            outputs = [root / f"{label}-{side}.ms" for side in ("casa", "native")]
+            for module, output in zip((casatasks, tasks), outputs, strict=True):
+                assert module.split(vis=str(partitioned), outputvis=str(output), datacolumn="all",
+                                    keepmms=keep, width=width, timebin=timebin) is None, label
+                with table(str(output), ack=False) as result:
+                    assert all(result.iscelldefined(name, 0) for name in SPECTRA), label
+            compare_rows(*outputs, columns, label)
+            reference, native = (partitions(output, keep) for output in outputs)
+            for want, got in zip(reference, native, strict=True):
+                compare_rows(want, got, columns, f"{label} member")
+    return 4
+
+
 def main():
     assert tuple(casatasks.version()) == (6, 7, 6, 14)
     with TemporaryDirectory(prefix="split-mms-") as work:
@@ -245,6 +271,7 @@ def main():
             with table(str(mms), ack=False) as after:
                 np.testing.assert_array_equal(after.getcol("DATA"), source_data)
                 np.testing.assert_array_equal(after.getcol("FLAG"), source_flags)
+        count += compare_mms_spectra(root)
         print(f"{count} split Multi-MS products and {rejections} rejection or no-product cases compared with CASA 6.7.6.14")
 
 
