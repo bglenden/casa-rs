@@ -275,7 +275,9 @@ impl CorrelationSelection {
             .collect::<Result<_, _>>()?;
         Ok(Some(Self {
             by_description,
-            clip_metric: clip_operator.map(|(metric, _)| metric),
+            clip_metric: clip_operator
+                .map(|(metric, _)| metric)
+                .or((mode == FlagDataMode::Clip).then_some(ClipMetric::Amplitude)),
             unknown_clip_expression,
         }))
     }

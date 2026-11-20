@@ -77,13 +77,13 @@ def expected_flags(basis, products, samples, metric, bounds, channels=slice(None
     return expected
 
 
-def check_product(path, expected_by_dd, selected_column, selected_data):
+def check_product(path, expected_by_dd, selected_column, selected_data, *, observed=DATA):
     with table(path, ack=False) as ms, casa_table(path) as casa:
         for row, ddid in enumerate(ms.getcol("DATA_DESC_ID")):
             expected = expected_by_dd[ddid]
             np.testing.assert_array_equal(ms.getcell("FLAG", row), expected)
             np.testing.assert_array_equal(casa.getcell("FLAG", row).T, expected)
-            np.testing.assert_array_equal(ms.getcell("DATA", row), DATA)
+            np.testing.assert_array_equal(ms.getcell("DATA", row), observed)
             np.testing.assert_array_equal(ms.getcell(selected_column, row), selected_data)
             assert not ms.getcell("FLAG_ROW", row)
 
@@ -95,6 +95,11 @@ def compare_products():
          {0: (basis, (product,))}, slice(None))
         for basis in ("linear", "circular") for product in "IQUV"
     ]
+    # These bounds distinguish the sign and factor of two in the corrected products.
+    cases.extend(
+        (basis, f"REAL_{product}", "DATA", np.real, (1.9, 3.1), {0: (basis, (product,))}, slice(None))
+        for basis, product in CASA_DEFECTS
+    )
     cases.extend((
         ("linear", "ABS_I", "CORRECTED", np.abs, (1, 2), {0: ("linear", ("I",))}, slice(1, 3)),
         ("linear", "IMAG_I", "DATA", np.imag, (-0.5, 0.5), {0: ("linear", ("I",))}, slice(None)),
@@ -133,6 +138,38 @@ def compare_products():
     return len(cases)
 
 
+def compare_precision_edges():
+    huge = float(np.finfo(np.float32).max) * 0.75
+    epsilon = np.finfo(np.float32).eps
+    cases = [
+        (basis, f"ARG_{product}", {"clipminmax": [-3.2, -3.0], "clipoutside": False},
+         (1, 2), (complex(0.0, -2), 2j))
+        for basis, product in (("linear", "V"), ("circular", "U"))
+    ]
+    cases.extend((
+        ("linear", "REAL_V", {}, (1, 2), (complex(np.nan, 4), 0)),
+        ("linear", "REAL_V", {"clipminmax": [huge * 0.49, huge * 0.51], "clipoutside": False},
+         (1, 2), (complex(0, huge), 0)),
+        ("linear", "XX,I", {"clipzeros": True}, (0, 3), (2 * complex(epsilon, epsilon * 0.0003), 0)),
+    ))
+    for index, (basis, expression, options, planes, samples) in enumerate(cases):
+        observed = np.tile(np.array([1, 3, 1, 1], dtype="c8"), (4, 1))
+        observed[0, list(planes)] = samples
+        expected = np.zeros(observed.shape, dtype=bool)
+        expected[0, list(planes)] = True
+        for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
+            path = f"precision-{index}-{name}.ms"
+            copytree(f"{basis}.ms", path)
+            with table(path, readonly=False, ack=False) as ms:
+                shape = ms.getcol("DATA").shape
+                ms.putcol("DATA", np.broadcast_to(observed, shape).copy())
+                ms.putcol("FLAG", np.zeros(shape, dtype=bool))
+            assert task(vis=path, mode="clip", correlation=expression, flagbackup=False,
+                        **options) == {}, expression
+            check_product(path, {0: expected}, "DATA", observed, observed=observed)
+    return len(cases)
+
+
 def compare_preview_and_repeat():
     vis = "linear.ms"
     before, auxiliary = snapshot(vis), auxiliary_content(vis)
@@ -163,6 +200,7 @@ def main():
     with TemporaryDirectory(prefix="flagdata-clip-stokes-") as work, chdir(work):
         make_inputs()
         cases = compare_products()
+        cases += compare_precision_edges()
         compare_preview_and_repeat()
     print(f"{cases} Stokes clip products, a preview and cross-tool repeat applications passed")
 

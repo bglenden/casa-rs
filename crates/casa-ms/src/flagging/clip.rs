@@ -43,9 +43,9 @@ impl StokesCombination {
         match self {
             Self::Sum => (left + right) / 2.0,
             Self::Difference => (left - right) / 2.0,
-            Self::ImaginaryDifference => {
-                Complex32::new(left.im - right.im, right.re - left.re) / 2.0
-            }
+            // Scale first to avoid overflowing the division's numerator.
+            // Complex division preserves signed zero at the phase boundary.
+            Self::ImaginaryDifference => ((left - right) / 2.0) / Complex32::i(),
         }
     }
 
@@ -53,9 +53,7 @@ impl StokesCombination {
         match self {
             Self::Sum => (left + right) / 2.0,
             Self::Difference => (left - right) / 2.0,
-            Self::ImaginaryDifference => {
-                Complex64::new(left.im - right.im, right.re - left.re) / 2.0
-            }
+            Self::ImaginaryDifference => ((left - right) / 2.0) / Complex64::i(),
         }
     }
 }
