@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_coordinates::{CoordinateSystem, CoordinateType, RecordCoordinate};
-use casa_types::{ArrayValue, Value};
+use casa_types::{ArrayValue, ScalarValue, Value};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -98,6 +98,85 @@ impl PyCoordsys {
                 ArrayValue::from_string_vec(stokes.iter().map(|code| code.name().into()).collect())
                     .into(),
             );
+            state.coordinates = CoordinateSystem::from_record(&record)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            state.record = record;
+            Ok(true)
+        })
+    }
+
+    #[pyo3(signature = (value, r#type="", overwrite=false, which=-10), text_signature = "($self, value, type='', overwrite=False, which=-10)")]
+    fn setunits(
+        &self,
+        py: Python<'_>,
+        value: &Bound<'_, PyAny>,
+        r#type: &str,
+        overwrite: bool,
+        which: i64,
+    ) -> PyResult<bool> {
+        let units = names(string_arguments(Some(value), "value")?);
+        py.detach(|| {
+            let mut state = self.state();
+            let mut record = state.record.clone();
+            let axes = if r#type.is_empty() {
+                if units.len() != state.coordinates.n_world_axes() {
+                    return Err(PyRuntimeError::new_err(
+                        "units vector must be of length nWorldAxes()",
+                    ));
+                }
+                (0..units.len()).map(Some).collect()
+            } else {
+                let kind = coordinate_type(r#type);
+                let (_, model, coordinate) = numbered_coordinates(&state)?
+                    .into_iter()
+                    .find(|(index, model, _)| {
+                        if which < 0 {
+                            model.coordinate_type() == kind
+                        } else {
+                            *index as i64 == which
+                        }
+                    })
+                    .ok_or_else(|| {
+                        PyRuntimeError::new_err(format!(
+                            "No requested {kind} coordinate in this CoordinateSystem"
+                        ))
+                    })?;
+                if units.len() != coordinate.pixel_axes.len() {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Supplied axis units vector must be of length {}",
+                        coordinate.pixel_axes.len()
+                    )));
+                }
+                if overwrite && matches!(kind, CoordinateType::Linear | CoordinateType::Tabular) {
+                    if model.coordinate_type() != kind {
+                        return Err(PyRuntimeError::new_err(format!(
+                            "Coordinate {which} is not of type {kind}"
+                        )));
+                    }
+                    let Some(Value::Record(target)) = record.get_mut(&coordinate.field) else {
+                        return Err(PyRuntimeError::new_err(
+                            "Coordinate is missing from the record",
+                        ));
+                    };
+                    if kind == CoordinateType::Tabular && target.get("unit").is_some() {
+                        target.upsert("unit", Value::Scalar(ScalarValue::String(units[0].clone())));
+                    }
+                    target.upsert(
+                        "units",
+                        Value::Array(ArrayValue::from_string_vec(units.clone())),
+                    );
+                    Vec::new()
+                } else {
+                    coordinate.pixel_axes
+                }
+            };
+            for (axis, unit) in axes.into_iter().zip(units) {
+                let axis = axis.ok_or_else(|| {
+                    PyRuntimeError::new_err("Cannot set the unit of a removed coordinate axis")
+                })?;
+                CoordinateSystem::set_axis_unit_in_record(&mut record, axis, &unit)
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            }
             state.coordinates = CoordinateSystem::from_record(&record)
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             state.record = record;

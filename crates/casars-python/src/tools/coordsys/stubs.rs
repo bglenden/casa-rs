@@ -196,18 +196,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value, r#type = None, overwrite = None, which = None), text_signature = "($self, value, type='', overwrite=False, which=-10)")]
-    fn setunits(
-        &self,
-        value: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        which: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setunits")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (originshft = None, newshape = None), text_signature = "($self, originshft=[], newshape=[])")]
     fn subimage(
         &self,

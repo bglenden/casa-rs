@@ -55,6 +55,9 @@ Use `cs.setreferencevalue(values)` and `cs.setincrement(values)` to edit
 the coordinate record. Numeric values use the declared world-axis units.
 Quantity strings can specify their own units, and `type` selects one
 coordinate.
+Use `cs.setunits(values)` to change the declared units and rescale the
+coordinate values. On a selected linear or tabular coordinate,
+`overwrite=True` relabels units while keeping the numeric values.
 
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
