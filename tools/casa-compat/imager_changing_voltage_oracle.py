@@ -175,6 +175,32 @@ def missing_continuum_control(root, source):
     print('missing continuum model reference and bandwidth in Hz', actual, flush=True)
 
 
+def array_boundary_control(root, source, model, held):
+    combined = root / 'two-arrays.ms'
+    make_input(source, combined, scratch=True)
+    writer = table()
+    assert writer.open(str(combined / 'OBSERVATION'), nomodify=False)
+    assert writer.nrows() == 1 and writer.addrows(1)
+    for column in writer.colnames():
+        if writer.iscelldefined(column, 0):
+            assert writer.putcell(column, 1, writer.getcell(column, 0))
+    assert writer.done()
+    assert writer.open(str(combined), nomodify=False)
+    times = writer.getcol('TIME')
+    second = times == times.max()
+    assert writer.putcol('ARRAY_ID', second.astype(np.int32)) and writer.done()
+    results = []
+    for engine, factory in (('pinned', casa_imager), ('native', imager)):
+        target = root / f'{engine}-two-arrays.ms'
+        make_input(combined, target, scratch=True)
+        predict(factory, target, model, '360deg', '180deg', True)
+        results.append(data(target, 'MODEL_DATA')[:, 0, :])
+    expected, actual = results
+    np.testing.assert_array_equal(expected[:, ~second], held[:, ~second])
+    assert relative_rms(expected[:, second], held[:, second]) > .2
+    compare('new array refreshes the default increment for the same field', actual, expected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -236,6 +262,7 @@ def main():
     within_buffer_control(args.work, source, args.model)
     unwrapped_feed_control(args.work, source, args.model)
     missing_continuum_control(args.work, args.dataset)
+    array_boundary_control(args.work, source, args.model, held)
 
 
 if __name__ == '__main__':

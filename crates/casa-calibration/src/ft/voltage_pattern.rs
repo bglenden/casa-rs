@@ -725,11 +725,24 @@ mod tests {
                 ),
                 casa_types::RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
                 casa_types::RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(1.))),
+                casa_types::RecordField::new(
+                    "TIME_ORIGIN",
+                    Value::Scalar(ScalarValue::Float64(time)),
+                ),
+                casa_types::RecordField::new(
+                    "NAME",
+                    Value::Scalar(ScalarValue::String(String::new())),
+                ),
                 casa_types::RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
                 casa_types::RecordField::new(
                     "DIRECTION",
                     Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1]))),
                 ),
+                casa_types::RecordField::new(
+                    "TARGET",
+                    Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![2, 1]))),
+                ),
+                casa_types::RecordField::new("TRACKING", Value::Scalar(ScalarValue::Bool(true))),
             ]);
             pointing.table_mut().add_row(record).unwrap();
         }
