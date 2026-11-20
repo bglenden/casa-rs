@@ -52,3 +52,18 @@ def test_world_edits_preserve_native_records_and_transform(casa, tmp_path):
             np.testing.assert_allclose(coordinates.referencevalue()["numeric"], expected_reference)
             np.testing.assert_allclose(coordinates.toworldmany(pixels)["numeric"], expected)
             assert coordinates.done() and reopened.done()
+
+
+def test_rejected_world_edits_preserve_the_coordinate_record():
+    cs = tools.coordsys()
+    assert cs.newcoordsys(linear=2)
+    assert cs.setreferencevalue([11.0, 22.0])
+    with pytest.raises(RuntimeError, match="increment cannot be zero"):
+        cs.setincrement([3.0, 0.0])
+    np.testing.assert_array_equal(cs.increment()["numeric"], [1.0, 1.0])
+    with pytest.raises(RuntimeError, match="relative"):
+        cs.setreferencevalue({"numeric": [4.0], "ar_type": "relative"})
+    np.testing.assert_array_equal(cs.referencevalue()["numeric"], [11.0, 22.0])
+    point = np.array([[1.0], [2.0]])
+    np.testing.assert_array_equal(cs.toworldmany(point)["numeric"], [[12.0], [24.0]])
+    assert cs.done()
