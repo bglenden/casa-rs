@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Prepare image models with the existing gridder for CASA's legacy imager.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
@@ -13,7 +13,8 @@ use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
     GridPrecision, ImageExtent, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale,
-    PaddingFactor, PolarizationRouting, Spheroidal, WPlaneCount, WPlanes,
+    PaddingFactor, PolarizationRouting, SpectralAxis, SpectralKernel, SpectralResampler,
+    Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral, legacy_multi_term};
@@ -120,9 +121,9 @@ pub(super) fn check_scratch_cube(
     interpolation: i32,
     shape: &[usize],
 ) -> MsResult<()> {
-    if scratch && interpolation != 0 && shape.get(3).is_some_and(|&channels| channels > 1) {
+    if scratch && interpolation == 3 && shape.get(3).is_some_and(|&channels| channels > 1) {
         return Err(invalid(
-            "legacy scratch cube prediction with non-nearest frequency interpolation is pending in #1520",
+            "legacy scratch cube prediction with spline frequency interpolation is pending in #1520",
         ));
     }
     Ok(())
@@ -143,7 +144,7 @@ pub(super) fn prepare_configured_image(
         options.settings.frequency_interpolation,
         image.shape(),
     )?;
-    let layout = ImageTransform::new(ms, selected, &image, options)?;
+    let layout = ImageTransform::new(ms, selected, &image, scratch, options)?;
     let mut path = virtual_model_image_path(ms)?;
     if scratch {
         let name = path
@@ -172,6 +173,7 @@ struct ImageTransform {
     operator: MeasurementOperator,
     coordinates: CoordinateSystem,
     frequencies: Vec<f64>,
+    interpolation_frequencies: Option<Vec<f64>>,
     increment: [f64; 2],
     phase_center: [f64; 2],
     frame: String,
@@ -334,11 +336,77 @@ fn automatic_w_planes(
     })
 }
 
+fn validate_short_cubic(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+    matching_frequencies: &[f64],
+    convert: bool,
+) -> MsResult<()> {
+    let increment = matching_frequencies[1] - matching_frequencies[0];
+    let axis = SpectralAxis::tabular(matching_frequencies, increment).map_err(invalid)?;
+    let resampler = SpectralResampler::channel_local(axis.clone(), SpectralKernel::Cubic)
+        .with_legacy_prediction_axis(axis);
+    let engine = convert.then(|| MsCalEngine::new(ms)).transpose()?;
+    let windows = ms.spectral_window()?;
+    let mut by_window = BTreeMap::new();
+    let mut buffers = BTreeSet::new();
+    for row in &selected.selected_rows {
+        let id = row.spectral_window_id;
+        let (reference, frequencies) = match by_window.entry(id) {
+            std::collections::btree_map::Entry::Occupied(window) => window.into_mut(),
+            std::collections::btree_map::Entry::Vacant(window) => {
+                let raw = windows.chan_freq(id as usize)?;
+                let frequencies = if let Some(channel) = selected.channel_selections.get(&id) {
+                    channel
+                        .indices(raw.len())?
+                        .into_iter()
+                        .map(|index| raw[index])
+                        .collect()
+                } else {
+                    raw
+                };
+                window.insert((windows.frequency_reference(id as usize)?, frequencies))
+            }
+        };
+        if frequencies.len() < 2 {
+            continue;
+        }
+        let frame = engine.as_ref().filter(|_| *reference != FrequencyRef::LSRK);
+        let key = frame.map(|_| (row.field_id, row.time_mjd_seconds.to_bits()));
+        if !buffers.insert((id, key)) {
+            continue;
+        }
+        if let Some(engine) = frame {
+            let frame =
+                engine.spectral_frame_observatory(row.time_mjd_seconds, row.field_id as usize)?;
+            let ratio = convert_frequency_to_frame_with_frame(
+                *reference,
+                FrequencyRef::LSRK,
+                1.,
+                Some(&frame),
+            )?;
+            let frequencies = frequencies
+                .iter()
+                .map(|value| value * ratio)
+                .collect::<Vec<_>>();
+            resampler
+                .validate_legacy_prediction(&frequencies)
+                .map_err(invalid)?;
+        } else {
+            resampler
+                .validate_legacy_prediction(frequencies)
+                .map_err(invalid)?;
+        }
+    }
+    Ok(())
+}
+
 impl ImageTransform {
     fn new(
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
         image: &PagedImage<f32>,
+        scratch: bool,
         options: PredictionGeometry,
     ) -> MsResult<Self> {
         let [nx, ny, npol, channels] = *image.shape() else {
@@ -359,6 +427,20 @@ impl ImageTransform {
         let CoordinateModel::Spectral(spectral) = coords.coordinate(spectral) else {
             unreachable!()
         };
+        let interpolation_frequencies =
+            if scratch && channels > 1 && matches!(options.settings.frequency_interpolation, 1 | 2)
+            {
+                // FTMachine saves these image world frequencies before stripping
+                // the reference conversion from the channel-matching coordinate.
+                let original = spectral_with_runtime(spectral)?;
+                Some(
+                    (0..channels)
+                        .map(|channel| original.world_frequency_hz(channel as f64).map_err(invalid))
+                        .collect::<MsResult<Vec<_>>>()?,
+                )
+            } else {
+                None
+            };
         // A new legacy imager has no active frequency conversion even when
         // the input image carries a saved reference conversion.
         let spectral = if options.frequency_frame_valid {
@@ -423,7 +505,10 @@ impl ImageTransform {
         *coordinates.obs_info_mut() = ObsInfo::new("UNKNOWN").with_observer("UNKNOWN");
         let frequencies = (0..channels)
             .map(|index| spectral.world_frequency_hz(index as f64).map_err(invalid))
-            .collect::<MsResult<_>>()?;
+            .collect::<MsResult<Vec<_>>>()?;
+        if scratch && options.settings.frequency_interpolation == 2 && (2..4).contains(&channels) {
+            validate_short_cubic(ms, selected, &frequencies, options.frequency_frame_valid)?;
+        }
         let basis = Basis::ChannelLocal {
             planes: channels as u32,
         };
@@ -459,6 +544,7 @@ impl ImageTransform {
             operator,
             coordinates,
             frequencies,
+            interpolation_frequencies,
             increment,
             phase_center,
             frame: direction.direction_ref().as_str().to_owned(),
@@ -629,6 +715,14 @@ impl ImageTransform {
             frequency_frame_valid,
         }
         .record();
+        if let Some(frequencies) = &self.interpolation_frequencies {
+            // This temporary record never leaves the active scratch writer.
+            record.upsert("tovis", Value::Scalar(ScalarValue::Bool(false)));
+            record.upsert(
+                "casars_live_image_frequency",
+                Value::Array(ArrayValue::from_f64_vec(frequencies.clone())),
+            );
+        }
         let settings = self.options.settings;
         record.upsert(
             "usedoublegrid",
