@@ -39,6 +39,17 @@ pub(super) fn prepare_model(
             "this legacy pbwproject configuration is pending #1520",
         ));
     }
+    if options.mosaic
+        && let Some(first) = selected.selected_rows.first()
+        && selected
+            .selected_rows
+            .iter()
+            .any(|row| row.field_id != first.field_id)
+    {
+        return Err(invalid(
+            "legacy pbmosaic prediction with several fields is pending #1520",
+        ));
+    }
     let model = PagedImage::<f32>::open(path).map_err(invalid)?;
     let (shape, increment, coordinates) = model_geometry(&model)?;
     let [side, _, _, _] = shape;
@@ -140,10 +151,12 @@ pub(super) fn prepare_model(
             frequency_frame_valid: geometry.frequency_frame_valid,
         }
         .record();
-        record.upsert(
-            "name",
-            Value::Scalar(ScalarValue::String("nPBWProjectFT".into())),
-        );
+        let machine = if options.mosaic {
+            "PBMosaicFT"
+        } else {
+            "nPBWProjectFT"
+        };
+        record.upsert("name", Value::Scalar(ScalarValue::String(machine.into())));
         record.upsert(
             "spwchanselflag",
             Value::Array(ArrayValue::Int32(selection_mask(ms, selected)?)),

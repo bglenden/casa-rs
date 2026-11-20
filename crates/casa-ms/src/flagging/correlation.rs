@@ -42,12 +42,19 @@ impl CorrelationSelection {
         data_column: FlagDataColumn,
         expression: &str,
     ) -> Result<Option<Self>, FlaggingError> {
-        let text = expression
+        let mut text = expression
             .split('\0')
             .next()
             .unwrap_or_default()
             .to_uppercase();
-        if text.is_empty() {
+        let default_clip = mode == FlagDataMode::Clip && text.is_empty();
+        if default_clip {
+            text.push_str(if data_column == FlagDataColumn::FloatData {
+                "REAL_ALL"
+            } else {
+                "ABS_ALL"
+            });
+        } else if text.is_empty() {
             return Ok(None);
         }
         let unsupported = || FlaggingError::MutateFlags {
@@ -81,7 +88,7 @@ impl CorrelationSelection {
                 mode,
                 FlagDataMode::Manual | FlagDataMode::Quack | FlagDataMode::Clip
             ) || (has_operator && clip_operator.is_none())
-                || text.contains("WVR"))
+                || (mode != FlagDataMode::Clip && text.contains("WVR")))
         {
             return Err(unsupported());
         }
@@ -144,13 +151,23 @@ impl CorrelationSelection {
             } else {
                 visibility.to_owned()
             };
-            if visibility.contains(['I', 'Q', 'U', 'V']) {
-                return Err(unsupported());
-            }
-            let products: Vec<_> = RECEPTOR_PRODUCTS
-                .into_iter()
-                .filter(|name| visibility.contains(*name))
-                .collect();
+            let products = if visibility.contains("WVR") {
+                wvr_clip_products(&visibility, &modes).ok_or_else(unsupported)?
+            } else if (clip_operator.is_none() && required.contains("I"))
+                || modes.iter().all(|stored| stored.contains(&"I"))
+            {
+                // Without WVR, the mapper skips every buffer with stored I.
+                Vec::new()
+            } else {
+                if !default_clip && visibility.contains(['I', 'Q', 'U', 'V']) {
+                    return Err(unsupported());
+                }
+                RECEPTOR_PRODUCTS
+                    .into_iter()
+                    .chain(["Q", "U", "V"].into_iter().filter(|_| default_clip))
+                    .filter(|name| visibility.contains(*name))
+                    .collect()
+            };
             if clip_operator.is_some() && products.is_empty() {
                 unknown_clip_expression = Some(
                     float_suffix.map_or_else(|| text.clone(), |suffix| format!("REAL {suffix}")),
@@ -263,8 +280,41 @@ impl CorrelationSelection {
     }
 }
 
+fn wvr_clip_products(visibility: &str, modes: &[Vec<&str>]) -> Option<Vec<&'static str>> {
+    let derived = modes
+        .iter()
+        .filter(|stored| stored.contains(&"I"))
+        .any(|stored| {
+            let has_pair = |a, b| stored.contains(&a) && stored.contains(&b);
+            (visibility.contains('Q')
+                && !stored.contains(&"Q")
+                && (has_pair("XX", "YY") || has_pair("RL", "LR")))
+                || (visibility.contains('U')
+                    && !stored.contains(&"U")
+                    && (has_pair("XY", "YX") || has_pair("RL", "LR")))
+        });
+    if derived {
+        return None;
+    }
+    // WVR admits a stored-I buffer. CASA's visibility mapper also adds
+    // other requested stored products, with V suppressed for WVR.
+    Some(
+        std::iter::once("I")
+            .chain(
+                RECEPTOR_PRODUCTS
+                    .into_iter()
+                    .chain(["Q", "U"])
+                    .filter(|name| visibility.contains(*name)),
+            )
+            .collect(),
+    )
+}
+
 fn clip_planes(products: &[&str], stored: &[&str]) -> Vec<usize> {
-    if stored.contains(&"I") || products.first().is_none_or(|name| !stored.contains(name)) {
+    let Some(first) = products.first() else {
+        return Vec::new();
+    };
+    if !stored.contains(first) || (stored.contains(&"I") && *first != "I") {
         return Vec::new();
     }
     // The visibility mapper resolves duplicate labels to the last stored

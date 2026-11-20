@@ -61,7 +61,7 @@ pub(super) fn parse_saved_region(
                 Err(_) => compound::decode(region_name, rec, target_coords, full_shape, plane),
             }
         }
-        "WCIntersection" | "WCDifference" | "WCComplement" => {
+        "WCIntersection" | "WCDifference" | "WCComplement" | "WCExtension" | "WCConcatenation" => {
             compound::decode(region_name, rec, target_coords, full_shape, plane)
         }
         "LCSlicer" | "LCBox" => {
@@ -394,23 +394,51 @@ fn decode_wc_box(
     coords: &CoordinateSystem,
     full_shape: &[usize],
 ) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
+    decode_wc_box_axes(name, rec, coords, full_shape, |_| true)
+}
+
+fn decode_wc_box_axes(
+    name: &str,
+    rec: &RecordValue,
+    coords: &CoordinateSystem,
+    full_shape: &[usize],
+    include: impl Fn(usize) -> bool,
+) -> Result<(Vec<usize>, Vec<usize>), ImageError> {
     let (axes, origin) = wc_pixel_axes(name, "WCBox", rec, coords)?;
     let mut modes = read_numeric_vec(rec.get("absrel")).unwrap_or_default();
     if modes.is_empty() {
         modes.resize(axes.len(), 1.0);
     }
+    let dimension_mismatch =
+        || ImageError::InvalidMetadata(format!("WCBox {name:?} dimension mismatch"));
+    if modes.len() != axes.len() {
+        return Err(dimension_mismatch());
+    }
+    let selected_axes = axes
+        .iter()
+        .copied()
+        .filter(|&axis| include(axis))
+        .collect::<Vec<_>>();
+    let modes = modes
+        .into_iter()
+        .zip(&axes)
+        .filter_map(|(mode, &axis)| include(axis).then_some(mode))
+        .collect::<Vec<_>>();
     let mut bounds = Vec::new();
     for (key, low) in [("blc", true), ("trc", false)] {
         let quantities = read_quantum_list(rec.get(key))?;
-        if quantities.len() != axes.len() || modes.len() != axes.len() {
-            return Err(ImageError::InvalidMetadata(format!(
-                "WCBox {name:?} dimension mismatch"
-            )));
+        if quantities.len() != axes.len() {
+            return Err(dimension_mismatch());
         }
+        let quantities = quantities
+            .into_iter()
+            .zip(&axes)
+            .filter_map(|(quantity, &axis)| include(axis).then_some(quantity))
+            .collect::<Vec<_>>();
         bounds.push(wc_box_corner(
             coords,
             full_shape,
-            &axes,
+            &selected_axes,
             &quantities,
             &modes,
             origin,

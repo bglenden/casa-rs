@@ -244,10 +244,12 @@ impl PyImager {
                 threads: numthreads,
             }
             .options(state.prediction.transform_options())?;
-            if ftmachine.eq_ignore_ascii_case("pbwproject") {
+            let mosaic = ftmachine.eq_ignore_ascii_case("pbmosaic");
+            if mosaic || ftmachine.eq_ignore_ascii_case("pbwproject") {
                 state.prediction.configure_legacy_pbw(
                     settings,
                     ImagerLegacyPbWOptions {
+                        mosaic,
                         cache_directory: PathBuf::from(cfcachedirname),
                         w_planes: wprojplanes,
                         apply_pointing_offsets: applypointingoffsets,

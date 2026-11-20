@@ -248,7 +248,7 @@ impl Chunk {
         Ok(chunk)
     }
 
-    fn mask<T: ImagePixel>(
+    pub(super) fn mask<T: ImagePixel>(
         &self,
         image: &impl ImageInterface<T>,
     ) -> PyResult<Option<ArrayD<bool>>> {
@@ -397,7 +397,7 @@ impl Chunk {
     }
 }
 
-fn and_mask(
+pub(super) fn and_mask(
     original: Option<ArrayD<bool>>,
     expression: Option<ArrayD<bool>>,
 ) -> Option<ArrayD<bool>> {

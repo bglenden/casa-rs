@@ -312,15 +312,23 @@ impl PolygonRegion {
         coords: &CoordinateSystem,
         base_pixel: &[f64],
     ) -> Result<PixelPolygons, ImageError> {
-        let [x_axis, y_axis] = self.pixel_axes;
         let base_world = coords.to_world(base_pixel)?;
+        self.pixel_polygons_at_world(coords, &base_world)
+    }
+
+    fn pixel_polygons_at_world(
+        &self,
+        coords: &CoordinateSystem,
+        base_world: &[f64],
+    ) -> Result<PixelPolygons, ImageError> {
+        let [x_axis, y_axis] = self.pixel_axes;
         self.polygons
             .iter()
             .map(|polygon| {
                 polygon
                     .iter()
                     .map(|vertex| {
-                        let mut world = base_world.clone();
+                        let mut world = base_world.to_vec();
                         world[x_axis] = vertex[0];
                         world[y_axis] = vertex[1];
                         let pixel = coords.to_pixel(&world)?;
@@ -336,6 +344,21 @@ impl PolygonRegion {
                     .collect()
             })
             .collect()
+    }
+
+    pub(crate) fn lattice_plane(
+        &self,
+        coords: &CoordinateSystem,
+        shape: &[usize],
+    ) -> Result<Option<PolygonPixelPlane>, ImageError> {
+        self.check_axes(coords)?;
+        // WCPolygon creates one LCPolygon at the reference world position.
+        // Unspecified axes extend that plane without multiplying its storage.
+        let reference = (0..coords.n_coordinates())
+            .flat_map(|i| coords.coordinate(i).reference_value())
+            .collect::<Vec<_>>();
+        let vertices = self.pixel_polygons_at_world(coords, &reference)?;
+        Ok(polygon_pixel_plane(&vertices, shape, self.pixel_axes))
     }
 }
 
@@ -456,6 +479,36 @@ fn statistics_of(mut values: Vec<f64>, unit: &str) -> Option<RegionStatistics> {
 
 /// Finds the pixels inside `polygons` (pixel coordinates on the region axes)
 /// within their bounding box, or `None` when the box misses the image.
+pub(crate) struct PolygonPixelPlane {
+    pub(crate) start: [usize; 2],
+    pub(crate) mask: Array2<bool>,
+}
+
+pub(crate) fn polygon_pixel_plane(
+    polygons: &[Vec<[f64; 2]>],
+    shape: &[usize],
+    axes: [usize; 2],
+) -> Option<PolygonPixelPlane> {
+    let plane = select_plane(polygons, shape, axes)?;
+    let mut low = [plane.inside.nrows(), plane.inside.ncols()];
+    let mut high = [0, 0];
+    for ((x, y), &included) in plane.inside.indexed_iter() {
+        if included {
+            low[0] = low[0].min(x);
+            low[1] = low[1].min(y);
+            high[0] = high[0].max(x);
+            high[1] = high[1].max(y);
+        }
+    }
+    Some(PolygonPixelPlane {
+        start: [plane.start[axes[0]] + low[0], plane.start[axes[1]] + low[1]],
+        mask: plane
+            .inside
+            .slice(ndarray::s![low[0]..=high[0], low[1]..=high[1]])
+            .to_owned(),
+    })
+}
+
 fn select_plane(
     polygons: &[Vec<[f64; 2]>],
     shape: &[usize],

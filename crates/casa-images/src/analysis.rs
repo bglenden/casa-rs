@@ -3524,48 +3524,65 @@ fn image_flux_with_integration<T: ImagePixel>(
     selection: &Selection,
     spectral_axis_collapsed: bool,
 ) -> Option<f64> {
-    let units = image.units();
-    let pixel_area = direction_pixel_area(image.coordinates())?;
-    let flux = if units.contains('K') {
+    let spectral_axis = spectral_axis_collapsed
+        .then(|| image.find_axis(CoordinateType::Spectral))
+        .flatten()
+        .filter(|&axis| selection.shape[axis] > 1);
+    let channels = spectral_axis.map(|axis| [selection.start[axis], selection.start[axis] + 1]);
+    let beam = image
+        .units()
+        .contains("/beam")
+        .then(|| image.image_info().ok()?.beam_set.single_beam())
+        .flatten();
+    statistics_flux_scale(image.coordinates(), image.units(), beam, channels)
+        .map(|factor| sum * factor)
+}
+
+/// Converts a sum of image pixels to the flux reported by CASA statistics.
+///
+/// The factor uses square arcseconds for temperature and pixels per beam for
+/// per-beam brightness. If the spectral axis is collapsed over multiple
+/// channels, `channels` gives the first two measured spectral pixels.
+pub fn statistics_flux_scale(
+    coordinates: &CoordinateSystem,
+    units: &str,
+    beam: Option<GaussianBeam>,
+    channels: Option<[usize; 2]>,
+) -> Option<f64> {
+    let pixel_area = direction_pixel_area(coordinates)?;
+    let flux_factor = if units.contains('K') {
         let arcsec_per_rad = 180.0 * 3600.0 / std::f64::consts::PI;
-        sum * pixel_area * arcsec_per_rad * arcsec_per_rad
+        pixel_area * arcsec_per_rad * arcsec_per_rad
     } else if units.contains("/beam") {
-        let beam_area = image.image_info().ok()?.beam_set.single_beam()?.area();
+        let beam_area = beam?.area();
         if beam_area <= 0.0 {
             return None;
         }
-        sum * pixel_area / beam_area
+        pixel_area / beam_area
     } else {
         return None;
     };
-    let factor = if spectral_axis_collapsed {
-        spectral_integration(image, selection).unwrap_or(1.0)
-    } else {
-        1.0
-    };
-    Some(flux * factor)
+    let channel_width = channels
+        .and_then(|pixels| spectral_integration(coordinates, pixels))
+        .unwrap_or(1.0);
+    Some(flux_factor * channel_width)
 }
 
 /// The width casacore integrates `flux` over: one channel of the selected
 /// spectral axis, when the selection holds more than one.
-fn spectral_integration<T: ImagePixel>(
-    image: &PagedImage<T>,
-    selection: &Selection,
+fn spectral_integration(
+    coordinates: &CoordinateSystem,
+    [first, second]: [usize; 2],
 ) -> Option<f64> {
-    let axis = image.find_axis(CoordinateType::Spectral)?;
-    if selection.shape[axis] <= 1 {
-        return None;
-    }
-    let coordinate = coordinate_for_axis(image.coordinates(), axis)?;
-    let rest = spectral_rest_frequency(image.coordinates()).unwrap_or(0.0);
+    let coordinate = coordinates.coordinate(coordinates.find_coordinate(CoordinateType::Spectral)?);
+    let rest = spectral_rest_frequency(coordinates).unwrap_or(0.0);
     if rest > 0.0 {
         // The selection's own first two channels, as casacore's sub-image.
-        let first = selection.start[axis] as f64;
-        let f0 = coordinate.to_world(&[first]).ok()?[0];
-        let f1 = coordinate.to_world(&[first + 1.0]).ok()?[0];
+        let f0 = coordinate.to_world(&[first as f64]).ok()?[0];
+        let f1 = coordinate.to_world(&[second as f64]).ok()?[0];
         Some(SPEED_OF_LIGHT_KM_S * (f1 - f0).abs() / rest)
     } else {
-        Some(coordinate.increment()[0])
+        Some(coordinate.increment()[0] * second.abs_diff(first) as f64)
     }
 }
 

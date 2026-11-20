@@ -21,6 +21,7 @@ casa-calibration = { path = "../casa-calibration" }
 casa-components = { path = "../casa-components" }
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
+casa-lattices = { path = "../casa-lattices" }
 casa-measures-data = { path = "../casa-measures-data" }
 casa-ms = { path = "../casa-ms" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
