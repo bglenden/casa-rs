@@ -229,7 +229,7 @@ impl PyImager {
     ) -> PyResult<bool> {
         // The A/W controls are consumed by their Fourier machines. Ordinary
         // GridFT and WProjectFT do not use them.
-        let _ = (psterm, aterm, mterm, wbawp);
+        let _ = (mterm, wbawp);
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -266,7 +266,7 @@ impl PyImager {
                 ftmachine.to_ascii_lowercase().as_str(),
                 "awproject" | "mawproject"
             ) {
-                state.prediction.configure_legacy_aw(
+                state.prediction.configure_legacy_aw_terms(
                     settings,
                     ImagerLegacyAwOptions {
                         cache_directory: PathBuf::from(cfcachedirname),
@@ -278,6 +278,7 @@ impl PyImager {
                         rotation_step_deg: rotpastep,
                         conjugate_beams: conjbeams,
                     },
+                    [psterm, aterm],
                 )
             } else {
                 state.prediction.configure_transform(settings)
