@@ -593,16 +593,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, overwrite = None), text_signature = "($self, outfile='', overwrite=False)")]
-    fn maketestimage(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("maketestimage")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (region = None, point = None, width = None, negfind = None, list = None), text_signature = "($self, region={}, point=True, width=5, negfind=False, list=True)")]
     fn maxfit(
         &self,
