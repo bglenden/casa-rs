@@ -115,7 +115,8 @@ impl FourierModel {
             .entry(self.mosaic.then_some(row.row.data_spw_id))
             .or_default();
         if !layouts.contains_key(row.correlations) {
-            let model = PreparedFourierModel::load(&self.record, &row, grids.clone())?;
+            let scratch = !matches!(merge, FourierMerge::VirtualSum);
+            let model = PreparedFourierModel::load(&self.record, &row, grids.clone(), scratch)?;
             *grids = Some(Arc::clone(&model.grids));
             layouts.insert(row.correlations.to_vec(), model);
         }
@@ -159,6 +160,7 @@ impl PreparedFourierModel {
         record: &RecordValue,
         row: &FourierRow<'_>,
         cached_grids: Option<Arc<PreparedModelGrids>>,
+        scratch: bool,
     ) -> Result<Self, GainSolveError> {
         let (terms, continuum_basis) = grid_terms(record)?;
         let images = terms
@@ -208,13 +210,13 @@ impl PreparedFourierModel {
                 terms[0],
                 row,
                 (direction, coords.obs_info().telescope.contains("VLA")),
-                &geometry,
-                &polarization,
+                (&geometry, &polarization),
                 axis.first_hz(),
                 matches!(
                     record.get("freqframevalid"),
                     Some(Value::Scalar(ScalarValue::Bool(true)))
                 ),
+                scratch,
             )?;
             (kernels, Some(layout))
         } else {

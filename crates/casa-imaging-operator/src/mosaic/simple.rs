@@ -28,11 +28,7 @@ impl Layout {
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let largest = nx.max(ny);
-        let sampling = if largest < 50 {
-            100
-        } else {
-            (5000. / largest as f64).ceil().max(1.) as u16
-        };
+        let sampling = MosaicPb::simple_oversampling(image.shape);
         // CompositeNumber::nextLargerEven is strictly larger, including
         // when the requested size is already an even composite.
         let side = next_larger_even_composite(largest / 2 * 2 * 2 * usize::from(sampling) + 1);
@@ -77,6 +73,16 @@ pub struct SimpleMosaicScreens {
 }
 
 impl MosaicPb {
+    /// Fourier oversampling used by legacy SimplePBConvFunc on this image.
+    pub fn simple_oversampling([nx, ny]: [usize; 2]) -> u16 {
+        let largest = nx.max(ny);
+        if largest < 50 {
+            100
+        } else {
+            5000_usize.div_ceil(largest) as u16
+        }
+    }
+
     /// Peak bytes to construct SimplePBConvFunc's common-beam screens.
     /// Includes the Float FFT plane and planning, retained cropped planes,
     /// frequency scaling scratch, the voltage table and routing.

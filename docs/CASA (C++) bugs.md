@@ -1852,6 +1852,21 @@ produced SIGBUS during cleanup on one run. The isolated child writes its
 reference DATA before cleanup; the parent accepts only these identified
 cleanup failures and records the process exit separately from prediction.
 
+## Legacy imager cleanup aborts after VLA common-beam prediction
+
+CASA 6.7.6.14 returns success from `imager.ft` with
+`setoptions(ftmachine='mosaic')` on a 1.5 GHz VLA MeasurementSet. Both
+scratch and virtual predictions reach disk. The next `imager.done()`
+call raises SIGABRT with “pure virtual method called.” A separate CASA
+process reopens the virtual recipe and reads its model through `uvsub`.
+
+casa-rs publishes both products and closes the tool normally. The
+common-beam oracle verifies that CASA finished prediction before the
+cleanup failure and checks live and reopened output against their own
+references.
+[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
 ## Mosaic multi-image prediction depends on image order
 
 - Date noted: 2026-11-11

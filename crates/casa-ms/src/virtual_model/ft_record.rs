@@ -215,6 +215,32 @@ pub fn legacy_mosaic(record: &mut RecordValue, stokes: &str, beam_class: i32, sa
         RecordField::new("vptable", text("")),
         RecordField::new("pbclass", int(beam_class)),
     ]);
+    legacy_mosaic_record(record, stokes, sampling, beam);
+}
+
+/// Record a legacy MosaicFT common beam. The C++ reader rebuilds the
+/// convolution when it initializes the next visibility buffer.
+pub fn legacy_common_mosaic(
+    record: &mut RecordValue,
+    stokes: &str,
+    telescope: &str,
+    sampling: u16,
+) {
+    let beam = RecordValue::new(vec![
+        RecordField::new("name", text("SimplePBConvFunc")),
+        RecordField::new("numconv", int(0)),
+        RecordField::new("actualconvindex", int(-1)),
+        RecordField::new(
+            "donemainconv",
+            Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[0]), false))),
+        ),
+        RecordField::new("pbclass", int(1)),
+    ]);
+    record.upsert("telescope", text(telescope));
+    legacy_mosaic_record(record, stokes, sampling, beam);
+}
+
+fn legacy_mosaic_record(record: &mut RecordValue, stokes: &str, sampling: u16, beam: RecordValue) {
     record.upsert("name", text("MosaicFT"));
     record.upsert("stokes", text(stokes));
     record.upsert("usezero", boolean(true));

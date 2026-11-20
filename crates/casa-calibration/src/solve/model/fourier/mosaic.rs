@@ -32,6 +32,7 @@ pub(super) struct MosaicLayout {
     increment: [f64; 2],
     antenna_classes: Vec<u8>,
     legacy: bool,
+    clip_pointing: bool,
     vla_image: bool,
     converted_pointing: Option<(usize, MDirection)>,
     pub(super) autocorrelations: bool,
@@ -42,78 +43,35 @@ impl MosaicLayout {
         record: &RecordValue,
         row: &FourierRow<'_>,
         (direction, vla_image): (&DirectionCoordinate, bool),
-        geometry: &GridGeometry,
-        polarization: &PolarizationRouting,
+        (geometry, polarization): (&GridGeometry, &PolarizationRouting),
         reference_hz: f64,
         convert_frequencies: bool,
+        scratch: bool,
     ) -> Result<(Box<dyn ConvolutionFunctionSet>, Self), GainSolveError> {
         let Some(Value::Record(beam)) = record.get("pbconvfunc") else {
             return Err(model_error("virtual mosaic has no beam convolution record"));
         };
-        if record_text(beam, "name")? != "HetArrayConvFunc" {
-            return Err(model_error(
-                "virtual mosaic requires an array beam convolution",
-            ));
-        }
-        let telescope = row
-            .ms
-            .observation()
-            .map_err(model_error)?
-            .string(row.row.observation_id as usize, "TELESCOPE_NAME")
-            .map_err(model_error)?;
         let rules = saved::rules(record, beam);
         let legacy = rules == MosaicRules::Simulator;
+        let common = match record_text(beam, "name")? {
+            "HetArrayConvFunc" => false,
+            "SimplePBConvFunc" if legacy => true,
+            _ => return Err(model_error("unrecognized virtual mosaic beam convolution")),
+        };
         let (window, complete_window) =
             beam_window(row, convert_frequencies, legacy.then_some(record))?;
-        // HetArrayConvFunc::fromRecord clears its remembered MS. On the
-        // first buffer of that MS it regenerates the legacy convolution
-        // with the current antenna metadata.
-        let mut loaded = if legacy {
-            None
+        let (kernels, antenna_classes) = if common {
+            common_kernels(record, row, geometry, polarization, &window, scratch)?
         } else {
-            saved::planes(record, beam, &window)?
-        };
-        if loaded.is_none()
-            && let Some(complete) = complete_window
-            && window
-                .shares_beam_frequencies(&complete, rules)
-                .map_err(model_error)?
-        {
-            loaded = saved::planes(record, beam, &complete)?;
-        }
-        let class = saved::integer(beam, "pbclass")?;
-        let (kernels, antenna_classes) = if class == 8 {
-            let path = std::path::Path::new(record_text(beam, "vptable")?);
-            let beams = image_beam::ImageBeams::load(path, row)?;
-            let kernels =
-                match restore(rules, geometry, polarization, &window, loaded, beams.len())? {
-                    Some(kernels) => kernels,
-                    None => image_kernels(
-                        geometry,
-                        direction,
-                        polarization,
-                        reference_hz,
-                        window,
-                        &beams,
-                    )?,
-                };
-            (kernels, beams.classes)
-        } else {
-            let (dishes, classes) = antenna_beams(row, geometry, &telescope, class, beam, rules)?;
-            let kernels =
-                match restore(rules, geometry, polarization, &window, loaded, dishes.len())? {
-                    Some(kernels) => kernels,
-                    None => MosaicPb::new(
-                        rules,
-                        geometry,
-                        polarization,
-                        reference_hz,
-                        &dishes,
-                        &[window],
-                    )
-                    .map_err(model_error)?,
-                };
-            (kernels, classes)
+            array_kernels(
+                (record, beam),
+                row,
+                (direction, geometry),
+                polarization,
+                reference_hz,
+                rules,
+                (window, complete_window),
+            )?
         };
         let grid = geometry.image();
         Ok((
@@ -124,10 +82,11 @@ impl MosaicLayout {
                 shape: grid.shape,
                 increment: grid.increment_rad,
                 antenna_classes,
-                legacy: rules == MosaicRules::Simulator,
+                legacy,
+                clip_pointing: legacy && !common,
                 vla_image,
                 converted_pointing: None,
-                autocorrelations: rules == MosaicRules::Simulator
+                autocorrelations: legacy
                     && matches!(
                         record.get("usezero"),
                         Some(Value::Scalar(casa_types::ScalarValue::Bool(true)))
@@ -175,7 +134,7 @@ impl MosaicLayout {
                 .map_err(model_error)?
         };
         let (longitude, latitude) = pointing.as_angles();
-        if self.legacy {
+        if self.clip_pointing {
             // HetArrayConvFunc truncates to integer image pixels and returns
             // empty convolution support for pointings outside the grid.
             let Ok(pixel) = self.direction.world_to_pixel([longitude, latitude]) else {
@@ -208,6 +167,102 @@ impl MosaicLayout {
         };
         Ok([first, second])
     }
+}
+
+fn array_kernels(
+    (record, beam): (&RecordValue, &RecordValue),
+    row: &FourierRow<'_>,
+    (direction, geometry): (&DirectionCoordinate, &GridGeometry),
+    polarization: &PolarizationRouting,
+    reference_hz: f64,
+    rules: MosaicRules,
+    (window, complete_window): (MosaicWindow, Option<MosaicWindow>),
+) -> Result<(MosaicPb, Vec<u8>), GainSolveError> {
+    let legacy = rules == MosaicRules::Simulator;
+    let telescope = row
+        .ms
+        .observation()
+        .map_err(model_error)?
+        .string(row.row.observation_id as usize, "TELESCOPE_NAME")
+        .map_err(model_error)?;
+    // HetArrayConvFunc::fromRecord clears its remembered MS. On the
+    // first buffer of that MS it regenerates the legacy convolution
+    // with the current antenna metadata.
+    let mut loaded = if legacy {
+        None
+    } else {
+        saved::planes(record, beam, &window)?
+    };
+    if loaded.is_none()
+        && let Some(complete) = complete_window
+        && window
+            .shares_beam_frequencies(&complete, rules)
+            .map_err(model_error)?
+    {
+        loaded = saved::planes(record, beam, &complete)?;
+    }
+    let class = saved::integer(beam, "pbclass")?;
+    let result = if class == 8 {
+        let path = std::path::Path::new(record_text(beam, "vptable")?);
+        let beams = image_beam::ImageBeams::load(path, row)?;
+        let kernels = match restore(rules, geometry, polarization, &window, loaded, beams.len())? {
+            Some(kernels) => kernels,
+            None => image_kernels(
+                geometry,
+                direction,
+                polarization,
+                reference_hz,
+                window,
+                &beams,
+            )?,
+        };
+        (kernels, beams.classes)
+    } else {
+        let (dishes, classes) = antenna_beams(row, geometry, &telescope, class, beam, rules)?;
+        let kernels = match restore(rules, geometry, polarization, &window, loaded, dishes.len())? {
+            Some(kernels) => kernels,
+            None => MosaicPb::new(
+                rules,
+                geometry,
+                polarization,
+                reference_hz,
+                &dishes,
+                &[window],
+            )
+            .map_err(model_error)?,
+        };
+        (kernels, classes)
+    };
+    Ok(result)
+}
+
+fn common_kernels(
+    record: &RecordValue,
+    row: &FourierRow<'_>,
+    geometry: &GridGeometry,
+    polarization: &PolarizationRouting,
+    window: &MosaicWindow,
+    scratch: bool,
+) -> Result<(MosaicPb, Vec<u8>), GainSolveError> {
+    let telescope = record_text(record, "telescope")?;
+    let frequency = if scratch {
+        row.ms
+            .spectral_window()
+            .map_err(model_error)?
+            .ref_frequency(0)
+            .map_err(model_error)?
+    } else {
+        // MosaicFT::fromRecord recreates its VPSkyJones at 1 THz.
+        1.0e12
+    };
+    let beam = PrimaryBeam::for_telescope(telescope, frequency)
+        .ok_or_else(|| model_error(format!("no legacy common mosaic beam for {telescope}")))?;
+    let kernels =
+        MosaicPb::simple_screens(geometry, polarization, beam, std::slice::from_ref(window))
+            .and_then(|screens| screens.finish())
+            .map_err(model_error)?;
+    let antennas = row.ms.antenna().map_err(model_error)?;
+    Ok((kernels, vec![0; antennas.row_count()]))
 }
 
 fn restore(
