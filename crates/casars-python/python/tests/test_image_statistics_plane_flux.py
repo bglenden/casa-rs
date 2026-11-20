@@ -75,9 +75,34 @@ def test_box_flux_integrates_selected_channels_after_applying_each_beam(casa, al
         assert "flux" not in image.statistics(region=selection, axes=[0, 1, 3], algorithm=algorithm)
         single_plane = regionmanager.box([0, 0, 1, 2], [3, 2, 1, 2])
         np.testing.assert_allclose(image.statistics(region=single_plane, algorithm=algorithm)["flux"], [density[1, 2]])
-        one_channel = regionmanager.box([0, 0, 0, 1], [3, 2, 1, 1])
-        np.testing.assert_allclose(image.statistics(axes=[0, 1], region=one_channel, algorithm=algorithm)["flux"], density[:, 1])
         assert image.done()
+
+
+def test_single_selected_channel_uses_each_stokes_beam(casa):
+    left, values, _ = _image(tools)
+    right, _, _ = _image(casa)
+    one_channel = casa.regionmanager().box([0, 0, 0, 1], [3, 2, 1, 1])
+    left_result = left.statistics(axes=[0, 1], region=one_channel)
+    right_result = right.statistics(axes=[0, 1], region=one_channel)
+    _assert_value(left_result["npts"], right_result["npts"])
+    _assert_value(left_result["sum"], right_result["sum"])
+    np.testing.assert_allclose(left_result["flux"], _expected_density(values)[:, 1])
+    # On a one-channel selection CASA uses Stokes I's beam for both planes.
+    area_i = np.pi / (2 * np.log(2))
+    np.testing.assert_allclose(right_result["flux"], values.sum(axis=(0, 1))[:, 1] / area_i)
+    assert left.done() and right.done()
+
+
+def test_excluded_plane_preserves_the_shape_of_the_flux_array(casa):
+    left, values, _ = _image(tools)
+    right, _, _ = _image(casa)
+    expected = _expected_density(values)
+    expected[1, 1] = 0.0
+    left_result = left.statistics(axes=[0, 1], excludepix=[5, 5])
+    right_result = right.statistics(axes=[0, 1], excludepix=[5, 5])
+    np.testing.assert_allclose(left_result["flux"], expected)
+    _assert_value(left_result, right_result)
+    assert left.done() and right.done()
 
 
 def test_individual_beam_flux_after_all_native_write_reopen_pairings(casa, tmp_path):
