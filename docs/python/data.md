@@ -94,6 +94,10 @@ Use `ia.modify(cl.torecord(), subtract=False)` to add a component model to a
 float image. The default subtracts the model. A region limits the pixel
 section. CASA validates an explicit mask and applies the edit to the stored
 pixels in that section.
+Use `ia.imageconcat(infiles=["a.im", "b.im"], axis=0)` for a temporary
+concatenation, or give `outfile` for a native image. The default
+concatenation axis is spectral. `reorder=True` sorts inputs along the
+selected coordinate. Virtual modes are tracked in #1749.
 Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
 float or complex image. Use `update=True` to validate the selected native
 pixel mask after replacement.

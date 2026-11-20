@@ -107,7 +107,7 @@ pub(super) fn raised(error: impl std::fmt::Display) -> PyErr {
 impl ImageHandle {
     pub(super) fn open(path: &Path) -> Result<Self, ImageError> {
         if path.is_file() {
-            return Self::open_fits(path);
+            return Self::open_fits(path, FitsToolImport::open(path, 0, -1)?);
         }
         Ok(match AnyPagedImage::open(path)? {
             AnyPagedImage::Float32(image) => Self::Float(Storage::Paged(Box::new(image))),
@@ -117,8 +117,14 @@ impl ImageHandle {
         })
     }
 
-    fn open_fits(path: &Path) -> Result<Self, ImageError> {
-        let mut source = FitsToolImport::open(path, 0, -1)?;
+    pub(super) fn open_for_concatenation(path: &Path) -> Result<Self, ImageError> {
+        if path.is_file() {
+            return Self::open_fits(path, FitsToolImport::open_for_concatenation(path)?);
+        }
+        Self::open(path)
+    }
+
+    fn open_fits(path: &Path, mut source: FitsToolImport) -> Result<Self, ImageError> {
         if source.is_tile_compressed() {
             return Err(ImageError::CasaSelection(format!(
                 "No data in the zeroth or first extension of {}",

@@ -7342,6 +7342,16 @@ already open, CASA reports that it is in the table cache. Casa-rs rejects
 overwriting existing entries inside the source image before staging the
 cutout.
 
+## Paged image concatenation can remove a source image or mask
+
+CASA 6.7.6.14 accepts `imageconcat(overwrite=True)` with an existing output
+directory that contains an input. It removes the nested image before failing
+to read its pixels. Replacing an input's mask subtable as the output can also
+succeed, leaving the input mask unreadable because the new table has no
+`PagedArray` column. Casa-rs raises a Python error before either replacement.
+A new output directory inside a source image is supported when no existing
+subtable is replaced.
+
 ## imsubimage permutes coordinate labels after dropping transposed axes
 
 In CASA 6.7.6.14, take a cube in RA, Dec, Stokes, frequency order and

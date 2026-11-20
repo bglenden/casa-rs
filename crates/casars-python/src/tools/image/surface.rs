@@ -633,7 +633,7 @@ const METHODS: &[Method] = &[
             param("mode", K::Text, Text("paged")),
         ],
         R::Any,
-        No,
+        Status::Partial,
     ),
     method(
         "insert",

@@ -42,7 +42,7 @@ IMPLEMENTED["calibrater"] = {
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit",
 }
-PARTIAL = {"calibrater": {"setmodel", "setsolve"}}
+PARTIAL = {"calibrater": {"setmodel", "setsolve"}, "image": {"imageconcat"}}
 
 IMPLEMENTED["coordsys"] = {
     "increment", "referencevalue",
