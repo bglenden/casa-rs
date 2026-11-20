@@ -954,6 +954,9 @@ matrices are converted to double precision, as in CASA.</p>
 <code>ia.sethistory(origin, messages)</code> to append provenance. For an image with stored
 restoring beams, <code>ia.restoringbeam()</code> reads the beam quantities and
 <code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid.
+Use <code>ia.summary(list=False)</code> to read the shape, coordinate axes, mask names
+and restoring beams and return the two report messages. The default
+<code>list=True</code> sends the report to the logger.
 Use <code>ia.makecomplex("output.im", "imaginary.im")</code> to combine the attached
 real image with a conformant real image of matching precision. A supplied
 region selects the same section from both inputs. The output copies the real
