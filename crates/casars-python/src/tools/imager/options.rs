@@ -55,8 +55,8 @@ impl TransformArguments<'_> {
         previous.gridder = match machine.as_str() {
             "wproject" => ImagerGridder::w_project(self.planes),
             "mosaic" => ImagerGridder::Mosaic,
-            "sd" | "both" => ImagerGridder::Spheroidal,
-            "pbwproject" | "pbmosaic" | "awproject" | "mawproject" => {
+            "sd" | "both" | "pbwproject" | "pbmosaic" => ImagerGridder::Spheroidal,
+            "awproject" | "mawproject" => {
                 return not_yet_implemented_in(
                     "imager",
                     "setoptions for this Fourier machine",
