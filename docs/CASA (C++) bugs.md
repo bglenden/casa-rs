@@ -4049,6 +4049,27 @@ The paired oracle computes both the selected sample flags and the
 original-axis row status, including a whole-scan control where CASA
 writes the same row flags.
 
+## An invalid flagdata interval can yield inconsistent time-averaged flags
+
+In CASA 6.7.6.14, run `flagdata(mode="clip", timeavg=True, timebin="40s",
+clipminmax=[1.2, 2.2], ntime="-1s")` on fresh copies of the same 120-row
+fixture. Consecutive calls in one process can flag 324 or 674 samples.
+The same inconsistency occurs with `ntime=float("nan")`. The handler
+warns and leaves its interval uninitialized. casa-rs uses the default
+scan interval, which consistently flags the same 324 samples as explicit
+`ntime="scan"`. The original parameter is recorded in HISTORY.
+[`flagdata_routine_controls_oracle.py`](../tools/casa-compat/flagdata_routine_controls_oracle.py)
+
+## Flagdata report display can stall in headless CASA
+
+With CASA 6.7.6.14 in a headless Python installation without
+`casaplotserver`, `flagdata(mode="summary", action="calculate", display="report")`
+reports the missing module and fails to return within ten seconds. The
+casa-rs headless provider returns the ordinary summary record and preserves
+the input flags and metadata. The oracle checks the returned record against
+pinned CASA's summary with display disabled.
+[`flagdata_routine_controls_oracle.py`](../tools/casa-compat/flagdata_routine_controls_oracle.py)
+
 ## Weight clipping can ignore defined channel weights
 
 In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="WEIGHT_SPECTRUM")`

@@ -110,9 +110,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         Err(error)
     })?;
     request.time_chunk = time_chunk;
-    let display = task.required_text("display")?;
-    if matches!(display.as_str(), "data" | "report" | "both") {
-        tracing::warn!(%display, "running flagdata with its headless provider");
+    let display_option = task.required_text("display")?;
+    if matches!(display_option.as_str(), "data" | "report" | "both") {
+        tracing::warn!(display = %display_option, "running flagdata with its headless provider");
     }
     let path = task.path("vis")?;
     // The CASA task derives persistence from action, including when the
@@ -456,6 +456,7 @@ fn time_chunk_argument(task: &TaskInvocation<'_>) -> Result<Option<f64>, TaskFai
         None => return Ok(None),
         Some(ParameterValue::String(text)) if text == "scan" => return Ok(None),
         Some(ParameterValue::String(text)) => {
+            let text = text.split('\0').next().unwrap_or_default();
             let quantity = Quantity::read(text)
                 .map_err(|error| TaskFailure::execution(error.to_string()).at("ntime"))?;
             let seconds = match quantity.unit().name() {

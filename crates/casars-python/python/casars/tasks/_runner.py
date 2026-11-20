@@ -571,10 +571,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
         if duration is None:
             errors["ntime"] = ["null value not allowed"] * 3
         elif isinstance(duration, cfloat):
-            seconds = float(duration)
-            values["ntime"] = seconds if isfinite(seconds) else (
-                "scan" if isnan(seconds) or seconds > 0 else 0.0
-            )
+            values["ntime"] = float(duration)
         elif not isinstance(duration, str):
             errors["ntime"] = ["must be of cFloat type", "must be of cStr type"]
     for parameter, expected, casa_type in (
@@ -584,6 +581,7 @@ def _coerce_flagdata_options(values: dict[str, Any]) -> str | None:
         ("basecnt", bool, "cBool"),
         ("fieldcnt", bool, "cBool"),
         ("name", str, "cStr"),
+        ("display", str, "cStr"),
         ("timebin", str, "cStr"),
         ("minrel", cfloat, "cFloat"),
         ("maxrel", cfloat, "cFloat"),
