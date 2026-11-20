@@ -599,11 +599,17 @@ fn decode_entries(record: &RecordValue) -> Result<Vec<Entry>, GainSolveError> {
                     EntrySelection::Rows(entry.index_combination),
                     &entry.container,
                 )?;
-                // Native SDGrid recipes keep the original iterator span
-                // for interpolation, including its single-channel bypass.
-                if matches!(model.prediction, Prediction::SingleDish(_))
-                    && entry.container.get("casars_live_image_frequency").is_some()
-                {
+                // These native recipes replay the writer's channel span.
+                // The SDGrid span also controls its single-channel bypass.
+                let saved_span = match entry.container.get("name") {
+                    Some(Value::Scalar(ScalarValue::String(name))) => {
+                        matches!(name.as_str(), "nPBWProjectFT" | "PBMosaicFT")
+                            || (name == "SDGrid"
+                                && entry.container.get("casars_live_image_frequency").is_some())
+                    }
+                    _ => false,
+                };
+                if saved_span {
                     if entry
                         .channel_selection
                         .iter()
@@ -611,7 +617,7 @@ fn decode_entries(record: &RecordValue) -> Result<Vec<Entry>, GainSolveError> {
                             spw < 0 || start < 0 || count <= 0 || step <= 0
                         })
                     {
-                        return Err(model_error("invalid saved SDGrid channel selection"));
+                        return Err(model_error("invalid saved Fourier channel selection"));
                     }
                     model.scratch_channels = entry.channel_selection;
                 }

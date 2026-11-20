@@ -148,7 +148,12 @@ impl PyImageTool {
             let image = image.lock();
             image.check_single_precision("name")?;
             let Some(path) = image.path() else {
-                return Ok("Temporary_Image".into());
+                let name = if image.image_type_name() == "ImageExpr" {
+                    ""
+                } else {
+                    "Temporary_Image"
+                };
+                return Ok(name.into());
             };
             if strippath {
                 Ok(path

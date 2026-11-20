@@ -7,6 +7,14 @@ use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
 
 use super::{AnyPagedImage, ImageError, ImagePixel, ImagePixelType, PagedImage};
 
+fn open_read_locked_table(path: &Path, attempts: u32) -> Result<Table, ImageError> {
+    Ok(Table::open_with_lock_attempts(
+        TableOptions::new(path),
+        LockOptions::new(LockMode::AutoLocking),
+        attempts,
+    )?)
+}
+
 impl AnyPagedImage {
     /// Opens an existing image and retains a read lock on its table.
     ///
@@ -15,31 +23,45 @@ impl AnyPagedImage {
     /// acquire a write lock before a mutation with [`PagedImage::lock`].
     pub fn open_with_lock(path: impl AsRef<Path>, attempts: u32) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
-        let table = Table::open_with_lock_attempts(
-            TableOptions::new(&path),
-            LockOptions::new(LockMode::AutoLocking),
-            attempts,
-        )?;
+        let table = open_read_locked_table(&path, attempts)?;
         let kind = ImagePixelType::from_primitive_type(
             PagedImage::<f32>::map_column_primitive_type(&table, None)?,
         )?;
         match kind {
-            ImagePixelType::Float32 => PagedImage::from_locked_disk(path, table).map(Self::Float32),
-            ImagePixelType::Float64 => PagedImage::from_locked_disk(path, table).map(Self::Float64),
+            ImagePixelType::Float32 => {
+                PagedImage::from_locked_disk(path, table, 0).map(Self::Float32)
+            }
+            ImagePixelType::Float64 => {
+                PagedImage::from_locked_disk(path, table, 0).map(Self::Float64)
+            }
             ImagePixelType::Complex32 => {
-                PagedImage::from_locked_disk(path, table).map(Self::Complex32)
+                PagedImage::from_locked_disk(path, table, 0).map(Self::Complex32)
             }
             ImagePixelType::Complex64 => {
-                PagedImage::from_locked_disk(path, table).map(Self::Complex64)
+                PagedImage::from_locked_disk(path, table, 0).map(Self::Complex64)
             }
         }
     }
 }
 
 impl<T: ImagePixel> PagedImage<T> {
-    fn from_locked_disk(path: PathBuf, table: Table) -> Result<Self, ImageError> {
-        let tiled_io = Self::open_tiled_io(&path, 0).ok().map(RefCell::new);
-        Self::from_disk(path, table, tiled_io, 0)
+    pub(crate) fn open_read_locked_with_cache(
+        path: &Path,
+        max_cache_bytes: usize,
+    ) -> Result<Self, ImageError> {
+        let table = open_read_locked_table(path, 0)?;
+        Self::from_locked_disk(path.to_path_buf(), table, max_cache_bytes)
+    }
+
+    fn from_locked_disk(
+        path: PathBuf,
+        table: Table,
+        max_cache_bytes: usize,
+    ) -> Result<Self, ImageError> {
+        let tiled_io = Self::open_tiled_io(&path, max_cache_bytes)
+            .ok()
+            .map(RefCell::new);
+        Self::from_disk(path, table, tiled_io, max_cache_bytes)
     }
 
     /// Acquires a casacore-compatible table lock on a locking-enabled image.

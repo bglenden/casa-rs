@@ -6,6 +6,7 @@ Run with CASA's Python. Output images are temporary; expected.json holds their
 pixel values, masks and sampled WCS for offline checks and live CASA readback.
 """
 
+import copy
 import json
 import os
 import shutil
@@ -135,9 +136,105 @@ def make_inputs():
     region = rg.wbox(blc=["1pix", "1pix"], trc=["3pix", "4pix"],
                      pixelaxes=[0, 1], csys=cs.torecord())
     assert rg.tofile("box.rgn", region)
+    make_compound_regions(ia, cs.torecord(), rg)
+    make_extended_regions(ia, cs.torecord(), rg)
+    for name, lower, upper, stride in [
+        ("stride", [0, 1, 0, 0], [5, 5, 3, 3], [2, 2, 1, 2]),
+        ("stride_degenerate", [0, 1, 1, 0], [5, 5, 2, 1], [2, 2, 3, 4]),
+        ("stride_tabular", [0, 0, 0, 0], [3, 2, 1, 0], [2, 1, 1, 1]),
+    ]:
+        assert rg.tofile(name + ".rgn", rg.box(blc=lower, trc=upper, inc=stride))
     rg.done()
     cs.done()
     ia.done()
+
+
+def make_compound_regions(ia, coords, rg):
+    def box(low, high, axes=(0, 1, 3)):
+        return rg.wbox(blc=[f"{p}pix" for p in low], trc=[f"{p}pix" for p in high],
+                       pixelaxes=list(axes), csys=coords)
+
+    a = box([0, 1, 0], [3, 3, 2])
+    b = box([2, 2, 1], [5, 5, 3])
+    inputs = {"*1": a, "*2": b}
+    union = rg.makeunion(inputs)
+    ellipse = rg.fromtext("ellipse[[4pix, 3pix], [1pix, 0.7pix], 25deg]", ia.shape(), coords)
+    circle = rg.fromtext("circle[[2pix, 2.5pix], 1pix]", ia.shape(), coords)
+    polygon = rg.fromtext(POLY, ia.shape(), coords)
+    pair = {"*1": polygon, "*2": box([1, 1, 1], [4, 3, 2])}
+    for name, region in [
+        ("union", union),
+        ("intersection", rg.intersection(inputs)),
+        ("difference", rg.difference(a, b)),
+        ("complement", rg.complement(a)),
+        ("nested", rg.difference(union, box([0, 1, 0], [1, 3, 3]))),
+        ("nonoverlap", rg.intersection({"*1": a, "*2": box([4, 0, 0], [5, 1, 0])})),
+        ("mixed", rg.makeunion({"*1": a, "*2": ellipse})),
+        ("masked_edge", rg.difference(circle, box([2, 2], [2, 2], axes=(0, 1)))),
+        ("polygon_transposed", rg.intersection(pair)),
+    ]:
+        assert rg.tofile(f"saved_compound_{name}.rgn", region)
+
+
+def make_extended_regions(ia, coords, rg):
+    def box(axes, low, high):
+        return rg.wbox(blc=[f"{p}pix" for p in low], trc=[f"{p}pix" for p in high],
+                       pixelaxes=axes, csys=coords)
+
+    qualified = rg.fromtext(POLY + ", range=[1pix,2pix], corr=[Q]", ia.shape(), coords)
+    extension = box([3, 2], [0, 1], [2, 2])
+
+    def stretched(last):
+        original = box([0, 1, 3], [1, 1, 1], [4, 3, last])
+        return {"name": "WCExtension", "isRegion": 2, "comment": "",
+                "regions": {"*1": original, "*2": extension, "nr": 2}}
+
+    first = box([0, 1], [0, 1], [2, 4])
+    second = box([0, 1], [3, 2], [4, 4])
+    members = {"*1": first, "*2": second}
+
+    def concatenated(end):
+        region = rg.concatenation(box=box([3], [1], [end]), regions=members)
+        # RegionManager repeats its first argument when building the record.
+        # Store distinct members to exercise the actual casacore reader.
+        region["regions"]["*2"] = second
+        return region
+
+    polygons = {"*1": rg.fromtext(POLY, ia.shape(), coords),
+                "*2": rg.fromtext("poly[[0pix,2pix],[2pix,2pix],[2pix,4pix],[0pix,4pix]]",
+                                  ia.shape(), coords)}
+    polygon_stack = rg.concatenation(box=box([3], [1], [2]), regions=polygons)
+    polygon_stack["regions"]["*2"] = polygons["*2"]
+    wrong_frame = copy.deepcopy(concatenated(2))
+    spectral = wrong_frame["box"]["coordinates"]["spectral2"]
+    spectral["system"] = "BARY"
+    spectral["conversion"]["system"] = "BARY"
+
+    sky = casatools.image()
+    assert sky.open("relative_sky.im")
+    sky_cs = sky.coordsys()
+    sky_coords = sky_cs.torecord()
+    original = rg.wbox(blc=["2pix"],trc=["2pix"],pixelaxes=[1],csys=sky_coords)
+    target = rg.wbox(blc=["-1pix","0pix"],trc=["1pix","1pix"],pixelaxes=[0,1],
+                    csys=sky_coords,absrel="relref")
+    stretch = {"name":"WCExtension","isRegion":2,"comment":"",
+               "regions":{"*1":original,"*2":target,"nr":2}}
+    sibling = rg.wbox(blc=["4pix","3pix"],trc=["5pix","4pix"],pixelaxes=[0,1],csys=sky_coords)
+    nested = rg.makeunion({"*1":stretch,"*2":sibling})
+    sky_cs.done()
+    sky.done()
+
+    for name, region in [
+        ("extension", qualified),
+        ("stretch", stretched(1)),
+        ("stretch_invalid", stretched(2)),
+        ("concat", concatenated(2)),
+        ("concat_invalid", concatenated(3)),
+        ("concat_polygons", polygon_stack),
+        ("concat_frame_invalid", wrong_frame),
+        ("nested_relative", nested),
+    ]:
+        assert rg.tofile(f"saved_axis_{name}.rgn", region)
 
 
 def history_marker(image):
@@ -245,6 +342,21 @@ def capture_cases(output):
     capture("saved_relative_disjoint", region="relative_disjoint.rgn", error=True)
     capture("saved_relative_pixels_world", "relative_sky.im", region="relative_pixels_world.rgn")
     capture("saved_relative_wide", "relative_wide.im", region="relative_wide.rgn", error=True)
+    for label in ("union", "intersection", "difference", "complement", "nested", "nonoverlap", "mixed"):
+        name = "saved_compound_" + label
+        capture(name, region=name + ".rgn", error=label == "nonoverlap")
+    capture("saved_compound_masked_edge", region="saved_compound_masked_edge.rgn")
+    capture("saved_compound_polygon_transposed", "transposed.im", region="saved_compound_polygon_transposed.rgn")
+    capture("saved_stride", region="stride.rgn")
+    capture("saved_stride_mask", region="stride.rgn", mask='"cube.im" > 195')
+    capture("saved_stride_stretch", region="stride.rgn", mask='"stretch.im" > 200', stretch=True)
+    capture("saved_stride_drop", region="stride_degenerate.rgn", dropdeg=True, keepaxes=[3])
+    capture("saved_stride_tabular", "axis_maps/tabular_spectral_first.image", region="stride_tabular.rgn")
+    for label in ("extension", "stretch", "stretch_invalid", "concat", "concat_invalid",
+                  "concat_polygons", "concat_frame_invalid"):
+        name = "saved_axis_" + label
+        capture(name, region=name + ".rgn", error=label.endswith("_invalid"))
+    capture("saved_axis_nested_relative", "relative_sky.im", region="saved_axis_nested_relative.rgn")
     capture("saved_box_conflict", "plane.im", region="saved.rgn", box="0,0,4,4", error=True)
     capture("saved_chans_conflict", region="box.rgn", chans="1", error=True)
     capture("saved_stokes_conflict", region="box.rgn", stokes="Q", error=True)

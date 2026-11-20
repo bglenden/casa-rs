@@ -10,9 +10,47 @@
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, StokesCoordinate, StokesType,
 };
+use casa_lattices::{TraversalCursorIter, TraversalSpec};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{ImageError, ImageInterface, ImagePixel, PagedImage};
+
+pub(super) struct StridedSection<'a> {
+    pub(super) start: &'a [usize],
+    /// Counts of selected pixels on each axis.
+    pub(super) shape: &'a [usize],
+    pub(super) stride: &'a [usize],
+}
+
+impl StridedSection<'_> {
+    pub(super) fn cursors(&self, dense_cursor: Vec<usize>) -> TraversalCursorIter {
+        // Reading a strided tile may fetch its dense enclosing box. Keep that
+        // box bounded by the chosen source tile on every axis.
+        let packed = dense_cursor
+            .into_iter()
+            .zip(self.stride)
+            .map(|(size, &step)| size.div_ceil(step).max(1))
+            .collect::<Vec<_>>();
+        TraversalCursorIter::new(self.shape.to_vec(), packed, TraversalSpec::tiles())
+    }
+
+    pub(super) fn source_start(&self, position: &[usize]) -> Vec<usize> {
+        position
+            .iter()
+            .zip(self.start)
+            .zip(self.stride)
+            .map(|((&offset, &start), &step)| start + offset * step)
+            .collect()
+    }
+
+    pub(super) fn dense_shape(&self, shape: &[usize]) -> Vec<usize> {
+        shape
+            .iter()
+            .zip(self.stride)
+            .map(|(&count, &step)| (count - 1) * step + 1)
+            .collect()
+    }
+}
 
 /// The pixel axes of `image`'s direction plane, (longitude, latitude):
 /// its direction coordinate's wherever they are, or the first two axes of an
@@ -202,6 +240,15 @@ pub(super) fn shift_record_reference_pixels(
     start: &[usize],
     shape: &[usize],
 ) -> Result<(), ImageError> {
+    section_record_reference_pixels(record, start, shape, None)
+}
+
+pub(super) fn section_record_reference_pixels(
+    record: &mut RecordValue,
+    start: &[usize],
+    shape: &[usize],
+    stride: Option<&[usize]>,
+) -> Result<(), ImageError> {
     let placed = CoordinateSystem::record_coordinates(record).map_err(|error| {
         ImageError::InvalidMetadata(format!("subimage coordinate system: {error}"))
     })?;
@@ -211,15 +258,24 @@ pub(super) fn shift_record_reference_pixels(
             .iter()
             .map(|axis| axis.map_or(0.0, |axis| start[axis] as f64))
             .collect::<Vec<_>>();
+        let steps = stride.map(|stride| {
+            coordinate
+                .pixel_axes
+                .iter()
+                .map(|axis| axis.map_or(1.0, |axis| stride[axis] as f64))
+                .collect::<Vec<_>>()
+        });
+        let steps = steps.as_deref().unwrap_or_default();
         let Some(Value::Record(coordinate_record)) = record.get_mut(&coordinate.field) else {
             continue;
         };
         if coordinate.field.starts_with("spectral")
             && let Some(Some(axis)) = coordinate.pixel_axes.first()
-            && casa_coordinates::SpectralCoordinate::subimage_tabular_record(
+            && casa_coordinates::SpectralCoordinate::subimage_tabular_record_with_stride(
                 coordinate_record,
                 start[*axis],
                 shape[*axis],
+                stride.map_or(1, |stride| stride[*axis]),
             )
             .map_err(|error| {
                 ImageError::InvalidMetadata(format!("subimage spectral coordinate: {error}"))
@@ -227,46 +283,79 @@ pub(super) fn shift_record_reference_pixels(
         {
             continue;
         }
-        shift_pixels(coordinate_record, &shifts);
+        section_pixels(coordinate_record, &shifts, steps);
         for parameters in ["wcs", "tabular"] {
             if let Some(Value::Record(inner)) = coordinate_record.get_mut(parameters) {
-                shift_pixels(inner, &shifts);
+                section_pixels(inner, &shifts, steps);
             }
         }
     }
     Ok(())
 }
 
-/// Moves `record`'s `crpix` back by `shifts`, one per axis, and the
-/// `pixelvalues` of its lookup table, which has one axis, by the first.
-fn shift_pixels(record: &mut RecordValue, shifts: &[f64]) {
-    let first = shifts.first().copied().unwrap_or(0.0);
+/// Adjust casacore reference pixels and increments for a section. The
+/// increments scale by the pixel steps, leaving the PC matrix unchanged.
+fn section_pixels(record: &mut RecordValue, shifts: &[f64], steps: &[f64]) {
+    let step = |axis| steps.get(axis).copied().unwrap_or(1.0);
+    let position = |axis, value| (value - shifts.get(axis).copied().unwrap_or(0.0)) / step(axis);
     match record.get_mut("crpix") {
-        Some(Value::Array(array)) => {
-            shift_values(array, |axis| shifts.get(axis).copied().unwrap_or(0.0));
-        }
-        Some(Value::Scalar(ScalarValue::Float64(crpix))) => *crpix -= first,
+        Some(Value::Array(array)) => map_numeric_values(array, position),
+        Some(Value::Scalar(ScalarValue::Float64(crpix))) => *crpix = position(0, *crpix),
         _ => {}
     }
     if let Some(Value::Array(array)) = record.get_mut("pixelvalues") {
-        shift_values(array, |_| first);
+        map_numeric_values(array, |_, value| position(0, value));
+    }
+    if steps.iter().any(|&step| step != 1.0) {
+        match record.get_mut("cdelt") {
+            Some(Value::Array(array)) => {
+                map_numeric_values(array, |axis, value| value * step(axis))
+            }
+            Some(Value::Scalar(ScalarValue::Float64(cdelt))) => *cdelt *= step(0),
+            _ => {}
+        }
     }
 }
 
-/// Subtracts `shift(i)` from element `i` of `array`, a float array.
-fn shift_values(array: &mut ArrayValue, shift: impl Fn(usize) -> f64) {
+/// Transforms the elements of a stored floating-point coordinate array.
+fn map_numeric_values(array: &mut ArrayValue, transform: impl Fn(usize, f64) -> f64) {
     let values = match array {
         ArrayValue::Float64(values) => values
             .iter()
             .enumerate()
-            .map(|(i, value)| *value - shift(i))
+            .map(|(i, value)| transform(i, *value))
             .collect::<Vec<_>>(),
         ArrayValue::Float32(values) => values
             .iter()
             .enumerate()
-            .map(|(i, value)| f64::from(*value) - shift(i))
+            .map(|(i, value)| transform(i, f64::from(*value)))
             .collect::<Vec<_>>(),
         _ => return,
     };
     *array = ArrayValue::from_f64_vec(values);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StridedSection;
+
+    #[test]
+    fn sparse_source_windows_never_exceed_a_dense_cursor() {
+        let section = StridedSection {
+            start: &[1, 3],
+            shape: &[5, 8],
+            stride: &[100_000, 3],
+        };
+        let mut read_count = 0;
+        for cursor in section.cursors(vec![64, 8]) {
+            let cursor = cursor.unwrap();
+            let origin = section.source_start(&cursor.position);
+            let extent = section.dense_shape(&cursor.shape);
+            assert_eq!(extent[0], 1);
+            assert!(extent[1] <= 8);
+            assert_eq!((origin[0] - 1) % 100_000, 0);
+            read_count += 1;
+        }
+        assert_eq!(read_count, 15);
+    }
 }
