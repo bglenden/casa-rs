@@ -10,6 +10,7 @@ mod beam_edit;
 mod beam_rotate;
 mod beam_view;
 mod beams;
+mod bounding_box;
 mod calc;
 mod concatenate;
 mod conformance;

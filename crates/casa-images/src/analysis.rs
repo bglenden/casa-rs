@@ -31,10 +31,10 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::{
-    ImageInsertion, ImagePixelSelection, MaskReplacementOptions, MaskReplacementOutcome,
-    SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
-    put_image_region, replace_masked_complex_pixels, replace_masked_real_pixels,
-    validate_put_region_shapes,
+    ImageInsertion, ImagePixelSelection, ImageRegionBounds, MaskReplacementOptions,
+    MaskReplacementOutcome, SubimageOptions, SubimagePlan, SubimageRegion,
+    ensure_outfile_does_not_alias_input, put_image_region, replace_masked_complex_pixels,
+    replace_masked_real_pixels, validate_put_region_shapes,
 };
 mod list_log;
 mod planes;
@@ -60,7 +60,7 @@ pub use self::importfits::importfits;
 pub use self::imsubimage::ImageNoise;
 pub use self::lel_mask::{
     ImageToolExpressionInputs, compile_image_tool_expression, evaluate_image_tool_mask,
-    evaluate_pixel_expression,
+    evaluate_pixel_expression, open_fits_expression,
 };
 pub use crate::expr_parser::ImageToolPixelExpression;
 mod lel_pixels;

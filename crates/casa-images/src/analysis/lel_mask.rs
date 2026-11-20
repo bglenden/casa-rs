@@ -498,6 +498,51 @@ fn operand_path(base: &Path, spec: &str) -> Option<(PathBuf, Option<String>)> {
     None
 }
 
+/// Open a lazy FITS expression operand with its optional validity mask.
+///
+/// The image and mask share one section reader for the lifetime of the
+/// expression.
+///
+/// # Errors
+/// Returns an error if the file has no supported FITS image.
+pub fn open_fits_expression<T: ImageExprValue + From<f32>>(
+    path: &Path,
+    use_mask: bool,
+) -> Result<ImageExpression<T>, ImageError> {
+    let fits = FitsToolImport::open(path, 0, -1)?;
+    if fits.is_tile_compressed() {
+        return Err(ImageError::CasaSelection(format!(
+            "No data in the zeroth or first extension of {}",
+            path.display(),
+        )));
+    }
+    let reader = Arc::new(SharedFitsSectionReader::new(
+        path.to_path_buf(),
+        fits.hdu_index(),
+        fits.shape().to_vec(),
+    )?);
+    let mask_reader = Arc::clone(&reader);
+    let mask_fn = (fits.has_implicit_mask() && use_mask).then(|| {
+        Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
+            let pixels = mask_reader.read(start, shape, stride)?;
+            Ok(pixels
+                .iter()
+                .any(|value| value.is_nan())
+                .then(|| pixels.mapv(|value| !value.is_nan())))
+        }) as crate::image_expr::OwnedMaskReader
+    });
+    let expression = ImageExprBuilder::from_section_readers(
+        ImageExprMeta::from_fits(&fits, path)?,
+        Arc::new(move |start, shape, stride| {
+            reader
+                .read(start, shape, stride)
+                .map(|pixels| pixels.mapv(<T as From<f32>>::from))
+        }),
+        mask_fn,
+    );
+    expression.compile()
+}
+
 fn open_path_with_mask_name(
     path: &Path,
     mask_name: Option<String>,
@@ -513,39 +558,9 @@ fn open_path_with_mask_name(
                 path.display(),
             )));
         }
-        let fits = FitsToolImport::open(path, 0, -1)?;
-        if fits.is_tile_compressed() {
-            return Err(ImageError::CasaSelection(format!(
-                "No data in the zeroth or first extension of {}",
-                path.display(),
-            )));
-        }
-        let reader = Arc::new(SharedFitsSectionReader::new(
-            path.to_path_buf(),
-            fits.hdu_index(),
-            fits.shape().to_vec(),
-        )?);
-        let mask_reader = Arc::clone(&reader);
-        let mask_fn = (fits.has_implicit_mask() && !ignore_default).then(|| {
-            Arc::new(move |start: &[usize], shape: &[usize], stride: &[usize]| {
-                let pixels = mask_reader.read(start, shape, stride)?;
-                Ok(pixels
-                    .iter()
-                    .any(|value| value.is_nan())
-                    .then(|| pixels.mapv(|value| !value.is_nan())))
-            }) as crate::image_expr::OwnedMaskReader
-        });
-        let expression = ImageExprBuilder::from_section_readers(
-            ImageExprMeta::from_fits(&fits, path)?,
-            Arc::new(move |start, shape, stride| {
-                reader
-                    .read(start, shape, stride)
-                    .map(|pixels| pixels.mapv(f64::from))
-            }),
-            mask_fn,
-        );
+        let expression = open_fits_expression(path, !ignore_default)?;
         return Ok(Operand::Real(
-            MaskSource::Sections(Box::new(expression.compile()?)),
+            MaskSource::Sections(Box::new(expression)),
             true,
         ));
     }
