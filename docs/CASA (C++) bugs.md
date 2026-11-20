@@ -21,6 +21,10 @@ CASA behaviours casa-rs follows for parity:
 CASA behaviours casa-rs does not follow:
 [renaming an image while another tool holds it open](#image-rename-can-move-an-open-table-before-failing-to-reattach),
 [removing an open table through a symbolic link](#image-removal-can-delete-an-open-table-through-a-symbolic-link),
+[reading the validity of a decisive Boolean image expression](#calcmask-can-crash-on-decisive-boolean-validity),
+[calculating an expression with a mixed-precision vector](#calc-can-crash-on-a-mixed-precision-vector),
+[publishing image-calculator output before validating its metadata source](#imagecalc-can-publish-pixels-before-rejecting-the-metadata-source),
+[reading a same-named FITS file after changing the working directory](#imagecalc-can-read-a-different-fits-operand-after-a-directory-change),
 [FITS import of an empty primary HDU](#fits-import-can-abort-on-an-empty-primary-hdu),
 [restoring-beam removal with a malformed record](#beam-removal-can-delete-metadata-before-rejecting-a-record),
 [a Gaussian beam fit to collinear PSF samples](#a-gaussian-beam-fit-to-collinear-psf-samples-is-unstable),
@@ -3927,6 +3931,21 @@ range on FLOAT_DATA uses the signed values, as CASA does. The
 `tools/casa-compat/flagdata_clip_range_oracle.py` comparison verifies both
 choices with independent expected flags.
 
+## Clip visibility operators can flag unrequested samples
+
+In CASA 6.7.6.14, `flagdata(mode="clip", correlation="IMAG_XX")`
+can also flag YY. The visibility mapper scans the operator for product
+names and treats the I in IMAG as a request for Stokes I. The paired
+fixture puts the XX imaginary value outside the range and its derived
+Stokes I value inside it. CASA flags both contributing planes at that
+channel. casa-rs evaluates the explicit XX product.
+
+With `correlation="REAL_XX", clipzeros=True`, CASA compares the signed
+real value to the zero tolerance. A finite value of −3 is flagged.
+casa-rs compares the magnitude to the zero tolerance and uses the
+signed value for any explicit range. The clip operator oracle checks
+both cases against independent expected flags. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## An overflowing observation selector flags a different observation
 
 In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.
@@ -7640,6 +7659,63 @@ the old name and can abort while closing that stale handle. casa-rs refuses
 the move before changing either path while another tool holds the image.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+A lazy `imagecalc` result provides another reproduction. CASA 6.7.6.14
+permits renaming the native operand while the result is attached. Its next
+pixel read fails because the original tile path no longer exists. casa-rs
+retains the operand while the lazy result is open and refuses the rename
+before moving either path.
+
+## `calcmask` can crash on decisive Boolean validity
+
+In CASA 6.7.6.14, create `source.im` as a float image with values
+`[[1, 2], [3, 4]]` and default mask `"source.im" > 2`. On another
+image of shape `[2, 2]`, `calcmask('mask(("source.im" > 0) || T)')`
+and `calcmask('mask(("source.im" > 0) && F)')` terminate Python with
+SIGSEGV. Reversing the operands also crashes. An unmasked image predicate
+can trigger the same failure, for example
+`mask(("source.im" > 2) || (value("source.im") <= 2))`.
+
+casa-rs evaluates validity per pixel. A known true operand makes OR valid,
+and a known false operand makes AND valid. Where neither operand determines
+the result, both operands must be valid. The resulting validity mask is
+all true in these reproductions. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+## `calc` can crash on a mixed-precision vector
+
+With a temporary float image of shape `[3]`, CASA 6.7.6.14 terminates Python
+with SIGSEGV when evaluating `calc("[1, 2.5, 4] + 1", False)` or
+`calc("[-1.25, -2e1, +3.2]", False)`. The inputs mix single and double
+precision scalars in an array literal.
+
+casa-rs promotes those elements using the expression's numeric types and
+stores the results `[2, 3.5, 5]` and `[-1.25, -20, 3.2]` as float pixels.
+[#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+## `imagecalc` can publish pixels before rejecting the metadata source
+
+In CASA 6.7.6.14, evaluate
+`imagecalc('out.im', '"source.im" * 3', True, 'missing.im')` with a valid
+float `source.im` and a missing metadata image. CASA raises `RuntimeError`
+after writing the calculated pixels to `out.im`. If `out.im` already held
+an unrelated image, the same failed call replaces its original pixels.
+
+casa-rs validates the metadata source and stages the product before
+publication. The failed call preserves an existing output and leaves a new
+output path absent. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+## `imagecalc` can read a different FITS operand after a directory change
+
+Create two directories with an `input.fits` of the same shape in each. Give
+the first image pixel value 2 and the second image pixel value 21. In the
+first directory, create a lazy CASA 6.7.6.14 result using
+`imagecalc(pixels='"input.fits" * 3')`. Change to the second directory before
+the first pixel read. CASA returns 63 while keeping the first file's
+metadata. With a native image operand, CASA returns 6 in this sequence.
+
+casa-rs resolves the operand paths when creating the result and returns 6
+with the original FITS metadata. The FITS handle is opened on the first pixel
+read and retained for subsequent reads. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
 ## PlotMS averages disjoint channel selections on a compressed sample grid
 
 With CASA 6.7.6.14, a callibrary, `spw='0:0~2;5~7'` and
@@ -7760,3 +7836,50 @@ track in the image frame.
 [`imager_single_dish_options_oracle.py`](../tools/casa-compat/imager_single_dish_options_oracle.py) ·
 [`imager_single_dish_spectral_oracle.py`](../tools/casa-compat/imager_single_dish_spectral_oracle.py) ·
 [`imager_single_dish_beam_oracle.py`](../tools/casa-compat/imager_single_dish_beam_oracle.py)
+
+## Legacy `pbwproject` virtual recipes lack a machine name
+
+CASA 6.7.6.14 predicts nonzero complex model visibilities in the legacy
+VLA single-W-plane case with a new or existing convolution cache.
+`nPBWProjectFT::toRecord` saves an image and
+transform geometry. It omits the Fourier-machine name and the convolution
+needed to repeat the prediction. Pinned `ms.uvsub` refuses that record
+with `field name is unknown`. Its virtual-model reader also lacks an
+`nPBWProjectFT` constructor.
+
+Casa-rs shares the cache generator with the legacy EP workflow and
+retains the Fourier image and its convolution in a native recipe.
+The CASA image tool opens both images. Native `ms.uvsub` reopens the model
+after the original cache is removed from its path. Both readers refuse
+the incomplete pinned recipe before subtracting a visibility model.
+[`imager_legacy_pbw_oracle.py`](../tools/casa-compat/imager_legacy_pbw_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## FITS export can change axis lengths or abort while removing axes
+
+With CASA 6.7.6.14, export a float image of shape `[3, 4, 2, 1]` with a
+two-plane Stokes axis and one spectral channel using `image.tofits` with
+`deglast=True` and `stokeslast=True`. The output declares two spectral
+channels and two Stokes planes even though the source has only 24 pixels.
+The degenerate-axis pass uses the input extents after the Stokes pass has
+already changed their order. casa-rs writes `[3, 4, 1, 2]` and preserves
+all pixel values and their coordinates.
+
+CASA also raises `Unknown error copying image to FITS file` when moving a
+leading singleton axis in a linear image of shape `[1, 4, 2]` with
+`deglast=True`. casa-rs writes `[4, 2, 1]` with the data in the matching
+axis order, readable in CASA.
+
+On the pinned Linux build, `dropdeg=True` on a `[1, 1, 1, 1]` float image
+can terminate Python with SIGFPE. casa-rs raises `RuntimeError` because no
+image axes would remain. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Image region collapse can select the first pixel or abort
+
+With a 5×4×2 image whose coordinate is linear, CASA 6.7.6.14
+`image.getregion(axes=[0])` can return shape `(1, 1, 2)` with the first
+two input pixels. With the standard coordinates and double-complex
+pixels, the same call can terminate the process.
+
+casa-rs averages valid pixels over the requested axes and retains all
+other axes, for every supported image pixel type (#1627).

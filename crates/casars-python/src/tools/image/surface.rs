@@ -94,11 +94,11 @@ const METHODS: &[Method] = &[
     method(
         "calc",
         &[
-            param("pixels", K::Any, Required),
+            param("pixels", K::Text, Required),
             param("verbose", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "calcmask",
@@ -556,7 +556,7 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "getslice",
@@ -618,7 +618,7 @@ const METHODS: &[Method] = &[
             param("prec", K::Text, Text("float")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "imageconcat",
@@ -1176,8 +1176,8 @@ const METHODS: &[Method] = &[
             param("stretch", K::Bool, Bool(false)),
             param("history", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method("topixel", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("torecord", &[], R::Any, Yes),

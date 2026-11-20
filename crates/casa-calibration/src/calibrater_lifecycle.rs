@@ -20,8 +20,8 @@ use crate::{
     solve_calibration_with_output_mode,
 };
 
-mod ep_cache;
-mod legacy_ep;
+pub(crate) mod ep_cache;
+pub(crate) mod legacy_ep;
 
 use legacy_ep::LegacyEpSolver;
 

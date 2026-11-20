@@ -113,7 +113,7 @@ impl PyImageTool {
             if pixel_position(image.coordinates(), image.shape(), &pixel).is_none() {
                 return Ok(CasaValue::empty_record());
             }
-            attachment.require_lock(&mut image, casa_tables::LockType::Read)?;
+            attachment.require_pixel_read_lock(&mut image)?;
             if let ImageHandle::Float(Storage::Temp {
                 image,
                 fits: Some(fits),
