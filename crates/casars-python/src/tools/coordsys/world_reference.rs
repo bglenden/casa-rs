@@ -519,8 +519,11 @@ pub(super) fn format_world_offsets(
         }
     }
     let mut result = format_world_at(state, world, format, absolute, true, true)?;
-    if !absolute && let CasaValue::Record(fields) = &mut result {
-        fields.insert("ar_type".into(), CasaValue::Text("relative".into()));
+    if !absolute
+        && let CasaValue::Record(fields) = &mut result
+        && let Some((_, tag)) = fields.iter_mut().find(|(name, _)| name == "ar_type")
+    {
+        *tag = CasaValue::Text("relative".into());
     }
     Ok(result)
 }
