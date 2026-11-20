@@ -53,6 +53,10 @@ def configure_data(path, case=""):
         uvw = np.array([
             np.linspace(-2., 2., rows), np.full(rows, .8), np.linspace(.05, 1.8, rows)
         ])
+        if case == "automatic-w":
+            # Exercise several automatic planes. Pinned CASA can return a
+            # nonpositive convolution integral on the short-baseline grid.
+            uvw[2] *= 10.
         tb.putcol("UVW", uvw)
         fields = tb.getcol("FIELD_ID")
         times = tb.getcol("TIME")
@@ -108,7 +112,7 @@ def prediction(path, images, reference, case, factory=imager, custom_vp=None):
     if case in {"wproject", "wvirtual", "automatic-w"}:
         planes = -1 if case == "automatic-w" else 16
         assert tool.setoptions(ftmachine="wproject", padding=1.4, wprojplanes=planes, numthreads=1)
-        assert tool.ft(model=images[:1])
+        assert tool.ft(model=images[:1]), (case, path)
     elif case == "boxcar":
         assert tool.setoptions(gridfunction="BOX", singleprecisiononly=True, cache=131072,
                                tile=8, freqinterp="linear-interpolation")
