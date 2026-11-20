@@ -98,13 +98,38 @@ def compare_overlapping_scans():
             assert not ms.getcol("FLAG_ROW").any()
 
 
+def compare_partly_flagged_channel():
+    for column, bounds in (("outside", [0.5, 1.5]), ("zero", [-0.01, 0.01])):
+        for representation in ("scratch", "virtual"):
+            masks = []
+            for name, task in (("casa", casatasks.flagdata), ("native", tasks.flagdata)):
+                path = f"preflagged-{column}-{representation}-{name}.ms"
+                copytree(f"{representation}.ms", path)
+                with table(path, ack=False, readonly=False) as ms:
+                    flags = ms.getcell("FLAG", 1)
+                    flags[1, 1] = True
+                    ms.putcell("FLAG", 1, flags)
+                assert task(vis=path, field="0", mode="clip", datacolumn="MODEL",
+                            correlation="REAL_XX", clipminmax=bounds,
+                            clipoutside=False, flagbackup=False) == {}
+                with table(path, ack=False) as ms, casa_table(path) as casa:
+                    flags = ms.getcol("FLAG")
+                    matches = (representation == "virtual") == (column == "zero")
+                    np.testing.assert_array_equal(flags[1, 1], [matches, True])
+                    np.testing.assert_array_equal(casa.getcol("FLAG").transpose(2, 1, 0), flags)
+                    masks.append((flags, ms.getcol("FLAG_ROW")))
+            for expected, actual in zip(*masks, strict=True):
+                np.testing.assert_array_equal(actual, expected)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="flagdata-virtual-fourier-") as directory, chdir(directory):
         prepare_models()
         products = compare_models()
         compare_overlapping_scans()
-    print(f"{products} clipping products agree with CASA virtual and scratch models, plus simultaneous scans")
+        compare_partly_flagged_channel()
+    print(f"{products} ordinary products plus simultaneous scans and four preflagged products agree with CASA")
 
 
 if __name__ == "__main__":

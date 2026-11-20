@@ -4,7 +4,7 @@
 use casa_ms::flagging::{FlagDataModelPredictor, FlaggingError};
 use casa_ms::{MeasurementSet, ResolvedMsSelectionRow};
 use casa_types::Complex32;
-use ndarray::ArrayD;
+use ndarray::{ArrayD, Axis};
 
 use crate::solve::{GainSolveError, grouping::VisibilityModels};
 
@@ -27,8 +27,32 @@ impl FlagDataModelPredictor for VisibilityModels {
         correlations: &[i32],
         flags: &ArrayD<bool>,
     ) -> Result<Option<ArrayD<Complex32>>, FlaggingError> {
-        self.predict(ms, row, correlations, flags)
-            .map_err(|error| model_error(ms, error))
+        if flags.ndim() != 2 {
+            return Err(model_error(
+                ms,
+                GainSolveError::VirtualModel(format!(
+                    "FLAG row {row} must have correlation and channel axes"
+                )),
+            ));
+        }
+        // The flagging iterator supplies the channel flag to the virtual
+        // Fourier machine. Its flag is the union of the stored correlations.
+        let mut channel_flags = None;
+        for (index, channel) in flags.axis_iter(Axis(1)).enumerate() {
+            if channel.iter().any(|&flag| flag) && channel.iter().any(|&flag| !flag) {
+                channel_flags
+                    .get_or_insert_with(|| flags.clone())
+                    .index_axis_mut(Axis(1), index)
+                    .fill(true);
+            }
+        }
+        self.predict(
+            ms,
+            row,
+            correlations,
+            channel_flags.as_ref().unwrap_or(flags),
+        )
+        .map_err(|error| model_error(ms, error))
     }
 }
 
