@@ -7652,7 +7652,8 @@ native `uvsub` reopens the models. An incomplete CASA recipe raises an
 error that identifies the missing settings.
 
 Standalone SDGrid uses the interpolator selected by `freqinterp` for
-scratch prediction. Its native saved recipe retains that choice on reopen.
+scratch prediction. Its native saved recipe retains that choice and the
+original channel span on reopen, including the single-channel bypass.
 GridBoth delegates prediction to its two child transforms. The legacy
 frequency setter updates the parent, so both children use nearest
 neighbour. In the pinned five-plane test, all four methods produce identical

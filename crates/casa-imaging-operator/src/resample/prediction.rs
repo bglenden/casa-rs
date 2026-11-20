@@ -465,6 +465,10 @@ impl SpectralResampler {
                 reason: "sampled spectrum does not match native channel and correlation dimensions",
             });
         }
+        if row.row_flag {
+            output.fill(Complex32::default());
+            return Ok(true);
+        }
         self.validate_legacy_prediction(row.frequencies_hz)?;
         scratch.begin(correlations);
         scratch.predicted.clear();

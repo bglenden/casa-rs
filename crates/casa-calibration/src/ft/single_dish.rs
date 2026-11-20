@@ -470,7 +470,7 @@ fn model_record(
             })
             .collect::<MsResult<Vec<_>>>()?;
         if geometry.settings.frequency_interpolation == 2 && channels < 4 {
-            validate_short_cubic(ms, selected, &input, geometry.frequency_frame_valid)?;
+            validate_short_cubic(ms, selected, &frequencies, geometry.frequency_frame_valid)?;
         }
         record.upsert(
             "casars_live_image_frequency",

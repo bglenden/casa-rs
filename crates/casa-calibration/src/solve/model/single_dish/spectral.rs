@@ -280,5 +280,27 @@ mod tests {
             model.prediction[63 * CORRELATIONS],
             Complex32::new(31.5, 1.)
         );
+        let flagged = NativeRow {
+            row_flag: true,
+            ..native
+        };
+        assert!(
+            model
+                .resampler
+                .predict_sampled_spectrum(
+                    &flagged,
+                    CORRELATIONS,
+                    &mut model.scratch,
+                    &mut model.prediction,
+                    |_, _| panic!("a flagged row must not sample the sky"),
+                )
+                .unwrap()
+        );
+        assert!(
+            model
+                .prediction
+                .iter()
+                .all(|&cell| cell == Complex32::default())
+        );
     }
 }

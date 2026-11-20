@@ -16,14 +16,16 @@ from imager_mosaic_oracle import fixture
 from imager_single_dish_oracle import correlations, prepare_ms, read_virtual
 
 
-def write_cube(template, cube, values):
+def write_cube(template, cube, values, *, start='99999500000Hz', step='2.7MHz', reporting=''):
     tool = image()
     assert tool.open(str(template))
     coords = tool.coordsys()
     assert tool.done()
-    assert coords.setreferencevalue(value='99999500000Hz', type='spectral')
+    assert coords.setreferencevalue(value=start, type='spectral')
     assert coords.setreferencepixel(value=[0.], type='spectral')
-    assert coords.setincrement(value='2.7MHz', type='spectral')
+    assert coords.setincrement(value=step, type='spectral')
+    if reporting:
+        assert coords.setconversiontype(spectral=reporting)
     pixels = np.broadcast_to(np.asarray(values, dtype=np.float32), (320, 320, 1, len(values))).copy()
     assert tool.fromarray(str(cube), pixels, csys=coords.torecord()) and coords.done() and tool.done()
 
@@ -42,15 +44,21 @@ def predict(factory, path, model, mode, method, *, scratch=True, spw=''):
     return result
 
 
-def pair(root, source, model, mode, method, *, virtual=True, spw=''):
+def pair(root, source, model, mode, method, *, virtual=True, spw='', overlap=True):
     from casars.tools import imager as native
 
-    label = f'{mode}-{method}' + ('-channel' if spw else '')
+    label = f'{mode}-{method}' + (f'-{spw.replace(":", "-").replace(";", "-")}' if spw else '')
+    if model.stem != 'cube':
+        label = f'{label}-{model.stem}'
     pinned = root / f'{label}-pinned.ms'
     scratch = root / f'{label}-scratch.ms'
     stored = root / f'{label}-virtual.ms'
     for path in (pinned, scratch):
         prepare_ms(source, path, mode)
+        writer = table()
+        assert writer.open(str(path), nomodify=False)
+        previous = writer.getcol('MODEL_DATA')
+        assert writer.putcol('MODEL_DATA', np.zeros_like(previous)) and writer.done()
     proc = subprocess.run([sys.executable, __file__, '--casa', str(pinned), str(model),
                            mode, method, '--spw', spw], check=False)
     assert proc.returncode in (0, -11) and (root / f'{pinned.name}.prediction-complete').exists()
@@ -60,7 +68,7 @@ def pair(root, source, model, mode, method, *, virtual=True, spw=''):
     products = [actual]
     if virtual:
         prepare_ms(source, stored, mode, scratch=False)
-        assert predict(native, stored, model, mode, method, scratch=False)
+        assert predict(native, stored, model, mode, method, scratch=False, spw=spw)
         saved_method = ('nearest', 'linear', 'cubic', 'spline').index(method) if mode == 'sd' else 0
         products.append(read_virtual(stored, mode, 'BOX', sd_method=saved_method))
     for name, rows in [('autocorrelations', auto), ('cross-correlations', ~auto)]:
@@ -68,7 +76,7 @@ def pair(root, source, model, mode, method, *, virtual=True, spw=''):
             values = expected[..., rows]
             errors = [relative_rms(product[..., rows], values) for product in products]
             print(label, name, errors, flush=True)
-            assert np.abs(values).max() > .1 and max(errors) < 1.e-5
+            assert (np.abs(values).max() > .1) == overlap and max(errors) < 1.e-5
     return expected
 
 
@@ -89,7 +97,7 @@ def run(root):
             else:
                 assert relative_rms(result, nearest) > .05
     nearest = pair(root, source, model, 'sd', 'nearest', virtual=False, spw='0:5')
-    linear = pair(root, source, model, 'sd', 'linear', virtual=False, spw='0:5')
+    linear = pair(root, source, model, 'sd', 'linear', spw='0:5')
     assert np.array_equal(nearest, linear)
     table_tool = table()
     assert table_tool.open(str(source), nomodify=False)
@@ -99,9 +107,16 @@ def run(root):
     row_flags[10] = True
     assert table_tool.putcol('FLAG', flags)
     assert table_tool.putcol('FLAG_ROW', row_flags) and table_tool.done()
-    pair(root, source, model, 'sd', 'cubic', virtual=False, spw='0:1~4;8~10')
+    pair(root, source, model, 'sd', 'cubic', spw='0:1~4;8~10')
     short = root / 'short.im'
     write_cube(template, short, [1., 2., .3])
+    pair(root, source, short, 'sd', 'cubic', spw='0:3')
+    outside = root / 'outside.im'
+    write_cube(template, outside, [1., 2., .3], start='100015000000Hz', step='1MHz')
+    pair(root, source, outside, 'sd', 'cubic', spw='0:0;11', overlap=False)
+    converted = root / 'converted.im'
+    write_cube(template, converted, [1., 2., .3], start='99901000000Hz', reporting='CMB')
+    pair(root, source, converted, 'sd', 'cubic', overlap=False)
     pinned_short = root / 'short-pinned.ms'
     prepare_ms(source, pinned_short, 'sd')
     subprocess.run([sys.executable, __file__, '--casa', str(pinned_short), str(short),
