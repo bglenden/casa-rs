@@ -242,7 +242,10 @@ impl PyImageTool {
                 Ok(output)
             })?;
             if outfile.is_empty() {
-                result.retain_expression_inputs(retained);
+                result.retain_expression_inputs(
+                    retained,
+                    inputs.paths().map(Path::to_path_buf).collect(),
+                );
             }
             Ok(result)
         })?;

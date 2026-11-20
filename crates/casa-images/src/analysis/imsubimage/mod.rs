@@ -76,6 +76,15 @@ impl SubimagePlan {
         native_coordinates: Option<RecordValue>,
         options: SubimageOptions<'_>,
     ) -> Result<Self, ImageError> {
+        Self::new_with_beams(image, native_coordinates, options, None)
+    }
+
+    pub(in crate::analysis) fn new_with_beams<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        native_coordinates: Option<RecordValue>,
+        options: SubimageOptions<'_>,
+        beam_record: Option<&RecordValue>,
+    ) -> Result<Self, ImageError> {
         if matches!(&options.region, Some(SubimageRegion::Text(_)))
             && image
                 .coordinates()
@@ -93,6 +102,7 @@ impl SubimagePlan {
             selection,
             options.dropdeg,
             options.keepaxes,
+            beam_record,
         )
     }
 
@@ -224,6 +234,7 @@ impl SubimagePlan {
         selection: SubimageSelection,
         dropdeg: bool,
         keepaxes: &[i64],
+        beam_record: Option<&RecordValue>,
     ) -> Result<Self, ImageError> {
         let kept_axes = resolve_kept_axes(&selection.shape, dropdeg, keepaxes)?;
         let cropped_stokes = if selection.selected_stokes.is_none()
@@ -243,6 +254,10 @@ impl SubimagePlan {
         } else {
             None
         };
+        let mut source_info = image.image_info()?;
+        if let Some(record) = beam_record {
+            source_info.beam_set = ImageInfo::from_record(record)?.beam_set;
+        }
         let (coordinates, coordinate_record, image_info) = reduce_coordinates_and_beams(
             image.coordinates(),
             native_coordinates,
@@ -256,7 +271,7 @@ impl SubimagePlan {
                     .as_deref()
                     .or(cropped_stokes.as_deref()),
             },
-            image.image_info()?,
+            source_info,
         )?;
         let shape = kept_axes
             .iter()
@@ -688,6 +703,7 @@ fn run_typed<T: ImagePixel + Copy>(
         selection,
         request.dropdeg,
         &request.keepaxes,
+        None,
     )?;
 
     let destination = std::path::absolute(&request.outfile).map_err(output_io)?;

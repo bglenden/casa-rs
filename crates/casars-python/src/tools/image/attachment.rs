@@ -34,6 +34,7 @@ pub(super) struct AttachedImage {
     key: Option<PathBuf>,
     beam_view: Mutex<BeamView>,
     retained_inputs: Vec<Self>,
+    operand_paths: Vec<PathBuf>,
 }
 
 impl AttachedImage {
@@ -48,6 +49,7 @@ impl AttachedImage {
             key: None,
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         }
     }
 
@@ -117,6 +119,7 @@ impl AttachedImage {
                 key: Some(key.to_path_buf()),
                 beam_view: Mutex::default(),
                 retained_inputs: Vec::new(),
+                operand_paths: Vec::new(),
             })
     }
 
@@ -162,6 +165,7 @@ impl AttachedImage {
             key: Some(key.to_path_buf()),
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         };
         opened.check_bound_name(&opened.lock())?;
         Ok(opened)
@@ -198,12 +202,17 @@ impl AttachedImage {
             .collect()
     }
 
-    pub(super) fn retain_expression_inputs(&mut self, inputs: Vec<Self>) {
-        self.retained_inputs.extend(inputs);
+    pub(super) fn retain_expression_inputs(&mut self, inputs: Vec<Self>, paths: Vec<PathBuf>) {
+        self.retained_inputs = inputs;
+        self.operand_paths = paths;
     }
 
     pub(super) fn expression_inputs(&self) -> &[Self] {
         &self.retained_inputs
+    }
+
+    pub(super) fn operand_paths(&self) -> &[PathBuf] {
+        &self.operand_paths
     }
 
     pub(super) fn is_persistent(&self) -> bool {
@@ -328,6 +337,7 @@ impl AttachedImage {
                 key: Some(source.clone()),
                 beam_view: Mutex::new(self.beam_view().clone()),
                 retained_inputs: Vec::new(),
+                operand_paths: Vec::new(),
             });
         }
         if old_name
@@ -404,6 +414,7 @@ impl AttachedImage {
             key: Some(target),
             beam_view: Mutex::new(beam_view),
             retained_inputs: Vec::new(),
+            operand_paths: Vec::new(),
         })
     }
 
