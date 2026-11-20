@@ -17,6 +17,7 @@ from http import HTTPStatus
 import inspect
 from json import JSONDecodeError, dumps, loads
 from math import isfinite, isnan
+from numbers import Real
 import os
 from os import PathLike
 from pathlib import Path
@@ -307,7 +308,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             width = arguments["smoothtime"]
             if isinstance(width, bool):
                 values["smoothtime"] = float(width)
-            elif isinstance(width, (float, np.floating)) and width == float("inf"):
+            elif isinstance(width, Real) and width == float("inf"):
                 # The parameter profile carries finite values. This interval
                 # still covers the whole group for MeasurementSet epochs.
                 values["smoothtime"] = sys.float_info.max
