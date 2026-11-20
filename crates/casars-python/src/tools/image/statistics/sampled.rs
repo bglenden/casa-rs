@@ -9,6 +9,7 @@ use pyo3::PyResult;
 
 use crate::convert::value::CasaValue;
 
+use super::flux::FluxScale;
 use super::{BASIC, Chunk, QUANTILES, StatsOptions, add_extrema, raised};
 
 // Rows use the same field order as BASIC followed by QUANTILES.
@@ -19,7 +20,7 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
     chunk: &Chunk,
     options: &StatsOptions<'_>,
     mask: Option<&ArrayD<bool>>,
-    flux_scale: Option<f64>,
+    flux_scale: Option<&FluxScale>,
     record: &mut Vec<(&'static str, CasaValue)>,
 ) -> PyResult<Vec<usize>> {
     let rank = chunk.size.len();
@@ -179,7 +180,11 @@ pub(super) fn collect<T: ImagePixel + StatsElement>(
                 "flux",
                 CasaValue::Floats {
                     shape: output_shape,
-                    values: rows.iter().map(|row| row[1] * scale).collect(),
+                    values: rows
+                        .iter()
+                        .enumerate()
+                        .map(|(index, row)| row[1] * scale.for_plane(index))
+                        .collect(),
                 },
             ));
         }

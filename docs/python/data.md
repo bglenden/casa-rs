@@ -240,7 +240,9 @@ quartiles, and median absolute deviation. The tool supports classical,
 biweight, Chauvenet, fit-to-half and hinges-and-fences statistics. Supply
 `logfile` for a report with labeled planes. `append=False` replaces that
 file. `list=True` adds a summary, and `verbose=True` sends the table to the
-logger. Disk storage and flux for per-plane beams are tracked in
+logger. Flux density for a retained channel or polarization uses that
+plane's restoring beam. An all-axis reduction over a selected single
+polarization integrates the channel flux densities. Disk storage is tracked in
 [#1627](https://github.com/bglenden/casa-rs/issues/1627).
 
 The remaining CASA image and coordinate operations are tracked in
