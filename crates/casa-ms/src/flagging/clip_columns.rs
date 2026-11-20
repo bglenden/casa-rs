@@ -180,6 +180,32 @@ impl ClipColumns {
                 .is_some_and(|weights| weights.scalar_fallback.is_some())
     }
 
+    pub(super) fn prepare_spectrum_fallbacks(
+        &mut self,
+        table: &Table,
+        first_rows: &BTreeMap<i32, usize>,
+        path: &str,
+    ) -> Result<(), FlaggingError> {
+        for operand in std::iter::once(&mut self.primary).chain(self.average_weights.iter_mut()) {
+            if operand.scalar_fallback.is_none() {
+                continue;
+            }
+            for (&spw, &row) in first_rows {
+                let value = table
+                    .column_accessor(operand.name)
+                    .and_then(|column| column.array_cells_owned(&[row]))
+                    .map_err(|source| FlaggingError::MutateFlags {
+                        path: path.to_string(),
+                        reason: format!("read first selected {} row {row}: {source}", operand.name),
+                    })?;
+                operand
+                    .fallback_windows
+                    .insert(spw, value.first().is_some_and(Option::is_none));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn read<'a>(
         &'a mut self,
         table: &Table,
@@ -340,6 +366,58 @@ pub(super) struct ClipColumnCells<'a> {
 }
 
 impl ClipColumnCells<'_> {
+    pub(super) fn measurements(
+        &self,
+        slot: usize,
+        flags: &ArrayD<bool>,
+        row: usize,
+        path: &str,
+    ) -> Result<Cow<'_, ArrayValue>, FlaggingError> {
+        self.primary.row(slot, flags, row, path)
+    }
+
+    pub(super) fn model(
+        &self,
+        slot: usize,
+        flags: &ArrayD<bool>,
+        row: usize,
+        path: &str,
+    ) -> Result<Option<&ArrayValue>, FlaggingError> {
+        self.subtract
+            .as_ref()
+            .zip(self.model_name)
+            .map(|(cells, name)| checked_row_data(cells.get(slot), flags, row, name, path))
+            .transpose()
+    }
+
+    pub(super) fn weights(
+        &self,
+        slot: usize,
+        flags: &ArrayD<bool>,
+        row: usize,
+        path: &str,
+    ) -> Result<Option<Cow<'_, ArrayValue>>, FlaggingError> {
+        let weights = self
+            .average_weights
+            .as_ref()
+            .map(|column| column.row(slot, flags, row, path))
+            .transpose()?;
+        if weights
+            .as_deref()
+            .is_some_and(|value| !matches!(value, ArrayValue::Float32(_) | ArrayValue::Float64(_)))
+        {
+            return Err(FlaggingError::MutateFlags {
+                path: path.to_string(),
+                reason: format!("averaging statistics on row {row} must be floating-point arrays"),
+            });
+        }
+        Ok(weights)
+    }
+
+    pub(super) fn uses_sigma(&self) -> bool {
+        self.inverse_sigma
+    }
+
     pub(super) fn row(
         &self,
         slot: usize,
@@ -348,69 +426,62 @@ impl ClipColumnCells<'_> {
         row: usize,
         path: &str,
     ) -> Result<Cow<'_, ArrayValue>, FlaggingError> {
-        let mut primary = self.primary.row(slot, flags, row, path)?;
+        let mut primary = self.measurements(slot, flags, row, path)?;
         if let Some(bins) = bins {
-            let weights = self
-                .average_weights
-                .as_ref()
-                .map(|column| column.row(slot, flags, row, path))
-                .transpose()?;
+            let weights = self.weights(slot, flags, row, path)?;
             let reduction = match weights.as_deref() {
-                Some(spectrum @ (ArrayValue::Float32(_) | ArrayValue::Float64(_))) => {
-                    ChannelReduction::Weighted {
-                        spectrum,
-                        inverse_sigma: self.inverse_sigma,
-                    }
-                }
-                Some(_) => {
-                    return Err(FlaggingError::MutateFlags {
-                        path: path.to_string(),
-                        reason: format!(
-                            "channel averaging statistics on row {row} must be floating-point arrays"
-                        ),
-                    });
-                }
+                Some(spectrum) => ChannelReduction::Weighted {
+                    spectrum,
+                    inverse_sigma: self.inverse_sigma,
+                },
                 None if self.sum_weights => ChannelReduction::Sum,
                 None => ChannelReduction::Mean,
             };
             primary = Cow::Owned(bins.average(primary.as_ref(), flags, reduction));
         }
-        let Some((cells, name)) = self.subtract.as_ref().zip(self.model_name) else {
+        let Some(stored_model) = self.model(slot, flags, row, path)? else {
             return Ok(primary);
         };
-        let stored_model = checked_row_data(cells.get(slot), flags, row, name, path)?;
         let averaged_model =
             bins.map(|bins| bins.average(stored_model, flags, ChannelReduction::Mean));
         let model = averaged_model.as_ref().unwrap_or(stored_model);
-        let residual = match (primary.as_ref(), model) {
-            (ArrayValue::Complex32(data), ArrayValue::Complex32(model)) => {
-                ArrayValue::Complex32(data - model)
-            }
-            (ArrayValue::Complex64(data), ArrayValue::Complex64(model)) => {
-                ArrayValue::Complex64(data - model)
-            }
-            (ArrayValue::Float32(data), ArrayValue::Complex32(model)) => ArrayValue::Complex32(
-                ndarray::Zip::from(data)
-                    .and(model)
-                    .map_collect(|&data, &model| Complex32::new(data, 0.0) - model),
-            ),
-            (ArrayValue::Float64(data), ArrayValue::Complex64(model)) => ArrayValue::Complex64(
-                ndarray::Zip::from(data)
-                    .and(model)
-                    .map_collect(|&data, &model| Complex64::new(data, 0.0) - model),
-            ),
-            _ => {
-                return Err(FlaggingError::MutateFlags {
-                    path: path.to_string(),
-                    reason: format!(
-                        "{} and {name} row {row} must hold matching numeric samples and a complex model",
-                        self.primary.column.name
-                    ),
-                });
-            }
-        };
-        Ok(Cow::Owned(residual))
+        subtract_model(primary.as_ref(), model, row, path).map(Cow::Owned)
     }
+}
+
+pub(super) fn subtract_model(
+    data: &ArrayValue,
+    model: &ArrayValue,
+    row: usize,
+    path: &str,
+) -> Result<ArrayValue, FlaggingError> {
+    let residual = match (data, model) {
+        (ArrayValue::Complex32(data), ArrayValue::Complex32(model)) => {
+            ArrayValue::Complex32(data - model)
+        }
+        (ArrayValue::Complex64(data), ArrayValue::Complex64(model)) => {
+            ArrayValue::Complex64(data - model)
+        }
+        (ArrayValue::Float32(data), ArrayValue::Complex32(model)) => ArrayValue::Complex32(
+            ndarray::Zip::from(data)
+                .and(model)
+                .map_collect(|&data, &model| Complex32::new(data, 0.0) - model),
+        ),
+        (ArrayValue::Float64(data), ArrayValue::Complex64(model)) => ArrayValue::Complex64(
+            ndarray::Zip::from(data)
+                .and(model)
+                .map_collect(|&data, &model| Complex64::new(data, 0.0) - model),
+        ),
+        _ => {
+            return Err(FlaggingError::MutateFlags {
+                path: path.to_string(),
+                reason: format!(
+                    "Residual row {row} must hold matching numeric samples and a complex model"
+                ),
+            });
+        }
+    };
+    Ok(residual)
 }
 
 fn broadcast_weights(
