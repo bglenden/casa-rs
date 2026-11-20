@@ -1748,7 +1748,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 810</li>
+<li>Concepts: 811</li>
 <li>Surfaces: 45 (45 task, 0 session)</li>
 <li>Surface bindings: 1089</li>
 </ul>
@@ -1967,7 +1967,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-impv">Position Velocity</a><br><code>impv</code></td>
 <td>task</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">6</td>
 <td><code>image_analysis</code></td>
 <td style="text-align: right;">16</td>
 <td>Extract a CASA-style position-velocity image</td>
@@ -8993,7 +8993,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="position-velocity-impv">Position Velocity (<code>impv</code>)<a class="headerlink" href="#position-velocity-impv" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>5</code></li>
+<li>Contract version: <code>6</code></li>
 <li>Category: Images</li>
 <li>Provider family: <code>image_analysis</code></li>
 <li>Summary: Extract a CASA-style position-velocity image</li>
@@ -9028,59 +9028,59 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>mode</code></td>
-<td><code>impv.mode@r1</code></td>
-<td><code>choice (2 values)</code></td>
+<td><code>impv.mode@r2</code></td>
+<td><code>string</code></td>
 <td><code>"coords"</code>; optional</td>
 <td>Slice</td>
 <td>How the slice is given: by start and end, or by center, length and position angle.</td>
 </tr>
 <tr>
 <td><code>start</code></td>
-<td><code>parameter.start@r1</code></td>
-<td><code>string</code></td>
-<td><code>""</code>; required</td>
+<td><code>parameter.start@r2</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
 <td>Slice</td>
 <td>Cube-axis start channel, frequency, or velocity</td>
 </tr>
 <tr>
 <td><code>end</code></td>
-<td><code>parameter.end@r1</code></td>
-<td><code>string</code></td>
-<td><code>""</code>; required</td>
+<td><code>parameter.end@r2</code></td>
+<td><code>variant</code></td>
+<td><code>""</code>; optional</td>
 <td>Slice</td>
 <td>End pixel coordinate</td>
 </tr>
 <tr>
 <td><code>center</code></td>
-<td><code>pv.center@r1</code></td>
-<td><code>array&lt;string&gt;</code></td>
+<td><code>pv.center@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Slice</td>
 <td>Center of the slice in the direction plane, given with length and pa.</td>
 </tr>
 <tr>
 <td><code>length</code></td>
-<td><code>impv.length@r1</code></td>
-<td><code>string</code></td>
+<td><code>impv.length@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Slice</td>
 <td>Length of the slice in the direction plane, given with center and pa.</td>
 </tr>
 <tr>
 <td><code>pa</code></td>
-<td><code>impv.pa@r1</code></td>
-<td><code>string</code></td>
+<td><code>impv.pa@r2</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Slice</td>
 <td>Position angle of the slice, north through east, given with center and length.</td>
 </tr>
 <tr>
 <td><code>width</code></td>
-<td><code>impv.width@r1</code></td>
-<td><code>integer</code></td>
+<td><code>impv.width@r2</code></td>
+<td><code>variant</code></td>
 <td><code>1</code>; optional</td>
 <td>Slice</td>
-<td>Averaging width in pixels</td>
+<td>Odd averaging width in pixels or an angular width.</td>
 </tr>
 <tr>
 <td><code>unit</code></td>
@@ -9100,11 +9100,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>region</code></td>
-<td><code>image.selection.region@r1</code></td>
-<td><code>string</code></td>
+<td><code>impv.region@r1</code></td>
+<td><code>variant</code></td>
 <td><code>""</code>; optional</td>
 <td>Selection</td>
-<td>Region file or expression.</td>
+<td>CASA region text, image region name, or a region record. Direction-axis cropping is refused.</td>
 </tr>
 <tr>
 <td><code>chans</code></td>

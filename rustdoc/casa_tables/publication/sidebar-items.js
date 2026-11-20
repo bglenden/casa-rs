@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["exchange_directories","rename_without_replacing"]};
+window.SIDEBAR_ITEMS = {"fn":["check_write_access","exchange_directories","rename_without_replacing"]};

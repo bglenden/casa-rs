@@ -954,11 +954,15 @@ matrices are converted to double precision, as in CASA.</p>
 <code>ia.sethistory(origin, messages)</code> to append provenance. For an image with stored
 restoring beams, <code>ia.restoringbeam()</code> reads the beam quantities and
 <code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid.
+Use <code>ia.isconform("other.im")</code> to check whether a float image has the same
+shape and compatible coordinates as a native float or complex image.
 Use <code>ia.fitsheader()</code> to inspect the FITS header for a float image without
 exporting the pixels. Pass <code>exclude="HISTORY"</code> to omit the log from the returned
 dictionary. Use <code>retstr=True</code> to return the complete string of 80-byte cards.</p>
 <p>Use <code>ia.open("example.fits")</code> to read pixels and their validity mask directly
-from a FITS file. Metadata edits on this attachment last until <code>ia.done()</code>.
+from a FITS file. Metadata edits apply for the life of the attachment.
+Use <code>ia.rename("new-name.fits")</code> to move an attached FITS file. The tool
+reopens the moved file and reads its stored metadata again.
 Use <code>ia.fromfits("example.im", "example.fits")</code> to import a FITS image as a
 writable native CASA image for pixel edits and <code>ia.subimage(...)</code>. <code>whichhdu</code>
 selects the image HDU and <code>whichrep</code> selects the coordinate representation.
