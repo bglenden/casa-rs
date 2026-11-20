@@ -324,9 +324,11 @@ def main():
         results[name] = compare(root, source, native, name, 'delmod', virtual, arguments, refused)
     for name, task, fixture, arguments in [
         ('mms-create', 'clearcal', {}, dict(field='MISSING', addmodel=True)),
+        ('mms-numpy-create', 'clearcal', {}, dict(addmodel=np.bool_(True))),
         ('mms-select', 'clearcal', scratch, dict(field='0')),
         ('mms-no-selection-match', 'clearcal', scratch, dict(field='MISSING')),
         ('mms-delete-scratch', 'delmod', scratch, dict(field='0', otf=False, scr=True)),
+        ('mms-numpy-delete-scratch', 'delmod', scratch, dict(otf=np.bool_(False), scr=np.bool_(True))),
         ('mms-invalid-field', 'delmod', scratch, dict(field='MISSING', scr=True)),
     ]:
         results[name] = compare_mms(root, source, native, name, task, fixture, arguments)
