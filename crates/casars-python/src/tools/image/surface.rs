@@ -646,7 +646,12 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("isconform", &[param("other", K::Any, Required)], R::Any, No),
+    method(
+        "isconform",
+        &[param("other", K::Any, Required)],
+        R::Any,
+        Yes,
+    ),
     method("isopen", &[], R::Any, Yes),
     method("ispersistent", &[], R::Any, Yes),
     method(

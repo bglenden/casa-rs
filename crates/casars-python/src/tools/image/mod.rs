@@ -6,6 +6,7 @@
 mod attachment;
 mod beam_edit;
 mod beams;
+mod conformance;
 mod create;
 mod default_record;
 mod fits_header;
