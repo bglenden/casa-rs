@@ -67,11 +67,24 @@ World values use the units reported by `cs.units()`.
 NumPy `float32`, `float64`, `longdouble`, `longlong`, and `ulonglong`
 matrices are converted to double precision, as in CASA.
 
+Use `ia.toworld(pixels, format="nqsm")` to convert one image position.
+Each format letter requests numeric values, quantities, strings, or
+measures. Pass `dovelocity=False` to omit spectral velocities from the
+measure record. Pass one of these representations to `ia.topixel(world)`
+to obtain the zero-based pixel coordinates in its `numeric` field.
+`ia.coordmeasures(pixel)` returns world measures and the pixel's intensity
+and validity. Pass `dframe` or `sframe` to request specific direction or
+spectral frames.
+
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.beamforconvolvedsize(source, convolved)` to calculate the Gaussian
+beam needed to reach a target resolution. Use `ia.deconvolvefrombeam(source,
+beam)` to recover a fitted source size and see whether the source is resolved.
+Pass the major axis, minor axis and position angle as angular quantity strings.
 Use `ia.rotatebeam("15deg")` to rotate all stored restoring beams. On a
 directly opened FITS image, the rotation applies only to the open tool.
 Each open tool keeps its own view of the restoring beams. Reopen a native
@@ -186,6 +199,13 @@ to keep in `keepaxes`. Region inputs include CRTF text and files, saved region
 references, and unit-stride boxes and polygon records.
 An existing entry inside the input image cannot be replaced, protecting
 the source's history and mask tables.
+
+Use `ia.adddegaxes(stokes="I", spectral=True)` to make a copy with new
+singleton axes. Pass `outfile` to save the copy as a native image. The copy
+preserves the source pixels, existing coordinates, named masks and history.
+Set `silent=True` to skip requested coordinate types that already exist.
+Sources with image attribute groups are tracked in
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
 ### Migrate an existing image reader or writer
 

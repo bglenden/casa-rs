@@ -5657,6 +5657,24 @@ rejects the cycle before changing the component.
 CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
 casa-rs rejects a non-finite shape or error before mutation.
 
+## `image.toworld` and `image.topixel` abort on a multidimensional numeric record
+
+Attach a 4 by 4 float image, then call either method with
+`{"numeric": np.array([[1., 2.], [3., 4.]])}`. CASA 6.7.6.14 terminates
+with SIGABRT and `Vector<T>: ndim of other array > 1`. The casa-rs tool
+raises `RuntimeError` because the numeric field must be one-dimensional.
+The direct array form of a pixel position still accepts CASA's flattened
+input.
+
+## `image.topixel` can write outside the world vector for a sliced direction measure
+
+Create a CASA image with shape `[1, 8, 6]`, call `child = ia.subimage(dropdeg=True)`,
+then call `child.topixel(child.toworld([2, 1], "m"))`. CASA 6.7.6.14 aborts with
+`free(): invalid pointer` after assigning the removed longitude through a
+negative world-axis index. casa-rs uses the surviving declination and spectral
+measure and returns `[2, 1]`, consistent with the numeric, quantity, and
+string encodings of the same position.
+
 ## Measures spectral conversions reject or truncate valid vectors
 
 CASA 6.7.6.14 `me.tofrequency` and `me.toradialvelocity` return only the
