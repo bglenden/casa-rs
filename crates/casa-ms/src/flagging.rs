@@ -804,6 +804,13 @@ fn apply_clip_flags(
     correlations: Option<&CorrelationSelection>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
+    let path = display_ms_path(ms);
+    if request.clipoutside.is_some() {
+        clip_columns::require_physical_model(ms, request.data_column, selected_rows, &path)?;
+    }
+    let Some(mut columns) = ClipColumns::bind(ms.main_table(), request.data_column)? else {
+        return Ok(ChangeSet::default());
+    };
     let Some(outside) = request.clipoutside else {
         tracing::warn!("clipoutside must be a scalar Boolean to start the clip agent");
         return Ok(ChangeSet::default());
@@ -819,21 +826,19 @@ fn apply_clip_flags(
         metric: correlations.and_then(CorrelationSelection::clip_metric),
     };
     // CASA flags non-finite data and, with clipzeros, near-zero samples.
-    let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
     let mut changed = ChangeSet::default();
     let mut flagged_samples = 0usize;
     let mut total_samples = 0usize;
     let mut row_changes = Vec::<(usize, usize)>::new();
-    let include_ddid = channel_selections.is_some() || correlations.is_some();
-    let mut columns = ClipColumns::bind(ms.main_table(), request.data_column)?;
+    let include_ddid =
+        channel_selections.is_some() || correlations.is_some() || columns.uses_weight_spectrum();
     let bytes_per_sample = columns.bytes_per_sample(ms.main_table(), &path)?;
     let read_plan = clip_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
     for rows in selected_rows.chunks(read_plan.rows_per_block.max(1)) {
         let table = ms.main_table();
         let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
         let mut touched_rows = std::collections::BTreeSet::<usize>::new();
-        let data_cells = columns.read(table, rows, &path)?;
         let flag_cells = table
             .column_accessor(FLAG_COLUMN)
             .and_then(|column| column.array_cells_owned(rows))
@@ -846,6 +851,7 @@ fn apply_clip_flags(
         } else {
             None
         };
+        let data_cells = columns.read(table, rows, ddids.as_deref(), &ddid_to_spw, &path)?;
         for (row_slot, &row) in rows.iter().enumerate() {
             let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
                 Some(ArrayValue::Bool(values)) => values,

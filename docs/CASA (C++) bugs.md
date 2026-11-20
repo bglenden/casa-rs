@@ -3829,6 +3829,18 @@ flags and the native channel mask independently. It also checks that an
 undefined cell following a defined first spectrum still raises a read
 error. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
+## Residual clipping can use the wrong observed column
+
+In CASA 6.7.6.14, `flagdata(mode="clip", datacolumn="RESIDUAL_DATA")`
+uses FLOAT_DATA as the observed operand when an MS contains both DATA
+and FLOAT_DATA. On the paired fixture this leaves a DATA residual of 1
+unflagged when clipping inside 0.9 to 1.6.
+
+casa-rs subtracts the complex MODEL_DATA from DATA when both observed
+columns exist. An MS whose only observed column is FLOAT_DATA uses that
+column and keeps the imaginary part of the model in the residual. The
+oracle verifies the masks and original flag backups. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## An overflowing observation selector flags a different observation
 
 In CASA 6.7.6.14, `flagdata(observation=4294967296)` selects observation 0.
