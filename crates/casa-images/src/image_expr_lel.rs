@@ -499,15 +499,39 @@ pub(crate) fn rebin_coordinates(
         return Ok(());
     }
     let mut record = coords.to_record();
-    let placed = CoordinateSystem::record_coordinates(&record)?;
-    let mut updated = coords.clone();
+    *coords = rebin_coordinate_record(&mut record, factors)?;
+    Ok(())
+}
+
+pub(crate) fn rebin_coordinate_record(
+    record: &mut RecordValue,
+    factors: &[usize],
+) -> Result<CoordinateSystem, ImageError> {
+    let placed = CoordinateSystem::record_coordinates(record)?;
     for coord in placed {
         if coord.field.starts_with("stokes") {
             continue;
         }
-        let Some(Value::Record(coord_record)) = record.get(&coord.field).cloned() else {
+        let Some(Value::Record(coord_record)) = record.get_mut(&coord.field) else {
             continue;
         };
+        if let [Some(axis)] = coord.pixel_axes.as_slice()
+            && let Some(&factor) = factors.get(*axis).filter(|&&factor| factor > 1)
+        {
+            let table = if coord.field.starts_with("tabular") {
+                Some(&mut *coord_record)
+            } else if let Some(Value::Record(table)) = coord_record.get_mut("tabular") {
+                Some(table)
+            } else {
+                None
+            };
+            if let Some(table) = table
+                && rebin_sampled_axis(table, factor)?
+            {
+                continue;
+            }
+        }
+        let coord_record = coord_record.clone();
         for (local_axis, opt_pixel_axis) in coord.pixel_axes.iter().enumerate() {
             let Some(axis) = *opt_pixel_axis else {
                 continue;
@@ -519,20 +543,45 @@ pub(crate) fn rebin_coordinates(
             let ff = f as f64;
             if let Some(old_crpix) = record_axis_scalar(&coord_record, "crpix", local_axis) {
                 let new_crpix = (old_crpix - 0.5 * (ff - 1.0)) / ff;
-                let (sys, _) =
-                    CoordinateSystem::set_reference_pixel_in_record(&mut record, axis, new_crpix)?;
-                updated = sys;
+                CoordinateSystem::set_reference_pixel_in_record(record, axis, new_crpix)?;
             }
             if let Some(old_cdelt) = record_axis_scalar(&coord_record, "cdelt", local_axis) {
                 let new_cdelt = old_cdelt * ff;
-                let (sys, _) =
-                    CoordinateSystem::set_increment_in_record(&mut record, axis, new_cdelt)?;
-                updated = sys;
+                CoordinateSystem::set_increment_in_record(record, axis, new_cdelt)?;
             }
         }
     }
-    *coords = updated;
-    Ok(())
+    CoordinateSystem::from_live_record(record).map_err(ImageError::from)
+}
+
+fn rebin_sampled_axis(table: &mut RecordValue, factor: usize) -> Result<bool, ImageError> {
+    let reference = |field| {
+        record_axis_scalar(table, field, 0)
+            .ok_or_else(|| ImageError::InvalidMetadata(format!("sampled axis has no {field}")))
+    };
+    let Some(Value::Array(ArrayValue::Float64(worlds))) = table.get("worldvalues") else {
+        return Ok(false);
+    };
+    if worlds.is_empty() {
+        return Ok(false);
+    }
+    let (pixel, world, increment) = (
+        reference("crpix")?,
+        reference("crval")?,
+        reference("cdelt")?,
+    );
+    let factor = factor as f64;
+    let new_pixel = (pixel + 0.5) / factor - 0.5;
+    let new_increment = increment * factor;
+    // CASACORE changes the live reference pixel, then scales the samples
+    // relative to the original reference world value.
+    let shift = (pixel - new_pixel) * increment;
+    let samples = worlds.mapv(|value| world + (value + shift - world) * factor);
+    table.upsert("worldvalues", Value::Array(ArrayValue::Float64(samples)));
+    for (field, value) in [("crpix", new_pixel), ("cdelt", new_increment)] {
+        table.upsert(field, Value::Array(ArrayValue::from_f64_vec(vec![value])));
+    }
+    Ok(true)
 }
 
 /// Maps a requested rebinned slice `(start, shape, stride)` to the contiguous
@@ -582,7 +631,7 @@ fn accumulate_rebin_block<T: ImageExprValue>(
     sum: &mut T,
     count: &mut usize,
 ) {
-    if axis == los.len() {
+    if axis == 0 {
         let valid = mask.is_none_or(|m| m[base]);
         if valid {
             if *count == 0 {
@@ -594,10 +643,11 @@ fn accumulate_rebin_block<T: ImageExprValue>(
         }
         return;
     }
+    let axis = axis - 1;
     let stride = in_strides[axis];
     for coord in los[axis]..his[axis] {
         accumulate_rebin_block(
-            axis + 1,
+            axis,
             base + coord * stride,
             los,
             his,
@@ -655,7 +705,7 @@ pub(crate) fn rebin_reduce_slice<T: ImageExprValue>(
         let mut sum = T::default_value();
         let mut count = 0usize;
         accumulate_rebin_block(
-            0,
+            ndim,
             0,
             &los,
             &his,
@@ -666,7 +716,7 @@ pub(crate) fn rebin_reduce_slice<T: ImageExprValue>(
             &mut count,
         );
         if count > 0 {
-            out_vals.push(sum / T::from_f64_lossy(count as f64));
+            out_vals.push(sum.div_by_real(count as f64));
             if let Some(ref mut m) = out_mask {
                 m.push(true);
             }

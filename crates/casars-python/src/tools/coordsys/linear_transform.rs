@@ -128,6 +128,13 @@ pub(super) fn normalize_restored_matrix(
     };
     if matrix.is_some_and(|factor| factor != 1.0) {
         Ok(Some(edit_record(original, model)?))
+    } else if matches!(model, CoordinateModel::Spectral(_)) {
+        let edited = edit_record(original, model)?;
+        let normalized = recorded_coordinate(&edited, "tabular")?;
+        let changed = ["crpix", "crval", "cdelt"]
+            .iter()
+            .any(|field| table.get(field) != normalized.get(field));
+        Ok(changed.then_some(edited))
     } else {
         Ok(None)
     }

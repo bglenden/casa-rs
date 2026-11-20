@@ -393,18 +393,7 @@ impl CoordinateSystem {
     /// [`CoordinateError::InvalidRecord`] for axis maps that do not number
     /// the system's axes, as for any other malformed record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
-        let obs_info = match rec.get("obsinfo") {
-            Some(Value::Record(obs_rec)) => ObsInfo::from_record(obs_rec)?,
-            _ => ObsInfo::from_record(rec)?,
-        };
-        let coordinates = read_coordinates(rec)?
-            .into_iter()
-            .map(|(_, coordinate)| coordinate)
-            .collect();
-        Ok(Self {
-            coordinates,
-            obs_info,
-        })
+        Self::restore_record(rec, false)
     }
 
     /// The coordinates of `rec` as [`from_record`](Self::from_record) reads
