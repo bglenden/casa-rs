@@ -60,6 +60,7 @@ IMPLEMENTED["coordsys"] = {
 }
 IMPLEMENTED["image"] = {
     "crop",
+    "decimate",
     "boundingbox",
     "insert",
     "addnoise",

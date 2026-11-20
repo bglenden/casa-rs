@@ -115,7 +115,7 @@ fn replace_masked<T: ImagePixel>(
     }
     image.put_slice(&pixels, &selection.start)?;
     if options.update {
-        let Some(name) = image.default_mask_name() else {
+        let Some(name) = image.active_pixel_mask_name() else {
             return Ok(MaskReplacementOutcome::MissingNativeMask);
         };
         let all_valid = ArrayD::from_elem(IxDyn(&selection.shape), true);

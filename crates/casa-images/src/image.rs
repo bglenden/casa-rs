@@ -651,6 +651,12 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
         Ok(self.mask_names().iter().any(|entry| entry == name))
     }
 
+    /// Mask target for in-place pixel edits. An empty name denotes a
+    /// temporary image's writable anonymous mask.
+    fn active_pixel_mask_name(&self) -> Option<String> {
+        self.default_mask_name()
+    }
+
     /// Edit several sections of an existing mask through one writer.
     fn with_mask_slice_writer(
         &mut self,
