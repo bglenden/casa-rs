@@ -310,6 +310,26 @@ fn record_roundtrip() {
     assert!((restored.latpole() - 1.2).abs() < TOL);
 }
 
+#[test]
+fn b1950_vla_uses_the_casa_name_in_saved_direction_frames() {
+    for (frame, conversion) in [
+        (DirectionRef::B1950Vla, DirectionRef::J2000),
+        (DirectionRef::J2000, DirectionRef::B1950Vla),
+    ] {
+        let coordinate = DirectionCoordinate::new(
+            frame,
+            Projection::new(ProjectionType::SIN),
+            [0.2, 0.5],
+            [-1e-4, 1e-4],
+            [0.0, 0.0],
+        )
+        .with_conversion_direction_ref(conversion);
+        let restored = DirectionCoordinate::from_record(&coordinate.to_record()).unwrap();
+        assert_eq!(restored.direction_ref(), frame);
+        assert_eq!(restored.conversion_direction_ref(), conversion);
+    }
+}
+
 /// Supported zenithal images reopen with their coordinates intact.
 /// Unsupported parameters fail at open, before regridding.
 #[test]

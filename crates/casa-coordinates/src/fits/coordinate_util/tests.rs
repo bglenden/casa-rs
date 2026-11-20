@@ -213,6 +213,43 @@ fn direction_sin_roundtrip() {
 }
 
 #[test]
+fn b1950_vla_uses_casas_fits_equinox() {
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::B1950Vla,
+        Projection::new(ProjectionType::SIN),
+        [1.0, 0.5],
+        [-1e-4, 1e-4],
+        [2.0, 2.0],
+    ));
+    let shape = [5, 5];
+    let exported = to_fits_header(&coordinates, &shape);
+    assert_eq!(exported.get_string("RADESYS"), Some("FK4"));
+    assert_eq!(exported.get_float("EQUINOX"), Some(1979.9));
+
+    for (card, system, expected) in [
+        (Some("RADESYS"), "FK4", DirectionRef::B1950Vla),
+        (Some("RADESYS"), "FK4-NO-E", DirectionRef::B1950Vla),
+        (Some("RADECSYS"), "FK4", DirectionRef::B1950Vla),
+        (None, "", DirectionRef::B1950Vla),
+        (Some("RADESYS"), "FK5", DirectionRef::J2000),
+    ] {
+        let mut header = FitsHeader::new();
+        for keyword in exported.iter().filter(|keyword| keyword.name != "RADESYS") {
+            header.set(&keyword.name, keyword.value.clone());
+        }
+        if let Some(card) = card {
+            header.set(card, FitsValue::String(system.into()));
+        }
+        let restored = from_fits_header(&header, &shape).unwrap();
+        let CoordinateModel::Direction(direction) = restored.coordinate(0) else {
+            panic!("expected direction coordinate");
+        };
+        assert_eq!(direction.direction_ref(), expected);
+    }
+}
+
+#[test]
 fn azp_fits_parameters_follow_the_latitude_axis() {
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));

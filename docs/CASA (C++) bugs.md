@@ -4144,6 +4144,17 @@ edit before changing the image. Dates inside the representable range still
 work, including 1.01 billion MJD days, which both render as
 `2767144/12/15/00:00:00.000000` (#977).
 
+## `imhead` can save a direction reference frame that prevents reopening the image
+
+In CASA 6.7.6.14, `imhead(mode='put', hdkey='equinox', hdvalue='APP')`
+returns successfully on a J2000 image. It stores APP as the native
+frame and retains J2000 as the conversion frame. Reopening the image then
+fails with `Missing information in Frame specified for conversion`.
+The same behavior occurs for JMEAN and AZEL. The saved direction coordinate
+does not supply the epoch or observer position needed by those conversions.
+casa-rs checks the conversion before updating the image and preserves the
+existing readable coordinates if the context is missing (#977).
+
 ## `feather` fails on an image whose direction is not on its first two axes
 
 - Date noted: 2026-10-30
