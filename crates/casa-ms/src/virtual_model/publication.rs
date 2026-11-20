@@ -11,7 +11,33 @@ use crate::schema::SubtableId;
 use crate::scratch_columns::{Write, change_in_place};
 use crate::{MeasurementSet, MsResult};
 
-use super::{ModelState, VirtualModelEntry, add_model, delete_images, invalid, record_images};
+use super::{
+    ModelState, VirtualModelEntry, add_model, delete_images, invalid, record_images,
+    virtual_model_target_for_field,
+};
+
+/// Check a planned placement against a fresh SOURCE snapshot under MAIN.
+#[doc(hidden)]
+pub fn verify_virtual_model_target_holding(
+    ms: &mut MeasurementSet,
+    lock: &mut TableWriteLock,
+    first_field: i32,
+    expected: &Path,
+) -> MsResult<()> {
+    with_model_locks(ms, Some(lock), |ms, _, _| {
+        verify_target(ms, first_field, expected)
+    })
+}
+
+fn verify_target(ms: &MeasurementSet, field: i32, expected: &Path) -> MsResult<()> {
+    let current = virtual_model_target_for_field(ms, field)?
+        .canonicalize()
+        .map_err(|error| invalid(error.to_string()))?;
+    if current != expected {
+        return Err(invalid("the virtual model storage target changed"));
+    }
+    Ok(())
+}
 
 /// One attempted publication of all virtual entries for an independent target.
 /// Keep this value when retrying the same operation with the same entries.
@@ -48,8 +74,9 @@ impl VirtualModelPublication {
         ms: &mut MeasurementSet,
         entries: impl IntoIterator<Item = (&'a VirtualModelEntry, bool)>,
         lock: &mut TableWriteLock,
+        expected: (i32, &Path),
     ) -> MsResult<()> {
-        self.publish(ms, entries, Some(lock))
+        self.publish(ms, entries, Some(lock), Some(expected))
     }
 
     pub(super) fn publish<'a>(
@@ -57,6 +84,7 @@ impl VirtualModelPublication {
         ms: &mut MeasurementSet,
         entries: impl IntoIterator<Item = (&'a VirtualModelEntry, bool)>,
         lock: Option<&mut TableWriteLock>,
+        expected: Option<(i32, &Path)>,
     ) -> MsResult<()> {
         match self.stage {
             PublicationStage::Published => return Ok(()),
@@ -67,7 +95,16 @@ impl VirtualModelPublication {
             }
             _ => {}
         }
+        let resuming_cleanup = matches!(self.stage, PublicationStage::MainCleanup { .. });
         with_model_locks(ms, lock, |ms, main, source| {
+            if let Some((field, path)) = expected {
+                verify_target(ms, field, path)?;
+            }
+            if resuming_cleanup && ms.main_table().path().is_some() {
+                // The preceding save and its best-effort reload may both
+                // have failed. Confirm the on-disk keywords before cleanup.
+                ms.main_table_mut().resync()?;
+            }
             if matches!(self.stage, PublicationStage::Unwritten) {
                 let mut state = ModelState::read(ms)?;
                 let mut retired_images = Vec::new();
@@ -87,8 +124,9 @@ impl VirtualModelPublication {
                             "one virtual model publication must target SOURCE or MAIN",
                         ));
                     }
-                    self.stage = PublicationStage::Uncertain;
-                    state.write_source(ms, source)?;
+                    state.write_source(ms, source, || {
+                        self.stage = PublicationStage::Uncertain;
+                    })?;
                     self.stage = PublicationStage::MainCleanup {
                         removed,
                         retired_images,
@@ -131,6 +169,20 @@ impl VirtualModelPublication {
 }
 
 fn delete_unreferenced_images(ms: &MeasurementSet, mut retired: Vec<PathBuf>) {
+    // A SOURCE table has no reverse pointers to the MAINs that use it.
+    // Another MAIN can still name a grid currently or formerly in SOURCE.
+    // Only remove retired grids whose directory belongs to this MAIN.
+    let Some(main) = ms
+        .main_table()
+        .path()
+        .and_then(|path| path.canonicalize().ok())
+    else {
+        return;
+    };
+    retired.retain(|grid| {
+        grid.parent()
+            .is_some_and(|parent| parent.canonicalize().is_ok_and(|parent| parent == main))
+    });
     if retired.is_empty() {
         return;
     }

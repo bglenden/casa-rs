@@ -329,16 +329,21 @@ def independent_image_lifetimes(root, source, native, images):
                    disableparallel=True, flagbackup=False, datacolumn='all')
     first, second = referenced_tables(path)
     assert native.ft(str(path), field='0', model=images['point']) is None
-    originals = []
-    for part in (first, second):
+    def stored_grid(part):
         records = state(part)[1][2]
         grid = Path(next(record['ft_0']['container']['diskimage'] for record in records if record))
         assert grid.resolve().parent == (part/'SOURCE').resolve()
-        originals.append(grid)
-    assert originals[0].resolve() != originals[1].resolve()
+        return grid.resolve()
+
+    original_first, original_second = [stored_grid(part) for part in (first, second)]
+    assert original_first != original_second
     assert native.ft(str(first), field='0', model=images['cube']) is None
-    assert not originals[0].exists()
-    assert originals[1].exists()
+    assert stored_grid(first) != original_first
+    assert stored_grid(second) == original_second
+    assert original_second.exists()
+    # A SOURCE table supplies no complete list of MAIN tables that can
+    # retain the retired recipe. Replacement leaves its grid available.
+    assert original_first.exists()
     expected = root/'lifetime-reference.ms'
     copy_ms(second, expected)
     assert casa.uvsub(str(expected)) is None

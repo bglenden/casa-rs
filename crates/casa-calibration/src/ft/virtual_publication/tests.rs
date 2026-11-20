@@ -7,10 +7,11 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
+use casa_ms::schema::SubtableId;
 use casa_ms::{MsSelection, VirtualModelEntry, virtual_model};
-use casa_tables::TableOptions;
+use casa_tables::{ColumnSchema, TableOptions};
 use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 
 use super::*;
 use crate::ft::image::{TaylorTerm, prepare_image};
@@ -110,6 +111,17 @@ fn stale_main(ms: &mut MeasurementSet, lock: &mut TableWriteLock) {
     lock.record_write();
 }
 
+fn grid_path(entry: &VirtualModelEntry) -> PathBuf {
+    let machine = match entry.container.get("subftm") {
+        Some(Value::Record(grid)) => grid,
+        _ => &entry.container,
+    };
+    let Some(Value::Scalar(ScalarValue::String(path))) = machine.get("diskimage") else {
+        panic!("a saved FT machine needs a disk image");
+    };
+    PathBuf::from(path)
+}
+
 fn grids(path: &Path) -> Vec<PathBuf> {
     let ms = MeasurementSet::open(path).unwrap();
     let record = virtual_model(&ms, 0).unwrap().unwrap().record;
@@ -117,14 +129,7 @@ fn grids(path: &Path) -> Vec<PathBuf> {
         .unwrap()
         .iter()
         .map(|entry| {
-            let machine = match entry.container.get("subftm") {
-                Some(Value::Record(grid)) => grid,
-                _ => &entry.container,
-            };
-            let Some(Value::Scalar(ScalarValue::String(path))) = machine.get("diskimage") else {
-                panic!("a saved FT machine needs a disk image");
-            };
-            let path = PathBuf::from(path);
+            let path = grid_path(entry);
             assert!(path.join("table.dat").is_file(), "missing grid {path:?}");
             path
         })
@@ -159,24 +164,39 @@ fn source_save_keeps_every_taylor_grid_when_main_cleanup_fails() {
     let first = publication.publish([(&mut ms, &mut lock)].into_iter());
     fs::rename(&backup, &main).unwrap();
     assert!(first.is_err(), "MAIN metadata save should fail");
-    lock.release().unwrap();
-    drop(publication);
-    drop(ms);
-
+    let written = grids(&path);
+    assert_eq!(written.len(), 2, "SOURCE has the full Taylor record");
     assert!(
         old[0].join("table.dat").is_file(),
         "MAIN still names the old image"
     );
-    assert_eq!(grids(&path).len(), 2, "SOURCE has the full Taylor record");
     assert!(
-        MeasurementSet::open(path)
+        MeasurementSet::open(&path)
             .unwrap()
             .main_table()
             .keywords()
             .get("model_0")
             .is_some(),
-        "the artificial MAIN keyword still exists"
+        "the stale MAIN keyword still exists"
     );
+    if external.is_none() {
+        // Retry on the same handle whose in-memory cleanup already ran
+        // but whose control file could not be reloaded after the error.
+        publication
+            .publish([(&mut ms, &mut lock)].into_iter())
+            .unwrap();
+        assert!(
+            MeasurementSet::open(&path)
+                .unwrap()
+                .main_table()
+                .keywords()
+                .get("model_0")
+                .is_none(),
+            "the resumed cleanup has to remove the on-disk keyword"
+        );
+        assert_eq!(grids(&path), written);
+    }
+    lock.release().unwrap();
 }
 
 #[test]
@@ -263,4 +283,131 @@ fn retry_after_later_target_failure_applies_the_increment_once() {
             .is_none(),
         "retry finishes the previous MAIN cleanup"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_changed_source_route_refuses_the_batch_before_any_increment() {
+    if !measures_available() {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let left = fixture(&temp.path().join("left"));
+    let right = fixture(&temp.path().join("right"));
+    let (mut first, mut first_lock) = opened(&left);
+    let (second, second_lock) = opened(&right);
+    let model = models(&first, temp.path(), &[2.]);
+    let mut publication =
+        VirtualFtPublication::new([&first, &second].into_iter(), vec![], model, true, false)
+            .unwrap();
+
+    let original_source = temp.path().join("original-right-source");
+    fs::rename(right.join("SOURCE"), &original_source).unwrap();
+    std::os::unix::fs::symlink(left.join("SOURCE"), right.join("SOURCE")).unwrap();
+    let mut second = MeasurementSet::open(&right).unwrap();
+    let mut second_lock = second_lock;
+    let error = publication
+        .publish(
+            [
+                (&mut first, &mut first_lock),
+                (&mut second, &mut second_lock),
+            ]
+            .into_iter(),
+        )
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("storage target changed"),
+        "{error}"
+    );
+    assert!(
+        virtual_model(&MeasurementSet::open(&left).unwrap(), 0)
+            .unwrap()
+            .is_none()
+    );
+
+    // Also check an alias skipped by the plan, with the routes reversed.
+    fs::create_dir(temp.path().join("second-model")).unwrap();
+    let model = models(&first, &temp.path().join("second-model"), &[3.]);
+    let mut alias =
+        VirtualFtPublication::new([&first, &second].into_iter(), vec![], model, true, false)
+            .unwrap();
+    fs::remove_file(right.join("SOURCE")).unwrap();
+    fs::rename(&original_source, right.join("SOURCE")).unwrap();
+    let mut second = MeasurementSet::open(right).unwrap();
+    let error = alias
+        .publish(
+            [
+                (&mut first, &mut first_lock),
+                (&mut second, &mut second_lock),
+            ]
+            .into_iter(),
+        )
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("storage target changed"),
+        "{error}"
+    );
+    assert!(
+        virtual_model(&MeasurementSet::open(left).unwrap(), 0)
+            .unwrap()
+            .is_none()
+    );
+    first_lock.release().unwrap();
+    second_lock.release().unwrap();
+}
+
+#[test]
+fn a_rejected_source_cell_leaves_the_publication_unwritten() {
+    if !measures_available() {
+        return;
+    }
+    for retry in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = fixture(temp.path());
+        let (mut ms, mut lock) = opened(&path);
+        let source_path = path.join("SOURCE");
+        let original_source = temp.path().join("original-source");
+        crate::paths::copy_dir_recursive(&source_path, &original_source).unwrap();
+        let source = ms.subtable_mut(SubtableId::Source).unwrap();
+        source
+            .add_column(
+                ColumnSchema::scalar("SOURCE_MODEL", PrimitiveType::String),
+                Some(Value::Scalar(ScalarValue::String(String::new()))),
+            )
+            .unwrap();
+        source.save(TableOptions::new(&source_path)).unwrap();
+
+        let images = models(&ms, temp.path(), &[2.]);
+        let grid = grid_path(&images[0].entry);
+        let mut publication =
+            VirtualFtPublication::new([&ms].into_iter(), vec![], images, true, false).unwrap();
+        assert!(
+            publication
+                .publish([(&mut ms, &mut lock)].into_iter())
+                .is_err()
+        );
+        assert!(
+            virtual_model(&MeasurementSet::open(&path).unwrap(), 0)
+                .unwrap()
+                .is_none()
+        );
+        if retry {
+            let invalid_source = temp.path().join("invalid-source");
+            fs::rename(&source_path, &invalid_source).unwrap();
+            fs::rename(&original_source, &source_path).unwrap();
+            // Correct the table while preserving the already-prepared grid.
+            fs::rename(invalid_source.join(grid.file_name().unwrap()), &grid).unwrap();
+            publication
+                .publish([(&mut ms, &mut lock)].into_iter())
+                .unwrap();
+            assert_eq!(grids(&path), [grid]);
+        } else {
+            drop(publication);
+            assert!(
+                !grid.exists(),
+                "a pre-save refusal must not retain the grid"
+            );
+        }
+        lock.release().unwrap();
+    }
 }

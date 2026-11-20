@@ -45,8 +45,8 @@
 pub mod ft_record;
 
 mod publication;
-pub use publication::VirtualModelPublication;
 use publication::with_model_locks;
+pub use publication::{VirtualModelPublication, verify_virtual_model_target_holding};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -232,8 +232,9 @@ pub fn virtual_model(ms: &MeasurementSet, field: i32) -> MsResult<Option<Virtual
 /// under the entry's key, else the record a SOURCE row in use for the first
 /// field's source holds, gains the entry after its others when
 /// `incremental` or when it had a record to add to; otherwise (a new
-/// record, not incremental) the record is the entry alone, and the images
-/// the old record named are deleted. Without `incremental` an entry of
+/// record, not incremental) the record is the entry alone. Retired grids
+/// in MAIN can be removed once they have no references. Without
+/// `incremental` an entry of
 /// the old record covering one of the new combinations is removed first
 /// (`addToRec`). The record is then filed as the module states, and every
 /// field the entry covers points to it.
@@ -271,6 +272,10 @@ pub fn virtual_model_target<'a>(
     let Some(&first) = fields.first() else {
         return Err(invalid("a virtual model entry names no field"));
     };
+    virtual_model_target_for_field(ms, first)
+}
+
+fn virtual_model_target_for_field(ms: &MeasurementSet, first: i32) -> MsResult<&Path> {
     let state = ModelState::read(ms)?;
     let table = if state.first_row_of_source(ms, first)?.is_some() {
         ms.subtable(SubtableId::Source)
@@ -303,7 +308,7 @@ fn put_model(
     incremental: bool,
     lock: Option<&mut TableWriteLock>,
 ) -> MsResult<()> {
-    VirtualModelPublication::default().publish(ms, [(entry, incremental)], lock)
+    VirtualModelPublication::default().publish(ms, [(entry, incremental)], lock, None)
 }
 
 fn add_model(
@@ -1219,7 +1224,7 @@ impl ModelState {
         source_lock: Option<&mut TableWriteLock>,
     ) -> MsResult<()> {
         let mut state = self;
-        state.write_source(ms, source_lock)?;
+        state.write_source(ms, source_lock, || {})?;
         state.write_main(ms, main_lock)
     }
 
@@ -1227,6 +1232,7 @@ impl ModelState {
         &mut self,
         ms: &mut MeasurementSet,
         source_lock: Option<&mut TableWriteLock>,
+        before_save: impl FnOnce(),
     ) -> MsResult<()> {
         if let Some(models) = self.source.take().filter(|source| source.changed)
             && let Some(table) = ms.subtable_mut(SubtableId::Source)
@@ -1242,6 +1248,7 @@ impl ModelState {
                         .and_then(|mut accessor| accessor.set(Value::Record(cell)))?;
                 }
                 *table.keywords_mut() = models.keywords.clone();
+                before_save();
                 Ok(())
             })?;
         }
