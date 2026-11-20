@@ -62,6 +62,7 @@
 pub mod analysis;
 pub mod beam;
 mod casa_return;
+pub mod concatenate;
 pub mod convolve2d;
 pub mod error;
 pub mod expr_file;
@@ -96,6 +97,7 @@ pub use analysis::{
     immath, immoments, impbcor, import_fits, importfits, impv, imregrid, imstat, imsubimage,
     parse_image_channel_selection, parse_imstat_algorithm, run_image_analysis_task,
 };
+pub use analysis::{ImregridOutcome, ImregridTemplate};
 pub use beam::{BeamComponent, GaussianBeam, ImageBeamSet, StoredGaussianBeam};
 pub use casa_lattices::{
     ScratchSpace, StatisticsAlgorithmKind, TempStoragePlan, TempStoragePolicy,

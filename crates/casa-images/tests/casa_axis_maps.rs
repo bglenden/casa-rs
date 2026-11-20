@@ -551,6 +551,8 @@ fn feather_takes_the_direction_wherever_its_axes_are() {
             highres,
             lowres,
             sdfactor: 1.0,
+            effdishdiam: -1.0,
+            lowpassfiltersd: false,
             overwrite: false,
         })
         .unwrap();

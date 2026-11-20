@@ -1908,7 +1908,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         self.make_reduction(ReductionOp::Avdev)
     }
 
-    fn make_reduction(self, op: ReductionOp) -> Self {
+    pub(crate) fn make_reduction(self, op: ReductionOp) -> Self {
         let child_shape = self.meta.shape.clone();
         let mut meta = self.meta;
         meta.shape = vec![];

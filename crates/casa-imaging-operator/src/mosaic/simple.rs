@@ -28,11 +28,7 @@ impl Layout {
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let largest = nx.max(ny);
-        let sampling = if largest < 50 {
-            100
-        } else {
-            (5000. / largest as f64).ceil().max(1.) as u16
-        };
+        let sampling = MosaicPb::simple_oversampling(image.shape);
         // CompositeNumber::nextLargerEven is strictly larger, including
         // when the requested size is already an even composite.
         let side = next_larger_even_composite(largest / 2 * 2 * 2 * usize::from(sampling) + 1);
@@ -77,6 +73,16 @@ pub struct SimpleMosaicScreens {
 }
 
 impl MosaicPb {
+    /// Fourier oversampling used by legacy SimplePBConvFunc on this image.
+    pub fn simple_oversampling([nx, ny]: [usize; 2]) -> u16 {
+        let largest = nx.max(ny);
+        if largest < 50 {
+            100
+        } else {
+            5000_usize.div_ceil(largest) as u16
+        }
+    }
+
     /// Peak bytes to construct SimplePBConvFunc's common-beam screens.
     /// Includes the Float FFT plane and planning, retained cropped planes,
     /// frequency scaling scratch, the voltage table and routing.
@@ -114,6 +120,18 @@ impl MosaicPb {
         pattern: &casa_numerics::BeamPattern,
         windows: &[MosaicWindow],
     ) -> Result<SimpleMosaicScreens, OperatorError> {
+        Self::simple_shifted_pattern_screens(geometry, polarization, pattern, windows, [0.; 2])
+    }
+
+    /// Construct the common-beam screens with the beam displaced from the
+    /// Fourier screen centre along the image's two axes, in degrees.
+    pub fn simple_shifted_pattern_screens(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        pattern: &casa_numerics::BeamPattern,
+        windows: &[MosaicWindow],
+        offset_deg: [f64; 2],
+    ) -> Result<SimpleMosaicScreens, OperatorError> {
         Self::simple_sampled_screens(
             geometry,
             polarization,
@@ -122,9 +140,11 @@ impl MosaicPb {
                 let at = pattern.at_frequency(last);
                 let centre = side / 2;
                 for y in 0..side {
-                    let ry = ((y as f64 - centre as f64) * increments[1]).powi(2) as f32;
+                    let ry =
+                        ((y as f64 - centre as f64) * increments[1] - offset_deg[1]).powi(2) as f32;
                     for x in 0..side {
-                        let rx = ((x as f64 - centre as f64) * increments[0]).powi(2) as f32;
+                        let rx = ((x as f64 - centre as f64) * increments[0] - offset_deg[0])
+                            .powi(2) as f32;
                         let radius = (f64::from((rx + ry).sqrt()) * 60. * last / 1e9) as f32;
                         let power = at.power(f64::from(radius));
                         plane[y * side + x] =

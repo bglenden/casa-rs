@@ -49,44 +49,72 @@ fn parse_unit_with_hook(input: &str, mut after_parse: impl FnMut()) -> Result<Un
         // or a user definition changes during parsing, retry.
         let fits_enabled = reg.cache_fits_state();
         let user_generation = reg.user_generation();
-        let bytes = input.as_bytes();
-        let mut pos = 0;
-        let result = parse_expr(bytes, &mut pos);
+        let result = parse_complete(input, &|name| reg.lookup_unit(name));
         after_parse();
         if fits_enabled != reg.cache_fits_state() || user_generation != reg.user_generation() {
             continue;
         }
         let result = result?;
-        if pos != bytes.len() {
-            return Err(UnitError::InvalidUnit {
-                input: input.to_owned(),
-            });
-        }
         // A late cache write retains the state under which parsing began.
         reg.cache_put_at_state(input, result, fits_enabled, user_generation);
         return Ok(result);
     }
 }
 
+/// Parse while resolving a few unit names in the caller's local context.
+pub(super) fn parse_unit_with_definitions(
+    input: &str,
+    definitions: &[(&str, UnitVal)],
+) -> Result<UnitVal, UnitError> {
+    let reg = global_registry();
+    reg.with_stable_units(|| {
+        parse_complete(input.trim(), &|name| {
+            definitions
+                .iter()
+                .find_map(|(label, value)| (*label == name).then_some(*value))
+                .or_else(|| reg.lookup_declared_unit(name))
+        })
+    })
+}
+
+fn parse_complete(
+    input: &str,
+    resolve: &impl Fn(&str) -> Option<UnitVal>,
+) -> Result<UnitVal, UnitError> {
+    let bytes = input.as_bytes();
+    let mut pos = 0;
+    let unit = parse_expr(bytes, &mut pos, resolve)?;
+    if pos != bytes.len() {
+        return Err(UnitError::InvalidUnit {
+            input: input.to_owned(),
+        });
+    }
+    Ok(unit)
+}
+
 /// Parse a full expression: sequence of terms separated by `.` or `/`.
 /// A leading `/` is treated as `1/…` (e.g. `/mol` → mol⁻¹).
-fn parse_expr(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
+fn parse_expr(
+    bytes: &[u8],
+    pos: &mut usize,
+    resolve: &impl Fn(&str) -> Option<UnitVal>,
+) -> Result<UnitVal, UnitError> {
     let mut result = if *pos < bytes.len() && bytes[*pos] == b'/' {
         UnitVal::NODIM
     } else {
-        parse_term(bytes, pos)?
+        parse_term(bytes, pos, resolve)?
     };
 
     while *pos < bytes.len() {
         match bytes[*pos] {
             b'.' => {
                 *pos += 1;
-                let term = parse_term(bytes, pos)?;
+                let term = parse_term(bytes, pos, resolve)?;
                 result = result * term;
             }
             b'/' => {
                 *pos += 1;
-                let term = parse_term(bytes, pos)?;
+                let term = parse_term(bytes, pos, resolve)?;
                 result = result / term;
             }
             b')' => break,
@@ -97,7 +125,11 @@ fn parse_expr(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
 }
 
 /// Parse a single term: parenthesised expression or field, optionally with exponent.
-fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
+fn parse_term(
+    bytes: &[u8],
+    pos: &mut usize,
+    resolve: &impl Fn(&str) -> Option<UnitVal>,
+) -> Result<UnitVal, UnitError> {
     if *pos >= bytes.len() {
         return Ok(UnitVal::NODIM);
     }
@@ -113,14 +145,14 @@ fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
         while bytes.get(*pos).is_some_and(u8::is_ascii_digit) {
             *pos += 1;
         }
-        if scan_field(bytes, *pos) > *pos {
-            parse_term(bytes, pos)?
+        if scan_field(bytes, *pos, resolve) > *pos {
+            parse_term(bytes, pos, resolve)?
         } else {
             UnitVal::NODIM
         }
     } else if bytes[*pos] == b'(' {
         *pos += 1;
-        let inner = parse_expr(bytes, pos)?;
+        let inner = parse_expr(bytes, pos, resolve)?;
         if *pos >= bytes.len() || bytes[*pos] != b')' {
             return Err(UnitError::InvalidUnit {
                 input: String::from_utf8_lossy(bytes).into_owned(),
@@ -129,7 +161,7 @@ fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
         *pos += 1;
         inner
     } else {
-        parse_field(bytes, pos)?
+        parse_field(bytes, pos, resolve)?
     };
 
     let underscore_field = !parenthesized && *pos > start && bytes[*pos - 1] == b'_';
@@ -144,12 +176,16 @@ fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
 }
 
 /// Parse a field: a known unit name, optionally preceded by a prefix.
-fn parse_field(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
+fn parse_field(
+    bytes: &[u8],
+    pos: &mut usize,
+    resolve: &impl Fn(&str) -> Option<UnitVal>,
+) -> Result<UnitVal, UnitError> {
     let start = *pos;
     let reg = global_registry();
 
     // Collect the field token: alphanumeric + special chars.
-    let end = scan_field(bytes, *pos);
+    let end = scan_field(bytes, *pos, resolve);
     if end == start {
         return Err(UnitError::InvalidUnit {
             input: String::from_utf8_lossy(bytes).into_owned(),
@@ -160,7 +196,7 @@ fn parse_field(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
     let field_str = std::str::from_utf8(field).unwrap_or("");
 
     // 1) Try the full field as a unit name.
-    if let Some(val) = reg.lookup_unit(field_str) {
+    if let Some(val) = resolve(field_str) {
         *pos = end;
         return Ok(val);
     }
@@ -170,7 +206,7 @@ fn parse_field(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
         let prefix2 = std::str::from_utf8(&field[..2]).unwrap_or("");
         let rest2 = std::str::from_utf8(&field[2..]).unwrap_or("");
         if let Some(pfactor) = reg.lookup_prefix(prefix2)
-            && let Some(uval) = reg.lookup_unit(rest2)
+            && let Some(uval) = resolve(rest2)
         {
             *pos = end;
             return Ok(UnitVal::new(pfactor * uval.factor, uval.dim));
@@ -182,7 +218,7 @@ fn parse_field(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
         let prefix1 = std::str::from_utf8(&field[..1]).unwrap_or("");
         let rest1 = std::str::from_utf8(&field[1..]).unwrap_or("");
         if let Some(pfactor) = reg.lookup_prefix(prefix1)
-            && let Some(uval) = reg.lookup_unit(rest1)
+            && let Some(uval) = resolve(rest1)
         {
             *pos = end;
             return Ok(UnitVal::new(pfactor * uval.factor, uval.dim));
@@ -203,7 +239,7 @@ fn parse_field(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
 /// name (e.g. `S0`, `M0`, `R0`).  Otherwise digits are parsed separately as
 /// exponents, matching the C++ `UnitVal::create()` behaviour where `"m2"` is
 /// field `"m"` with exponent `2`.
-fn scan_field(bytes: &[u8], start: usize) -> usize {
+fn scan_field(bytes: &[u8], start: usize, resolve: &impl Fn(&str) -> Option<UnitVal>) -> usize {
     let mut i = start;
 
     // Special: handle `:` sequences (`:`, `::`, `:::`)
@@ -231,11 +267,10 @@ fn scan_field(bytes: &[u8], start: usize) -> usize {
         while j < bytes.len() && bytes[j].is_ascii_digit() {
             j += 1;
         }
-        if let Ok(candidate) = std::str::from_utf8(&bytes[start..j]) {
-            let reg = crate::quanta::registry::global_registry();
-            if reg.lookup_unit(candidate).is_some() {
-                return j;
-            }
+        if let Ok(candidate) = std::str::from_utf8(&bytes[start..j])
+            && resolve(candidate).is_some()
+        {
+            return j;
         }
     }
 

@@ -6,6 +6,12 @@
 pub(super) mod coords;
 mod pixel_edit;
 pub(super) mod region;
+mod replace_masked;
+
+pub use replace_masked::{
+    MaskReplacementOptions, MaskReplacementOutcome, replace_masked_complex_pixels,
+    replace_masked_real_pixels,
+};
 
 pub use pixel_edit::ImagePixelSelection;
 
@@ -13,16 +19,18 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_lattices::{TraversalIter, TraversalSpec};
 use casa_tables::publication::{exchange_directories, rename_without_replacing};
-use casa_types::{ArrayD, RecordValue, Value};
-use ndarray::{Axis, Zip};
+use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
+use ndarray::{Axis, IxDyn, SliceInfoElem, Zip};
+use num_complex::Complex;
 
 use crate::image::{ImageHistoryEntry, append_image_history_entries, image_history_entries};
 use crate::{
-    AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, ImageSubimageSummary,
-    ImsubimageRequest, MutableImageInterface, PagedImage, TempImage, TempStoragePolicy,
-    read_fits_image,
+    AnyPagedImage, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
+    ImageSubimageSummary, ImsubimageRequest, MutableImageInterface, PagedImage, TempImage,
+    TempStoragePolicy, read_fits_image,
 };
 
 use self::coords::{CoordReductionSpec, reduce_coordinates_and_beams};
@@ -31,6 +39,7 @@ use super::axes::stokes_for_axis;
 use super::lel_mask::evaluate_mask;
 
 /// A region as CASA text, a region filename, or a casacore region record.
+#[derive(Clone, Copy)]
 pub enum SubimageRegion<'a> {
     Text(&'a str),
     Record(&'a RecordValue),
@@ -88,6 +97,128 @@ impl SubimagePlan {
             options.dropdeg,
             options.keepaxes,
         )
+    }
+
+    /// Resolve a writable selection, including a positive-stride pixel slice.
+    /// Returns the packed pixel geometry and its stride in the parent image.
+    ///
+    /// # Errors
+    ///
+    /// A region, coordinate system or stride the image cannot represent.
+    pub fn for_edit<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        region: Option<SubimageRegion<'_>>,
+    ) -> Result<(Self, Vec<usize>), ImageError> {
+        let plan = |region| {
+            Self::new(
+                image,
+                None,
+                SubimageOptions {
+                    region,
+                    dropdeg: false,
+                    keepaxes: &[],
+                },
+            )
+        };
+        let Some(SubimageRegion::Record(record)) = region else {
+            return Ok((plan(region)?, vec![1; image.ndim()]));
+        };
+        if !matches!(record.get("name"),
+            Some(Value::Scalar(ScalarValue::String(name))) if name == "LCSlicer")
+        {
+            return Ok((plan(region)?, vec![1; image.ndim()]));
+        }
+        let section =
+            region::saved::decode_lc_slicer("region", record, image.coordinates(), image.shape())?;
+        if section.stride.iter().all(|&step| step == 1) {
+            return Ok((plan(region)?, section.stride));
+        }
+        let mut dense = record.clone();
+        dense.upsert(
+            "inc",
+            Value::Array(ArrayValue::from_f64_vec(vec![1.0; image.ndim()])),
+        );
+        dense.upsert(
+            "fracinc",
+            Value::Array(ArrayValue::from_bool_vec(vec![false; image.ndim()])),
+        );
+        let mut output = Self::new(
+            image,
+            None,
+            SubimageOptions {
+                region: Some(SubimageRegion::Record(&dense)),
+                dropdeg: false,
+                keepaxes: &[],
+            },
+        )?;
+        output.stride_edit_coordinates(image, &section.stride)?;
+        Ok((output, section.stride))
+    }
+
+    fn stride_edit_coordinates<T: ImagePixel>(
+        &mut self,
+        image: &dyn ImageInterface<T>,
+        stride: &[usize],
+    ) -> Result<(), ImageError> {
+        let mut record = self.coordinates.to_record();
+        let mut axis = 0;
+        for index in 0..self.coordinates.n_coordinates() {
+            let coordinate = self.coordinates.coordinate(index);
+            for local in 0..coordinate.n_pixel_axes() {
+                let step = stride[axis];
+                if step > 1 {
+                    if let CoordinateModel::Stokes(stokes) = coordinate {
+                        let labels = stokes
+                            .stokes()
+                            .iter()
+                            .step_by(step)
+                            .copied()
+                            .collect::<Vec<_>>();
+                        super::axes::replace_stokes_in_record(&mut record, &labels)?;
+                    } else {
+                        let (_, stored) = CoordinateSystem::set_increment_in_record(
+                            &mut record,
+                            axis,
+                            coordinate.increment()[local],
+                        )?;
+                        CoordinateSystem::set_increment_in_record(
+                            &mut record,
+                            axis,
+                            stored * step as f64,
+                        )?;
+                        CoordinateSystem::set_reference_pixel_in_record(
+                            &mut record,
+                            axis,
+                            coordinate.reference_pixel()[local] / step as f64,
+                        )?;
+                    }
+                }
+                axis += 1;
+            }
+        }
+        self.coordinates = CoordinateSystem::from_record(&record)?;
+        self.shape
+            .iter_mut()
+            .zip(stride)
+            .for_each(|(len, step)| *len = len.div_ceil(*step));
+        let beams = &self.image_info.beam_set;
+        if beams.is_multi() {
+            let step = |kind| image.find_axis(kind).map_or(1, |axis| stride[axis]);
+            let channels = step(CoordinateType::Spectral);
+            let stokes = step(CoordinateType::Stokes);
+            self.image_info.beam_set = ImageBeamSet::from_grid(
+                (0..beams.n_channels())
+                    .step_by(channels)
+                    .map(|channel| {
+                        (0..beams.n_stokes())
+                            .step_by(stokes)
+                            .map(|polarization| *beams.beam(channel, polarization))
+                            .collect()
+                    })
+                    .collect(),
+            );
+        }
+        Ok(())
     }
 
     pub(in crate::analysis) fn from_selection<T: ImagePixel>(
@@ -156,6 +287,33 @@ impl SubimagePlan {
         (&self.selection.start, end)
     }
 
+    /// Image metadata with the restoring beams cropped to this section.
+    pub fn image_info(&self) -> &ImageInfo {
+        &self.image_info
+    }
+
+    /// Whether the resolved selection consists of multiple regions or
+    /// nonconsecutive spectral or polarization intervals.
+    pub fn has_multiple_regions(&self) -> bool {
+        self.selection.has_multiple_regions
+    }
+
+    /// Check an optional mask expression against the parent image. This also
+    /// checks stretching along the selected axes. Operations that edit the
+    /// underlying pixel values can validate a mask without materializing it.
+    ///
+    /// # Errors
+    ///
+    /// An invalid expression or a mask that does not conform to the image.
+    pub fn validate_mask<T: ImagePixel>(
+        &self,
+        image: &dyn ImageInterface<T>,
+        mask: Option<&str>,
+        stretch: bool,
+    ) -> Result<(), ImageError> {
+        super::lel_mask::validate_mask(mask, image.shape(), image.coordinates(), stretch)
+    }
+
     /// Copies selected pixels, image metadata and the combined mask into a
     /// new image allocated with the plan's shape and coordinates. The input
     /// must be the source used to create the plan. Output is populated in
@@ -167,15 +325,7 @@ impl SubimagePlan {
         mask_expression: Option<&str>,
         stretch: bool,
     ) -> Result<(), ImageError> {
-        if output.shape() != self.shape {
-            return Err(ImageError::ShapeMismatch {
-                expected: self.shape.clone(),
-                got: output.shape().to_vec(),
-            });
-        }
-        output.set_units_string(image.units().to_owned())?;
-        output.set_image_info(&self.image_info)?;
-        output.set_misc_info(image.misc_info())?;
+        self.copy_metadata(image, output)?;
         let selection = &self.selection;
         let mut mask =
             image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
@@ -189,12 +339,7 @@ impl SubimagePlan {
         )? {
             and_opt_mask(&mut mask, expression);
         }
-        if let Some(mask) = mask
-            && mask.iter().any(|valid| !valid)
-        {
-            output.put_mask("mask0", &self.squeeze(mask))?;
-            output.set_default_mask("mask0")?;
-        }
+        self.write_selection_mask(output, mask)?;
         let spec = TraversalSpec::tiles().section(selection.start.clone(), selection.shape.clone());
         for chunk in TraversalIter::new(image, spec) {
             let chunk = chunk?;
@@ -204,6 +349,126 @@ impl SubimagePlan {
                 .map(|&axis| chunk.cursor.position[axis] - selection.start[axis])
                 .collect::<Vec<_>>();
             output.put_slice(&self.squeeze(chunk.data), &position)?;
+        }
+        Ok(())
+    }
+
+    /// Copy the selected real and imaginary sections into a complex image.
+    /// Coordinates and metadata come from the real image used to plan the section.
+    pub fn make_complex_to<T>(
+        &self,
+        real: &dyn ImageInterface<T>,
+        imaginary: &dyn ImageInterface<T>,
+        output: &mut dyn MutableImageInterface<Complex<T>>,
+        region: Option<SubimageRegion<'_>>,
+    ) -> Result<(), ImageError>
+    where
+        T: ImagePixel + Copy,
+        Complex<T>: ImagePixel + Copy,
+    {
+        let selection = &self.selection;
+        let imaginary_selection = SubimageSelection::resolve(imaginary, None, region, None, None)?;
+        if selection.shape != imaginary_selection.shape {
+            return Err(ImageError::CasaSelection(
+                "Real and imaginary parts have different shapes".into(),
+            ));
+        }
+        self.copy_metadata(real, output)?;
+        let stride = vec![1; real.ndim()];
+        let mut real_membership = None;
+        let mut imaginary_membership = None;
+        selection.apply_selection_masks(&mut real_membership);
+        imaginary_selection.apply_selection_masks(&mut imaginary_membership);
+        let check_mask = real.has_pixel_mask()
+            || imaginary.has_pixel_mask()
+            || real_membership.is_some()
+            || imaginary_membership.is_some();
+        let mut has_invalid = false;
+
+        let spec = TraversalSpec::tiles().section(selection.start.clone(), selection.shape.clone());
+        for chunk in TraversalIter::new(real, spec) {
+            let chunk = chunk?;
+            let relative: Vec<_> = chunk
+                .cursor
+                .position
+                .iter()
+                .zip(&selection.start)
+                .map(|(&position, &start)| position - start)
+                .collect();
+            let imaginary_origin: Vec<_> = relative
+                .iter()
+                .zip(&imaginary_selection.start)
+                .map(|(&offset, &start)| offset + start)
+                .collect();
+            let imag = imaginary.get_slice(&imaginary_origin, &chunk.cursor.shape, &stride)?;
+            let data = Zip::from(&chunk.data)
+                .and(&imag)
+                .map_collect(|&real, &imag| Complex::new(real, imag));
+            let position: Vec<_> = self.kept_axes.iter().map(|&axis| relative[axis]).collect();
+            if check_mask {
+                let mut mask =
+                    real.get_mask_slice(&chunk.cursor.position, &chunk.cursor.shape, &stride)?;
+                if let Some(imaginary_mask) =
+                    imaginary.get_mask_slice(&imaginary_origin, &chunk.cursor.shape, &stride)?
+                {
+                    and_opt_mask(&mut mask, imaginary_mask);
+                }
+                for membership in [&real_membership, &imaginary_membership]
+                    .into_iter()
+                    .flatten()
+                {
+                    let slices: Vec<_> = relative
+                        .iter()
+                        .zip(&chunk.cursor.shape)
+                        .map(|(&start, &size)| SliceInfoElem::Slice {
+                            start: start as isize,
+                            end: Some((start + size) as isize),
+                            step: 1,
+                        })
+                        .collect();
+                    and_opt_mask(&mut mask, membership.slice(slices.as_slice()).to_owned());
+                }
+                let mask =
+                    mask.unwrap_or_else(|| ArrayD::from_elem(IxDyn(&chunk.cursor.shape), true));
+                has_invalid |= mask.iter().any(|&valid| !valid);
+                output.put_mask_slice("mask0", &self.squeeze(mask), &position)?;
+            }
+            output.put_slice(&self.squeeze(data), &position)?;
+        }
+        if has_invalid {
+            output.set_default_mask("mask0")?;
+        } else if check_mask {
+            output.remove_mask("mask0")?;
+        }
+        Ok(())
+    }
+
+    fn copy_metadata<T: ImagePixel, U: ImagePixel>(
+        &self,
+        source: &dyn ImageInterface<T>,
+        output: &mut dyn MutableImageInterface<U>,
+    ) -> Result<(), ImageError> {
+        if output.shape() != self.shape {
+            return Err(ImageError::ShapeMismatch {
+                expected: self.shape.clone(),
+                got: output.shape().to_vec(),
+            });
+        }
+        output.set_units_string(source.units().to_owned())?;
+        output.set_image_info(&self.image_info)?;
+        output.set_misc_info(source.misc_info())
+    }
+
+    fn write_selection_mask<T: ImagePixel>(
+        &self,
+        output: &mut dyn MutableImageInterface<T>,
+        mask: Option<ArrayD<bool>>,
+    ) -> Result<(), ImageError> {
+        if let Some(mask) = mask
+            && mask.iter().any(|valid| !valid)
+        {
+            output.put_mask("mask0", &self.squeeze(mask))?;
+            output.set_default_mask("mask0")?;
         }
         Ok(())
     }

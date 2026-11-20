@@ -1018,7 +1018,7 @@ pub struct MeasurementSetColumnWriteTelemetry {
 }
 
 /// Finalized bounded write telemetry.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MeasurementSetWriteTelemetry {
     /// Per-column timings and bytes.
     pub columns: Vec<MeasurementSetColumnWriteTelemetry>,

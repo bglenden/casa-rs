@@ -13,8 +13,9 @@ use pyo3::prelude::*;
 use crate::tools::coordsys::validate_coordinate_indices;
 
 use super::PyImageTool;
+use super::attachment::AttachedImage;
 use super::beams::subrecord;
-use super::handle::{ImageHandle, raised};
+use super::handle::raised;
 
 const TOLERANCE: f64 = 1e-6;
 const WCS_TOLERANCE: f64 = 1e-13;
@@ -271,7 +272,11 @@ fn placements(record: &RecordValue) -> PyResult<Vec<PlacedAxis>> {
         .collect()
 }
 
-fn coordinates_conform(left: &RecordValue, right: &RecordValue) -> PyResult<bool> {
+pub(super) fn coordinates_conform(
+    left: &RecordValue,
+    right: &RecordValue,
+    exact_axis_names: bool,
+) -> PyResult<bool> {
     let left_system = CoordinateSystem::from_record(left).map_err(raised)?;
     let right_system = CoordinateSystem::from_record(right).map_err(raised)?;
     if left_system.n_coordinates() != right_system.n_coordinates()
@@ -289,15 +294,17 @@ fn coordinates_conform(left: &RecordValue, right: &RecordValue) -> PyResult<bool
         {
             return Ok(false);
         }
-        let left_names = lhs.model.axis_names();
-        let right_names = rhs.model.axis_names();
-        if lhs
-            .world_axes
-            .iter()
-            .enumerate()
-            .any(|(index, &axis)| axis >= 0 && left_names.get(index) != right_names.get(index))
-        {
-            return Ok(false);
+        if exact_axis_names {
+            let left_names = lhs.model.axis_names();
+            let right_names = rhs.model.axis_names();
+            if lhs
+                .world_axes
+                .iter()
+                .enumerate()
+                .any(|(index, &axis)| axis >= 0 && left_names.get(index) != right_names.get(index))
+            {
+                return Ok(false);
+            }
         }
         if lhs.world_axes.iter().any(|&axis| axis >= 0) {
             let left_record = subrecord(left, &lhs.coordinate.field).expect("parsed coordinate");
@@ -318,15 +325,11 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let (shape, coordinates) = {
-                let image = attachment.lock();
-                if image.kind() != ImagePixelType::Float32 {
-                    return Err(raised(
-                        "Exception: This method only supports Float valued images.",
-                    ));
-                }
-                (image.shape().to_vec(), image.coordinate_record())
-            };
+            if attachment.lock().kind() != ImagePixelType::Float32 {
+                return Err(raised(
+                    "Exception: This method only supports Float valued images.",
+                ));
+            }
             let path = Path::new(other);
             if other.is_empty() {
                 return Err(raised("Exception: File name is empty."));
@@ -334,8 +337,13 @@ impl PyImageTool {
             if !path.exists() {
                 return Err(raised(format!("Exception: File {other} does not exist..")));
             }
-            let other = ImageHandle::open(path)
+            let other = AttachedImage::open(path)
                 .map_err(|_| raised(format!("Exception: Unable to open image {other}.")))?;
+            let (shape, coordinates) = {
+                let image = attachment.lock();
+                (image.shape().to_vec(), image.coordinate_record())
+            };
+            let other = other.lock();
             if !matches!(
                 other.kind(),
                 ImagePixelType::Float32 | ImagePixelType::Complex32
@@ -345,7 +353,7 @@ impl PyImageTool {
             if shape != other.shape() {
                 return Ok(false);
             }
-            coordinates_conform(&coordinates, &other.coordinate_record())
+            coordinates_conform(&coordinates, &other.coordinate_record(), true)
         })
     }
 }

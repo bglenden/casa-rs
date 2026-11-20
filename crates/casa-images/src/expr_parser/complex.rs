@@ -29,19 +29,13 @@ fn promote<T: ImageExprValue + PartialOrd + ExprValueConvert>(
     }
 }
 
-pub(super) fn complex_scalar<'a, T: ImageExprValue + PartialOrd + ExprValueConvert>(
+pub(super) fn complex_constructor<'a, T: ImageExprValue + PartialOrd + ExprValueConvert>(
     real: ExprNode<'a, T>,
     imaginary: ExprNode<'a, T>,
     position: usize,
 ) -> Result<ExprNode<'a, T>, ExprParseError> {
     let real = real.into_numeric_or_constant(position)?;
     let imaginary = imaginary.into_numeric_or_constant(position)?;
-    if !real.shape().is_empty() || !imaginary.shape().is_empty() {
-        return Err(ExprParseError {
-            message: "complex() over image expressions is unfinished (#1625)".into(),
-            position,
-        });
-    }
     let promote = |value: T| Complex64::new(value.to_f64(), 0.0);
     let real = real.map_pixel_type(promote).map_err(error(position))?;
     let imaginary = imaginary.map_pixel_type(promote).map_err(error(position))?;
@@ -112,5 +106,5 @@ pub(super) fn complex_function<'a, T: ImageExprValue + PartialOrd + ExprValueCon
     let expr = expr
         .map_pixel_type(move |value| T::from_f64(convert(value)))
         .map_err(error(pos))?;
-    Ok(ExprNode::Numeric(Box::new(expr)))
+    Ok(ExprNode::numeric(expr, false))
 }

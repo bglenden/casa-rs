@@ -91,9 +91,9 @@ has CASA 6.7.6.14's signature, defaults and return value; the casa-rs tasks
 unset sentinel instead of copying catalog defaults into Python.
 
 Python binds Rust through PyO3 alone, in one native module, `casars._core`.
-It carries task parameters, task results and MeasurementSet plot documents as
-well as the in-process objects: the `casars.data.Image` NumPy object layer, the CASA tool classes of
-`casars.tools` and the `casars.simutil` class.
+It carries task parameters, task results, MeasurementSet plot documents, the
+classes in `casars.tools`, and `casars.simutil`. Use `casars.tools.image`
+for NumPy pixel access and native image editing.
 
 ## Plotting and image inspection
 

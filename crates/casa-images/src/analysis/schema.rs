@@ -3,7 +3,7 @@
 
 use std::{collections::BTreeMap, path::PathBuf};
 
-use casa_provider_contracts::ParameterValue;
+use casa_provider_contracts::{CasaValue, ParameterValue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -80,7 +80,7 @@ pub enum ImageAnalysisTaskResult {
     /// Result for [`ImageAnalysisTaskRequest::Impbcor`].
     Impbcor(PbcorSummary),
     /// Result for [`ImageAnalysisTaskRequest::Imregrid`].
-    Imregrid(ImageRegridSummary),
+    Imregrid(ImregridOutcome),
     /// Result for [`ImageAnalysisTaskRequest::Feather`].
     Feather(FeatherSummary),
     /// Result for [`ImageAnalysisTaskRequest::Exportfits`].
@@ -653,17 +653,51 @@ pub enum PbcorRegion {
 pub struct ImregridRequest {
     /// Input CASA image path.
     pub imagename: PathBuf,
-    /// Template CASA image path whose shape/coordinates define the output.
-    pub template: PathBuf,
+    /// A template image, the `get` selector, or a coordinate and shape record.
+    pub template: ImregridTemplate,
     /// Output CASA image path.
+    #[serde(default)]
     pub output: PathBuf,
     /// Interpolation method: `nearest`, `linear` or `cubic`, read by its
     /// first letter as casacore reads it (`casa_images::RegridMethod`).
     #[serde(default = "default_regrid_interpolation")]
     pub interpolation: String,
+    /// Regrid channels at equal radio velocity using the two rest frequencies.
+    #[serde(default = "default_true")]
+    pub asvelocity: bool,
+    /// Zero-based input pixel axes, or `[-1]` for matching nondegenerate axes.
+    #[serde(default)]
+    pub axes: Vec<i64>,
+    /// Output lengths in input axis order, or `[-1]` for CASA's inferred shape.
+    #[serde(default = "default_regrid_shape")]
+    pub shape: Vec<i64>,
+    /// Direction coordinate sampling interval, with zero using each pixel.
+    #[serde(default = "default_regrid_decimate")]
+    pub decimate: i64,
+    /// Resample in pixel space instead of using the coordinate conversion.
+    #[serde(default)]
+    pub replicate: bool,
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
+}
+
+fn default_regrid_decimate() -> i64 {
+    10
+}
+
+fn default_regrid_shape() -> Vec<i64> {
+    vec![-1]
+}
+
+/// CASA's accepted template representations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ImregridTemplate {
+    /// Image path or a template selector such as `get`.
+    Image(PathBuf),
+    /// A `csys` and `shap` dictionary returned by `template='get'`.
+    Record(BTreeMap<String, ParameterValue>),
 }
 
 /// CASA `feather` request for Fourier-domain high/low image combination.
@@ -678,6 +712,12 @@ pub struct FeatherRequest {
     /// Single-dish scale factor.
     #[serde(default = "default_sdfactor")]
     pub sdfactor: f32,
+    /// Positive effective single-dish diameter in metres. A nonpositive value uses the input beam.
+    #[serde(default = "default_effdishdiam")]
+    pub effdishdiam: f32,
+    /// Low-pass filter the dish image at its nominal diameter when no positive diameter is given.
+    #[serde(default)]
+    pub lowpassfiltersd: bool,
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
@@ -697,6 +737,10 @@ fn default_pv_unit() -> String {
 
 fn default_regrid_interpolation() -> String {
     "linear".to_string()
+}
+
+fn default_effdishdiam() -> f32 {
+    -1.0
 }
 
 fn default_sdfactor() -> f32 {
@@ -824,6 +868,16 @@ pub struct ImageRegridSummary {
     pub shape: Vec<usize>,
     /// Valid output pixels.
     pub valid_pixels: usize,
+}
+
+/// A CASA regrid returns either its template dictionary or an image product.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ImregridOutcome {
+    /// A completed regridding operation that wrote an image.
+    Product(ImageRegridSummary),
+    /// The input image's `csys` and `shap` fields as a typed CASA dictionary.
+    Template(CasaValue),
 }
 
 /// Summary returned after writing a `feather` product.

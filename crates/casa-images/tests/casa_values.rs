@@ -56,20 +56,6 @@ fn assert_refused(output: &Output, issue: &str) {
     assert!(stderr.contains(issue), "{stderr}");
 }
 
-/// `reply` refuses `parameter`, naming `issue`.
-fn assert_refuses(reply: TaskReply, parameter: &str, issue: &str) {
-    let TaskReply::Failed {
-        message,
-        parameter: named,
-        ..
-    } = reply
-    else {
-        panic!("{reply:?}");
-    };
-    assert_eq!(named.as_deref(), Some(parameter), "{message}");
-    assert!(message.contains(issue), "{message}");
-}
-
 #[test]
 fn immoments_takes_casas_moments_and_includepix() {
     let workspace = tempfile::tempdir().unwrap();
@@ -408,36 +394,44 @@ fn immath_takes_casas_spellings_of_its_defaults() {
     assert!(!root.join("badspix.im").exists());
 }
 
-/// CASA's default call, `imregrid('in.image')`, is `template='get'`, which
-/// writes nothing and so needs no `output`: it reaches the refusal of
-/// `get`, on the command line and in a request.
 #[test]
-fn imregrid_refuses_casas_default_template_get() {
+fn imregrid_returns_a_reusable_template_or_writes_the_default_product() {
     let workspace = tempfile::tempdir().unwrap();
     let root = workspace.path();
     write_image(&root.join("in.image"), 1.0);
     let imregrid = env!("CARGO_BIN_EXE_imregrid");
-    for values in [
-        json!({"imagename": "in.image"}),
-        json!({"imagename": "in.image", "output": "out.im"}),
-    ] {
-        let reply = json_run(imregrid, "imregrid", values.clone(), root);
-        assert_refuses(reply, "template", "#977");
-    }
-    assert!(!root.join("out.im").exists());
-    assert_refused(&run(imregrid, &["--imagename", "in.image"], root), "#977");
-    // A writing regrid still needs its output.
-    write_image(&root.join("template.image"), 1.0);
     let reply = json_run(
         imregrid,
         "imregrid",
-        json!({"imagename": "in.image", "template": "template.image"}),
+        json!({"imagename": "in.image", "output": "unused.image"}),
+        root,
+    );
+    let TaskReply::Succeeded { value, .. } = reply else {
+        panic!("{reply:?}");
+    };
+    let template = value.to_plain_json();
+    assert_eq!(template["shap"], json!([4, 4, 3]));
+    assert!(template["csys"]["direction0"].is_object());
+    assert!(!root.join("unused.image").exists());
+    let reply = json_run(
+        imregrid,
+        "imregrid",
+        json!({"imagename": "in.image", "template": template, "output": "dictionary.image"}),
+        root,
+    );
+    assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    assert!(root.join("dictionary.image").exists());
+    let cli = run(
+        imregrid,
+        &["--imagename", "in.image", "--template", "dictionary.image"],
         root,
     );
     assert!(
-        matches!(&reply, TaskReply::Failed { parameter: Some(name), .. } if name == "output"),
-        "{reply:?}"
+        cli.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cli.stderr)
     );
+    assert!(root.join("in.image.regridded").exists());
 }
 
 #[test]

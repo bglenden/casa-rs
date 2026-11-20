@@ -5,7 +5,9 @@
 
 use std::path::Path;
 
-use casa_coordinates::{CoordinateSystem, FitsHeader, FitsValue, fits::from_fits_header};
+use casa_coordinates::{
+    CoordinateSystem, FitsHeader, FitsValue, ProjectionType, fits::from_fits_header,
+};
 use casa_types::ArrayD;
 use fitsio::{FitsFile, hdu::HduInfo, images::ImageType as FitsImageType};
 use ndarray::{IxDyn, ShapeBuilder};
@@ -16,7 +18,7 @@ mod beams;
 mod history;
 mod tool_import;
 pub(crate) use history::{history_rows, read_cards};
-pub use tool_import::{FitsSectionReader, FitsToolImport};
+pub use tool_import::{FitsSectionReader, FitsToolImport, fits_section_image};
 
 /// A FITS image read into memory ([`read_fits_image`]).
 #[derive(Debug, Clone)]
@@ -34,6 +36,36 @@ pub struct FitsImage {
     /// The pixels in Fortran order, as single precision: casacore's
     /// `FITSImage` reads every `BITPIX` as `Float`.
     pub pixels: ArrayD<f32>,
+}
+
+/// FITSImage uses TiledFileAccess's 32768-pixel tile shape.
+pub(crate) fn fits_tile_shape(shape: &[usize]) -> Vec<usize> {
+    let mut remaining = 32768_f32;
+    let mut result = vec![1; shape.len()];
+    for (axis, &length) in shape.iter().enumerate() {
+        if length as f32 <= remaining {
+            result[axis] = length;
+            remaining /= length as f32;
+        } else {
+            let ideal = (remaining + 0.5) as usize;
+            if length % ideal == 0 {
+                result[axis] = ideal;
+            } else {
+                for offset in 1..ideal.min(length - ideal + 1) {
+                    if length % (ideal - offset) == 0 {
+                        result[axis] = ideal - offset;
+                        break;
+                    }
+                    if length % (ideal + offset) == 0 {
+                        result[axis] = ideal + offset;
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    result
 }
 
 /// Read the primary image's axis lengths without allocating its pixels.
@@ -230,20 +262,22 @@ fn read_primary_fits_header(
         );
     }
     for key in [
-        "RADESYS", "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER",
+        "RADESYS", "RADECSYS", "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER",
     ] {
         if let Some(value) = read_optional_key::<String>(fits, hdu, key)? {
             header.set(key, FitsValue::String(value.trim_end().to_string()));
         }
     }
     for key in [
-        "EQUINOX", "RESTFRQ", "RESTFREQ", "BMAJ", "BMIN", "BPA", "LONPOLE", "LATPOLE", "CROTA2",
+        "EQUINOX", "EPOCH", "RESTFRQ", "RESTFREQ", "BMAJ", "BMIN", "BPA", "LONPOLE", "LATPOLE",
+        "CROTA2",
     ] {
         if let Some(value) = read_optional_key::<f64>(fits, hdu, key)? {
             header.set(key, FitsValue::Float(value));
         }
     }
     for axis in 1..=shape.len() {
+        let ctype_key = format!("CTYPE{axis}");
         for prefix in ["CUNIT", "CTYPE"] {
             let key = format!("{prefix}{axis}");
             if let Some(value) = read_optional_key::<String>(fits, hdu, &key)? {
@@ -254,6 +288,18 @@ fn read_primary_fits_header(
             let key = format!("{prefix}{axis}");
             if let Some(value) = read_optional_key::<f64>(fits, hdu, &key)? {
                 header.set(key, FitsValue::Float(value));
+            }
+        }
+        let projection = header
+            .get_string(&ctype_key)
+            .and_then(|ctype| ctype.rsplit_once('-'))
+            .and_then(|(_, code)| ProjectionType::from_name(code));
+        if let Some(projection) = projection {
+            for parameter in 1..=projection.fits_parameter_defaults().len() {
+                let key = format!("PV{axis}_{parameter}");
+                if let Some(value) = read_optional_key::<f64>(fits, hdu, &key)? {
+                    header.set(key, FitsValue::Float(value));
+                }
             }
         }
     }

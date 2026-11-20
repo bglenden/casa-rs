@@ -302,7 +302,7 @@ with its CASA task.
 
 ## What profiles intentionally exclude
 
-- `casars.data.Image` and `casars.tools.table` object-handle lifecycle
+- `casars.tools.image` and `casars.tools.table` object-handle lifecycle
 - progress files, executable overrides, Last controls, and telemetry
 - saved region and mask mutations, which are dataset artifacts
 - an exact resolved historical replay record
