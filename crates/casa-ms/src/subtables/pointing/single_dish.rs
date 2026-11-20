@@ -153,9 +153,9 @@ impl PointingCurve {
                 });
             }
             for index in (1..knots.len() - 1).rev() {
-                for axis in 0..2 {
-                    second_derivatives[index][axis] -=
-                        upper[index] * second_derivatives[index + 1][axis];
+                let next = second_derivatives[index + 1];
+                for (current, next) in second_derivatives[index].iter_mut().zip(next) {
+                    *current -= upper[index] * next;
                 }
             }
         }
