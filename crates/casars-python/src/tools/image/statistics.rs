@@ -6,11 +6,16 @@ use casa_lattices::{
     ExecutionResources, FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm,
     StatsElement,
 };
+use casa_types::Value;
+use casa_types::measures::MeasFrame;
+use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::quanta::{Quantity, Unit};
 use ndarray::{ArrayD, Zip};
 use pyo3::prelude::*;
 
+use crate::convert::holder::C_MPS;
 use crate::convert::{DoubleList, IntList, Variant, value::CasaValue};
+use crate::tools::coordsys::stored_velocity_settings;
 use crate::tools::{LogLine, emit};
 
 use super::copy_region::Selection;
@@ -88,7 +93,43 @@ fn position_fields(
     ))
 }
 
-struct StatsOptions {
+struct SpectralVelocity {
+    unit: Unit,
+    convention: DopplerRef,
+}
+
+impl SpectralVelocity {
+    fn from_image(image: &ImageHandle) -> Option<Self> {
+        let coordinates = image.coordinates();
+        let index = coordinates.find_coordinate(CoordinateType::Spectral)?;
+        let CoordinateModel::Spectral(spectral) = coordinates.coordinate(index) else {
+            return None;
+        };
+        if spectral.rest_frequency() <= 0.0 {
+            return None;
+        }
+        let record = image.coordinate_record();
+        let placements = CoordinateSystem::record_coordinates(&record).ok()?;
+        let native = match record.get(&placements.get(index)?.field) {
+            Some(Value::Record(record)) => Some(record),
+            _ => None,
+        };
+        let (unit, convention) = stored_velocity_settings(native, spectral).ok()?;
+        Some(Self { unit, convention })
+    }
+
+    fn velocity_for_ratio(&self, ratio: f64) -> Option<f64> {
+        let frame = MeasFrame::new();
+        let shift = MDoppler::new(ratio, DopplerRef::RATIO)
+            .convert_to(DopplerRef::BETA, &frame)
+            .ok()?
+            .convert_to(self.convention, &frame)
+            .ok()?;
+        Some(shift.value() * C_MPS / self.unit.val().factor)
+    }
+}
+
+struct StatsOptions<'a> {
     axes: Vec<usize>,
     include: Option<[f64; 2]>,
     exclude: Option<[f64; 2]>,
@@ -97,12 +138,13 @@ struct StatsOptions {
     algorithm: StatisticsAlgorithm,
     single_precision: bool,
     fits_backed: bool,
+    spectral_velocity: Option<&'a SpectralVelocity>,
 }
 
 fn calculate<T: ImagePixel + StatsElement>(
     image: &impl ImageInterface<T>,
     chunk: &Chunk,
-    mut options: StatsOptions,
+    mut options: StatsOptions<'_>,
 ) -> PyResult<(CasaValue, Vec<usize>)> {
     let selection = image
         .sub_image_with_stride(
@@ -117,7 +159,13 @@ fn calculate<T: ImagePixel + StatsElement>(
     if !matches!(options.algorithm, StatisticsAlgorithm::Classic)
         && !matches!(options.algorithm, StatisticsAlgorithm::HingesFences { fence } if fence < 0.0)
     {
-        let scale = flux_scale(image, chunk, &options.axes, global);
+        let scale = flux_scale(
+            image,
+            chunk,
+            &options.axes,
+            global,
+            options.spectral_velocity,
+        );
         let iterations = sampled::collect(
             &selection,
             chunk,
@@ -177,7 +225,13 @@ fn calculate<T: ImagePixel + StatsElement>(
     if empty {
         fields.push(("flux", CasaValue::floats(Vec::new())));
     } else {
-        if let Some(scale) = flux_scale(image, chunk, &options.axes, global) {
+        if let Some(scale) = flux_scale(
+            image,
+            chunk,
+            &options.axes,
+            global,
+            options.spectral_velocity,
+        ) {
             let mut sums = stats.get_statistic(Statistic::Sum).map_err(raised)?;
             Zip::from(&mut sums).and(&npts).for_each(|sum, &count| {
                 *sum = if count > 0.0 { *sum * scale } else { 0.0 };
@@ -284,6 +338,7 @@ fn flux_scale<T: ImagePixel>(
     chunk: &Chunk,
     axes: &[usize],
     global: bool,
+    spectral_velocity: Option<&SpectralVelocity>,
 ) -> Option<f64> {
     let collapsed = |axis| global || axes.contains(&axis);
     let axis_types = image.axis_types();
@@ -329,7 +384,23 @@ fn flux_scale<T: ImagePixel>(
         .filter(|(kind, _)| **kind == CoordinateType::Direction)
         .map(|(_, &step)| step as f64)
         .product::<f64>();
-    statistics_flux_scale(coordinates, units, beam, channels).map(|scale| scale * direction_stride)
+    if let (Some([first, second]), Some(velocity)) = (channels, spectral_velocity) {
+        let index = coordinates.find_coordinate(CoordinateType::Spectral)?;
+        let model = coordinates.coordinate(index);
+        let CoordinateModel::Spectral(spectral) = model else {
+            return None;
+        };
+        let to_velocity = |pixel| {
+            let frequency = model.to_world(&[pixel as f64]).ok()?[0];
+            velocity.velocity_for_ratio(frequency.abs() / spectral.rest_frequency())
+        };
+        let width = (to_velocity(second)? - to_velocity(first)?).abs();
+        statistics_flux_scale(coordinates, units, beam, None)
+            .map(|scale| scale * direction_stride * width)
+    } else {
+        statistics_flux_scale(coordinates, units, beam, channels)
+            .map(|scale| scale * direction_stride)
+    }
 }
 
 #[pymethods]
@@ -399,6 +470,7 @@ impl PyImageTool {
             let region = region?;
             let mask = expression?;
             attachment.require_pixel_read_lock(&mut image)?;
+            let spectral_velocity = SpectralVelocity::from_image(&image);
             let result = (|| {
                 let shape = image.shape();
                 let axes = axes.map_or_else(Vec::new, |arg| arg.0);
@@ -433,6 +505,7 @@ impl PyImageTool {
                     algorithm,
                     single_precision,
                     fits_backed: image.fits().is_some(),
+                    spectral_velocity: spectral_velocity.as_ref(),
                 };
                 let (value, units) = match &*image {
                     ImageHandle::Float(Storage::Temp {
@@ -467,6 +540,7 @@ impl PyImageTool {
             if list || verbose || !logfile.is_empty() {
                 report::StatisticsReport {
                     coordinates: image.coordinates(),
+                    spectral_velocity: spectral_velocity.as_ref(),
                     chunk: &chunk,
                     collapsed_axes: &axes,
                     values: &value,

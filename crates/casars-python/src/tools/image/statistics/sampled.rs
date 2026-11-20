@@ -17,7 +17,7 @@ const COLS: usize = BASIC.len() + QUANTILES.len();
 pub(super) fn collect<T: ImagePixel + StatsElement>(
     selection: &impl ImageInterface<T>,
     chunk: &Chunk,
-    options: &StatsOptions,
+    options: &StatsOptions<'_>,
     mask: Option<&ArrayD<bool>>,
     flux_scale: Option<f64>,
     record: &mut Vec<(&'static str, CasaValue)>,

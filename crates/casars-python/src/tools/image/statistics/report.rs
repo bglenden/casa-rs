@@ -4,20 +4,16 @@ use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write as _};
 
+use crate::convert::value::CasaValue;
+use crate::tools::LogLine;
 use casa_coordinates::display::{
     format_latitude_dms_with_precision, format_longitude_hours_with_precision, format_stream_value,
     format_stream_value_with_precision,
 };
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
 use casa_lattices::{StatisticsAlgorithm, StatisticsAlgorithmKind};
-use casa_types::measures::MeasFrame;
-use casa_types::measures::doppler::{DopplerRef, MDoppler};
 
-use crate::convert::holder::C_MPS;
-use crate::convert::value::CasaValue;
-use crate::tools::LogLine;
-
-use super::Chunk;
+use super::{Chunk, SpectralVelocity};
 
 const COLUMNS: [(&str, &str); 7] = [
     ("Npts", "npts"),
@@ -31,6 +27,7 @@ const COLUMNS: [(&str, &str); 7] = [
 
 pub(super) struct StatisticsReport<'a> {
     pub(super) coordinates: &'a CoordinateSystem,
+    pub(super) spectral_velocity: Option<&'a SpectralVelocity>,
     pub(super) chunk: &'a Chunk,
     pub(super) collapsed_axes: &'a [usize],
     pub(super) values: &'a CasaValue,
@@ -218,7 +215,10 @@ impl StatisticsReport<'_> {
             if self.chunk.size[axis] > 1 {
                 unit.push('.');
                 if spectral.rest_frequency() > 0.0 {
-                    unit.push_str("km/s");
+                    unit.push_str(
+                        self.spectral_velocity
+                            .map_or("km/s", |velocity| velocity.unit.name()),
+                    );
                 } else {
                     unit.push_str(&self.coordinates.coordinate(index).axis_units()[0]);
                 }
@@ -262,7 +262,9 @@ impl StatisticsReport<'_> {
             }
         };
         if list {
-            for line in self.summary(columns.is_empty()) {
+            let global = self.collapsed_axes.is_empty()
+                || self.collapsed_axes.len() == self.chunk.size.len();
+            for line in self.summary(global) {
                 write_line("# ", &line, "\n");
                 log.push(LogLine::info(line));
             }
@@ -291,16 +293,20 @@ impl StatisticsReport<'_> {
         let mut columns = Vec::new();
         for index in 0..self.coordinates.n_coordinates() {
             let model = self.coordinates.coordinate(index);
-            for (local, label) in model.axis_names().into_iter().enumerate() {
+            for label in model.axis_names() {
                 if !self.collapsed_axes.is_empty()
                     && !self.collapsed_axes.contains(&axis)
                     && self.chunk.size[axis] > 1
                 {
+                    let label = label.to_ascii_uppercase();
+                    let velocity = self.spectral_velocity.filter(|_| {
+                        label == "FREQUENCY" && matches!(model, CoordinateModel::Spectral(_))
+                    });
                     columns.push(AxisColumn {
                         axis,
-                        local,
                         model,
-                        label: label.to_ascii_uppercase(),
+                        label,
+                        velocity,
                     });
                 }
                 axis += 1;
@@ -325,8 +331,8 @@ impl StatisticsReport<'_> {
         let mut header = String::new();
         for column in columns {
             if column.label == "FREQUENCY" {
-                let unit = if column.is_velocity() {
-                    "km/s".into()
+                let unit = if let Some(velocity) = column.velocity {
+                    velocity.unit.name().to_owned()
                 } else {
                     column.model.axis_units().remove(0)
                 };
@@ -377,30 +383,44 @@ impl StatisticsReport<'_> {
             }
         }
         let mut position = vec![0; columns.len()];
+        let mut iteration_order: Vec<_> = (0..columns.len()).collect();
+        iteration_order.sort_by_key(|&index| match columns[index].label.as_str() {
+            "STOKES" => 0,
+            "FREQUENCY" => 1,
+            "DECLINATION" => 2,
+            "RIGHT ASCENSION" => 3,
+            _ => 4,
+        });
         for _ in 0..npts.len() {
-            let mut row = String::new();
-            let mut index = 0;
-            for ((column, labels), &plane) in columns.iter().zip(&labels).zip(&position) {
-                let (text, pixel) = &labels[plane];
-                let width = column.width();
-                let plane_width = column.name().len() + 8;
-                let _ = write!(row, "{text:>width$} {pixel:>plane_width$} ");
-                index += plane * strides[column.axis];
-            }
-            for (cell, &(_, values)) in stats.iter().enumerate() {
-                if cell != 0 {
-                    row.push(' ');
+            let index = columns
+                .iter()
+                .zip(&position)
+                .map(|(column, &plane)| plane * strides[column.axis])
+                .sum::<usize>();
+            if npts[index] > 0.0 {
+                let mut row = String::new();
+                for ((column, labels), &plane) in columns.iter().zip(&labels).zip(&position) {
+                    let (text, pixel) = &labels[plane];
+                    let width = column.width();
+                    let plane_width = column.name().len() + 8;
+                    let _ = write!(row, "{text:>width$} {pixel:>plane_width$} ");
                 }
-                let text = scientific(values[index]);
-                let _ = write!(row, "{text:>13}");
+                for (cell, &(_, values)) in stats.iter().enumerate() {
+                    if cell != 0 {
+                        row.push(' ');
+                    }
+                    let text = scientific(values[index]);
+                    let _ = write!(row, "{text:>13}");
+                }
+                if let Some(count) = self.iterations.get(index) {
+                    let _ = write!(row, "      {count}");
+                }
+                line(row, false);
             }
-            if let Some(count) = self.iterations.get(index) {
-                let _ = write!(row, "      {count}");
-            }
-            line(row, false);
-            for (plane, labels) in position.iter_mut().zip(&labels).rev() {
+            for &axis in &iteration_order {
+                let plane = &mut position[axis];
                 *plane += 1;
-                if *plane < labels.len() {
+                if *plane < labels[axis].len() {
                     break;
                 }
                 *plane = 0;
@@ -428,19 +448,14 @@ fn scientific(value: f64) -> String {
 
 struct AxisColumn<'a> {
     axis: usize,
-    local: usize,
     model: &'a CoordinateModel,
     label: String,
+    velocity: Option<&'a SpectralVelocity>,
 }
 
 impl AxisColumn<'_> {
-    fn is_velocity(&self) -> bool {
-        self.label == "FREQUENCY"
-            && matches!(self.model, CoordinateModel::Spectral(spectral) if spectral.rest_frequency() > 0.0)
-    }
-
     fn name(&self) -> &str {
-        if self.is_velocity() {
+        if self.velocity.is_some() {
             "VELOCITY"
         } else {
             &self.label
@@ -464,26 +479,22 @@ impl AxisColumn<'_> {
             CoordinateModel::Direction(_) => match self.label.as_str() {
                 "RIGHT ASCENSION" => format_longitude_hours_with_precision(value, 5),
                 "DECLINATION" => format_latitude_dms_with_precision(value, 5),
-                _ => format_stream_value_with_precision(value.to_degrees(), 5),
+                _ => format!("{:.5}", value.to_degrees()),
             },
             CoordinateModel::Stokes(_) => StokesType::from_code(value as i32)
                 .map_or_else(|| value.to_string(), |stokes| stokes.name().into()),
-            CoordinateModel::Spectral(spectral) if self.is_velocity() => {
-                let ratio = value.abs() / spectral.rest_frequency();
-                MDoppler::new(ratio, DopplerRef::RATIO)
-                    .convert_to(spectral.velocity_convention(), &MeasFrame::new())
-                    .map_or_else(
-                        |_| "?".into(),
-                        |shift| {
-                            format_stream_value_with_precision(shift.value() * C_MPS / 1000.0, 9)
-                        },
+            CoordinateModel::Spectral(spectral) => {
+                if let Some(velocity) = self.velocity {
+                    let ratio = value.abs() / spectral.rest_frequency();
+                    velocity.velocity_for_ratio(ratio).map_or_else(
+                        || "?".into(),
+                        |shift| format_stream_value_with_precision(shift, 9),
                     )
+                } else {
+                    format_stream_value_with_precision(value, 9)
+                }
             }
-            CoordinateModel::Spectral(_) => format_stream_value_with_precision(value, 9),
-            _ => {
-                let unit = &self.model.axis_units()[self.local];
-                format!("{}{unit}", format_stream_value_with_precision(value, 5))
-            }
+            _ => format_stream_value_with_precision(value, 5),
         }
     }
 }

@@ -8034,6 +8034,9 @@ In CASA 6.7.6.14, `ia.statistics(region=...)` on a box starting at
 for the maximum at image pixel `[3, 2, 1]`. The first coordinate omits
 the region's sampling stride, so the reported position was never selected.
 casa-rs maps extrema to absolute image pixels using the original stride.
+The same reporting issue affects the plane indices written to a statistics
+logfile. With a channel selection of `1, 3, 5`, CASA prints `1, 2, 3`.
+casa-rs reports the actual selected channel indices next to their world values.
 
 An unfiltered `ia.statistics()` on a 5×4×2 image created with
 `linear=True` and pixel values 0 through 39 reports `npts=2` and `sum=1`,

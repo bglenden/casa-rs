@@ -124,3 +124,103 @@ def test_statistics_report_labels_the_flux_and_its_units(casa, tmp_path, shape, 
         flux_lines.append(line)
         assert image.done()
     assert flux_lines[0] == flux_lines[1]
+
+
+def test_report_uses_native_velocity_preferences_and_world_axis_order(casa, tmp_path):
+    path = str(tmp_path / "galactic.im")
+    source = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    assert source.setreferencecode("GALACTIC", type="direction", adjust=False)
+    record = source.torecord()
+    record["spectral1"]["velUnit"] = "m/s"
+    record["spectral1"]["velType"] = 1
+    image = casa.image()
+    values = np.arange(60, dtype=np.float32).reshape((3, 4, 5), order="F")
+    assert image.fromarray(path, pixels=values, csys=record)
+    assert image.done()
+    for axis in (0, 2):
+        reports = []
+        for index, backend in enumerate((tools, casa)):
+            image = backend.image()
+            assert image.open(path)
+            logfile = tmp_path / f"galactic-{axis}-{index}.txt"
+            stats = image.statistics(axes=[axis], logfile=str(logfile))
+            np.testing.assert_array_equal(stats["sum"], values.sum(axis=axis))
+            reports.append(logfile.read_text())
+            assert image.done()
+        assert reports[0] == reports[1]
+        if axis == 0:
+            assert reports[0].startswith("#VELOCITY column unit = m/s\n")
+
+
+def test_statistics_skips_empty_planes_and_omits_selected_axis_summary(casa, tmp_path):
+    for index, backend in enumerate((tools, casa)):
+        image = backend.image()
+        assert image.fromarray(pixels=np.arange(27, dtype=np.float32).reshape((3, 3, 3), order="F"))
+        logfile = tmp_path / f"empty-plane-{index}.txt"
+        result = image.statistics(axes=[0, 1], excludepix=[9, 17], logfile=str(logfile))
+        np.testing.assert_array_equal(result["npts"], [9, 0, 9])
+        assert [row.split()[0] for row in logfile.read_text().splitlines() if row.startswith(" ")] == ["I", "U"]
+        assert image.done()
+        assert image.fromarray(pixels=np.arange(5, dtype=np.float32).reshape((1, 1, 5)))
+        image.statistics(axes=[2], list=True, logfile=str(logfile), append=False)
+        assert "# Regions" in logfile.read_text()
+        assert "# Values" not in logfile.read_text()
+        assert image.done()
+
+
+def test_linear_report_labels_have_no_unit_suffix(casa, tmp_path):
+    path = str(tmp_path / "linear.im")
+    cs = casa.coordsys().newcoordsys(direction=True, linear=1)
+    assert cs.setunits(["km"], type="linear", overwrite=True)
+    image = casa.image()
+    assert image.fromshape(path, [3, 4, 5], csys=cs.torecord())
+    assert image.done()
+    for index, backend in enumerate((tools, casa)):
+        image = backend.image()
+        assert image.open(path)
+        logfile = tmp_path / f"linear-{index}.txt"
+        image.statistics(axes=[0, 1], logfile=str(logfile))
+        assert [row.split()[0] for row in logfile.read_text().splitlines() if row.startswith(" ")] == [str(i) for i in range(5)]
+        assert image.done()
+
+
+def test_optical_flux_uses_the_stored_velocity_unit(casa, tmp_path):
+    path = str(tmp_path / "optical.im")
+    cs = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    record = cs.torecord()
+    spectral = record["spectral1"]
+    spectral["velUnit"] = "m/s"
+    spectral["velType"] = 1
+    image = casa.image()
+    assert image.fromarray(path, pixels=np.ones((4, 3, 3), dtype=np.float32), csys=record)
+    assert image.setbrightnessunit("Jy/beam")
+    assert image.setrestoringbeam(major="2arcmin", minor="1arcmin", pa="0deg")
+    assert image.done()
+    freq = spectral["wcs"]["crval"]
+    delta = spectral["wcs"]["cdelt"]
+    rest = spectral["restfreq"]
+    channel_width = 299792458.0 * rest * abs(1 / (freq + delta) - 1 / freq)
+    beam_area_in_pixels = np.pi / (2 * np.log(2))
+    expected = 36 * channel_width / beam_area_in_pixels
+    for index, backend in enumerate((tools, casa)):
+        image = backend.image()
+        assert image.open(path)
+        logfile = tmp_path / f"optical-{index}.txt"
+        stats = image.statistics(list=True, logfile=str(logfile))
+        np.testing.assert_allclose(stats["flux"], [expected], rtol=1e-8)
+        assert "3378.53 Jy.m/s" in logfile.read_text()
+        assert image.done()
+
+
+def test_strided_report_labels_absolute_selected_planes(casa, tmp_path):
+    image = tools.image()
+    cs = tools.coordsys().newcoordsys(direction=True, spectral=True)
+    values = np.arange(108, dtype=np.float32).reshape((3, 6, 6), order="F")
+    assert image.fromarray(pixels=values, csys=cs.torecord())
+    region = casa.regionmanager().box([0, 0, 1], [2, 5, 5], [1, 1, 2])
+    logfile = tmp_path / "strided.txt"
+    stats = image.statistics(axes=[0, 1], region=region, logfile=str(logfile))
+    np.testing.assert_array_equal(stats["sum"], values[:, :, 1::2].sum(axis=(0, 1)))
+    rows = [row.split() for row in logfile.read_text().splitlines() if row.startswith(" ")]
+    assert [int(row[1]) for row in rows] == [1, 3, 5]
+    assert image.done()
