@@ -2135,7 +2135,7 @@ where
             compiled.get_at(&[])
         }
         ExprNode::Mask(builder) if builder.shape().is_empty() => Err(cannot_convert()),
-        ExprNode::Complex(builder) if builder.shape().is_empty() => Err(cannot_convert()),
+        ExprNode::Complex(builder, _) if builder.shape().is_empty() => Err(cannot_convert()),
         _ => Err(ImageError::CasaSelection(
             "The pixels expression must be scalar".into(),
         )),
