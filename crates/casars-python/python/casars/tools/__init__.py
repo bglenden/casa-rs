@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from .._core import (
     calibrater,
+    imager,
     componentlist,
     coordsys,
     image,
@@ -32,6 +33,7 @@ from .._core import (
 
 __all__ = [
     "calibrater",
+    "imager",
     "componentlist",
     "coordsys",
     "image",

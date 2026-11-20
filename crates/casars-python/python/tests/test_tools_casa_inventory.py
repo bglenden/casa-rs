@@ -136,3 +136,20 @@ def test_calibrater_method_returns_before_open() -> None:
     assert instance.delmod() is False
     with pytest.raises(RuntimeError, match=r"Error in Calibrater::setModel: no VisEquation\."):
         instance.setptmodel()
+
+
+IMAGER_CALIBRATION = {"open", "close", "done", "selectvis", "uvrange", "settaylorterms", "ft"}
+
+
+def test_imager_calibration_signatures() -> None:
+    recorded = casa_signatures("imager")
+    assert_casa_signatures(tools.imager, {
+        **recorded,
+        "methods": {name: recorded["methods"][name] for name in IMAGER_CALIBRATION},
+    })
+    assert_bundle_describes(tools.imager, "imager", {"implemented": IMAGER_CALIBRATION})
+
+
+def test_imager_calibration_signatures_match_live_casa() -> None:
+    casatools = pytest.importorskip("casatools")
+    assert_live_signatures(tools.imager, casatools.imager, methods=IMAGER_CALIBRATION)

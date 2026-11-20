@@ -300,6 +300,17 @@ impl ModelInputs {
         if matching.peek().is_none() {
             return Ok(None);
         }
+        // CASA restores the last component recipe registered for a visibility
+        // buffer. A MeasurementSet can retain older overlapping recipes, for
+        // example after replacing a setjy model with imager.ft.
+        let virtual_components = (!scratch_model)
+            .then(|| {
+                entries.iter().rev().find(|entry| {
+                    matches!(&entry.prediction, Prediction::Components(_))
+                        && entry.selection.matches(buffer.selection)
+                })
+            })
+            .flatten();
         let engine = self
             .geometry
             .as_ref()
@@ -350,6 +361,9 @@ impl ModelInputs {
         for entry in matching {
             let components = match &entry.prediction {
                 Prediction::Components(components) => {
+                    if virtual_components.is_some_and(|active| !std::ptr::eq(active, entry)) {
+                        continue;
+                    }
                     components_written = true;
                     components
                 }

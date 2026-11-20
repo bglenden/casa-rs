@@ -7,12 +7,14 @@ use std::path::{Path, PathBuf};
 use casa_components::ComponentList;
 use casa_coordinates::CoordinateSystem;
 use casa_images::{ImageInfo, PagedImage};
+use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
 use casa_ms::{
     MeasurementSet, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
 };
 use casa_types::{RecordValue, ScalarValue, Value};
 
-use crate::{AttachmentError, CalibrationAttachment};
+use crate::model_columns::has_column;
+use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
 use super::image::{ImageModel, TaylorTerm, prepare_configured_image, reference_frequency};
 use super::settings::{ImagerTransformOptions, PredictionGeometry};
@@ -31,6 +33,7 @@ pub struct ImagerImageDefinition {
 }
 
 /// Inputs to one imager prediction.
+#[derive(Clone, Copy)]
 pub struct ImagerPredictionModel<'a> {
     /// Images in Taylor-term order.
     pub images: &'a [PathBuf],
@@ -49,16 +52,47 @@ pub struct ImagerPrediction {
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
+    partial_batch: Option<PartialBatch>,
+    ambiguous_scratch_write: bool,
 }
 
 struct PendingPublication {
     path: PathBuf,
     selection: MsSelection,
+    model: PredictionInputs,
+    publication: VirtualFtPublication,
+}
+
+struct PartialBatch {
+    inputs: Vec<CalibrationAttachment>,
+    model: PredictionInputs,
+    scratch: bool,
+    completed: usize,
+}
+
+struct PredictionInputs {
     images: Vec<PathBuf>,
     components: Option<PathBuf>,
     incremental: bool,
     phase_centre_time: Option<f64>,
-    publication: VirtualFtPublication,
+}
+
+impl PredictionInputs {
+    fn new(model: ImagerPredictionModel<'_>) -> Self {
+        Self {
+            images: model.images.to_owned(),
+            components: model.components.map(Path::to_owned),
+            incremental: model.incremental,
+            phase_centre_time: model.phase_centre_time,
+        }
+    }
+
+    fn matches(&self, model: ImagerPredictionModel<'_>) -> bool {
+        self.images == model.images
+            && self.components.as_deref() == model.components
+            && self.incremental == model.incremental
+            && self.phase_centre_time.map(f64::to_bits) == model.phase_centre_time.map(f64::to_bits)
+    }
 }
 
 impl Default for ImagerPrediction {
@@ -69,6 +103,8 @@ impl Default for ImagerPrediction {
             taylor: (1, None),
             voltage_pattern: None,
             pending_publication: None,
+            partial_batch: None,
+            ambiguous_scratch_write: false,
         }
     }
 }
@@ -94,15 +130,84 @@ impl ImagerPrediction {
     ///
     /// # Errors
     ///
-    /// An unsupported number of terms or an invalid frequency.
+    /// A nonpositive term count or an invalid frequency.
     pub fn set_taylor_terms(&mut self, terms: i32, reference_hz: Option<f64>) -> MsResult<()> {
-        if !(1..=3).contains(&terms) || reference_hz.is_some_and(|hz| !hz.is_finite() || hz <= 0.) {
+        if terms < 1 || reference_hz.is_some_and(|hz| !hz.is_finite() || hz <= 0.) {
             return Err(invalid(
-                "imager needs one to three Taylor terms and a positive reference frequency",
+                "imager needs at least one Taylor term and a positive reference frequency",
+            ));
+        }
+        if (self.partial_batch.is_some() || self.pending_publication.is_some())
+            && self.taylor != (terms, reference_hz)
+        {
+            return Err(invalid(
+                "finish publishing the previous imager prediction before changing Taylor terms",
             ));
         }
         self.taylor = (terms, reference_hz);
         Ok(())
+    }
+
+    /// Predict for every active writable input in enrollment order.
+    /// A retry continues after the last completed input and resumes any
+    /// interrupted publication on the current one.
+    ///
+    /// # Errors
+    /// The active inputs are not writable, a previous batch requires a retry,
+    /// or an input's model cannot be prepared or published.
+    pub fn predict_attached(
+        &mut self,
+        attachments: &ImagerAttachments,
+        model: ImagerPredictionModel<'_>,
+        scratch: bool,
+    ) -> Result<bool, AttachmentError> {
+        let inputs = attachments.writable_inputs()?;
+        let first = match &self.partial_batch {
+            Some(batch)
+                if batch.inputs == inputs
+                    && batch.scratch == scratch
+                    && batch.model.matches(model) =>
+            {
+                batch.completed
+            }
+            Some(_) => {
+                return Err(invalid(
+                    "retry the previous imager prediction to finish publishing it",
+                )
+                .into());
+            }
+            None => 0,
+        };
+        if scratch {
+            // CASA uses the last enrollment's destination for the whole
+            // iterator. Reject a missing column before any group member is
+            // changed. The legacy iterator can crash on this input.
+            for input in inputs
+                .iter()
+                .skip(first)
+                .filter(|input| !input.options().use_scratch)
+            {
+                if !has_column(&MeasurementSet::open(input.path())?, ModelData) {
+                    return Ok(false);
+                }
+            }
+        }
+        for (index, input) in inputs.iter().enumerate().skip(first) {
+            let result = self.predict_to(input, model, scratch);
+            if !matches!(result, Ok(true)) {
+                if index > 0 {
+                    self.partial_batch = Some(PartialBatch {
+                        inputs: inputs.to_vec(),
+                        model: PredictionInputs::new(model),
+                        scratch,
+                        completed: index,
+                    });
+                }
+                return result;
+            }
+        }
+        self.partial_batch = None;
+        Ok(true)
     }
 
     /// Predict and publish the model for one already-selected attachment.
@@ -120,18 +225,28 @@ impl ImagerPrediction {
         attachment: &CalibrationAttachment,
         model: ImagerPredictionModel<'_>,
     ) -> Result<bool, AttachmentError> {
+        self.predict_to(attachment, model, attachment.options().use_scratch)
+    }
+
+    fn predict_to(
+        &mut self,
+        attachment: &CalibrationAttachment,
+        model: ImagerPredictionModel<'_>,
+        scratch: bool,
+    ) -> Result<bool, AttachmentError> {
+        if self.ambiguous_scratch_write {
+            return Err(invalid(
+                "the previous scratch prediction may be partially written. Reopen the imager before a replacement prediction",
+            ).into());
+        }
         let mut pending = self.pending_publication.take();
+        let mut writing_scratch = false;
         let result = attachment.with_write(|ms, selection, lock| {
-            let scratch = attachment.options().use_scratch;
             if let Some(previous) = pending.as_mut() {
                 if scratch
                     || previous.path != attachment.path()
                     || previous.selection != selection.request
-                    || previous.images != model.images
-                    || previous.components.as_deref() != model.components
-                    || previous.incremental != model.incremental
-                    || previous.phase_centre_time.map(f64::to_bits)
-                        != model.phase_centre_time.map(f64::to_bits)
+                    || !previous.model.matches(model)
                 {
                     return Err(invalid(
                         "retry the previous imager prediction to finish publishing it",
@@ -141,16 +256,26 @@ impl ImagerPrediction {
                 previous.publication.publish([(ms, lock)].into_iter())?;
                 return Ok(true);
             }
-            if selection.selected_rows.is_empty() {
+            if selection.selected_rows.is_empty()
+                || (model.images.is_empty() && model.components.is_none())
+            {
                 return Ok(true);
             }
-            let Some((mut components, images)) = self.prepare(ms, selection, &model, scratch)?
+            if scratch && !has_column(ms, ModelData) {
+                return Ok(false);
+            }
+            let Some((mut components, images)) = self
+                .prepare(ms, selection, &model, scratch)
+                .map_err(AttachmentError::PredictionPreparation)?
             else {
                 return Ok(false);
             };
             if scratch {
                 components.extend(images.iter().map(|image| image.entry.clone()));
-                write_model_scratch(ms, selection, &components, model.incremental, lock)?;
+                // Virtual cleanup belongs to scratch attachment. An earlier
+                // virtual input in this iterator can still own recipes.
+                writing_scratch = !components.is_empty();
+                write_model_scratch(ms, selection, &components, model.incremental, false, lock)?;
             } else {
                 let publication = VirtualFtPublication::new(
                     [&*ms].into_iter(),
@@ -162,10 +287,7 @@ impl ImagerPrediction {
                 let previous = pending.insert(PendingPublication {
                     path: attachment.path().to_owned(),
                     selection: selection.request.clone(),
-                    images: model.images.to_owned(),
-                    components: model.components.map(Path::to_owned),
-                    incremental: model.incremental,
-                    phase_centre_time: model.phase_centre_time,
+                    model: PredictionInputs::new(model),
                     publication,
                 });
                 previous.publication.publish([(ms, lock)].into_iter())?;
@@ -173,6 +295,7 @@ impl ImagerPrediction {
             Ok(true)
         });
         if result.is_err() {
+            self.ambiguous_scratch_write = writing_scratch;
             self.pending_publication =
                 pending.filter(|previous| previous.publication.may_reference_models());
         }
@@ -186,7 +309,11 @@ impl ImagerPrediction {
         model: &ImagerPredictionModel<'_>,
         scratch: bool,
     ) -> MsResult<Option<(Vec<VirtualModelEntry>, Vec<ImageModel>)>> {
-        if model.images.is_empty() && model.components.is_none() {
+        if model
+            .images
+            .iter()
+            .any(|image| image.as_os_str().is_empty())
+        {
             return Ok(None);
         }
         if self.voltage_pattern.is_some() && model.components.is_some() {
@@ -240,14 +367,16 @@ impl ImagerPrediction {
             })
         };
         let mut components = Vec::new();
-        if let Some(path) = model.components.filter(|_| !model.incremental) {
+        if let Some(path) = model.components {
             let list = ComponentList::read_table(path).map_err(invalid)?;
-            components.push(model_entry(
-                ms,
-                selected,
-                VirtualModelKind::ComponentList,
-                list.to_record().map_err(invalid)?,
-            )?);
+            if !model.incremental {
+                components.push(model_entry(
+                    ms,
+                    selected,
+                    VirtualModelKind::ComponentList,
+                    list.to_record().map_err(invalid)?,
+                )?);
+            }
         }
         let mut images = Vec::new();
         match (self.voltage_pattern.as_ref(), scratch) {

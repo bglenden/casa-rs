@@ -73,6 +73,7 @@ pub(crate) fn write_model_scratch(
     selected: &ResolvedMsSelection,
     entries: &[VirtualModelEntry],
     incremental: bool,
+    clear_virtual: bool,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     if entries.is_empty() || selected.selected_rows.is_empty() {
@@ -89,7 +90,7 @@ pub(crate) fn write_model_scratch(
         selected.row_indices().collect(),
         &[MODEL],
         false,
-        true,
+        clear_virtual,
         lock,
     )?;
     let batch_rows = plan.batch_rows().max(1);
