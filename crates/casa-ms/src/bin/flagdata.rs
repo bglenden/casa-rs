@@ -81,6 +81,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
     let spw = task_selection_text(task, "spw")?;
+    let correlation = task_selection_text(task, "correlation")?;
     let clipminmax = match task.numbers("clipminmax")?.as_slice() {
         [minimum, maximum] => Some([*minimum, *maximum]),
         _ => None,
@@ -109,6 +110,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         selection: selection(task, &spw)?,
         casa_row_selection: true,
         spw: (!spw.is_empty()).then_some(spw),
+        correlation: (!correlation.is_empty()).then_some(correlation),
         mode,
         action,
         autocorr: task.flag("autocorr")?,

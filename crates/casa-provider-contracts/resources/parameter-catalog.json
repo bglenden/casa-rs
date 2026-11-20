@@ -9078,6 +9078,22 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.correlation",
+      "semantic_revision": 3,
+      "casa_name": "correlation",
+      "value_domain": {"kind": "string"},
+      "normalization": {"kind": "casa_field"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA flagging agent correlation selection.",
+        "details": "An empty selector uses every stored correlation. The agents find labels in the supplied text using the entire POLARIZATION table, and require each participating setup to contain all matched labels.",
+        "examples": ["XX", "XX,YY"]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "flagdata.autocorr",
       "semantic_revision": 1,
       "casa_name": "autocorr",
