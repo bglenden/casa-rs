@@ -2568,6 +2568,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#flagmanager-can-overwrite-a-saved-version-through-an-alias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flagmanager can overwrite a saved version through an alias
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4510,6 +4521,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#image-rename-can-move-an-open-table-before-failing-to-reattach" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image rename can move an open table before failing to reattach
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4546,6 +4568,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#image-rename-can-move-an-open-table-before-failing-to-reattach">renaming an image while another tool holds it open</a>,
 <a href="#image-removal-can-delete-an-open-table-through-a-symbolic-link">removing an open table through a symbolic link</a>,
 <a href="#fits-import-can-abort-on-an-empty-primary-hdu">FITS import of an empty primary HDU</a>,
 <a href="#beam-removal-can-delete-metadata-before-rejecting-a-record">restoring-beam removal with a malformed record</a>,
@@ -4688,6 +4711,7 @@ Calibration behaviours casa-rs does not follow:
 <a href="#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame">component spectra in another frame</a>.
 Flagging behaviours casa-rs does not follow:
 <a href="#flagmanager-gives-the-version-a-save-renames-the-new-comment">a re-saved version's comment</a>,
+<a href="#flagmanager-can-overwrite-a-saved-version-through-an-alias">re-saving a flag version through an alias</a>,
 <a href="#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice">an unrecognized flag merge choice</a>,
 <a href="#flagdatas-summary-aborts-on-a-correlation-it-cannot-name">a summary of correlations it cannot name</a>.
 Coordinate behaviours casa-rs does not follow:
@@ -8047,6 +8071,15 @@ CASA 6.7.6.14 lists <code>{0: {'name': 'v1.old.1793292269', 'comment': 'second'}
 and then <code>'second'</code>; the first comment is lost. casa-rs renames the version
 the same way and keeps its own comment (<code>flagmanager</code>'s
 <code>keep_existing_version</code>).</p>
+<h2 id="flagmanager-can-overwrite-a-saved-version-through-an-alias"><code>flagmanager</code> can overwrite a saved version through an alias<a class="headerlink" href="#flagmanager-can-overwrite-a-saved-version-through-an-alias" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, <code>flagmanager</code> can open a MeasurementSet through a symbolic
+link and write flag versions beside the link's target. The Python save
+preflight looks for the old version beside the alias. Re-saving the same
+version through the alias can therefore overwrite the saved flags and comment.
+The <code>tools/casa-compat/flagmanager_alias_oracle.py</code> comparison reproduces the
+loss. It verifies that casa-rs archives the previous flags and comment beside
+the target and can restore them. An existing alias-side catalog from an older
+casa-rs release remains directly accessible.</p>
 <h2 id="flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice"><code>flagmanager</code> replaces working flags for an unrecognized merge choice<a class="headerlink" href="#flagmanager-replaces-working-flags-for-an-unrecognized-merge-choice" title="Permanent link">&para;</a></h2>
 <p>CASA 6.7.6.14 accepts unrecognized <code>merge</code> strings in restore mode and
 silently applies <code>replace</code>. For example, <code>merge="OR"</code> removes working flags
@@ -11190,6 +11223,13 @@ at open and refuses the removal if the pathname was rebound.</p>
 <p>When a symbolic link lies inside a read-only directory, CASA can delete the
 linked image and leave the link dangling. casa-rs checks that directory
 before deleting the image and preserves both entries when it refuses.</p>
+<h2 id="image-rename-can-move-an-open-table-before-failing-to-reattach">Image rename can move an open table before failing to reattach<a class="headerlink" href="#image-rename-can-move-an-open-table-before-failing-to-reattach" title="Permanent link">&para;</a></h2>
+<p>In CASA 6.7.6.14, open one native image in two image tools in the same process
+and call <code>rename()</code> on the first tool. CASA can move the table, then raise
+<code>RuntimeError</code> while reopening it under the new name. The second tool keeps
+the old name and can abort while closing that stale handle. casa-rs refuses
+the move before changing either path while another tool holds the image.
+See <a href="https://github.com/bglenden/casa-rs/issues/1625">#1625</a>.</p>
 
 
 

@@ -2043,6 +2043,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#atmosphere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        atmosphere
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -8959,6 +8970,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#atmosphere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        atmosphere
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -14098,7 +14120,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">76</td>
 <td style="text-align: right;">76</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">49</td>
+<td style="text-align: right;">43</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -14329,7 +14351,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">102</td>
 <td style="text-align: right;">102</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">17</td>
+<td style="text-align: right;">14</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -14929,7 +14951,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: the vis parameter must be a path that exists ('' does not exist)</li>
 <li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
-<li>Accepted only at CASA's default until #978: <code>autocorr</code>, <code>inpfile</code>, <code>reason</code>, <code>tbuff</code>, <code>uvrange</code>, <code>timerange</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>observation</code>, <code>feed</code>, <code>clipminmax</code>, <code>clipoutside</code>, <code>channelavg</code>, <code>chanbin</code>, <code>timeavg</code>, <code>timebin</code>, <code>quackincrement</code>, <code>tolerance</code>, <code>addantenna</code>, <code>lowerlimit</code>, <code>upperlimit</code>, <code>ntime</code>, <code>combinescans</code>, <code>timefit</code>, <code>freqfit</code>, <code>maxnpieces</code>, <code>flagdimension</code>, <code>usewindowstats</code>, <code>halfwin</code>, <code>winsize</code>, <code>antint_ref_antenna</code>, <code>minchanfrac</code>, <code>verbose</code>, <code>growaround</code>, <code>flagneartime</code>, <code>flagnearfreq</code>, <code>minrel</code>, <code>maxrel</code>, <code>minabs</code>, <code>maxabs</code>, <code>basecnt</code>, <code>fieldcnt</code>, <code>display</code>, <code>savepars</code>, <code>cmdreason</code>, <code>outfile</code>, <code>overwrite</code>, <code>writeflags</code></li>
+<li>Accepted only at CASA's default until #978: <code>autocorr</code>, <code>inpfile</code>, <code>reason</code>, <code>tbuff</code>, <code>uvrange</code>, <code>timerange</code>, <code>correlation</code>, <code>intent</code>, <code>array</code>, <code>observation</code>, <code>feed</code>, <code>clipminmax</code>, <code>clipoutside</code>, <code>channelavg</code>, <code>chanbin</code>, <code>timeavg</code>, <code>timebin</code>, <code>quackincrement</code>, <code>tolerance</code>, <code>addantenna</code>, <code>lowerlimit</code>, <code>upperlimit</code>, <code>ntime</code>, <code>combinescans</code>, <code>timefit</code>, <code>freqfit</code>, <code>maxnpieces</code>, <code>flagdimension</code>, <code>usewindowstats</code>, <code>halfwin</code>, <code>winsize</code>, <code>antint_ref_antenna</code>, <code>minchanfrac</code>, <code>verbose</code>, <code>growaround</code>, <code>flagneartime</code>, <code>flagnearfreq</code>, <code>display</code>, <code>savepars</code>, <code>cmdreason</code>, <code>outfile</code>, <code>overwrite</code>, <code>writeflags</code></li>
 <li>casa-rs parameters CASA lacks: none</li>
 <li>Shared parameters: 76, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
@@ -16560,14 +16582,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
 <li>Accepted only at CASA's default until #1032: <code>rowindex</code>, <code>colindex</code>, <code>plotindex</code>, <code>xframe</code>, <code>xinterp</code>, <code>yframe</code>, <code>yinterp</code>, <code>phasecenter</code>, <code>extendflag</code>, <code>extcorr</code>, <code>extchannel</code>, <code>clearplots</code></li>
-<li>Accepted only at CASA's default until #1526: <code>callib</code>, <code>showatm</code>, <code>showtsky</code>, <code>showimage</code>, <code>colorizeoverlay</code></li>
+<li>Accepted only at CASA's default until #1526: <code>callib</code>, <code>colorizeoverlay</code></li>
 <li>casa-rs parameters CASA lacks: none</li>
 <li>Shared parameters: 102, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
 </ul>
 <h4 id="plotms-parameter-implementation">plotms parameter implementation<a class="headerlink" href="#plotms-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>e775bd07a6e5b9ebfbb4b812844564b063dc78e9</code>. Status counts: Default only: 17, Implemented: 23, Not implemented: 11, Partial: 51, Unassessed: 0.</p>
+<p>Audit baseline: <code>e775bd07a6e5b9ebfbb4b812844564b063dc78e9</code>. Status counts: Default only: 14, Implemented: 23, Not implemented: 11, Partial: 54, Unassessed: 0.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -17369,25 +17391,25 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>showatm</code></td>
 <td><code>False</code></td>
 <td><code>False</code>; <code>showatm</code> → <code>showatm</code></td>
-<td>Default only</td>
-<td>Compute and overlay the atmospheric transmission curve <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>bool</code>; Non-default refused when always (#1526)</td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Overlay atmospheric transmission on current calibration tables. MeasurementSet overlays remain open. <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>bool</code></td>
+<td><a href="#plotms-evidence-atmosphere">atmosphere</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>showtsky</code></td>
 <td><code>False</code></td>
 <td><code>False</code>; <code>showtsky</code> → <code>showtsky</code></td>
-<td>Default only</td>
-<td>Compute and overlay the sky temperature curve <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>bool</code>; Non-default refused when always (#1526)</td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Overlay sky temperature on current calibration tables. MeasurementSet overlays remain open. <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>bool</code></td>
+<td><a href="#plotms-evidence-atmosphere">atmosphere</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>showimage</code></td>
 <td><code>False</code></td>
 <td><code>False</code>; <code>showimage</code> → <code>showimage</code></td>
-<td>Default only</td>
-<td>Compute and overlay the image sideband curve <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>bool</code>; Non-default refused when always (#1526)</td>
-<td><a href="#plotms-evidence-remaining">remaining</a></td>
+<td>Partial</td>
+<td>Overlay a receiver image sideband on current calibration tables. MeasurementSet overlays remain open. <a href="#plotms-behavior-advanced">advanced</a><br>Catalog domain: <code>bool</code></td>
+<td><a href="#plotms-evidence-atmosphere">atmosphere</a>, <a href="#plotms-evidence-remaining">remaining</a></td>
 </tr>
 <tr>
 <td><code>colorizeoverlay</code></td>
@@ -17436,9 +17458,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p>Evidence: <a href="#plotms-evidence-paired">paired</a>.</p>
 <p><a id="plotms-behavior-advanced"></a></p>
 <h5 id="advanced-calibration-plotting-controls">Advanced calibration plotting controls<a class="headerlink" href="#advanced-calibration-plotting-controls" title="Permanent link">&para;</a></h5>
-<p><strong>Not implemented</strong> — Track calibration library, atmosphere, transformations and interactive flag controls.</p>
+<p><strong>Partial</strong> — Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.</p>
 <p>The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.</p>
-<p>Evidence: <a href="#plotms-evidence-remaining">remaining</a>.</p>
+<p>Evidence: <a href="#plotms-evidence-atmosphere">atmosphere</a>, <a href="#plotms-evidence-remaining">remaining</a>.</p>
 <h4 id="plotms-deviations-and-unfinished-work">plotms deviations and unfinished work<a class="headerlink" href="#plotms-deviations-and-unfinished-work" title="Permanent link">&para;</a></h4>
 <h5 id="disable-selection-proposed">disable-selection: Proposed<a class="headerlink" href="#disable-selection-proposed" title="Permanent link">&para;</a></h5>
 <ul>
@@ -17465,6 +17487,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="plotms-evidence-remaining"></a></p>
 <h5 id="remaining">remaining<a class="headerlink" href="#remaining" title="Permanent link">&para;</a></h5>
 <p><strong>Remaining calibration PlotMS workflow comparisons — planned.</strong> Requires additional native behavior and paired evidence. Advanced calibration table and MS plotting under #1526, #1032 and #215.</p>
+<p><a id="plotms-evidence-atmosphere"></a></p>
+<h5 id="atmosphere">atmosphere<a class="headerlink" href="#atmosphere" title="Permanent link">&para;</a></h5>
+<p><strong>Same-input atmospheric overlays — passed.</strong> 21 exports, 985 selected coordinates, one Python axis error and 19 rendered coordinates matched. Seven wide-band, weather and receiver overlay cases had a maximum normalized RMS of 0.00012. CASA 6.7.6.14 and casaplotms 2.9.1 on the same current-format bandpass and gain tables, with optional associated weather, water-vapour and receiver tables.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/12d08ef332634591a6ad4611408f4cc178f601c5/tools/casa-compat/plotms_atmosphere_oracle.py">tools/casa-compat/plotms_atmosphere_oracle.py</a></li>
+<li>Revision: <code>12d08ef332634591a6ad4611408f4cc178f601c5</code>; CASA: <code>6.7.6.14</code>.</li>
+<li>Command: <code>casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work &lt;new-dir&gt; --native-bin &lt;msexplore&gt;</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/plotms-atmosphere-20261119.json</code>.</li>
+</ul>
 <h3 id="plotweather">plotweather<a class="headerlink" href="#plotweather" title="Permanent link">&para;</a></h3>
 <ul>
 <li>CASA source: <code>casatasks/plotweather.py</code>, 4 parameters</li>
