@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Prepare the legacy imager's radial voltage pattern on the model image.
+//! Prepare the legacy imager's voltage pattern on the model image.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,9 +14,10 @@ use casa_tables::{Table, TableOptions};
 use casa_types::measures::ephemeris::offset_true_angle;
 use casa_types::measures::{MeasFrame, direction::MDirection};
 use casa_types::{RecordValue, ScalarValue, Value};
-use ndarray::Array2;
+use ndarray::{Array2, ArrayD};
 
 use super::invalid;
+use crate::execute::load_parallactic_angle_state;
 
 const MANAGED_VP_TABLE: &str = "CASARS_VOLTAGE_PATTERNS";
 
@@ -151,7 +152,14 @@ pub(super) struct PreparedVoltagePattern {
     pattern: Arc<Admitted<BeamPattern>>,
     centre: MDirection,
     frame: MeasFrame,
-    squint: Option<(PrimaryBeam, f64, f64)>,
+    squint: Option<BeamSquint>,
+}
+
+#[derive(Clone, Copy)]
+struct BeamSquint {
+    beam: PrimaryBeam,
+    reference_hz: f64,
+    angle: f64,
 }
 
 impl ImagerVoltagePattern {
@@ -224,9 +232,25 @@ impl ImagerVoltagePattern {
             let (beam, frequency) = default_beam
                 .filter(|(pattern, _)| pattern.squints())
                 .ok_or_else(|| invalid("this VLA band has no supported squint (#1520)"))?;
-            let angle =
-                engine.feed_parallactic_angle(time, field as usize, first.antenna2_id as usize)?;
-            Some((beam, frequency, angle))
+            let ScalarValue::Int32(feed) =
+                main.cell_accessor(first.row_index, "FEED2")?.scalar()?
+            else {
+                return Err(invalid("FEED2 must be Int32"));
+            };
+            let angle = load_parallactic_angle_state(ms)?
+                .feed_parallactic_angle(
+                    time,
+                    field,
+                    first.antenna2_id,
+                    *feed,
+                    first.spectral_window_id,
+                )
+                .map_err(invalid)?;
+            Some(BeamSquint {
+                beam,
+                reference_hz: frequency,
+                angle,
+            })
         } else {
             None
         };
@@ -288,21 +312,66 @@ impl PreparedVoltagePattern {
         self.squint.is_some()
     }
 
-    pub(super) fn shifted_separations(
+    fn shifted_separations(
         &self,
         direction: &DirectionCoordinate,
         shape: [usize; 2],
         frequency: f64,
     ) -> MsResult<Option<[Array2<f64>; 2]>> {
-        let Some((beam, reference, angle)) = self.squint else {
+        let Some(BeamSquint {
+            beam,
+            reference_hz,
+            angle,
+        }) = self.squint
+        else {
             return Ok(None);
         };
         let shifted = |right| {
-            let offset = beam.squint_displacement_rad(reference, frequency, angle, right);
+            let offset = beam.squint_displacement_rad(reference_hz, frequency, angle, right);
             let centre = offset_true_angle(&self.centre, offset).map_err(invalid)?;
             self.separations_from(direction, shape, &centre)
         };
         Ok(Some([shifted(true)?, shifted(false)?]))
+    }
+
+    pub(super) fn model_plane(
+        &self,
+        direction: &DirectionCoordinate,
+        radial: &Array2<f64>,
+        values: &ArrayD<f32>,
+        frequency: f64,
+    ) -> MsResult<Vec<Array2<f32>>> {
+        let [nx, ny, npol, _] = *values.shape() else {
+            unreachable!("legacy model plane shape");
+        };
+        let shifted = if npol == 4 {
+            self.shifted_separations(direction, [nx, ny], frequency)?
+        } else {
+            None
+        };
+        let pattern = self.pattern().at_frequency(frequency);
+        let power = |distance: f64| pattern.power(distance.to_degrees() * 60.0 * frequency / 1e9);
+        Ok((0..npol)
+            .map(|pol| {
+                Array2::from_shape_fn((ny, nx), |(y, x)| {
+                    if let Some([right, left]) = &shifted
+                        && matches!(pol, 0 | 3)
+                    {
+                        let i = values[[x, y, 0, 0]];
+                        let v = values[[x, y, 3, 0]];
+                        let right = (i + v) * power(right[[y, x]]);
+                        let left = (i - v) * power(left[[y, x]]);
+                        // Apply the two displaced parallel-hand beams in correlation space.
+                        return if pol == 0 {
+                            0.5 * (right + left)
+                        } else {
+                            0.5 * (right - left)
+                        };
+                    }
+                    values[[x, y, pol, 0]] * power(radial[[y, x]])
+                })
+            })
+            .collect())
     }
 
     fn separations_from(

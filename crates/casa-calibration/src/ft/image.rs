@@ -800,46 +800,13 @@ impl ImageTransform {
                     .map_err(invalid)
             },
             |plane, values| {
-                let frequency = self.frequencies[plane];
-                let shifted = if squint && npol == 4 {
-                    let (beam, direction, _) = beam.as_ref().expect("squinted beam");
-                    beam.shifted_separations(direction, [nx, ny], frequency)?
+                let images = if let Some((beam, direction, separation)) = &beam {
+                    beam.model_plane(direction, separation, values, self.frequencies[plane])?
                 } else {
-                    None
+                    (0..npol)
+                        .map(|pol| Array2::from_shape_fn((ny, nx), |(y, x)| values[[x, y, pol, 0]]))
+                        .collect()
                 };
-                let beam = beam.as_ref().map(|(beam, _, separation)| {
-                    (beam.pattern().at_frequency(frequency), separation)
-                });
-                let images = (0..npol)
-                    .map(|pol| {
-                        Array2::from_shape_fn((ny, nx), |(y, x)| {
-                            beam.as_ref()
-                                .map_or(values[[x, y, pol, 0]], |(pattern, separation)| {
-                                    if let Some([right, left]) = &shifted
-                                        && matches!(pol, 0 | 3)
-                                    {
-                                        let power = |distance: f64| {
-                                            pattern.power(
-                                                distance.to_degrees() * 60.0 * frequency / 1e9,
-                                            )
-                                        };
-                                        let i = values[[x, y, 0, 0]];
-                                        let v = values[[x, y, 3, 0]];
-                                        let right = (i + v) * power(right[[y, x]]);
-                                        let left = (i - v) * power(left[[y, x]]);
-                                        return if pol == 0 {
-                                            0.5 * (right + left)
-                                        } else {
-                                            0.5 * (right - left)
-                                        };
-                                    }
-                                    let radius =
-                                        separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
-                                    values[[x, y, pol, 0]] * pattern.power(radius)
-                                })
-                        })
-                    })
-                    .collect();
                 let model = ModelImages {
                     first_plane: plane as u32,
                     planes: vec![ModelPlane { images }],
