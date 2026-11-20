@@ -325,15 +325,11 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let (shape, coordinates) = {
-                let image = attachment.lock();
-                if image.kind() != ImagePixelType::Float32 {
-                    return Err(raised(
-                        "Exception: This method only supports Float valued images.",
-                    ));
-                }
-                (image.shape().to_vec(), image.coordinate_record())
-            };
+            if attachment.lock().kind() != ImagePixelType::Float32 {
+                return Err(raised(
+                    "Exception: This method only supports Float valued images.",
+                ));
+            }
             let path = Path::new(other);
             if other.is_empty() {
                 return Err(raised("Exception: File name is empty."));
@@ -343,6 +339,10 @@ impl PyImageTool {
             }
             let other = AttachedImage::open(path)
                 .map_err(|_| raised(format!("Exception: Unable to open image {other}.")))?;
+            let (shape, coordinates) = {
+                let image = attachment.lock();
+                (image.shape().to_vec(), image.coordinate_record())
+            };
             let other = other.lock();
             if !matches!(
                 other.kind(),

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::cell::OnceCell;
+use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateSystem;
@@ -102,6 +103,17 @@ pub(super) use with_storage;
 
 pub(super) fn raised(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
+}
+
+pub(super) fn same_file_snapshot(expected: &Metadata, actual: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if expected.dev() != actual.dev() || expected.ino() != actual.ino() {
+            return false;
+        }
+    }
+    expected.len() == actual.len() && expected.modified().ok() == actual.modified().ok()
 }
 
 impl ImageHandle {

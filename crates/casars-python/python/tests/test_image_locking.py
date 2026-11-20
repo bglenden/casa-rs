@@ -218,6 +218,139 @@ assert image.done()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+@pytest.mark.parametrize("operation", ["subimage", "replace", "modify"])
+@pytest.mark.parametrize("backend", ["casars.tools", "casatools"])
+def test_native_expression_waits_for_its_source_writer(casa, tmp_path, backend, operation):
+    owner, target = tools.image(), tools.image()
+    assert owner.fromshape(str(tmp_path / "source.im"), [4, 4])
+    assert target.fromshape(str(tmp_path / "target.im"), [4, 4])
+    if operation == "replace":
+        assert target.calcmask("F")
+    assert target.done()
+    ready = tmp_path / "ready"
+    child = subprocess.Popen(
+        [sys.executable, "-c", """
+import sys
+from importlib import import_module
+from pathlib import Path
+backend = import_module(sys.argv[1])
+tool = backend.image()
+assert tool.open("target.im")
+Path("ready").touch()
+if sys.argv[2] == "subimage":
+    result = tool.subimage(mask='"source.im">1')
+    assert result.getchunk(getmask=True).all()
+    assert result.done()
+elif sys.argv[2] == "replace":
+    assert tool.replacemaskedpixels('"source.im"', update=True)
+    assert (tool.getchunk() == 2).all()
+else:
+    model = backend.componentlist()
+    assert model.addcomponent(flux=1.0, dir="J2000 00h00m00s 00d00m00s")
+    assert tool.modify(model.torecord(), mask='"source.im">1')
+    assert model.done()
+assert tool.done()
+""", backend, operation],
+        cwd=tmp_path, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists()
+        time.sleep(0.2)
+        assert child.poll() is None, child.stderr.read() if child.poll() is not None else ""
+        assert owner.putchunk(np.full((4, 4), 2.0), locking=False)
+        assert owner.unlock()
+        assert child.wait(timeout=10) == 0, child.stderr.read()
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=5)
+        owner.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_tempclosed_concat_rejects_a_new_input_generation(tmp_path):
+    path = tmp_path / "first.im"
+    owner, other = tools.image(), tools.image()
+    assert other.fromshape(str(path), [3, 3], linear=True)
+    assert other.setbrightnessunit("Jy")
+    assert other.done()
+    assert owner.fromshape(str(tmp_path / "second.im"), [3, 3], linear=True)
+    product = tmp_path / "product.im"
+    assert other.fromshape(str(product), [2, 2])
+    assert other.putchunk(np.full((2, 2), 5.0))
+    assert other.done()
+    ready = tmp_path / "ready"
+    child = subprocess.Popen(
+        [sys.executable, "-c", """
+from pathlib import Path
+from casars import tools
+tool = tools.image()
+Path("ready").touch()
+try:
+    tool.imageconcat("product.im", ["first.im", "second.im"], axis=0,
+                     tempclose=True, relax=True, overwrite=True)
+except RuntimeError as error:
+    assert "first.im changed while it was being concatenated" in str(error), error
+else:
+    raise AssertionError("the concatenation accepted a changed input")
+assert tool.done()
+"""],
+        cwd=tmp_path, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists()
+        time.sleep(0.2)
+        assert child.poll() is None
+        assert other.open(str(path))
+        assert other.lock(writelock=True, nattempts=1)
+        assert other.setbrightnessunit("K")
+        assert other.putchunk(np.full((3, 3), 23.0), locking=False)
+        assert other.done()
+        assert owner.unlock()
+        assert child.wait(timeout=10) == 0, child.stderr.read()
+        assert other.open(str(product))
+        np.testing.assert_array_equal(other.getchunk(), np.full((2, 2), 5.0))
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=5)
+        other.done()
+        owner.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_isconform_self_uses_one_coordinate_generation(casa, tmp_path):
+    path = str(tmp_path / "coordinates.im")
+    tool = tools.image()
+    assert tool.fromshape(path, [4, 4], linear=True)
+    assert tool.unlock()
+    subprocess.run(
+        [sys.executable, "-c", """
+import sys
+from casatools import image
+tool = image()
+assert tool.open(sys.argv[1])
+coordinates = tool.coordsys()
+assert coordinates.setreferencepixel([8, 9], type="linear")
+assert tool.setcoordsys(coordinates.torecord())
+coordinates.done()
+assert tool.done()
+""", path],
+        check=True, timeout=10, capture_output=True,
+    )
+    assert tool.isconform(path)
+    assert tool.isconform(path)
+    assert_locks(tool, True, False)
+    assert tool.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
 @pytest.mark.parametrize(
     "operation,read,write",
     [

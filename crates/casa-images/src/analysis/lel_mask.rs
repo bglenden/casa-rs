@@ -313,7 +313,7 @@ fn open_path_with_mask_name(
         return Ok(Operand::Real(MaskSource::Memory(Box::new(temp)), true));
     }
 
-    match AnyPagedImage::open(path)? {
+    match open_mask_image(path)? {
         AnyPagedImage::Float64(img) => {
             if mask_name.is_some() {
                 return Err(ImageError::CasaSelection(format!(
@@ -340,6 +340,13 @@ fn open_path_with_mask_name(
             .map(Operand::Complex)
         }
     }
+}
+
+fn open_mask_image(path: &Path) -> Result<AnyPagedImage, ImageError> {
+    #[cfg(unix)]
+    return AnyPagedImage::open_with_lock(path, 0);
+    #[cfg(not(unix))]
+    AnyPagedImage::open(path)
 }
 
 fn convert_paged_mask_source<S: ImagePixel, T: ImagePixel>(
