@@ -63,7 +63,7 @@ pub fn project_provider_invocation_with_originals(
             });
             let flagdata_history = original.filter(|_| {
                 session.bundle().surface.id() == "flagdata"
-                    && matches!(name.as_str(), "vis" | "chanbin" | "outfile")
+                    && matches!(name.as_str(), "vis" | "spw" | "chanbin" | "timedev" | "freqdev" | "outfile")
             });
             let sent = given.filter(|_| is_quantity(session, name))
                 .map(|given| match given {

@@ -23300,7 +23300,7 @@
         },
         {
           "name": "chanbin",
-          "concept": {"id": "parameter.chanbin", "semantic_revision": 2},
+          "concept": {"id": "parameter.chanbin", "semantic_revision": 3},
           "order": 21,
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
           "required_when": {"kind": "never"},

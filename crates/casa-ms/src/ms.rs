@@ -1308,7 +1308,11 @@ fn flag_category_keywords() -> RecordValue {
     )])
 }
 
-fn subtable_path_from_main(main: &Table, base_path: &Path, id: SubtableId) -> Option<PathBuf> {
+pub(crate) fn subtable_path_from_main(
+    main: &Table,
+    base_path: &Path,
+    id: SubtableId,
+) -> Option<PathBuf> {
     if let Some(value) = main.keywords().get(id.name()) {
         let keyword_path = match value {
             Value::TableRef(path) => Some(path.as_str()),
