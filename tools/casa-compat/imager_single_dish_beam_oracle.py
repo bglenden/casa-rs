@@ -4,11 +4,12 @@
 
 import argparse
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
 import casatasks
-from casatools import image, imager, vpmanager
+from casatools import image, imager, table, vpmanager
 import numpy as np
 
 from gaincal_oracle import relative_rms
@@ -118,18 +119,56 @@ def airy_control(root, source, model):
     pair(root, source, model, 'sd', pattern, False)
 
 
+def gaussian_table(root):
+    pattern = root / 'gaussian.vp'
+    manager = vpmanager()
+    assert manager.reset()
+    for halfwidth in ('23arcsec', '52arcsec'):
+        assert manager.setpbgauss(telescope='ALMA', halfwidth=halfwidth, maxrad='90arcsec',
+                                  reffreq='100GHz', dopb=True)
+    assert manager.setuserdefault(vplistnum=1, telescope='ALMA')
+    assert manager.saveastable(str(pattern)) and manager.reset()
+    reader = table()
+    assert reader.open(str(pattern / 'VPLIST_DEFAULTS'))
+    defaults = dict(zip(reader.getcol('tel_and_anttype'), reader.getcol('vplistnum'), strict=True))
+    assert defaults['ALMA'] == 1 and reader.done()
+    return pattern
+
+
+def reported_frame_control(root, source, model):
+    reported = root / 'reported.im'
+    shutil.copytree(model, reported)
+    tool = image()
+    assert tool.open(str(reported))
+    coords = tool.coordsys()
+    assert coords.setconversiontype(spectral='CMB')
+    assert tool.setcoordsys(coords.torecord()) and coords.done() and tool.done()
+    pair(root, source, reported, 'sd', None, True)
+
+
+def selected_array_control(root, source, model, pattern):
+    selected = root / 'array-selection.ms'
+    prepare_ms(source, selected, 'sd')
+    writer = table()
+    assert writer.open(str(selected / 'OBSERVATION'), nomodify=False)
+    assert writer.nrows() == 1 and writer.addrows(1)
+    for column in writer.colnames():
+        if writer.iscelldefined(column, 0):
+            assert writer.putcell(column, 1, writer.getcell(column, 0))
+    assert writer.putcell('TELESCOPE_NAME', 0, 'VLA') and writer.done()
+    assert writer.open(str(selected), nomodify=False)
+    for column in ('ARRAY_ID', 'OBSERVATION_ID'):
+        assert writer.putcol(column, np.ones_like(writer.getcol(column)))
+    assert writer.done()
+    pair(root, selected, model, 'sd', pattern, False)
+
+
 def run(root):
     assert casatasks.version_string() == '6.7.6.14'
     root.mkdir(parents=True)
     source, _, model = fixture(root)
     model_image(model, wide=True)
-    pattern = root / 'gaussian.vp'
-    manager = vpmanager()
-    assert manager.reset()
-    assert manager.setpbgauss(telescope='ALMA', halfwidth='23arcsec', maxrad='90arcsec',
-                              reffreq='100GHz', dopb=True)
-    assert manager.setuserdefault(vplistnum=0, telescope='ALMA')
-    assert manager.saveastable(str(pattern)) and manager.reset()
+    pattern = gaussian_table(root)
     for mode in ('sd', 'both'):
         default = pair(root, source, model, mode, None, False)
         custom = pair(root, source, model, mode, pattern, False)
@@ -142,6 +181,12 @@ def run(root):
         assert relative_rms(applied, default) > .2
         assert relative_rms(applied_custom, applied) > .2
     airy_control(root, source, model)
+    reporting = root / 'reported-frame'
+    reporting.mkdir()
+    reported_frame_control(reporting, source, model)
+    array = root / 'selected-array'
+    array.mkdir()
+    selected_array_control(array, source, model, pattern)
 
 
 def main():

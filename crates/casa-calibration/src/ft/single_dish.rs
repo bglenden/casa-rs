@@ -14,7 +14,7 @@ use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{FirstBuffer, GridFt, casa_spectral};
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, SubtableId,
-    convert_frequency_to_frame_with_frame, voltage_pattern,
+    convert_frequency_to_frame_with_frame,
 };
 use casa_numerics::{BeamPattern, PrimaryBeam};
 use casa_types::measures::frequency::FrequencyRef;
@@ -27,7 +27,9 @@ use super::image::{
 };
 use super::moving_source::first_imager_row;
 use super::settings::{ImagerSingleDishKernel, PredictionGeometry};
-use super::voltage_pattern::PreparedVoltagePattern;
+use super::voltage_pattern::{
+    PreparedVoltagePattern, legacy_radial_pattern, reserve_radial_lookup,
+};
 use super::{invalid, spectral_with_runtime};
 
 pub(super) fn prepare_model(
@@ -61,12 +63,18 @@ pub(super) fn prepare_model(
             .single_dish_voltage_table
             .as_ref()
             .map(|path| {
-                let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
-                voltage_pattern::VoltagePatternTable::open(path)
-                    .map_err(invalid)?
-                    .default_record(&telescope)
-                    .map_err(invalid)?
-                    .ok_or_else(|| invalid(format!("no single-dish primary beam for {telescope}")))
+                let first = first_imager_row(ms, selected)?;
+                let ScalarValue::Int32(array) = ms
+                    .main_table()
+                    .cell_accessor(first.row_index, "ARRAY_ID")?
+                    .scalar()?
+                else {
+                    return Err(invalid("ARRAY_ID must be Int32"));
+                };
+                let telescope = ms
+                    .observation()?
+                    .string(usize::try_from(*array).map_err(invalid)?, "TELESCOPE_NAME")?;
+                legacy_radial_pattern(path, &telescope)
             })
             .transpose()?
     } else {
@@ -92,7 +100,7 @@ pub(super) fn prepare_model(
         kernel,
         parameters,
         &context.pointing_column,
-        custom_beam.as_ref(),
+        custom_beam,
     )?;
     let mut coordinates = image.coordinates().clone();
     let pol = coordinate_index(&coordinates, CoordinateType::Stokes)?;
@@ -168,7 +176,10 @@ pub(super) fn prepare_model(
             Value::Scalar(ScalarValue::Bool(context.cache_pointings)),
         );
         if let Some(beam) = custom_beam {
-            record.upsert("casars_sd_primary_beam", Value::Record(beam));
+            record.upsert(
+                "casars_sd_primary_beam",
+                Value::Record(saved_radial_beam(beam)),
+            );
         }
         Ok((record, nonzero))
     })
@@ -181,7 +192,7 @@ fn validate_model(
     kernel: ImagerSingleDishKernel,
     parameters: KernelParameters,
     pointing_column: &str,
-    custom_beam: Option<&RecordValue>,
+    custom_beam: Option<PrimaryBeam>,
 ) -> MsResult<()> {
     let [nx, ny, ..] = *image.shape() else {
         return Err(invalid("single-dish model needs direction axes"));
@@ -222,14 +233,13 @@ fn validate_model(
             let CoordinateModel::Spectral(axis) = coordinates.coordinate(spectral) else {
                 unreachable!("spectral coordinate")
             };
-            let frequency = axis
-                .clone()
-                .without_conversion()
+            let frequency = spectral_with_runtime(axis)?
                 .world_frequency_hz(0.)
                 .map_err(invalid)?;
             let increment = direction.increment()[0];
-            let beam = primary_beam(ms, frequency, custom_beam)?;
             let host = HostResources::detect().map_err(invalid)?;
+            let _pattern_memory = reserve_radial_lookup(&host)?;
+            let beam = primary_beam(ms, frequency, custom_beam)?;
             let _memory = admit(
                 &host,
                 &ResourcePolicy::Balanced,
@@ -304,12 +314,10 @@ pub(crate) fn validate_support([nx, ny]: [usize; 2], radius: usize) -> MsResult<
 pub(crate) fn primary_beam(
     ms: &MeasurementSet,
     frequency: f64,
-    custom: Option<&RecordValue>,
+    custom: Option<PrimaryBeam>,
 ) -> MsResult<BeamPattern> {
-    if let Some(record) = custom {
-        return Ok(voltage_pattern::radial_pattern(record)
-            .map_err(invalid)?
-            .pattern());
+    if let Some(beam) = custom {
+        return Ok(beam.pattern());
     }
     let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
     if let Some(beam) = PrimaryBeam::for_telescope(&telescope, frequency) {
@@ -317,6 +325,42 @@ pub(crate) fn primary_beam(
     }
     BeamPattern::for_dish_diameter(ms.antenna()?.dish_diameter(0)?)
         .ok_or_else(|| invalid("no usable single-dish primary beam"))
+}
+
+fn saved_radial_beam(beam: PrimaryBeam) -> RecordValue {
+    let mut record = RecordValue::default();
+    let mut quantity = |key, number, unit: &str| {
+        let mut value = RecordValue::default();
+        value.upsert("value", Value::Scalar(ScalarValue::Float64(number)));
+        value.upsert("unit", Value::Scalar(ScalarValue::String(unit.into())));
+        record.upsert(key, Value::Record(value));
+    };
+    quantity("reffreq", 1., "GHz");
+    let name = match beam {
+        PrimaryBeam::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+            maximum_radius_arcmin_ghz,
+        } => {
+            quantity("dishdiam", dish_diameter_m, "m");
+            quantity("blockagediam", blockage_diameter_m, "m");
+            quantity("maxrad", maximum_radius_arcmin_ghz, "arcmin");
+            "AIRY"
+        }
+        PrimaryBeam::Gaussian {
+            half_width_arcmin_ghz,
+            maximum_radius_arcmin_ghz,
+            is_voltage,
+        } => {
+            quantity("halfwidth", half_width_arcmin_ghz, "arcmin");
+            quantity("maxrad", maximum_radius_arcmin_ghz, "arcmin");
+            record.upsert("isthisvp", Value::Scalar(ScalarValue::Bool(is_voltage)));
+            "GAUSS"
+        }
+        _ => unreachable!("the custom single-dish loader returns a radial law"),
+    };
+    record.upsert("name", Value::Scalar(ScalarValue::String(name.into())));
+    record
 }
 
 fn write_planes(
@@ -356,9 +400,9 @@ fn write_planes(
                 unreachable!("spectral coordinate");
             };
             Ok::<_, casa_ms::MsError>((
-                &beam.pattern,
+                beam.pattern(),
                 beam.separations(direction, [nx, ny])?,
-                spectral,
+                spectral_with_runtime(spectral)?,
             ))
         })
         .transpose()?;

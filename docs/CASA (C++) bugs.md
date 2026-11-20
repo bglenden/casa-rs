@@ -7706,7 +7706,9 @@ recipe stores the first apparent sky for the selected fields. The beam oracle
 compares the stored sky pixels with CASA, then uses that pinned image as input
 to a separate CASA scratch prediction to verify native readback. Standalone
 SDGrid takes custom gridding beams. GridBoth keeps its default gridding beam
-and can still apply a custom sky voltage pattern.
+and can still apply a custom sky voltage pattern. The legacy voltage-pattern
+lookup uses the first concrete table row for the telescope. A later row
+marked as the VPManager default does not change that choice.
 
 SDGrid can include a cross-correlation when all of its UVW components
 are nonpositive. casa-rs applies the single-dish contribution to
