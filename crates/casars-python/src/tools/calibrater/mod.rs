@@ -292,6 +292,18 @@ impl PyCalibrater {
 }
 
 fn velocity_argument(value: &Variant, name: &str) -> PyResult<Quantity> {
+    if let Variant::Record(record) = value {
+        match (record.get("value"), record.get("unit")) {
+            (None, None) => return Quantity::new(0., "km/s").map_err(runtime_error),
+            (None, Some(Variant::Text(unit))) => {
+                return Quantity::new(0., unit).map_err(runtime_error);
+            }
+            (Some(Variant::Number(value)), None) => {
+                return Quantity::new(*value, "km/s").map_err(runtime_error);
+            }
+            _ => {}
+        }
+    }
     if !matches!(value, Variant::Text(_) | Variant::Record(_)) {
         return Err(PyTypeError::new_err(format!("_{name} is not a dictionary")));
     }
@@ -299,10 +311,14 @@ fn velocity_argument(value: &Variant, name: &str) -> PyResult<Quantity> {
 }
 
 fn bool_vector(value: &Bound<'_, PyAny>) -> PyResult<Vec<bool>> {
-    if let Ok(flag) = value.extract::<bool>() {
+    let flag = |item: &Bound<'_, PyAny>| {
+        item.extract::<bool>()
+            .or_else(|_| item.extract::<i64>().map(|value| value != 0))
+    };
+    if let Ok(flag) = flag(value) {
         return Ok(vec![flag]);
     }
-    value.extract()
+    value.try_iter()?.map(|item| flag(&item?)).collect()
 }
 
 fn selector(value: &Variant) -> Option<String> {

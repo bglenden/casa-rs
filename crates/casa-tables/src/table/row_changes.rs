@@ -27,6 +27,77 @@ pub struct ManagerAddition {
     pub spec: RecordValue,
 }
 
+/// A new CASA CompressComplex column and its completed backing data.
+pub struct CompressedComplexArray<'a> {
+    /// Descriptor for the logical Complex32 array.
+    pub schema: ColumnSchema,
+    /// Name of the StandardStMan scale and offset manager.
+    pub scalar_manager: &'a str,
+    /// Name of the TiledShapeStMan packed-cell manager.
+    pub tiled_manager: &'a str,
+    /// Packed Int32 cells in table row order.
+    pub packed: crate::StreamedTiledShapeColumn,
+    /// Per-row floating-point scales.
+    pub scales: Vec<Option<ScalarValue>>,
+    /// Per-row floating-point offsets.
+    pub offsets: Vec<Option<ScalarValue>>,
+}
+
+impl CompressedComplexArray<'_> {
+    fn groups(
+        &self,
+    ) -> [(
+        Vec<ColumnAddition>,
+        Option<ManagerAddition>,
+        ColumnGroupPayload<'_>,
+    ); 3] {
+        let logical = self.schema.name();
+        let stored = format!("{logical}_COMPRESSED");
+        let scale = format!("{logical}_SCALE");
+        let offset = format!("{logical}_OFFSET");
+        let add = |schema, keywords| ColumnAddition {
+            schema,
+            default: None,
+            keywords,
+            manager_type: None,
+            manager_group: None,
+        };
+        let group = |kind: &str, name: &str| {
+            Some(ManagerAddition {
+                kind: kind.to_owned(),
+                name: name.to_owned(),
+                spec: RecordValue::default(),
+            })
+        };
+        let scalars = [&offset, &scale].map(|column| {
+            add(
+                ColumnSchema::scalar(column, PrimitiveType::Float32),
+                RecordValue::default(),
+            )
+        });
+        let packed = ColumnSchema::array_variable(&stored, PrimitiveType::Int32, Some(2));
+        let keywords =
+            crate::storage::virtual_compress::automatic_complex_keywords(&stored, &scale, &offset);
+        [
+            (
+                scalars.into(),
+                group("StandardStMan", self.scalar_manager),
+                ColumnGroupPayload::Scalars([&self.offsets, &self.scales]),
+            ),
+            (
+                vec![add(packed, RecordValue::default())],
+                group("TiledShapeStMan", self.tiled_manager),
+                ColumnGroupPayload::Tiled(&self.packed),
+            ),
+            (
+                vec![add(self.schema.clone(), keywords)],
+                group("CompressComplex", logical),
+                ColumnGroupPayload::CompressedEngine,
+            ),
+        ]
+    }
+}
+
 impl Table {
     /// Append rows to a plain disk table without changing its storage
     /// manager bindings. Standard and AipsIO managers use `defaults`;
@@ -93,82 +164,37 @@ impl Table {
         })
     }
 
-    /// Install a complete CASA CompressComplex array with its packed cells
-    /// and automatic per-row scale and offset.
-    ///
-    /// The logical column and its three backing columns are published under
-    /// a single descriptor update, leaving other data managers untouched.
+    /// Install complete CASA CompressComplex arrays with their packed cells
+    /// and automatic per-row scale and offset. Stage all requested groups
+    /// before publishing a single descriptor update.
     ///
     /// # Errors
-    /// The table cannot add the supplied array or publish its storage groups.
-    pub fn add_compressed_complex_array_in_place(
+    /// A binding conflicts with the current table, the data do not match
+    /// the requested columns, or a storage file cannot be published.
+    pub fn add_compressed_complex_arrays_in_place(
         &mut self,
-        schema: ColumnSchema,
-        scalar_manager: &str,
-        tiled_manager: &str,
-        packed: &crate::StreamedTiledShapeColumn,
-        scales: &[Option<ScalarValue>],
-        offsets: &[Option<ScalarValue>],
+        arrays: &[CompressedComplexArray<'_>],
     ) -> Result<(), TableError> {
-        if schema.data_type() != Some(PrimitiveType::Complex32)
-            || [packed.row_count(), scales.len(), offsets.len()]
+        if arrays.iter().any(|array| {
+            array.schema.data_type() != Some(PrimitiveType::Complex32)
+                || [
+                    array.packed.row_count(),
+                    array.scales.len(),
+                    array.offsets.len(),
+                ]
                 .into_iter()
                 .any(|count| count != self.row_count())
-        {
+        }) {
             return Err(TableError::Storage(
                 "compressed complex layout requires one packed cell, scale and offset per row"
                     .into(),
             ));
         }
-        let logical = schema.name().to_owned();
-        let stored = format!("{logical}_COMPRESSED");
-        let scale = format!("{logical}_SCALE");
-        let offset = format!("{logical}_OFFSET");
-        let add = |schema, default, keywords| ColumnAddition {
-            schema,
-            default,
-            keywords,
-            manager_type: None,
-            manager_group: None,
-        };
-        let group = |kind: &str, name: &str, spec| {
-            Some(ManagerAddition {
-                kind: kind.to_owned(),
-                name: name.to_owned(),
-                spec,
-            })
-        };
-        let scalars = [&offset, &scale].map(|column| {
-            add(
-                ColumnSchema::scalar(column, PrimitiveType::Float32),
-                None,
-                RecordValue::default(),
-            )
-        });
-        let packed_schema = ColumnSchema::array_variable(&stored, PrimitiveType::Int32, Some(2));
-        let keywords =
-            crate::storage::virtual_compress::automatic_complex_keywords(&stored, &scale, &offset);
-        let groups = [
-            (
-                scalars.into(),
-                group("StandardStMan", scalar_manager, RecordValue::default()),
-                ColumnGroupPayload::Scalars([offsets, scales]),
-            ),
-            (
-                vec![add(packed_schema, None, RecordValue::default())],
-                group("TiledShapeStMan", tiled_manager, RecordValue::default()),
-                ColumnGroupPayload::Tiled(packed),
-            ),
-            (
-                vec![add(schema, None, keywords)],
-                group("CompressComplex", &logical, RecordValue::default()),
-                ColumnGroupPayload::Defaults,
-            ),
-        ];
         self.edit_clean_layout(
-            "add compressed array in place",
+            "add compressed arrays in place",
             move |this, path, mut dat, old| {
                 dat.raise_row_count(old);
+                let groups = arrays.iter().flat_map(CompressedComplexArray::groups);
                 let plan =
                     StagedEdit::stage_column_groups(path, dat, groups, this.data_manager_info())?;
                 this.note_persisted_write(path);

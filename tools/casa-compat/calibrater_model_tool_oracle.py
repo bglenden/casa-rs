@@ -11,7 +11,7 @@ import casatasks
 from casatools import calibrater as reference, table
 import numpy as np
 
-from casars.tools import calibrater as native
+from casars.tools import calibrater as native, table as native_table
 
 from bandpass_oracle import source_data
 from calibration_scratch_oracle import MAIN, SCRATCH, prepare, state
@@ -92,6 +92,123 @@ def open_float_data(root, seed):
     return result
 
 
+def open_packed_data(root, seed):
+    result = {}
+    for compress in (False, True):
+        snapshots = []
+        for label, factory in (("casa", reference), ("native", native)):
+            path = root / f"packed-data-{compress}-{label}.ms"
+            prepare(seed, path)
+            maker = reference()
+            assert maker.open(str(path), True, True, False)
+            assert maker.done()
+            tb = table()
+            assert tb.open(str(path), nomodify=False)
+            try:
+                data = tb.getcol("DATA")
+                tb.renamecol("DATA", "ORIGINAL_DATA")
+                tb.renamecol("CORRECTED_DATA", "DATA")
+                tb.putcol("DATA", data)
+            finally:
+                tb.close()
+            tool = factory()
+            # The packed DATA fixture retains the former CORRECTED_DATA backing
+            # names. Add compressed MODEL_DATA and exercise both ordinary additions.
+            assert tool.open(str(path), compress, not compress, True)
+            assert tool.done()
+            snapshots.append(state(path))
+        result[str(compress)] = compare(*snapshots)
+    return result
+
+
+def scratch_column_keywords(root, seed):
+    for label, factory in (("casa", reference), ("native", native)):
+        path = root / f"scratch-keywords-{label}.ms"
+        prepare(seed, path)
+        tb = table()
+        assert tb.open(str(path), nomodify=False)
+        try:
+            tb.putcolkeyword("DATA", "UNIT", "Jy")
+            tb.putcolkeyword("DATA", "USER_TAG", "observed")
+            observed = tb.getcolkeywords("DATA")
+        finally:
+            tb.close()
+        tool = factory()
+        assert tool.open(str(path), False, True, True)
+        assert tool.done()
+        assert tb.open(str(path))
+        try:
+            np.testing.assert_equal(tb.getcolkeywords("MODEL_DATA"), {})
+            np.testing.assert_equal(tb.getcolkeywords("CORRECTED_DATA"), observed)
+        finally:
+            tb.close()
+    return 2
+
+
+def failed_column_publication(root, seed):
+    for name in ("MODEL_DATA_SCALE", "CORRECTED_DATA_SCALE"):
+        path = root / f"collision-{name}.ms"
+        prepare(seed, path, virtual=True)
+        tb = table()
+        assert tb.open(str(path), nomodify=False)
+        try:
+            assert tb.addcols({name: {"valueType": "float"}})
+            values = np.full(tb.nrows(), 113., dtype=np.float32)
+            tb.putcol(name, values)
+        finally:
+            tb.close()
+        before = state(path)
+        assert tb.open(str(path))
+        try:
+            columns = tb.colnames()
+            managers = tb.getdminfo()
+        finally:
+            tb.close()
+        tool = native()
+        try:
+            tool.open(str(path), True, True, True)
+        except RuntimeError as error:
+            assert name in str(error), str(error)
+        else:
+            raise AssertionError(f"calibrater published scratch columns over {name}")
+        assert tool.done()
+        compare(before, state(path))
+        assert tb.open(str(path))
+        try:
+            assert tb.colnames() == columns
+            np.testing.assert_equal(tb.getdminfo(), managers)
+            np.testing.assert_array_equal(tb.getcol(name), values)
+        finally:
+            tb.close()
+
+    path = root / "generic-compression-engine.ms"
+    prepare(seed, path, virtual=True)
+    before = state(path)
+    tb = table()
+    assert tb.open(str(root / "open-0111-casa.ms"))
+    try:
+        descriptor = tb.getcoldesc("MODEL_DATA")
+    finally:
+        tb.close()
+    tool = native_table()
+    assert tool.open(str(path), nomodify=False)
+    try:
+        tool.addcols({"BROKEN": descriptor}, {"TYPE": "CompressComplex", "NAME": "BROKEN"})
+    except RuntimeError as error:
+        assert "CompressComplex" in str(error), str(error)
+    else:
+        raise AssertionError("table.addcols accepted a compression engine without backing columns")
+    finally:
+        assert tool.close()
+    assert tb.open(str(path))
+    try:
+        assert "BROKEN" not in tb.colnames()
+    finally:
+        tb.close()
+    compare(before, state(path))
+    return 3
+
+
 def model_transitions(root, seed):
     reports = []
     for label, factory in (("casa", reference), ("native", native)):
@@ -116,6 +233,9 @@ def model_transitions(root, seed):
             ({"mstep": 3}, (TypeError, "_mstep is not a dictionary")),
         ]:
             rejects(lambda: tool.selectvis(**params), *expected)
+        assert tool.selectvis(mstart={}, mstep={})
+        assert tool.selectvis(mstart={"value": 3.}, mstep={"unit": "km/s"})
+        assert tool.selectvis(mstart={"unit": "m/s"}, mstep={"value": 3.})
         assert tool.selectvis(field=0, spw="0", chanmode="channel", nchan=3, start=2, step=2)
         assert tool.initcalset(0)
         channel_mode = state(path)
@@ -154,6 +274,10 @@ def fit_components(root, seed):
             assert tool.open(str(source), addcorr=False, addmodel=False)
             assert tool.selectvis(field="0")
             np.testing.assert_allclose(tool.modelfit(True, -1, code, pars), pars, atol=1e-12, rtol=0)
+            if code == "P":
+                for mask in (0, 1, [1, 0, 0], np.array([1, 0, 0])):
+                    np.testing.assert_allclose(tool.modelfit(mask, -1, code, pars),
+                                               pars, atol=1e-12, rtol=0)
             values = tool.modelfit([True] * len(pars), 50, code, pars, str(path))
             assert isinstance(values, np.ndarray) and values.shape == (len(pars),)
             assert tool.done()
@@ -213,6 +337,9 @@ def main():
     result = {
         "open_scratch_samples": open_matrix(root, seed),
         "float_data_scratch_samples": open_float_data(root, seed),
+        "packed_data_scratch_samples": open_packed_data(root, seed),
+        "scratch_column_keyword_cases": scratch_column_keywords(root, seed),
+        "failed_column_publication_cases": failed_column_publication(root, seed),
         "model_transition_samples": model_transitions(root, seed),
         "compressed_reset_samples": reset_compressed(root, seed),
         "fit_max_parameter_difference": fit_components(root, seed),

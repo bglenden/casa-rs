@@ -14,8 +14,9 @@ use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow, scratch_columns,
 };
 use casa_tables::{
-    ColumnSchema, ComplexCompression, ComplexScale, StreamedTiledShapeCubeLayout,
-    StreamedTiledShapeValueType, StreamingTiledShapeWriter, Table, TableWriteLock,
+    ColumnSchema, ComplexCompression, ComplexScale, CompressedComplexArray,
+    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledShapeWriter, Table,
+    TableWriteLock,
 };
 use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue};
 
@@ -35,6 +36,8 @@ pub(super) fn initialize_columns(
         .parent()
         .ok_or_else(|| invalid("MAIN has no parent directory"))?;
     let temporary = tempfile::tempdir_in(path).map_err(invalid)?;
+    let mut arrays = Vec::with_capacity(columns.len());
+    let mut created = Vec::with_capacity(4 * columns.len());
     for &column in columns {
         let (scalars, packed, comment) = match column {
             MODEL => ("ModelScaleOffset", "ModelCompTiled", "model data"),
@@ -55,16 +58,37 @@ pub(super) fn initialize_columns(
         )
         .map_err(invalid)?;
         let data = pack_initial_cells(ms, &selected, column, writer)?;
-        scratch_columns::prepare_write_holding(ms, column, true, lock)?;
-        ms.main_table_mut().add_compressed_complex_array_in_place(
+        arrays.push(CompressedComplexArray {
             schema,
-            scalars,
-            packed,
-            &data.packed,
-            &data.scales,
-            &data.offsets,
-        )?;
+            scalar_manager: scalars,
+            tiled_manager: packed,
+            packed: data.packed,
+            scales: data.scales,
+            offsets: data.offsets,
+        });
+        created.extend(
+            ["", "_COMPRESSED", "_SCALE", "_OFFSET"].map(|suffix| format!("{name}{suffix}")),
+        );
+    }
+    ms.main_table_mut()
+        .add_compressed_complex_arrays_in_place(&arrays)?;
+    lock.record_write();
+    let column = if columns.contains(&MODEL) {
+        MODEL
+    } else {
+        CORRECTED
+    };
+    if let Err(error) = scratch_columns::prepare_write_holding(ms, column, true, lock) {
+        let added = created.iter().map(String::as_str).collect::<Vec<_>>();
+        ms.main_table_mut()
+            .remove_columns_preserving_managers(&added)
+            .map_err(|rollback| {
+                invalid(format!(
+                    "{error}. Removing the new scratch columns also failed: {rollback}"
+                ))
+            })?;
         lock.record_write();
+        return Err(error);
     }
     Ok(())
 }

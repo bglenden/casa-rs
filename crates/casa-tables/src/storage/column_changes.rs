@@ -22,6 +22,7 @@ pub(crate) enum ColumnGroupPayload<'a> {
     Defaults,
     Scalars([&'a [Option<ScalarValue>]; 2]),
     Tiled(&'a crate::StreamedTiledShapeColumn),
+    CompressedEngine,
 }
 
 impl<'a> StagedEdit<'a> {
@@ -195,6 +196,10 @@ impl<'a> StagedEdit<'a> {
                     )?;
                     None
                 }
+                ColumnGroupPayload::CompressedEngine => {
+                    // The validated logical array owns no physical file.
+                    None
+                }
             };
             if let Some(blob) = output {
                 dat.column_set
@@ -224,15 +229,6 @@ impl<'a> StagedEdit<'a> {
         let nrows = usize::try_from(dat.nrrow).map_err(|_| {
             StorageError::FormatMismatch("column addition row count overflow".into())
         })?;
-        if kind == "CompressComplex" {
-            super::virtual_compress::ComplexCompression::read(
-                &columns[0].keywords,
-                &columns[0].col_name,
-                kind,
-            )?;
-            // This manager reads its backing columns and owns no payload.
-            return Ok(None);
-        }
         let defaults = RecordValue::new(
             defaults
                 .fields()

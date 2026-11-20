@@ -302,9 +302,9 @@ pub(crate) fn scratch_write_plan(
             scratch_columns::prepare_write_holding(ms, column, true, lock)?;
         }
         for &column in columns {
-            let keyword = ms
-                .main_table()
-                .column_keywords(observed_column(ms))
+            let keyword = (column == CORRECTED)
+                .then(|| ms.main_table().column_keywords(observed_column(ms)))
+                .flatten()
                 .cloned();
             let schema =
                 casa_ms::column_def::build_table_schema(&[*column.optional_column().column_def()])
