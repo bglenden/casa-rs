@@ -144,6 +144,8 @@ pub struct FlagDataRequest {
     pub mode: FlagDataMode,
     /// Manual action.
     pub action: FlagDataAction,
+    /// Set manual flags only on rows whose antenna IDs are equal.
+    pub autocorr: bool,
     /// Data column for automatic modes.
     pub data_column: FlagDataColumn,
     /// Create a `flagdata_N` backup before mutating flags.
@@ -204,6 +206,7 @@ impl Default for FlagDataRequest {
             spw: None,
             mode: FlagDataMode::Manual,
             action: FlagDataAction::Flag,
+            autocorr: false,
             data_column: FlagDataColumn::Data,
             flagbackup: true,
             summary_options: FlagSummaryOptions::default(),
@@ -388,6 +391,16 @@ fn flagdata_with_persistence(
         );
     }
 
+    // The manual agent filters baselines after full MS selection, including
+    // the rows that supply the default date for a partial time selector.
+    let autocorrelation_rows = if request.autocorr
+        && request.mode == FlagDataMode::Manual
+        && request.action == FlagDataAction::Flag
+    {
+        Some(select_autocorrelations(ms, &selected_rows, &ms_path)?)
+    } else {
+        None
+    };
     let backup_version = if persist && request.flagbackup && !selected_rows.is_empty() {
         Some(save_next_flag_backup(ms, "flagdata")?)
     } else {
@@ -397,7 +410,7 @@ fn flagdata_with_persistence(
     let changes = match request.mode {
         FlagDataMode::Manual => set_selected_flags(
             ms,
-            &selected_rows,
+            autocorrelation_rows.as_deref().unwrap_or(&selected_rows),
             channel_selections.as_ref(),
             request.action.value(),
             SelectedFlagRowPolicy::ChangedSamples,
@@ -1398,6 +1411,23 @@ fn load_i32_cells(
             }),
         })
         .collect()
+}
+
+fn select_autocorrelations(
+    ms: &MeasurementSet,
+    rows: &[usize],
+    path: &str,
+) -> Result<Vec<usize>, FlaggingError> {
+    let table = ms.main_table();
+    let first = load_i32_cells(table, rows, "ANTENNA1", path)?;
+    let second = load_i32_cells(table, rows, "ANTENNA2", path)?;
+    Ok(rows
+        .iter()
+        .copied()
+        .zip(first)
+        .zip(second)
+        .filter_map(|((row, first), second)| (first == second).then_some(row))
+        .collect())
 }
 
 /// The selected rows' samples and flags. Each sample carries its value in
