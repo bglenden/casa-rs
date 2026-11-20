@@ -18,6 +18,16 @@ pub(crate) enum Smoother {
     Median,
 }
 
+impl Smoother {
+    pub(crate) fn from_name(mode: &str) -> Option<Self> {
+        match mode {
+            "mean" => Some(Self::Mean),
+            "median" => Some(Self::Median),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) fn smooth_calibration_table(
     ms_path: &Path,
     input: &Path,
@@ -27,7 +37,7 @@ pub(crate) fn smooth_calibration_table(
     seconds: f64,
     ratesmooth: bool,
 ) -> Result<(), String> {
-    if !seconds.is_finite() || seconds <= 0.0 {
+    if seconds.is_nan() || seconds <= 0.0 {
         return Err("smoothtime must be a positive duration in seconds".into());
     }
     let ms = MeasurementSet::open(ms_path).map_err(error_text)?;

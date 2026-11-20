@@ -6,12 +6,14 @@ from contextlib import chdir
 from json import loads
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import time
 
 import casatasks
 from casacore.tables import makearrcoldesc, maketabdesc, table
 import numpy as np
 
 from casars import tasks
+from flagdata_history_oracle import MJD_UNIX_EPOCH_S, compare_new_rows
 from flagdata_preview_oracle import assert_preserved, auxiliary_content, changed_samples
 from flagdata_summary_oracle import snapshot
 from record_casa_returns import make_cal_ms
@@ -115,10 +117,24 @@ def check_explicit_data(reference, native):
     for path in (reference, native):
         reset_flags(path)
     before_native, auxiliary = snapshot(native), auxiliary_content(native)
+    history_path = Path(native, "HISTORY")
+    with table(str(history_path), ack=False) as history:
+        original_rows = history.nrows()
     options = {"mode": "clip", "datacolumn": "DATA", "clipminmax": [1, 1], "flagbackup": False}
+    start = time() + MJD_UNIX_EPOCH_S
     assert casatasks.flagdata(vis=reference, **options) == {}
     assert tasks.flagdata(vis=native, **options) == {}
-    assert_preserved(native, before_native, auxiliary)
+    compare_new_rows((reference, native), original_rows, 1, (start, time() + MJD_UNIX_EPOCH_S))
+    actual = auxiliary_content(native)
+    assert auxiliary[0] == actual[0]
+    previous_files, current_files = (
+        {entry: value for entry, value in files.items() if not entry.is_relative_to(history_path)}
+        for files in (auxiliary[1], actual[1])
+    )
+    assert previous_files == current_files
+    for before, after in zip(before_native, snapshot(native), strict=True):
+        for expected, value in zip(before, after, strict=True):
+            np.testing.assert_array_equal(value, expected)
     with table(reference, ack=False) as storage:
         # CASA substitutes abs(FLOAT_DATA) for the explicitly requested DATA.
         np.testing.assert_array_equal(
@@ -213,13 +229,13 @@ def main():
         float_casa, float_native = "float-casa.ms", "float-native.ms"
         for path in (float_casa, float_native):
             make_input(path, float_data=True)
+        check_explicit_data(float_casa, float_native)
         for settings in (
             {"clipminmax": [1, 2]},
             {"clipminmax": [-2, -1], "clipoutside": False},
             {"clipzeros": np.bool_(True)},
         ):
             compare_clip(float_casa, float_native, {"datacolumn": "FLOAT_DATA", **settings})
-        check_explicit_data(float_casa, float_native)
         check_float_zero_detection(float_casa, float_native)
         check_disabled_agent_backup(reference, native)
     print("Thirty-five clip comparisons, thirteen rejections and two documented corrections verified")

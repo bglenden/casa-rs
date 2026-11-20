@@ -62,6 +62,7 @@ use clip_time::{TimeClip, time_bin_seconds};
 pub use command::append_flag_command;
 use correlation::{ClipProjection, CorrelationSelection};
 mod version_backup;
+pub use clip_models::{FlagDataModelFactory, FlagDataModelPredictor};
 pub use summary::{FlagCounts, FlagSummaryBreakdown, FlagSummaryOptions};
 pub use version_backup::{
     save_next_casa_flag_backup, save_next_flag_backup, save_next_partition_flag_backup,
@@ -406,13 +407,14 @@ pub fn flagdata(
     ms: &mut MeasurementSet,
     request: &FlagDataRequest,
 ) -> Result<FlagDataReport, FlaggingError> {
-    flagdata_with_persistence(ms, request, true)
+    flagdata_with_persistence(ms, request, true, None)
 }
 
 fn flagdata_with_persistence(
     ms: &mut MeasurementSet,
     request: &FlagDataRequest,
     persist: bool,
+    model_factory: Option<FlagDataModelFactory>,
 ) -> Result<FlagDataReport, FlaggingError> {
     let ms_path = display_ms_path(ms);
     tracing::info!(
@@ -490,6 +492,7 @@ fn flagdata_with_persistence(
             channel_selections.as_ref(),
             correlations.as_ref(),
             request,
+            model_factory,
         )?,
         FlagDataMode::Quack => apply_quack_flags(
             ms,
@@ -621,7 +624,7 @@ pub fn flagdata_path(
     ms_path: impl AsRef<Path>,
     request: &FlagDataRequest,
 ) -> Result<FlagDataReport, FlaggingError> {
-    flagdata_at_path(ms_path.as_ref(), request, true)
+    flagdata_path_with_model(ms_path, request, true, None)
 }
 
 /// Calculate candidate flags from a privately opened MS and discard the
@@ -630,21 +633,26 @@ pub fn calculate_flagdata_path(
     ms_path: impl AsRef<Path>,
     request: &FlagDataRequest,
 ) -> Result<FlagDataReport, FlaggingError> {
-    flagdata_at_path(ms_path.as_ref(), request, false)
+    flagdata_path_with_model(ms_path, request, false, None)
 }
 
-fn flagdata_at_path(
-    path: &Path,
+/// Run the task using a model predictor supplied by the executable. The factory
+/// is called only when clipping needs an FTMachine recipe, after any requested
+/// backup and after row selection. `persist=false` leaves the input unchanged.
+pub fn flagdata_path_with_model(
+    path: impl AsRef<Path>,
     request: &FlagDataRequest,
     persist: bool,
+    model_factory: Option<FlagDataModelFactory>,
 ) -> Result<FlagDataReport, FlaggingError> {
+    let path = path.as_ref();
     tracing::info!(path = %path.display(), "opening MeasurementSet for flagdata");
     let mut ms =
         MeasurementSet::open(path).map_err(|source| FlaggingError::OpenMeasurementSet {
             path: path.display().to_string(),
             source,
         })?;
-    flagdata_with_persistence(&mut ms, request, persist)
+    flagdata_with_persistence(&mut ms, request, persist, model_factory)
 }
 
 fn report_after(
@@ -878,6 +886,7 @@ fn apply_clip_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     request: &FlagDataRequest,
+    model_factory: Option<FlagDataModelFactory>,
 ) -> Result<ChangeSet, FlaggingError> {
     let path = display_ms_path(ms);
     let widths = request.clip_channel_bins.as_deref();
@@ -885,7 +894,13 @@ fn apply_clip_flags(
     let average = time_average.is_some_and(|interval| interval.is_some())
         || widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
     let models = if request.clipoutside.is_some() {
-        clip_models::ClipModels::for_selection(ms, request.data_column, selected_rows, &path)?
+        clip_models::ClipModels::for_selection(
+            ms,
+            request.data_column,
+            selected_rows,
+            model_factory,
+            &path,
+        )?
     } else {
         None
     };
@@ -943,35 +958,15 @@ fn apply_clip_flags(
         let table = ms.main_table();
         let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
         let mut touched_rows = std::collections::BTreeSet::<usize>::new();
-        let flag_cells = table
-            .column_accessor(FLAG_COLUMN)
-            .and_then(|column| column.array_cells_owned(rows))
-            .map_err(|source| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("read selected FLAG rows: {source}"),
-            })?;
+        let flag_cells = clip_time::read_flags(table, rows, &path)?;
         let ddids = if include_ddid {
             Some(load_i32_cells(table, rows, "DATA_DESC_ID", &path)?)
         } else {
             None
         };
-        let data_cells = columns.read(ms, rows, ddids.as_deref(), &ddid_to_spw, &path)?;
-        for (row_slot, &row) in rows.iter().enumerate() {
-            let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
-                Some(ArrayValue::Bool(values)) => values,
-                Some(other) => {
-                    return Err(FlaggingError::MutateFlags {
-                        path: path.clone(),
-                        reason: format!("FLAG row {row} must be bool array, found {other:?}"),
-                    });
-                }
-                None => {
-                    return Err(FlaggingError::MutateFlags {
-                        path: path.clone(),
-                        reason: format!("FLAG row {row} is undefined"),
-                    });
-                }
-            };
+        let data_cells =
+            columns.read(ms, rows, &flag_cells, ddids.as_deref(), &ddid_to_spw, &path)?;
+        for (row_slot, (&row, flags)) in rows.iter().zip(&flag_cells).enumerate() {
             total_samples += flags.len();
             flagged_samples += flags.iter().filter(|flag| **flag).count();
             let ddid = ddids.as_ref().map(|values| values[row_slot]);

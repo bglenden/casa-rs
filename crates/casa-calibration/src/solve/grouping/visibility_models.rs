@@ -11,6 +11,13 @@ use crate::solve::{GainSolveCombine, GainSolveError, GainSolveModelSource, model
 
 use super::{SelectedSolveRow, SolveBaseKey, SolveBucketKey, selected_solve_row, weights};
 
+const LEGACY_COMBINE: GainSolveCombine = GainSolveCombine {
+    scans: true,
+    observations: true,
+    fields: false,
+    spectral_windows: false,
+};
+
 /// The MODEL_DATA or virtual model visible to the old visibility iterator.
 pub(crate) struct VisibilityModels {
     rows: BTreeMap<usize, SelectedSolveRow>,
@@ -22,19 +29,27 @@ impl VisibilityModels {
         ms: &MeasurementSet,
         rows: &[ResolvedMsSelectionRow],
     ) -> Result<Self, GainSolveError> {
-        Self::from_ms(ms, rows, false)
+        Self::from_ms(ms, rows, LEGACY_COMBINE, false)
     }
 
     pub(crate) fn for_uvsub(
         ms: &MeasurementSet,
         rows: &[ResolvedMsSelectionRow],
     ) -> Result<Self, GainSolveError> {
-        Self::from_ms(ms, rows, true)
+        Self::from_ms(ms, rows, LEGACY_COMBINE, true)
+    }
+
+    pub(crate) fn for_flagdata(
+        ms: &MeasurementSet,
+        rows: &[ResolvedMsSelectionRow],
+    ) -> Result<Self, GainSolveError> {
+        Self::from_ms(ms, rows, GainSolveCombine::default(), true)
     }
 
     fn from_ms(
         ms: &MeasurementSet,
         rows: &[ResolvedMsSelectionRow],
+        combine: GainSolveCombine,
         defer_refusals: bool,
     ) -> Result<Self, GainSolveError> {
         let virtual_fields = scratch_columns::virtual_model_fields(ms);
@@ -48,7 +63,7 @@ impl VisibilityModels {
         } else {
             ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?
         };
-        Self::with_models(ms, rows, models)
+        Self::with_models(ms, rows, models, combine)
     }
 
     pub(crate) fn from_entries(
@@ -61,19 +76,15 @@ impl VisibilityModels {
             .map(|row| selected_solve_row(ms, row, None))
             .collect::<Result<Vec<_>, _>>()?;
         let models = ModelInputs::from_entries(ms, &rows, entries)?;
-        Self::with_models(ms, rows, models)
+        Self::with_models(ms, rows, models, LEGACY_COMBINE)
     }
 
     fn with_models(
         ms: &MeasurementSet,
         rows: Vec<SelectedSolveRow>,
         mut models: ModelInputs,
+        combine: GainSolveCombine,
     ) -> Result<Self, GainSolveError> {
-        let combine = GainSolveCombine {
-            scans: true,
-            observations: true,
-            ..GainSolveCombine::default()
-        };
         // VisBuffer chooses the first physical row at a timestamp. Solves
         // order tied timestamps by interval, which can choose a different state.
         let mut ordered: Vec<_> = rows

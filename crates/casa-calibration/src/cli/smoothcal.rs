@@ -21,15 +21,13 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         ));
     }
     let field = fields.join(",");
-    let smoother = match task.text("smoothtype")?.as_deref() {
-        Some("mean") => Smoother::Mean,
-        Some("median") => Smoother::Median,
-        _ => {
-            return Err(
-                TaskFailure::validation("smoothtype must be mean or median").at("smoothtype")
-            );
-        }
-    };
+    let smoother = task
+        .text("smoothtype")?
+        .as_deref()
+        .and_then(Smoother::from_name)
+        .ok_or_else(|| {
+            TaskFailure::validation("smoothtype must be mean or median").at("smoothtype")
+        })?;
     let seconds = task.number("smoothtime")?;
     let ratesmooth = task.flag("ratesmooth")?;
     smooth_calibration_table(

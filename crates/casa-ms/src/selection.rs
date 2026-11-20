@@ -1123,7 +1123,7 @@ fn plan_selected_row_blocks(
         .collect()
 }
 
-fn resolve_selected_row_facts(
+pub(crate) fn resolve_selected_row_facts(
     ms: &MeasurementSet,
     selected_row_indices: &[usize],
     row_blocks: &[MsSelectionRowBlock],
