@@ -24,6 +24,7 @@ pub(crate) fn stage_records(
     layout: &[u8],
     old_rows: u64,
     records: &[RecordValue],
+    defaults: &RecordValue,
 ) -> Result<(), StorageError> {
     let mut source = File::open(original)?;
     let header = parse_ssm_header(&mut source)?;
@@ -86,7 +87,9 @@ pub(crate) fn stage_records(
             for &(slot, column) in &managed {
                 let offset = layout.column_offsets[slot] as usize;
                 for (row, record) in rows.iter().enumerate() {
-                    let value = record.get(&column.col_name);
+                    let value = record
+                        .get(&column.col_name)
+                        .or_else(|| defaults.get(&column.col_name));
                     if is_ssm_indirect(column) {
                         let array_offset = write_indirect_cell(
                             arrays.as_mut().expect("indirect array file"),
@@ -199,7 +202,6 @@ fn append_start(
     // repeated appends then use space for the latest index only.
     if header.nr_idx_buckets == 0
         || first.checked_add(header.nr_idx_buckets) != Some(header.nr_buckets)
-        || header.nr_free_buckets != 0
         || header.last_string_bucket >= header.first_idx_bucket
         || indices.iter().any(|index| {
             index

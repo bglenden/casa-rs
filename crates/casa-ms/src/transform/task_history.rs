@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_tables::{Table, TableError, TableOptions};
-use casa_types::{ArrayValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{SubtableId, ms::subtable_path_from_main};
 
@@ -40,10 +40,6 @@ pub fn append_task_history(
         source: Box::new(source),
     };
     let mut table = open_staged_subtable_for_write(&path).map_err(failure)?;
-    let default_row = table
-        .schema()
-        .ok_or_else(|| failure(TableError::PreparedRowRequiresSchema))?
-        .default_row();
     let heading = [
         format!("taskname={}", history.task),
         format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
@@ -63,7 +59,7 @@ pub fn append_task_history(
             + 40_587.0 * 86_400.0;
         let text = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
         let empty = || Value::Array(ArrayValue::from_string_vec(vec![String::new()]));
-        let mut row = default_row.clone();
+        let mut row = RecordValue::default();
         for (column, value) in [
             ("APP_PARAMS", empty()),
             ("CLI_COMMAND", empty()),

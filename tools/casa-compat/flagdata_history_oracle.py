@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from time import time
 
 import casatasks
-from casacore.tables import table
+from casacore.tables import makearrcoldesc, makescacoldesc, maketabdesc, table
 import numpy as np
 
 from casars import tasks
@@ -110,6 +110,18 @@ def check_retained_reader(source):
     for name, task in TASKS:
         vis = f"retained-history-{name}.ms"
         copytree(source, vis)
+        with table(f"{vis}/HISTORY", readonly=False, ack=False) as history:
+            history.addcols(maketabdesc(makearrcoldesc("EXTRA_TILED", 0.0, ndim=1)), {
+                "TYPE": "TiledShapeStMan", "NAME": "HISTORY_TILED", "COLUMNS": ["EXTRA_TILED"],
+                "SPEC": {"DEFAULTTILESHAPE": np.array([2, 32], dtype=np.int32)},
+            })
+            history.putcell("EXTRA_TILED", 0, np.array([3.0, 4.0]))
+            history.addcols(maketabdesc([makescacoldesc("EXTRA_ISM_TEXT", ""), makearrcoldesc("EXTRA_ISM_ARRAY", 0.0, ndim=1)]), {
+                "TYPE": "IncrementalStMan", "NAME": "HISTORY_ISM",
+                "COLUMNS": ["EXTRA_ISM_TEXT", "EXTRA_ISM_ARRAY"],
+            })
+            history.putcell("EXTRA_ISM_TEXT", 0, "inherited")
+            history.putcell("EXTRA_ISM_ARRAY", 0, np.array([4.5]))
         with table(f"{vis}/HISTORY", lockoptions="usernoread", ack=False) as reader:
             original = list(reader.getcol("MESSAGE"))
             managers = {key: value["TYPE"] for key, value in reader.getdminfo().items()}
@@ -125,6 +137,10 @@ def check_retained_reader(source):
             final = list(reader.getcol("MESSAGE"))
             assert final[:len(current)] == current and len(final) == len(current) + 78
             assert final[len(current)] == "taskname=flagdata"
+            np.testing.assert_array_equal(reader.getcell("EXTRA_TILED", 0), [3.0, 4.0])
+            assert all(not reader.iscelldefined("EXTRA_TILED", row) for row in range(1, len(final)))
+            assert list(reader.getcol("EXTRA_ISM_TEXT")) == ["inherited"] * len(final)
+            np.testing.assert_array_equal(reader.getcol("EXTRA_ISM_ARRAY"), np.full((len(final), 1), 4.5))
 
 
 def compare_unchanged(source):
