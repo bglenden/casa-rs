@@ -119,12 +119,12 @@ pub(super) fn apply_array_feed_uv(
         array
     };
     if let Some(text) = array.filter(|text| !text.is_empty()) {
-        let text = if flagdata {
-            numeric_lexer_prefix(text)
+        let ranges = if flagdata {
+            // Flagging preserves the stored ARRAY_IDs and needs only their row predicate.
+            parse_numeric_row_id_ranges(numeric_lexer_prefix(text), "array")?
         } else {
-            text
+            ArraySelection::parse(text)?.ranges
         };
-        let ranges = ArraySelection::parse(text)?.ranges;
         compiled
             .casa_taql_exprs
             .push(row_ids_predicate("ARRAY_ID", &ranges));

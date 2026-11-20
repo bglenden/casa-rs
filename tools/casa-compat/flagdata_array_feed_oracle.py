@@ -6,6 +6,9 @@ from contextlib import chdir
 from json import loads
 from pathlib import Path
 from shutil import copytree
+from signal import SIGABRT
+from subprocess import run
+import sys
 from tempfile import TemporaryDirectory
 
 import casatasks
@@ -177,6 +180,16 @@ def compare_refusals(vis):
         assert module.flagdata(vis=vis, action="none", array=["2"], feed=["0"]) == {}
     assert_preserved(vis, before, auxiliary)
 
+    for module, kind in ((casatasks, UnicodeDecodeError), (tasks, RuntimeError)):
+        try:
+            module.flagdata(vis=vis, array="\u00a02", action="calculate")
+        except kind as error:
+            if module is tasks:
+                assert "array" in str(error).lower()
+        else:
+            raise AssertionError(f"{module.__name__} accepted invalid array text")
+        assert_preserved(vis, before, auxiliary)
+
     for feed in ("99", "2~0", "none", "\x00$invalid"):
         try:
             tasks.flagdata(vis=vis, feed=feed, flagbackup=False)
@@ -188,6 +201,47 @@ def compare_refusals(vis):
     return len(cases)
 
 
+def compare_array_bounds(vis, arrays):
+    before, auxiliary = snapshot(vis), auxiliary_content(vis)
+    wrapped = str(2**32 + 2)
+    reference = "array-wrap.ms"
+    copytree(vis, reference)
+    assert casatasks.flagdata(vis=reference, array=wrapped, flagbackup=False) == {}
+    assert_flags(reference, before, {row for row, array in enumerate(arrays) if array == 2})
+    try:
+        tasks.flagdata(vis=vis, array=wrapped, flagbackup=False)
+    except RuntimeError as error:
+        assert wrapped in str(error), error
+    else:
+        raise AssertionError(f"flagdata accepted overflowing array ID {wrapped}")
+    assert_preserved(vis, before, auxiliary)
+
+    high = "high-array.ms"
+    copytree(vis, high)
+    high_rows = {0, 5}
+    with table(high, readonly=False, ack=False) as ms:
+        for row in high_rows:
+            ms.putcell("ARRAY_ID", row, 1003)
+    before, auxiliary = snapshot(high), auxiliary_content(high)
+    script = (
+        "import resource\n"
+        "import sys\n"
+        "import casatasks\n"
+        "resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n"
+        "casatasks.flagdata(vis=sys.argv[1], array=sys.argv[2], action='calculate')\n"
+    )
+    for index, array in enumerate((">1002", ">=1002")):
+        crashed = run([sys.executable, "-c", script, high, array], capture_output=True, text=True)
+        assert crashed.returncode == -SIGABRT and "Negative shape" in crashed.stderr, (
+            array, crashed.returncode, crashed.stderr
+        )
+        assert_preserved(high, before, auxiliary)
+        native = f"high-array-native-{index}.ms"
+        copytree(high, native)
+        assert tasks.flagdata(vis=native, array=array, flagbackup=False) == {}
+        assert_flags(native, before, high_rows)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="flagdata-array-feed-") as work, chdir(work):
@@ -196,9 +250,11 @@ def main():
         array_cases = compare_array(vis, arrays, slots)
         feed_cases = compare_feed(vis, arrays, pairs)
         refusals = compare_refusals(vis)
+        compare_array_bounds(vis, arrays)
     print(f"{array_cases} array products, three array summaries, {feed_cases} feed products "
           f"and summaries, a feed preview, one inactive call, {refusals} paired refusals, "
-          "one reproduced feed-write bug and four feed refusal protections")
+          "one feed-write bug and four feed refusal protections, "
+          "an array diagnostic, one array ID overflow protection and two high-array crash fixes")
 
 
 if __name__ == "__main__":
