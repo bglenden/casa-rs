@@ -954,6 +954,10 @@ matrices are converted to double precision, as in CASA.</p>
 <code>ia.sethistory(origin, messages)</code> to append provenance. For an image with stored
 restoring beams, <code>ia.restoringbeam()</code> reads the beam quantities and
 <code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid.
+Use <code>ia.makecomplex("output.im", "imaginary.im")</code> to combine the attached
+real image with a conformant real image of matching precision. A supplied
+region selects the same section from both inputs. The output copies the real
+image's metadata and uses the intersection of the input masks.
 Use <code>ia.isconform("other.im")</code> to check whether a float image has the same
 shape and compatible coordinates as a native float or complex image.
 Use <code>ia.fitsheader()</code> to inspect the FITS header for a float image without
