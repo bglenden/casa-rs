@@ -5,6 +5,8 @@
 
 pub(super) mod coords;
 pub(super) mod region;
+mod region_write;
+pub use region_write::put_image_region;
 mod replace_masked;
 
 pub use replace_masked::{

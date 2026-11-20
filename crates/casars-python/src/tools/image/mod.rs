@@ -36,6 +36,7 @@ mod metadata;
 mod modify;
 mod pixels;
 mod point;
+mod put_region;
 mod records;
 mod region_read;
 mod replace_masked;

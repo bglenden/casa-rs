@@ -32,7 +32,8 @@ mod imregrid;
 mod imsubimage;
 pub use imsubimage::{
     MaskReplacementOptions, MaskReplacementOutcome, SubimageOptions, SubimagePlan, SubimageRegion,
-    ensure_outfile_does_not_alias_input, replace_masked_complex_pixels, replace_masked_real_pixels,
+    ensure_outfile_does_not_alias_input, put_image_region, replace_masked_complex_pixels,
+    replace_masked_real_pixels,
 };
 mod list_log;
 mod planes;
