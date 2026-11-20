@@ -111,12 +111,11 @@ impl ClipModels {
                     continue;
                 }
                 first_buffer_states.entry(key).or_insert(state);
-                if let std::collections::btree_map::Entry::Vacant(entry) = fields.entry(field) {
-                    if let Some(model) =
+                if let std::collections::btree_map::Entry::Vacant(entry) = fields.entry(field)
+                    && let Some(model) =
                         virtual_model(ms, field).map_err(|error| failure(path, error))?
-                    {
-                        entry.insert(decode(&model.record).map_err(|error| failure(path, error))?);
-                    }
+                {
+                    entry.insert(decode(&model.record).map_err(|error| failure(path, error))?);
                 }
                 if factory.is_some()
                     && fields
