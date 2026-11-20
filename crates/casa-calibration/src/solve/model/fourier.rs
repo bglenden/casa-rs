@@ -597,7 +597,7 @@ impl PreparedFourierModel {
             .legacy_ep_offsets
             .as_ref()
             .map_or(Ok(centre), |offsets| {
-                offsets.baseline_offset([row.row.antenna1, row.row.antenna2])
+                offsets.baseline_offset([row.row.antenna1, row.row.antenna2], row.row.time_seconds)
             })
             .map_err(model_error)?;
         Ok((angle, centre))
