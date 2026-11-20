@@ -119,7 +119,7 @@ def edited_sources(root, dataset, model, engines, results):
         compare(values['native'], values['casa'], f'{label}-edited-pixels', results)
 
 
-def moved_source(root, dataset, factory, first, second, model, expected):
+def moved_source(root, dataset, factory, first, second, model, expected, *, read_only=False):
     root.mkdir()
     local_model = root / 'model.im'
     component_path = root / 'point.cl'
@@ -129,7 +129,7 @@ def moved_source(root, dataset, factory, first, second, model, expected):
     keywords = {'image': 'model', 'components': 'complist'}
     target = root / 'source-moved.ms'
     make_input(dataset, target, scratch=True)
-    if first == 'image':
+    if read_only:
         pixel_files = list(local_model.glob('table.f*_TSM*'))
         assert pixel_files
         for path in pixel_files:
@@ -189,6 +189,9 @@ def run(root, dataset, model):
                 for engine, factory in engines:
                     moved_source(case / f'{engine}-moved', dataset, factory, first, second,
                                  model, scratch[engine])
+                if first == 'image':
+                    moved_source(case / 'read-only-moved', dataset, native, first, second,
+                                 model, scratch['native'], read_only=True)
                 virtual_products = {}
                 for writer, factory in engines:
                     path = case / f'{writer}-saved.ms'
