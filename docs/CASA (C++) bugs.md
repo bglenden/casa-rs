@@ -8028,3 +8028,22 @@ On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
 type="c")` followed by `image.set(pixels=2)` terminates Python with SIGSEGV.
 casa-rs raises `RuntimeError` and preserves the complex image. See
 [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Legacy AW prediction needs a usable sensitivity image for PB correction
+
+With CASA 6.7.6.14, the legacy `imager.ft` routes `awproject` and
+`mawproject` predict the same visibilities on the original VLA fixture.
+A `tclean` CFS cache works directly when `dopbgriddingcorrections=False`.
+With correction enabled, the legacy imager fails in its sensitivity-image
+lattice setup if the cache contains no `avgPB`. Supplying an `avgPB` image
+with the model's axes permits the corrected prediction. The cold legacy
+run on the same fixture fails while setting up its convolution cells.
+
+The legacy writer emits the model image and the `AWProjectWBFT` name but
+omits its convolution cache. Its own `ms.uvsub` reports `Unsupported
+FTMachine`. Casa-rs retains the kernel images with the model. CASA can
+open the backing images, and native `ms.uvsub` uses them after the source
+cache has moved. The native reader reports an error if the saved recipe
+has no retained kernel images.
+[`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)

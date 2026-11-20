@@ -31,6 +31,7 @@ use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, V
 use ndarray::{ArrayD, Axis};
 
 use super::{FocusSample, GainSolveError, SelectedSolveRow, model_error};
+use crate::ft::legacy_aw;
 use mosaic::MosaicLayout;
 
 pub(super) struct FourierModel {
@@ -173,7 +174,8 @@ struct PreparedFourierModel {
     flags: Vec<bool>,
     frequencies: Vec<f64>,
     legacy_pbw_angle: Option<legacy_pbw::FeedAngle>,
-    _legacy_pbw_memory: Option<Reservation>,
+    legacy_aw: bool,
+    _legacy_kernel_memory: Option<Reservation>,
 }
 
 impl PreparedFourierModel {
@@ -226,13 +228,27 @@ impl PreparedFourierModel {
         let axis = image_spectral_axis(image, channels)?;
         let (basis, resampler) = spectral_layout(record, &axis, continuum_basis, false)?;
         let tracking = tracking::Tracking::load(terms[0])?;
-        let legacy_pbw = matches!(
-            record_text(terms[0], "name")?,
-            "nPBWProjectFT" | "PBMosaicFT"
-        );
-        let (kernels, mosaic, legacy_pbw_memory): (Box<dyn ConvolutionFunctionSet>, _, _) =
+        let machine = record_text(terms[0], "name")?;
+        let legacy_pbw = matches!(machine, "nPBWProjectFT" | "PBMosaicFT");
+        let legacy_aw = machine == legacy_aw::MACHINE;
+        let (kernels, mosaic, legacy_kernel_memory): (Box<dyn ConvolutionFunctionSet>, _, _) =
             if legacy_pbw {
                 let (kernels, memory) = legacy_pbw::load(terms[0], row, &geometry, &polarization)?;
+                (Box::new(kernels), None, Some(memory))
+            } else if legacy_aw {
+                let path = complex_model_image_path(terms[0], row.ms)?.join(legacy_aw::CACHE);
+                let conjugate = matches!(
+                    terms[0].get("casars_legacy_aw_conjbeams"),
+                    Some(Value::Scalar(ScalarValue::Bool(true)))
+                );
+                let (kernels, memory) = legacy_aw::open_catalog(
+                    &path,
+                    &geometry,
+                    &polarization,
+                    axis.first_hz(),
+                    conjugate,
+                )
+                .map_err(model_error)?;
                 (Box::new(kernels), None, Some(memory))
             } else if mosaic::is_mosaic(terms[0]) {
                 let (kernels, layout) = MosaicLayout::load(
@@ -252,6 +268,7 @@ impl PreparedFourierModel {
                 (grid_kernel(terms[0], &geometry, &polarization)?, None, None)
             };
         let resampler = if legacy_pbw
+            || legacy_aw
             || mosaic
                 .as_ref()
                 .is_some_and(|layout| layout.autocorrelations)
@@ -265,7 +282,7 @@ impl PreparedFourierModel {
         let grids = match cached_grids {
             Some(grids) => grids,
             None => {
-                let memory = if legacy_pbw {
+                let memory = if legacy_pbw || legacy_aw {
                     let plane = (nx as u64)
                         .saturating_mul(ny as u64)
                         .saturating_mul(size_of::<Complex32>() as u64);
@@ -273,7 +290,7 @@ impl PreparedFourierModel {
                         .saturating_mul(images.len() as u64)
                         .saturating_mul(u64::from(operator.basis().planes()));
                     let peak = plane.saturating_mul(count.saturating_add(4));
-                    Some(legacy_pbw::reserve("legacy PB/W Fourier image read", peak)?)
+                    Some(legacy_pbw::reserve("legacy Fourier image read", peak)?)
                 } else {
                     None
                 };
@@ -287,13 +304,13 @@ impl PreparedFourierModel {
             None
         };
         let project = uses_projected_tangent(terms[0], row.ms)?;
-        let legacy_flags = legacy_pbw || terms[0].get("doconversion").is_some();
+        let legacy_flags = legacy_pbw || legacy_aw || terms[0].get("doconversion").is_some();
         let channel_mask = match terms[0].get("spwchanselflag") {
             Some(Value::Array(ArrayValue::Int32(mask))) if !mask.is_empty() => Some(mask.clone()),
             _ => None,
         };
         Ok(Self {
-            _legacy_pbw_memory: legacy_pbw_memory,
+            _legacy_kernel_memory: legacy_kernel_memory,
             operator,
             resampler,
             grids,
@@ -326,6 +343,7 @@ impl PreparedFourierModel {
             flags: Vec::new(),
             frequencies: Vec::new(),
             legacy_pbw_angle: legacy_pbw.then(legacy_pbw::FeedAngle::default),
+            legacy_aw,
         })
     }
 
@@ -392,6 +410,15 @@ impl PreparedFourierModel {
                 ),
                 layout.pointing_offset(&row, shift)?,
                 layout.antenna_types(&row)?,
+            ),
+            None if self.legacy_aw => (
+                GridFtProjection::mosaic_between_directions_with_frame(
+                    field,
+                    phase_centre,
+                    projection_frame,
+                ),
+                Some([0.0; 2]),
+                [0; 2],
             ),
             None if self.project => (
                 GridFtProjection::faceted_between_directions_with_frame(
@@ -503,7 +530,7 @@ impl PreparedFourierModel {
             row_flag: row.row.flag_row,
             context: RowContext {
                 native_frequency_ratio: 1.0 / ratio,
-                original_uvw_m: None,
+                original_uvw_m: self.legacy_aw.then_some(row.uvw),
                 time_s: row.row.time_seconds,
                 antennas: [row.row.antenna1 as u32, row.row.antenna2 as u32],
                 antenna_types,
@@ -740,8 +767,14 @@ fn image_spectral_axis(
 
 fn grid_terms(record: &RecordValue) -> Result<(Vec<&RecordValue>, Basis), GainSolveError> {
     match record_text(record, "name")? {
-        "GridFT" | "WProjectFT" | "MosaicFT" | "MosaicFTNew" | "SetJyGridFT" | "nPBWProjectFT"
-        | "PBMosaicFT" => Ok((vec![record], Basis::Constant)),
+        "GridFT"
+        | "WProjectFT"
+        | "MosaicFT"
+        | "MosaicFTNew"
+        | "SetJyGridFT"
+        | "nPBWProjectFT"
+        | "PBMosaicFT"
+        | legacy_aw::MACHINE => Ok((vec![record], Basis::Constant)),
         "MultiTermFT" => match record.get("subftm") {
             Some(Value::Record(term)) => Ok((vec![term], Basis::Constant)),
             _ => Err(model_error("virtual MultiTermFT has no subftm record")),
@@ -817,6 +850,7 @@ fn open_grid(
             | "SetJyGridFT"
             | "nPBWProjectFT"
             | "PBMosaicFT"
+            | legacy_aw::MACHINE
     ) {
         return Err(model_error(
             "unsupported Fourier image type in virtual model",

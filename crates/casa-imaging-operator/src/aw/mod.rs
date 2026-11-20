@@ -38,6 +38,7 @@ use cell_image::{load_group, read_header};
 use native_cache::{STAGING_PREFIX, write_manifest};
 
 mod legacy_ep;
+mod legacy_model;
 mod legacy_pbw;
 mod pa;
 mod rotation;
@@ -297,6 +298,7 @@ pub struct AwCatalog {
     indexing: AwIndexing,
     prediction_frequency_scale: f64,
     prediction_uses_native_frequency: bool,
+    legacy_prediction_origin: bool,
     pa_deg: Vec<f64>,
     frequencies_hz: Vec<f64>,
     w_values: Vec<f64>,
@@ -353,7 +355,48 @@ impl AwCatalog {
         polarization: &PolarizationRouting,
         bound_bytes: usize,
     ) -> Result<Self, AwCatalogError> {
-        let root = root.as_ref().to_path_buf();
+        Self::open(
+            root.as_ref(),
+            indexing,
+            geometry,
+            polarization,
+            bound_bytes,
+            false,
+        )
+    }
+
+    /// Open a CASA cache for the old VisBuffer AW predictor. That predictor
+    /// uses a different fine-pixel origin and always gathers the model from
+    /// the conjugate Mueller hand, regardless of the original W sign.
+    ///
+    /// # Errors
+    /// The cache is malformed or cannot route a selected correlation.
+    pub fn open_legacy_casa(
+        root: impl AsRef<Path>,
+        indexing: AwIndexing,
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        bound_bytes: usize,
+    ) -> Result<Self, AwCatalogError> {
+        Self::open(
+            root.as_ref(),
+            indexing,
+            geometry,
+            polarization,
+            bound_bytes,
+            true,
+        )
+    }
+
+    fn open(
+        root: &Path,
+        indexing: AwIndexing,
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        bound_bytes: usize,
+        legacy: bool,
+    ) -> Result<Self, AwCatalogError> {
+        let root = root.to_path_buf();
         let mut cells = read_cells(&root)?;
         let header_opening_bytes = coalesce_imported_pa(&mut cells);
         // A native cell's working field is the image field times the
@@ -476,7 +519,7 @@ impl AwCatalog {
                     "too many AW convolution groups for the selected rotation step",
                 )
             })?;
-        let mueller = routing(&mueller_elements, polarization).ok_or_else(|| {
+        let mueller = routing(&mueller_elements, polarization, legacy).ok_or_else(|| {
             cache_error(
                 &root,
                 "selected correlations have missing or overlapping Mueller routes",
@@ -505,6 +548,7 @@ impl AwCatalog {
             indexing,
             prediction_frequency_scale: 1.0,
             prediction_uses_native_frequency: false,
+            legacy_prediction_origin: legacy,
             pa_deg,
             frequencies_hz,
             w_values,
@@ -874,6 +918,7 @@ impl AwCatalog {
             &self.groups[source],
             self.oversampling,
             angle,
+            self.legacy_prediction_origin,
         )
         .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
         let mut lru = self.lru.lock().expect("cache lock");
@@ -1211,7 +1256,11 @@ fn read_cells(root: &Path) -> Result<Vec<CellFiles>, AwCatalogError> {
 /// `None` when a cell is missing or two outer correlations route one
 /// (grid, visibility) pair through different cells (a non-canonical
 /// three-correlation selection, where `element % npol` collides).
-fn routing(elements: &[u32], polarization: &PolarizationRouting) -> Option<MuellerRouting> {
+fn routing(
+    elements: &[u32],
+    polarization: &PolarizationRouting,
+    legacy: bool,
+) -> Option<MuellerRouting> {
     let pol_map = polarization.pol_map();
     let correlations = polarization.correlations();
     let plane_of = |element: u32| {
@@ -1249,7 +1298,10 @@ fn routing(elements: &[u32], polarization: &PolarizationRouting) -> Option<Muell
             {
                 return None;
             }
-            if let Some(input_grid) = pol_map[hand(cell)] {
+            // The old VisBuffer returns the Mueller ID from the conjugate
+            // map even when it reads the direct cell at W <= 0.
+            let grid_hand = if legacy { partner } else { cell };
+            if let Some(input_grid) = pol_map[hand(grid_hand)] {
                 forward[usize::from(!positive)][usize::from(input_grid)][outer] = Some(plane);
             }
         }
