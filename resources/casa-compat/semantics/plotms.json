@@ -972,31 +972,37 @@
       "status": "Not implemented"
     },
     "showatm": {
-      "scope": "Compute and overlay the atmospheric transmission curve",
+      "scope": "Overlay atmospheric transmission on current calibration tables. MeasurementSet overlays remain open.",
       "evidence": [
+        "atmosphere",
         "remaining"
       ],
       "behaviors": [
         "advanced"
-      ]
+      ],
+      "status": "Partial"
     },
     "showtsky": {
-      "scope": "Compute and overlay the sky temperature curve",
+      "scope": "Overlay sky temperature on current calibration tables. MeasurementSet overlays remain open.",
       "evidence": [
+        "atmosphere",
         "remaining"
       ],
       "behaviors": [
         "advanced"
-      ]
+      ],
+      "status": "Partial"
     },
     "showimage": {
-      "scope": "Compute and overlay the image sideband curve",
+      "scope": "Overlay a receiver image sideband on current calibration tables. MeasurementSet overlays remain open.",
       "evidence": [
+        "atmosphere",
         "remaining"
       ],
       "behaviors": [
         "advanced"
-      ]
+      ],
+      "status": "Partial"
     },
     "colorizeoverlay": {
       "scope": "Colorize the curve overlay using coloraxis",
@@ -1082,9 +1088,10 @@
     {
       "id": "advanced",
       "title": "Advanced calibration plotting controls",
-      "status": "Not implemented",
-      "scope": "Track calibration library, atmosphere, transformations and interactive flag controls.",
+      "status": "Partial",
+      "scope": "Compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.",
       "evidence": [
+        "atmosphere",
         "remaining"
       ],
       "gap": "The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215."
@@ -1125,6 +1132,20 @@
       "scope": "Advanced calibration table and MS plotting under #1526, #1032 and #215.",
       "result": "Requires additional native behavior and paired evidence.",
       "links": []
+    },
+    "atmosphere": {
+      "kind": "Same-input atmospheric overlays",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 on the same current-format bandpass and gain tables, with optional associated weather, water-vapour and receiver tables.",
+      "result": "17 exports, 849 selected coordinates, one Python axis error and 16 rendered sky-temperature coordinates matched. The maximum normalized RMS for the four measured-weather and receiver overlays was 0.00012.",
+      "casa_version": "6.7.6.14",
+      "revision": "85e691c397f7cdb2097e11e65de5772a4dca1310",
+      "source_revision": "85e691c397f7cdb2097e11e65de5772a4dca1310",
+      "command": "casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-atmosphere-20261119.json",
+      "links": [
+        "tools/casa-compat/plotms_atmosphere_oracle.py"
+      ]
     }
   }
 }
