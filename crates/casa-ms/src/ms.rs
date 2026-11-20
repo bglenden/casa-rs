@@ -1122,7 +1122,13 @@ pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<Strin
     for name in ["ANTENNA1", "ANTENNA2", "DATA_DESC_ID", "FLAG_ROW"] {
         bind(name, DataManagerKind::StandardStMan, None);
     }
-    for name in ["DATA", "MODEL_DATA", "CORRECTED_DATA"] {
+    for name in [
+        "DATA",
+        "MODEL_DATA",
+        "CORRECTED_DATA",
+        "FLOAT_DATA",
+        "LAG_DATA",
+    ] {
         bind(
             name,
             DataManagerKind::TiledShapeStMan,
