@@ -65,6 +65,12 @@ Use `cs.setrestfrequency(values, which=0, append=False)` to choose the active
 spectral rest frequency. Floating-point inputs use the coordinate's unit.
 Pass quantity strings or a quantity record to supply units explicitly.
 With `append=True`, `which` indexes the combined old and new list.
+Use `cs.frequencytovelocity(values)` and `cs.velocitytofrequency(values)`
+to convert relative to the active rest frequency. The default convention is
+radio Doppler and the default velocity unit is `km/s`. Pass `doppler`,
+`velunit`, or `frequnit` to choose other conventions or units.
+Use `cs.frequencytofrequency(values, velocity="10km/s")` to shift a vector
+by a velocity. A dimensionless `velocity` is a fraction of the speed of light.
 
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.

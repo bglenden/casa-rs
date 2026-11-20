@@ -53,29 +53,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value, frequnit = None, velocity = None), text_signature = "($self, value, frequnit='', velocity=[])")]
-    fn frequencytofrequency(
-        &self,
-        value: &Bound<'_, PyAny>,
-        frequnit: Option<&Bound<'_, PyAny>>,
-        velocity: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("frequencytofrequency")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value, frequnit = None, doppler = None, velunit = None), text_signature = "($self, value, frequnit='', doppler='radio', velunit='km/s')")]
-    fn frequencytovelocity(
-        &self,
-        value: &Bound<'_, PyAny>,
-        frequnit: Option<&Bound<'_, PyAny>>,
-        doppler: Option<&Bound<'_, PyAny>>,
-        velunit: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("frequencytovelocity")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn reorder(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("reorder")
@@ -197,17 +174,5 @@ impl PyCoordsys {
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn transpose(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("transpose")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value, frequnit = None, doppler = None, velunit = None), text_signature = "($self, value, frequnit='', doppler='radio', velunit='km/s')")]
-    fn velocitytofrequency(
-        &self,
-        value: &Bound<'_, PyAny>,
-        frequnit: Option<&Bound<'_, PyAny>>,
-        doppler: Option<&Bound<'_, PyAny>>,
-        velunit: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("velocitytofrequency")
     }
 }
