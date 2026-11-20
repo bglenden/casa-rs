@@ -65,6 +65,7 @@ pub struct ImagerPrediction {
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
     apply_voltage_pattern: bool,
+    voltage_squint: bool,
     mosaic_voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
@@ -129,6 +130,7 @@ impl Default for ImagerPrediction {
             taylor: (1, None),
             voltage_pattern: None,
             apply_voltage_pattern: false,
+            voltage_squint: false,
             mosaic_voltage_pattern: None,
             pending_publication: None,
             partial_batch: None,
@@ -262,6 +264,7 @@ impl ImagerPrediction {
     pub fn set_voltage_pattern(&mut self, pattern: Option<ImagerVoltagePattern>) {
         self.apply_voltage_pattern = pattern.is_some();
         self.voltage_pattern = pattern;
+        self.voltage_squint = false;
     }
 
     /// Update the voltage pattern for future predictions.
@@ -286,6 +289,20 @@ impl ImagerPrediction {
         pattern: Option<ImagerVoltagePattern>,
         apply: bool,
     ) -> MsResult<()> {
+        self.configure_voltage_pattern_squint(pattern, apply, false)
+    }
+
+    /// Configure the gridding beam and apply it with optional circular-feed
+    /// squint when preparing a polarized legacy Fourier model.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_voltage_pattern_squint(
+        &mut self,
+        pattern: Option<ImagerVoltagePattern>,
+        apply: bool,
+        squint: bool,
+    ) -> MsResult<()> {
         if self.partial_batch.is_some() || self.pending_publication.is_some() {
             return Err(invalid(
                 "finish publishing the previous imager prediction before changing the voltage pattern",
@@ -293,6 +310,7 @@ impl ImagerPrediction {
         }
         self.voltage_pattern = pattern;
         self.apply_voltage_pattern = apply;
+        self.voltage_squint = squint;
         Ok(())
     }
 
@@ -534,6 +552,14 @@ impl ImagerPrediction {
             return Ok(None);
         }
         let mosaic = matches!(self.options.gridder, ImagerGridder::Mosaic);
+        if self.apply_voltage_pattern
+            && self.voltage_squint
+            && (mosaic || self.options.single_dish.is_some())
+        {
+            return Err(invalid(
+                "this legacy beam-squint Fourier mode is pending #1520",
+            ));
+        }
         // MosaicFT uses its convolution beam directly.
         let pattern = self
             .voltage_pattern
@@ -646,7 +672,7 @@ impl ImagerPrediction {
                 let mut field = selected.clone();
                 for (_, rows) in fields {
                     field.selected_rows = rows;
-                    let voltage_pattern = pattern.prepare(ms, &field)?;
+                    let voltage_pattern = pattern.prepare(ms, &field, self.voltage_squint, true)?;
                     images.extend(self.prepare_images(
                         ms,
                         &field,
@@ -662,7 +688,7 @@ impl ImagerPrediction {
                 // virtual combinations. Its scratch iterator can change
                 // the beam as it advances to another field.
                 let voltage_pattern = pattern
-                    .map(|pattern| pattern.prepare(ms, selected))
+                    .map(|pattern| pattern.prepare(ms, selected, self.voltage_squint, scratch))
                     .transpose()?;
                 images = self.prepare_images(
                     ms,
