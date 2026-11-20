@@ -3106,7 +3106,7 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
                 .map(|(&extent, &step)| SliceInfoElem::Slice {
                     start: 0,
                     end: Some(extent as isize),
-                    step: step as isize,
+                    step: step.min(extent.max(1)) as isize,
                 })
                 .collect();
             return Ok(bounding.slice(local_slice.as_slice()).to_owned());

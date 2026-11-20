@@ -109,31 +109,24 @@ fn validate_slice(
         });
     }
     for axis in 0..ndim {
-        // The last element touched is: start + (shape-1) * stride
-        // This must be < lattice_shape[axis]
         if stride[axis] == 0 {
             return Err(LatticeError::InvalidTraversal(
                 "slice stride must be positive".into(),
             ));
         }
-        if slice_shape[axis] == 0 {
-            if start[axis] <= lattice_shape[axis] {
-                continue;
-            }
-        } else {
-            let last = (slice_shape[axis] - 1)
-                .checked_mul(stride[axis])
-                .and_then(|extent| start[axis].checked_add(extent));
-            if last.is_some_and(|last| last < lattice_shape[axis]) {
-                continue;
-            }
+        let end = slice_shape[axis]
+            .saturating_sub(1)
+            .checked_mul(stride[axis])
+            .and_then(|span| start[axis].checked_add(span))
+            .and_then(|last| last.checked_add(usize::from(slice_shape[axis] > 0)));
+        if end.is_none_or(|end| end > lattice_shape[axis]) {
+            return Err(LatticeError::SliceOutOfBounds {
+                start: start.to_vec(),
+                slice_shape: slice_shape.to_vec(),
+                stride: stride.to_vec(),
+                lattice_shape: lattice_shape.to_vec(),
+            });
         }
-        return Err(LatticeError::SliceOutOfBounds {
-            start: start.to_vec(),
-            slice_shape: slice_shape.to_vec(),
-            stride: stride.to_vec(),
-            lattice_shape: lattice_shape.to_vec(),
-        });
     }
     Ok(())
 }
@@ -160,12 +153,13 @@ impl<T: LatticeElement> Lattice<T> for ArrayLattice<T> {
             .iter()
             .zip(shape.iter())
             .zip(stride.iter())
-            .map(|((&s, &n), &st)| {
+            .enumerate()
+            .map(|(axis, ((&s, &n), &st))| {
                 let end = if n == 0 { s } else { s + (n - 1) * st + 1 };
                 SliceInfoElem::Slice {
                     start: s as isize,
                     end: Some(end as isize),
-                    step: if n <= 1 { 1 } else { st as isize },
+                    step: st.min(self.data.shape()[axis].max(1)) as isize,
                 }
             })
             .collect();
@@ -288,10 +282,10 @@ mod tests {
     fn get_slice_strided() {
         let data = Array::from_shape_fn(IxDyn(&[6, 6]), |idx| (idx[0] * 6 + idx[1]) as f64);
         let lat = ArrayLattice::new(data);
-        let result = lat.get_slice(&[0, 0], &[3, 3], &[2, 2]).unwrap();
+        let result = lat.get_slice(&[1, 1], &[3, 3], &[2, 2]).unwrap();
         assert_eq!(result.shape(), &[3, 3]);
-        // Element at [1,1] in result = data[2,2] = 14
-        assert_eq!(result[IxDyn(&[1, 1])], 14.0);
+        // The last selected sample lies exactly on the source boundary.
+        assert_eq!(result[IxDyn(&[2, 2])], 35.0);
     }
 
     #[test]
