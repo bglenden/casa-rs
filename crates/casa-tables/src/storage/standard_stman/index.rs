@@ -148,7 +148,7 @@ pub(super) fn write_group_indexes(
 /// each object's length once the object ends. The bucket being filled is
 /// held until the stream moves into the next; a length that falls in an
 /// earlier bucket is written straight to the file.
-struct IndexBucketSink {
+pub(super) struct IndexBucketSink {
     file: File,
     first_bucket: usize,
     bucket_bytes: usize,
@@ -161,7 +161,7 @@ struct IndexBucketSink {
 }
 
 impl IndexBucketSink {
-    fn new(file: File, first_bucket: usize, bucket_bytes: usize) -> Self {
+    pub(super) fn new(file: File, first_bucket: usize, bucket_bytes: usize) -> Self {
         Self {
             file,
             first_bucket,
@@ -175,7 +175,7 @@ impl IndexBucketSink {
     /// Stream the `SSMIndex` of `n_used` data buckets of `rows_per_bucket`
     /// rows, their last rows and their bucket numbers, in the file's byte
     /// order.
-    fn write_index(
+    pub(super) fn write_index(
         self,
         n_used: u32,
         rows_per_bucket: u32,
@@ -221,7 +221,7 @@ impl IndexBucketSink {
 
     /// End the chain at the last bucket and write it; return the number of
     /// index buckets and the length of the index.
-    fn finish(mut self) -> io::Result<(usize, usize)> {
+    pub(super) fn finish(mut self) -> io::Result<(usize, usize)> {
         let buckets = match &mut self.open {
             Some((bucket, bytes)) => {
                 write_chain_header(bytes, -1);

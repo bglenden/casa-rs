@@ -9,11 +9,14 @@ use std::process::ExitCode;
 use casa_ms::selection::MsSelection;
 use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
-    FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, calculate_flagdata_path,
-    flagdata_empty_record, flagdata_named_summary_record, flagdata_path,
-    flagdata_task_schema_bundle, ms_task_success, save_next_flag_backup, task_selection_text,
+    FlagSummaryOptions, FlaggingError, MeasurementSet, QuackMode, TransformTaskHistory,
+    append_task_history, calculate_flagdata_path, flagdata_empty_record,
+    flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
+    save_next_flag_backup, task_selection_text,
 };
-use casa_provider_contracts::{NumpyScalarType, ParameterValue, TaskFailureKind, python_repr};
+use casa_provider_contracts::{
+    DefaultSpec, NumpyScalarType, ParameterValue, TaskFailureKind, python_repr,
+};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -38,6 +41,7 @@ fn main() -> ExitCode {
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let action = task.required_text("action")?;
     check_correlation_argument(task, &action)?;
+    let channel_bins = channel_bin_widths(task)?;
     let calculate = match action.as_str() {
         "apply" => false,
         "calculate" => true,
@@ -54,7 +58,7 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             ));
         }
     };
-    let request = flagdata_request(task).or_else(|error| {
+    let request = flagdata_request(task, channel_bins).or_else(|error| {
         let parameter = error.parameter.as_deref();
         if parameter == Some("datacolumn")
             || (matches!(parameter, Some("channelavg" | "timeavg"))
@@ -74,9 +78,9 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         ) {
             return Err(not_yet("action", &action));
         }
-        calculate_flagdata_path(path, &request)
+        calculate_flagdata_path(&path, &request)
     } else {
-        flagdata_path(path, &request)
+        flagdata_path(&path, &request)
     }
     .map_err(|error| match error {
         FlaggingError::MissingCorrelationSummary => {
@@ -90,11 +94,81 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         error => TaskFailure::execution(error.to_string()),
     })?;
+    if !calculate
+        && request.mode != FlagDataMode::Summary
+        && let Err(error) = append_task_history(&path, &flagdata_history(task))
+    {
+        tracing::error!(%error, "updating flagdata HISTORY");
+    }
     let value = match &report.summary {
         Some(summary) => flagdata_named_summary_record(summary, &task.required_text("name")?),
         None => flagdata_empty_record(),
     };
     ms_task_success(value, &Some(report))
+}
+
+fn flagdata_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
+    let rflag = matches!(task.value("mode"), Some(ParameterValue::String(mode)) if mode == "rflag");
+    let mut bindings = task
+        .session()
+        .bundle()
+        .surface
+        .bindings()
+        .iter()
+        .filter(|binding| binding.projections.python.is_some())
+        .collect::<Vec<_>>();
+    bindings.sort_by_key(|binding| binding.order);
+    let parameters = bindings
+        .into_iter()
+        .filter_map(|binding| {
+            let name = binding.name.as_str();
+            let default = match &binding.default {
+                DefaultSpec::Literal { value } => Some(value),
+                DefaultSpec::Conditional { fallback, .. } => Some(fallback),
+                DefaultSpec::Required => None,
+            };
+            let given = task.session().given(name);
+            let value = if matches!(
+                name,
+                "vis" | "spw" | "chanbin" | "timedev" | "freqdev" | "outfile"
+            ) {
+                given.or(default).or_else(|| task.value(name))
+            } else {
+                task.value(name).or(default)
+            }?;
+            let text = match (name, value) {
+                ("writeflags", _) => "True".to_string(),
+                ("flagbackup", _) => "False".to_string(),
+                ("spw", ParameterValue::String(value)) if given.is_none() && value == "none" => {
+                    "\"\"".to_string()
+                }
+                ("timedev" | "freqdev", ParameterValue::String(value))
+                    if rflag && value.is_empty() =>
+                {
+                    "[]".to_string()
+                }
+                (
+                    "chanbin",
+                    ParameterValue::NumpyScalar { value, .. } | ParameterValue::ScalarArray(value),
+                ) => python_repr(value),
+                ("vis", ParameterValue::Array(paths))
+                    if let [ParameterValue::String(path)] = paths.as_slice() =>
+                {
+                    format!("\"{path}\"")
+                }
+                ("mode", ParameterValue::String(value)) if value == "manualflag" => {
+                    "\"manual\"".to_string()
+                }
+                (_, ParameterValue::String(value)) => format!("\"{value}\""),
+                (_, value) => python_repr(value),
+            };
+            Some((binding.name.clone(), text))
+        })
+        .collect();
+    TransformTaskHistory {
+        task: "flagdata".to_string(),
+        parameters,
+    }
 }
 
 fn check_correlation_argument(task: &TaskInvocation<'_>, action: &str) -> Result<(), TaskFailure> {
@@ -129,7 +203,10 @@ fn backup_before_failed_apply(task: &TaskInvocation<'_>, action: &str) -> Result
 
 /// The resolved run as a [`FlagDataRequest`]; the parameters the surface
 /// does not carry keep their defaults.
-fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFailure> {
+fn flagdata_request(
+    task: &TaskInvocation<'_>,
+    channel_bins: Vec<u32>,
+) -> Result<FlagDataRequest, TaskFailure> {
     let (mode, action) = mode(&task.required_text("mode")?)?;
     let spw = task_selection_text(task, "spw")?;
     let correlation = task_selection_text(task, "correlation")?;
@@ -180,7 +257,7 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         clipzeros: task.flag("clipzeros")?,
         clipminmax,
         clipoutside,
-        clip_channel_bins: clip_channel_bins(task, mode)?,
+        clip_channel_bins: clip_channel_bins(task, mode, channel_bins)?,
         clip_time_bin: clip_time_bin(task, mode)?,
         quackinterval,
         quackmode,
@@ -226,6 +303,7 @@ fn clip_time_bin(
 fn clip_channel_bins(
     task: &TaskInvocation<'_>,
     mode: FlagDataMode,
+    channel_bins: Vec<u32>,
 ) -> Result<Option<Vec<u32>>, TaskFailure> {
     if mode != FlagDataMode::Clip {
         return Ok(None);
@@ -250,22 +328,47 @@ fn clip_channel_bins(
             );
         }
     }
+    Ok(Some(channel_bins))
+}
+
+fn channel_bin_widths(task: &TaskInvocation<'_>) -> Result<Vec<u32>, TaskFailure> {
+    let invalid =
+        || TaskFailure::validation("chanbin must be an integer or integer vector").at("chanbin");
     let width = |value: &ParameterValue| match value {
         // Negative widths and oversized positive widths both cover the
         // selected window. Avoid wraparound into smaller, active widths.
         ParameterValue::Integer(value) => Ok(u32::try_from(*value).unwrap_or(u32::MAX)),
-        _ => Err(
-            TaskFailure::validation("chanbin must be an integer or integer vector").at("chanbin"),
-        ),
+        ParameterValue::Bool(value) => Ok(u32::from(*value)),
+        _ => Err(invalid()),
     };
-    let widths = match task.value("chanbin") {
-        Some(ParameterValue::Array(values)) => {
-            values.iter().map(width).collect::<Result<_, _>>()?
+    match task.value("chanbin") {
+        None | Some(ParameterValue::Bool(_)) => Ok(vec![1]),
+        Some(ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            ..
+        }) => Ok(vec![1]),
+        Some(ParameterValue::ScalarArray(value))
+            if matches!(
+                value.as_ref(),
+                ParameterValue::Integer(_)
+                    | ParameterValue::NumpyScalar {
+                        dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+                        ..
+                    }
+            ) =>
+        {
+            Ok(Vec::new())
         }
-        Some(value) => vec![width(value)?],
-        None => vec![1],
-    };
-    Ok(Some(widths))
+        Some(ParameterValue::Array(values))
+            if values
+                .iter()
+                .all(|value| matches!(value, ParameterValue::Bool(_))) =>
+        {
+            Ok(vec![1])
+        }
+        Some(ParameterValue::Array(values)) => values.iter().map(width).collect(),
+        Some(value) => Ok(vec![width(value)?]),
+    }
 }
 
 /// The row and channel selection passed to the flagging engine.
@@ -491,7 +594,9 @@ mod tests {
 
     /// The request a `flagdata` command line resolves to.
     fn request_for(args: &[&str]) -> Result<FlagDataRequest, TaskFailure> {
-        read(args, flagdata_request)
+        read(args, |task| {
+            flagdata_request(task, channel_bin_widths(task)?)
+        })
     }
 
     #[test]
