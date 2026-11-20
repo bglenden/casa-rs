@@ -81,6 +81,7 @@ impl From<SpatialShape> for QualifiedShape {
 pub(in crate::analysis) struct SubimageSelection {
     pub(in crate::analysis) start: Vec<usize>,
     pub(in crate::analysis) shape: Vec<usize>,
+    pub(super) stride: Option<Vec<usize>>,
     pub(in crate::analysis) plane: [usize; 2],
     /// Precomputed spatial mask (shape `[shape[plane[0]], shape[plane[1]]]`) if
     /// the selection is non-rectangular or a union of multiple shapes.
@@ -96,7 +97,37 @@ pub(in crate::analysis) struct SubimageSelection {
 }
 
 impl SubimageSelection {
+    pub(super) fn packed_shape(&self) -> Vec<usize> {
+        match &self.stride {
+            Some(stride) => self
+                .shape
+                .iter()
+                .zip(stride)
+                .map(|(&size, &step)| size.div_ceil(step))
+                .collect(),
+            None => self.shape.clone(),
+        }
+    }
+
     pub(in crate::analysis) fn resolve<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        box_arg: Option<&str>,
+        region_arg: Option<SubimageRegion<'_>>,
+        chans_arg: Option<&str>,
+        stokes_arg: Option<&str>,
+    ) -> Result<Self, ImageError> {
+        let selection = Self::resolve_section(image, box_arg, region_arg, chans_arg, stokes_arg)?;
+        if let Some(strides) = &selection.stride
+            && let Some((axis, &step)) = strides.iter().enumerate().find(|(_, step)| **step != 1)
+        {
+            return Err(ImageError::InvalidMetadata(format!(
+                "saved region has non-unit stride {step} on axis {axis}"
+            )));
+        }
+        Ok(selection)
+    }
+
+    pub(super) fn resolve_section<T: ImagePixel>(
         image: &dyn ImageInterface<T>,
         box_arg: Option<&str>,
         region_arg: Option<SubimageRegion<'_>>,
@@ -115,6 +146,7 @@ impl SubimageSelection {
         let mut regions: Vec<QualifiedShape> = Vec::new();
         let mut saved_mask = None;
         let mut saved_bounds: Option<(Vec<usize>, Vec<usize>)> = None;
+        let mut stride = None;
 
         if let Some(box_text) = box_arg {
             let PixelRegion::Boxes(boxes) = parse_box_region(box_text, &full_shape, plane)? else {
@@ -150,6 +182,7 @@ impl SubimageSelection {
             regions.extend(parsed.shapes);
             saved_mask = parsed.saved_mask;
             saved_bounds = parsed.saved_bounds;
+            stride = parsed.stride;
         }
 
         let explicit = |selection: Option<&str>| selection.is_some_and(|s| !s.trim().is_empty());
@@ -212,6 +245,7 @@ impl SubimageSelection {
         Ok(Self {
             start,
             shape,
+            stride,
             plane,
             spatial_mask,
             qualified_shapes: if regions
@@ -353,6 +387,7 @@ struct ParsedRegion {
     shapes: Vec<QualifiedShape>,
     saved_mask: Option<SavedRegionMask>,
     saved_bounds: Option<(Vec<usize>, Vec<usize>)>,
+    stride: Option<Vec<usize>>,
 }
 
 fn parse_region_argument<T: ImagePixel>(
@@ -382,6 +417,7 @@ fn parse_region_argument<T: ImagePixel>(
             shapes: vec![SpatialShape::Box(b).into()],
             saved_mask: None,
             saved_bounds: None,
+            stride: None,
         });
     }
     if let Some(inner) = text
@@ -394,6 +430,7 @@ fn parse_region_argument<T: ImagePixel>(
             shapes: vec![SpatialShape::Box(b).into()],
             saved_mask: None,
             saved_bounds: None,
+            stride: None,
         });
     }
     if looks_like_four_ints(text) {
@@ -403,6 +440,7 @@ fn parse_region_argument<T: ImagePixel>(
             shapes: vec![SpatialShape::Box(b).into()],
             saved_mask: None,
             saved_bounds: None,
+            stride: None,
         });
     }
 
@@ -513,6 +551,7 @@ fn parse_crtf_document<T: ImagePixel>(
         shapes,
         saved_mask: None,
         saved_bounds: None,
+        stride: None,
     })
 }
 

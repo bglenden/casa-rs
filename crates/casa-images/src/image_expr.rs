@@ -78,6 +78,7 @@ use crate::image_info::ImageInfo;
 #[path = "image_expr_compiled.rs"]
 mod compiled;
 pub(crate) use compiled::MemorySnapshotImage;
+pub(crate) use compiled::bounded_read_cursor;
 pub use compiled::{ImageExpression, MaskExpression};
 
 type UnaryExprFn<T> = Arc<dyn Fn(T) -> T + Send + Sync>;
