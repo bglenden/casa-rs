@@ -11,15 +11,37 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::derived::engine::{MsCalEngine, raw_field_phase_direction};
 use crate::scratch_columns::virtual_model_fields;
+use crate::selection::{MsSelectionRowBlock, ResolvedMsSelectionRow, resolve_selected_row_facts};
 use crate::{MeasurementSet, VirtualModelEntry, VirtualModelKind, virtual_model};
 
 use super::{FlagDataColumn, FlaggingError, load_i32_cells};
+
+/// Construct the existing full visibility predictor for rows of fields with
+/// Fourier recipes. The MeasurementSet supplies their original flags and geometry.
+pub type FlagDataModelFactory = fn(
+    &MeasurementSet,
+    &[ResolvedMsSelectionRow],
+) -> Result<Box<dyn FlagDataModelPredictor>, FlaggingError>;
+
+/// Predict the visible Fourier or component terms for an individual selected row.
+pub trait FlagDataModelPredictor {
+    /// Return a model in MS axis order (correlation, channel). An unmatched
+    /// buffer returns `None` and `flagdata` uses the default unit point model.
+    fn predict(
+        &self,
+        ms: &MeasurementSet,
+        row: usize,
+        correlations: &[i32],
+        flags: &ArrayD<bool>,
+    ) -> Result<Option<ArrayD<Complex32>>, FlaggingError>;
+}
 
 pub(super) struct ClipModels {
     fields: BTreeMap<i32, Vec<Recipe>>,
     first_buffer_states: BTreeMap<BufferKey, i32>,
     geometry: Option<MsCalEngine>,
     physical: bool,
+    fourier: Option<Box<dyn FlagDataModelPredictor>>,
 }
 
 struct Recipe {
@@ -58,6 +80,7 @@ impl ClipModels {
         ms: &MeasurementSet,
         column: FlagDataColumn,
         rows: &[usize],
+        factory: Option<FlagDataModelFactory>,
         path: &str,
     ) -> Result<Option<Self>, FlaggingError> {
         if !matches!(
@@ -79,31 +102,54 @@ impl ClipModels {
         }
         let mut fields = BTreeMap::new();
         let mut first_buffer_states = BTreeMap::new();
+        let mut fourier_rows = Vec::new();
         for block in rows.chunks(65_536) {
-            for (key, state) in buffer_rows(ms.main_table(), block, path)? {
+            for (&row, (key, state)) in block.iter().zip(buffer_rows(ms.main_table(), block, path)?)
+            {
                 let field = key.field;
                 if !available.contains(&field) {
                     continue;
                 }
                 first_buffer_states.entry(key).or_insert(state);
-                if fields.contains_key(&field) {
-                    continue;
+                if let std::collections::btree_map::Entry::Vacant(entry) = fields.entry(field) {
+                    if let Some(model) =
+                        virtual_model(ms, field).map_err(|error| failure(path, error))?
+                    {
+                        entry.insert(decode(&model.record).map_err(|error| failure(path, error))?);
+                    }
                 }
-                if let Some(model) =
-                    virtual_model(ms, field).map_err(|error| failure(path, error))?
+                if factory.is_some()
+                    && fields
+                        .get(&field)
+                        .is_some_and(|recipes| has_fourier(recipes))
                 {
-                    fields.insert(
-                        field,
-                        decode(&model.record).map_err(|error| failure(path, error))?,
-                    );
+                    fourier_rows.push(row);
                 }
             }
         }
+        let fourier = factory
+            .filter(|_| !fourier_rows.is_empty())
+            .map(|factory| {
+                let planned = fourier_rows
+                    .chunks(65_536)
+                    .enumerate()
+                    .map(|(index, rows)| MsSelectionRowBlock {
+                        selected_row_start: index * 65_536,
+                        selected_row_count: rows.len(),
+                        planned_bytes: std::mem::size_of_val(rows),
+                    })
+                    .collect::<Vec<_>>();
+                let rows = resolve_selected_row_facts(ms, &fourier_rows, &planned)
+                    .map_err(|error| failure(path, error))?;
+                factory(ms, &rows)
+            })
+            .transpose()?;
         Ok((!fields.is_empty()).then_some(Self {
             fields,
             first_buffer_states,
             geometry: None,
             physical,
+            fourier,
         }))
     }
 
@@ -111,6 +157,7 @@ impl ClipModels {
         &mut self,
         ms: &MeasurementSet,
         rows: &[usize],
+        flags: &[ArrayD<bool>],
         path: &str,
     ) -> Result<Vec<Option<ArrayValue>>, FlaggingError> {
         let table = ms.main_table();
@@ -125,6 +172,7 @@ impl ClipModels {
         let mut physical = Vec::new();
         let mut plans = Vec::new();
         let mut prediction_rows = Vec::new();
+        let mut fourier_rows = Vec::new();
         for (slot, (buffer, state)) in buffer_rows(table, rows, path)?.into_iter().enumerate() {
             let field_id = buffer.field;
             let selected = self.fields.get(&field_id);
@@ -136,6 +184,10 @@ impl ClipModels {
             let spw = descriptions
                 .spectral_window_id(ddid)
                 .map_err(|error| failure(path, error))?;
+            if self.fourier.is_some() && selected.is_some_and(|recipes| has_fourier(recipes)) {
+                fourier_rows.push((slot, buffer, spw));
+                continue;
+            }
             let state = self
                 .first_buffer_states
                 .get(&buffer)
@@ -156,6 +208,27 @@ impl ClipModels {
                 prediction_rows.push(rows[slot]);
             }
             plans.push((slot, buffer, spw, components));
+        }
+        if !fourier_rows.is_empty() {
+            let predictor = self
+                .fourier
+                .as_ref()
+                .expect("Fourier rows require a predictor");
+            for (slot, buffer, spw) in fourier_rows {
+                let row = rows[slot];
+                let polarization = descriptions
+                    .polarization_id(buffer.description as usize)
+                    .map_err(|error| failure(path, error))?;
+                let labels = cached(&mut labels, polarization, |id| pol.corr_type(id as usize))
+                    .map_err(|error| failure(path, error))?;
+                let frequencies =
+                    cached(&mut frequencies, spw, |id| windows.chan_freq(id as usize))
+                        .map_err(|error| failure(path, error))?;
+                let model = predictor
+                    .predict(ms, row, labels, &flags[slot])?
+                    .unwrap_or_else(|| default_model(labels, frequencies.len()));
+                cells[slot] = Some(ArrayValue::Complex32(model));
+            }
         }
         if !physical.is_empty() {
             let physical_rows = physical.iter().map(|&slot| rows[slot]).collect::<Vec<_>>();
@@ -226,6 +299,10 @@ impl ClipModels {
         }
         Ok(cells)
     }
+}
+
+fn has_fourier(recipes: &[Recipe]) -> bool {
+    recipes.iter().any(|recipe| recipe.components.is_none())
 }
 
 fn buffer_rows(

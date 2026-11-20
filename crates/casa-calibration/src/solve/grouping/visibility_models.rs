@@ -25,7 +25,7 @@ impl VisibilityModels {
         Self::from_ms(ms, rows, false)
     }
 
-    pub(crate) fn for_uvsub(
+    pub(crate) fn with_deferred_refusals(
         ms: &MeasurementSet,
         rows: &[ResolvedMsSelectionRow],
     ) -> Result<Self, GainSolveError> {

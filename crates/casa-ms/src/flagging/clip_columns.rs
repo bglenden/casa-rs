@@ -184,6 +184,7 @@ impl ClipColumns {
         &'a mut self,
         ms: &MeasurementSet,
         rows: &[usize],
+        flags: &[ArrayD<bool>],
         ddids: Option<&[i32]>,
         ddid_to_spw: &BTreeMap<i32, i32>,
         path: &str,
@@ -191,7 +192,7 @@ impl ClipColumns {
         let mut model = self
             .models
             .as_mut()
-            .map(|models| models.read(ms, rows, path))
+            .map(|models| models.read(ms, rows, flags, path))
             .transpose()?;
         let mut read = |name: &str| {
             if name == "MODEL_DATA"

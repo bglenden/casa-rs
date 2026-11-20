@@ -273,7 +273,7 @@
       "id": "flagdata",
       "launch": {
         "executable": "flagdata",
-        "cargo_package": "casa-ms",
+        "cargo_package": "casa-calibration",
         "override_env": "CASARS_FLAGDATA_BIN"
       },
       "dataset_kinds": [
