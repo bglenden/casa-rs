@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The effective Fourier transform options for legacy imager prediction.
 
+use std::path::PathBuf;
+
 use casa_imaging_operator::{GridPrecision, WPlaneCount};
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::position::MPosition;
@@ -101,6 +103,7 @@ pub(super) struct PredictionGeometry {
     pub(super) phase_centre_time: Option<f64>,
     pub(super) frequency_frame_valid: bool,
     pub(super) voltage_pattern: Option<PreparedVoltagePattern>,
+    pub(super) mosaic_voltage_table: Option<PathBuf>,
 }
 
 impl PredictionGeometry {

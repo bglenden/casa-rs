@@ -289,12 +289,12 @@ impl PyImager {
         // SkyEquation chooses its default pattern from the attached observation.
         let _ = telescope;
         self.with_state(py, |state| {
-            let pattern = dovp.then(|| ImagerVoltagePattern {
+            let pattern = (dovp || !usedefaultvp).then(|| ImagerVoltagePattern {
                 table: (!usedefaultvp).then(|| PathBuf::from(vptable)),
             });
             state
                 .prediction
-                .configure_voltage_pattern(pattern)
+                .configure_voltage_pattern_application(pattern, dovp)
                 .map_err(runtime_error)?;
             state.model_in_sky_equation = false;
             Ok(())

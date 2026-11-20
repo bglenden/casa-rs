@@ -71,8 +71,11 @@ impl ImageBeams {
         self.records.len()
     }
 
-    pub(super) fn screens(&self) -> Result<Vec<ImageBeam>, GainSolveError> {
-        self.records.iter().map(ImageBeam::load).collect()
+    pub(super) fn screens(&self, legacy: bool) -> Result<Vec<ImageBeam>, GainSolveError> {
+        self.records
+            .iter()
+            .map(|record| ImageBeam::load(record, legacy))
+            .collect()
     }
 }
 
@@ -199,14 +202,15 @@ pub(super) struct ImageBeam {
 }
 
 impl ImageBeam {
-    fn load(record: &RecordValue) -> Result<Self, GainSolveError> {
-        let (real, imaginary) = match record.get("realimage") {
-            Some(_) => {
+    fn load(record: &RecordValue, legacy: bool) -> Result<Self, GainSolveError> {
+        let (real, imaginary) = match (record.get("realimage"), record.get("imagimage"), legacy) {
+            (Some(_), Some(_), _) | (Some(_), _, false) => {
                 let real = ImagePlane::load::<f32>(record_text(record, "realimage")?, None, |v| {
                     Complex32::new(v, 0.)
                 })?;
-                let path = record_text(record, "imagimage")?;
-                let imaginary = if path.is_empty() {
+                // Legacy HetArrayConvFunc checks imagimage, then reads imagim.
+                let path = record_text(record, if legacy { "imagim" } else { "imagimage" })?;
+                let imaginary = if path.is_empty() && !legacy {
                     None
                 } else {
                     // PBMath2DImage uses the real-image polarization map
@@ -225,7 +229,7 @@ impl ImageBeam {
                 };
                 (real, imaginary)
             }
-            None => (
+            _ => (
                 ImagePlane::load::<Complex32>(record_text(record, "compleximage")?, None, |v| v)?,
                 None,
             ),

@@ -18,8 +18,8 @@ use casa_imaging_operator::{
 };
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{
-    FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_mosaic, legacy_multi_term,
-    set_grid_motion, set_grid_tangent,
+    FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
+    legacy_multi_term, set_grid_motion, set_grid_tangent,
 };
 use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
@@ -273,6 +273,7 @@ struct MosaicImage {
 enum MosaicBeam {
     Array(i32),
     Common(String),
+    Image(PathBuf),
 }
 
 struct WRecord {
@@ -609,7 +610,14 @@ impl ImageTransform {
         ));
         coordinates.add_coordinate(spectral.clone());
         let mosaic = matches!(options.settings.gridder, ImagerGridder::Mosaic)
-            .then(|| mosaic_image(ms, stokes, [nx, ny]))
+            .then(|| {
+                mosaic_image(
+                    ms,
+                    stokes,
+                    [nx, ny],
+                    options.mosaic_voltage_table.as_deref(),
+                )
+            })
             .transpose()?;
         *coordinates.obs_info_mut() = ObsInfo::new("UNKNOWN").with_observer("UNKNOWN");
         let frequencies = (0..channels)
@@ -893,6 +901,14 @@ impl ImageTransform {
                 MosaicBeam::Common(telescope) => {
                     legacy_common_mosaic(&mut record, &mosaic.stokes, telescope, mosaic.sampling);
                 }
+                MosaicBeam::Image(table) => {
+                    legacy_image_mosaic(
+                        &mut record,
+                        &mosaic.stokes,
+                        &table.to_string_lossy(),
+                        mosaic.sampling,
+                    );
+                }
             }
         }
         record.upsert(
@@ -908,18 +924,23 @@ fn mosaic_image(
     ms: &MeasurementSet,
     stokes: &StokesCoordinate,
     shape: [usize; 2],
+    voltage_table: Option<&Path>,
 ) -> MsResult<MosaicImage> {
-    let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
-    let (beam, sampling) = if telescope == "VLA" {
-        (
-            MosaicBeam::Common(telescope),
-            MosaicPb::simple_oversampling(shape),
-        )
+    let (beam, sampling) = if let Some(table) = voltage_table {
+        (MosaicBeam::Image(table.to_owned()), MOSAIC_OVERSAMPLING)
     } else {
-        (
-            MosaicBeam::Array(legacy_mosaic_beam_class(&telescope)?),
-            MOSAIC_OVERSAMPLING,
-        )
+        let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
+        if telescope == "VLA" {
+            (
+                MosaicBeam::Common(telescope),
+                MosaicPb::simple_oversampling(shape),
+            )
+        } else {
+            (
+                MosaicBeam::Array(legacy_mosaic_beam_class(&telescope)?),
+                MOSAIC_OVERSAMPLING,
+            )
+        }
     };
     Ok(MosaicImage {
         stokes: stokes.stokes().iter().map(|stokes| stokes.name()).collect(),

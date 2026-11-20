@@ -57,6 +57,7 @@ pub struct ImagerPrediction {
     options: ImagerTransformOptions,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
+    apply_voltage_pattern: bool,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
     ambiguous_scratch_write: bool,
@@ -116,6 +117,7 @@ impl Default for ImagerPrediction {
             options: ImagerTransformOptions::default(),
             taylor: (1, None),
             voltage_pattern: None,
+            apply_voltage_pattern: false,
             pending_publication: None,
             partial_batch: None,
             ambiguous_scratch_write: false,
@@ -183,6 +185,7 @@ impl ImagerPrediction {
 
     /// Enable a configured voltage pattern, or disable it with `None`.
     pub fn set_voltage_pattern(&mut self, pattern: Option<ImagerVoltagePattern>) {
+        self.apply_voltage_pattern = pattern.is_some();
         self.voltage_pattern = pattern;
     }
 
@@ -194,12 +197,27 @@ impl ImagerPrediction {
         &mut self,
         pattern: Option<ImagerVoltagePattern>,
     ) -> MsResult<()> {
+        let apply = pattern.is_some();
+        self.configure_voltage_pattern_application(pattern, apply)
+    }
+
+    /// Configure the gridding beam and separately enable its sky-model gain.
+    /// MosaicFT uses the beam even when sky-model gain is disabled.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_voltage_pattern_application(
+        &mut self,
+        pattern: Option<ImagerVoltagePattern>,
+        apply: bool,
+    ) -> MsResult<()> {
         if self.partial_batch.is_some() || self.pending_publication.is_some() {
             return Err(invalid(
                 "finish publishing the previous imager prediction before changing the voltage pattern",
             ));
         }
-        self.set_voltage_pattern(pattern);
+        self.voltage_pattern = pattern;
+        self.apply_voltage_pattern = apply;
         Ok(())
     }
 
@@ -441,18 +459,11 @@ impl ImagerPrediction {
             return Ok(None);
         }
         let mosaic = matches!(self.options.gridder, ImagerGridder::Mosaic);
-        if mosaic
-            && self
-                .voltage_pattern
-                .as_ref()
-                .is_some_and(|pattern| pattern.table.is_some())
-        {
-            return Err(invalid(
-                "legacy mosaic custom voltage-pattern prediction is pending in #1520",
-            ));
-        }
         // MosaicFT uses its convolution beam directly.
-        let pattern = self.voltage_pattern.as_ref().filter(|_| !mosaic);
+        let pattern = self
+            .voltage_pattern
+            .as_ref()
+            .filter(|_| self.apply_voltage_pattern && !mosaic);
         if pattern.is_some() && model.components.is_some() {
             return Err(invalid(
                 "a radial imager voltage pattern currently needs image models",
@@ -650,6 +661,10 @@ impl ImagerPrediction {
             phase_centre_time: model.phase_centre_time,
             frequency_frame_valid: self.frequency_frame_valid,
             voltage_pattern,
+            mosaic_voltage_table: self
+                .voltage_pattern
+                .as_ref()
+                .and_then(|pattern| pattern.table.clone()),
         };
         let mut images = Vec::new();
         for (index, path) in model.images.iter().enumerate() {

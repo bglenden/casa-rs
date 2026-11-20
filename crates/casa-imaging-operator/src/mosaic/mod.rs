@@ -557,9 +557,30 @@ impl MosaicPb {
         dishes: usize,
         support_pixels: usize,
         windows: &[MosaicWindow],
+        sample: impl FnMut([usize; 2], usize, [f64; 2], f64, &mut [Complex32], &mut [Complex32]),
+    ) -> Result<Self, OperatorError> {
+        Self::from_image_screens_with_rules(
+            MosaicRules::Tclean,
+            geometry,
+            polarization,
+            image_frequency_hz,
+            (dishes, support_pixels),
+            windows,
+            sample,
+        )
+    }
+
+    /// Construct the image-voltage kernels with the selected CASA machine's
+    /// channel grouping, support and resampling rules.
+    pub fn from_image_screens_with_rules(
+        rules: MosaicRules,
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        image_frequency_hz: f64,
+        (dishes, support_pixels): (usize, usize),
+        windows: &[MosaicWindow],
         mut sample: impl FnMut([usize; 2], usize, [f64; 2], f64, &mut [Complex32], &mut [Complex32]),
     ) -> Result<Self, OperatorError> {
-        let rules = MosaicRules::Tclean;
         let layout = MosaicLayout::with_support(
             rules,
             geometry,
