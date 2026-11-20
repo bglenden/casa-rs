@@ -786,7 +786,7 @@ def flagdata(
     scan: str = ...,
     intent: str = ...,
     array: str = ...,
-    observation: str = ...,
+    observation: str | int = ...,
     feed: str = ...,
     clipminmax: float | list[float] | tuple[float, ...] = ...,
     datacolumn: str = ...,
