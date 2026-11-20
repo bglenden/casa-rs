@@ -211,7 +211,7 @@ def definition_cases(root, reference_ms, factories):
                         raise AssertionError((engine, convolution))
                 assert tool.setoptions()
             if name == "channel" and engine == "native":
-                assert tool.setoptions(freqinterp="linear")
+                assert tool.setoptions(freqinterp="spline")
                 before = samples(path)
                 assert tool.ft(str(model)) is False
                 assert not model.exists()
@@ -243,10 +243,9 @@ def definition_cases(root, reference_ms, factories):
                 if engine == "native":
                     assert tool.defineimage(**arguments)
                     before = samples(path)
-                    for interpolation in ("linear", "cubic", "spline"):
-                        assert tool.setoptions(freqinterp=interpolation)
-                        assert tool.ft(str(model)) is False
-                        np.testing.assert_array_equal(samples(path), before)
+                    assert tool.setoptions(freqinterp="spline")
+                    assert tool.ft(str(model)) is False
+                    np.testing.assert_array_equal(samples(path), before)
                     assert tool.setoptions(freqinterp="nearest")
                 assert tool.ft(str(model))
                 assert tool.done()
@@ -269,6 +268,7 @@ def definition_cases(root, reference_ms, factories):
             assert error < 1e-3, (name, error)
             reports["channel_cube_nrms"] = error
     reports.update(reopened_channel_cube(root, reference_ms, factories))
+    reports.update(legacy_cube_interpolation(root, reference_ms, factories))
     return reports
 
 
@@ -299,6 +299,47 @@ def reopened_channel_cube(root, reference_ms, factories):
         error = relative_rms(actual, expected)
         assert error < 1e-3, (label, error)
         reports[f"channel_cube_{label}_nrms"] = error
+    return reports
+
+
+def legacy_cube_interpolation(root, reference_ms, factories):
+    model = root / "definition-channel-casa.im"
+    cases = {"whole": ("0", np.arange(12)), "stepped": ("0:2~10^2", np.arange(2, 11, 2)),
+             "single": ("0:4", np.array([4])), "created": ("0", np.arange(12))}
+    reports = {}
+    for method in ("linear", "cubic"):
+        for case, (selector, channels) in cases.items():
+            predictions = []
+            for engine, factory in factories.items():
+                path = root / f"interpolation-{method}-{case}-{engine}.ms"
+                shutil.copytree(reference_ms, path)
+                tool = factory()
+                assert tool.open(str(path), usescratch=True)
+                assert tool.selectvis(field=0, spw=selector)
+                assert tool.defineimage(nx=32, mode="channel", nchan=4, start=2, step=2,
+                                        outframe="TOPO")
+                image_path = model
+                if case == "created":
+                    image_path = root / f"interpolation-{method}-{engine}.im"
+                    assert tool.ft(str(image_path))
+                    with_image = image()
+                    assert with_image.open(str(image_path))
+                    pixels = with_image.getchunk()
+                    pixels[21, 12, 0, :] = [2., .5, 1.5, .75]
+                    assert with_image.putchunk(pixels) and with_image.done()
+                    assert tool.selectvis(field=0, spw=selector)
+                before = samples(path)
+                assert tool.setoptions(freqinterp=method)
+                assert tool.ft(str(image_path)) and tool.done(), (method, case, engine)
+                result = samples(path)
+                unselected = np.setdiff1d(np.arange(12), channels)
+                np.testing.assert_array_equal(result[:, unselected], before[:, unselected])
+                assert np.any(result[:, channels] != before[:, channels])
+                predictions.append(result[:, channels])
+            expected, actual = predictions
+            error = relative_rms(actual, expected)
+            assert error < 1e-3, (method, case, error)
+            reports[f"{method}-{case}-nrms"] = error
     return reports
 
 

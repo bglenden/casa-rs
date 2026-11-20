@@ -120,9 +120,9 @@ pub(super) fn check_scratch_cube(
     interpolation: i32,
     shape: &[usize],
 ) -> MsResult<()> {
-    if scratch && interpolation != 0 && shape.get(3).is_some_and(|&channels| channels > 1) {
+    if scratch && interpolation == 3 && shape.get(3).is_some_and(|&channels| channels > 1) {
         return Err(invalid(
-            "legacy scratch cube prediction with non-nearest frequency interpolation is pending in #1520",
+            "legacy scratch cube prediction with spline frequency interpolation is pending in #1520",
         ));
     }
     Ok(())
@@ -143,7 +143,7 @@ pub(super) fn prepare_configured_image(
         options.settings.frequency_interpolation,
         image.shape(),
     )?;
-    let layout = ImageTransform::new(ms, selected, &image, options)?;
+    let layout = ImageTransform::new(ms, selected, &image, scratch, options)?;
     let mut path = virtual_model_image_path(ms)?;
     if scratch {
         let name = path
@@ -172,6 +172,7 @@ struct ImageTransform {
     operator: MeasurementOperator,
     coordinates: CoordinateSystem,
     frequencies: Vec<f64>,
+    interpolation_frequencies: Option<Vec<f64>>,
     increment: [f64; 2],
     phase_center: [f64; 2],
     frame: String,
@@ -339,6 +340,7 @@ impl ImageTransform {
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
         image: &PagedImage<f32>,
+        scratch: bool,
         options: PredictionGeometry,
     ) -> MsResult<Self> {
         let [nx, ny, npol, channels] = *image.shape() else {
@@ -359,6 +361,20 @@ impl ImageTransform {
         let CoordinateModel::Spectral(spectral) = coords.coordinate(spectral) else {
             unreachable!()
         };
+        let interpolation_frequencies =
+            if scratch && channels > 1 && matches!(options.settings.frequency_interpolation, 1 | 2)
+            {
+                // FTMachine saves these image world frequencies before stripping
+                // the reference conversion from the channel-matching coordinate.
+                let original = spectral_with_runtime(spectral)?;
+                Some(
+                    (0..channels)
+                        .map(|channel| original.world_frequency_hz(channel as f64).map_err(invalid))
+                        .collect::<MsResult<Vec<_>>>()?,
+                )
+            } else {
+                None
+            };
         // A new legacy imager has no active frequency conversion even when
         // the input image carries a saved reference conversion.
         let spectral = if options.frequency_frame_valid {
@@ -459,6 +475,7 @@ impl ImageTransform {
             operator,
             coordinates,
             frequencies,
+            interpolation_frequencies,
             increment,
             phase_center,
             frame: direction.direction_ref().as_str().to_owned(),
@@ -629,6 +646,14 @@ impl ImageTransform {
             frequency_frame_valid,
         }
         .record();
+        if let Some(frequencies) = &self.interpolation_frequencies {
+            // This temporary record never leaves the active scratch writer.
+            record.upsert("tovis", Value::Scalar(ScalarValue::Bool(false)));
+            record.upsert(
+                "casars_live_image_frequency",
+                Value::Array(ArrayValue::from_f64_vec(frequencies.clone())),
+            );
+        }
         let settings = self.options.settings;
         record.upsert(
             "usedoublegrid",

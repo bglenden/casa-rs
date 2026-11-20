@@ -275,7 +275,12 @@ impl SpectralAxis {
     /// Doppler hops before computing the reported pixel.
     #[must_use]
     pub fn nearest_channel(&self, frequency_hz: f64) -> Option<u32> {
-        let pixel = match self.reporting_axis {
+        let pixel = (self.pixel_at_frequency(frequency_hz) + 0.5).floor();
+        (pixel >= 0.0 && pixel < f64::from(self.channels)).then_some(pixel as u32)
+    }
+
+    fn pixel_at_frequency(&self, frequency_hz: f64) -> f64 {
+        match self.reporting_axis {
             Some(axis) => {
                 let world_hz = axis.to_reporting.convert_hz(frequency_hz);
                 (world_hz - axis.reference_hz) / axis.increment_hz + axis.reference_pixel
@@ -283,9 +288,25 @@ impl SpectralAxis {
             None => self
                 .tabular_pixel(frequency_hz)
                 .unwrap_or_else(|| (frequency_hz - self.first_hz) / self.increment_hz),
+        }
+    }
+
+    fn legacy_prediction_channel(&self, frequency: f64, native_width: f64, order: Order) -> i64 {
+        let pixel = self.pixel_at_frequency(frequency);
+        let rounded = (pixel + 0.5).floor();
+        if (0. ..f64::from(self.channels)).contains(&rounded) {
+            return rounded as i64;
+        }
+        // Legacy VisBuffer GridFT admits one native channel width for
+        // linear interpolation and two for cubic.
+        let limit = order.halo() * 0.5;
+        let within = if rounded < 0. {
+            pixel * self.increment_hz.abs() >= -limit * native_width.abs()
+        } else {
+            let end = self.centre_hz(self.channels) + native_width * limit;
+            (native_width > 0. && frequency < end) || (native_width < 0. && frequency > end)
         };
-        let pixel = (pixel + 0.5).floor();
-        (pixel >= 0.0 && pixel < f64::from(self.channels)).then_some(pixel as u32)
+        if within { -2 } else { -1 }
     }
 
     /// `FTMachine::matchChannel` under interpolation: a native channel off
@@ -727,10 +748,17 @@ impl WeightSlots<'_> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct LegacyPredictionMap {
+    axis: SpectralAxis,
+    selection: Option<[usize; 3]>,
+}
+
 /// Turns native rows into placed, weighted samples for one operator.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpectralResampler {
     sampling: Sampling,
+    legacy_prediction_map: Option<LegacyPredictionMap>,
     basis: Basis,
     /// Whether a prediction degrids autocorrelation rows
     /// ([`Self::predicting_autocorrelations`]).
@@ -752,6 +780,7 @@ impl SpectralResampler {
         }
         Ok(Self {
             sampling: Sampling::Direct,
+            legacy_prediction_map: None,
             basis,
             autocorrelations: false,
             omit_terminal_plane: false,
@@ -771,11 +800,32 @@ impl SpectralResampler {
                 SpectralKernel::Linear => Sampling::Interpolated(output, Order::Linear),
                 SpectralKernel::Cubic => Sampling::Interpolated(output, Order::Cubic),
             },
+            legacy_prediction_map: None,
             basis: Basis::ChannelLocal { planes },
             autocorrelations: false,
             omit_terminal_plane: false,
             density_wavelength_scale: 1.0,
             rest_aw_density: false,
+        }
+    }
+
+    /// The legacy imager can match visibility channels in a different
+    /// frequency frame from the image frequencies it degrids. Its
+    /// interpolation uses the original image centres without refining them.
+    #[must_use]
+    pub fn with_legacy_prediction_axis(mut self, axis: SpectralAxis) -> Self {
+        self.legacy_prediction_map = Some(LegacyPredictionMap {
+            axis,
+            selection: None,
+        });
+        self
+    }
+
+    /// Set the original channel `start`, `count`, and `stride` of the next
+    /// legacy visibility buffer. Ordinary resamplers ignore this selection.
+    pub fn set_legacy_prediction_selection(&mut self, selection: Option<[usize; 3]>) {
+        if let Some(mapping) = self.legacy_prediction_map.as_mut() {
+            mapping.selection = selection;
         }
     }
 
@@ -939,6 +989,7 @@ impl SpectralResampler {
                 Sampling::Interpolated(_, order) => Sampling::Interpolated(axis, *order),
                 Sampling::Direct | Sampling::Nearest(_) => Sampling::Nearest(axis),
             },
+            legacy_prediction_map: None,
             basis: Basis::ChannelLocal { planes },
             omit_terminal_plane: false,
             autocorrelations: self.autocorrelations,

@@ -127,6 +127,7 @@ struct PreparedFourierModel {
     scale: Option<setjy::FluxScale>,
     legacy_taylor: Option<(i32, f64)>,
     legacy_flags: bool,
+    live_interpolation: bool,
     channel_mask: Option<ArrayD<i32>>,
     continuum_axis: Option<SpectralAxis>,
     convert_frequencies: bool,
@@ -240,6 +241,7 @@ impl PreparedFourierModel {
             scale,
             legacy_taylor: legacy_taylor_term(record)?,
             legacy_flags,
+            live_interpolation: record.get("casars_live_image_frequency").is_some(),
             channel_mask,
             continuum_axis: (channels == 1).then_some(axis),
             convert_frequencies: matches!(
@@ -344,6 +346,10 @@ impl PreparedFourierModel {
         self.frequencies.clear();
         self.frequencies
             .extend(row.frequencies.iter().map(|frequency| frequency * ratio));
+        let interpolation_channels = row
+            .scratch_channels
+            .map_or(row.frequencies.len(), |[_, _, count, _]| count as usize);
+        let use_spectral_selection_mask = !self.live_interpolation || interpolation_channels <= 1;
         for (channel, ((flags, raw), &frequency)) in self
             .flags
             .chunks_exact_mut(row.correlations.len())
@@ -369,9 +375,10 @@ impl PreparedFourierModel {
                         let compact = relative / stride as usize;
                         compact >= count as usize
                             || !relative.is_multiple_of(stride as usize)
-                            || mask
-                                .get([0, spw as usize, compact].as_slice())
-                                .is_some_and(|&value| value != 1)
+                            || (use_spectral_selection_mask
+                                && mask
+                                    .get([0, spw as usize, compact].as_slice())
+                                    .is_some_and(|&value| value != 1))
                     });
                 for (value, &raw_flag) in flags.iter_mut().zip(raw) {
                     *value = outside || masked || raw_flag;
@@ -405,6 +412,10 @@ impl PreparedFourierModel {
             self.covered.resize(cells, false);
             &mut self.covered[..]
         });
+        self.resampler
+            .set_legacy_prediction_selection(row.scratch_channels.map(
+                |[_, start, count, stride]| [start as usize, count as usize, stride as usize],
+            ));
         self.resampler
             .predict_row_with_coverage(
                 &self.operator,
@@ -533,10 +544,22 @@ fn spectral_layout(
         }
     };
     let basis = Basis::ChannelLocal { planes: channels };
-    Ok((
-        basis,
-        SpectralResampler::channel_local(axis.clone(), kernel),
-    ))
+    let resampler = if let Some(Value::Array(ArrayValue::Float64(frequencies))) =
+        record.get("casars_live_image_frequency")
+    {
+        let frequencies = frequencies.iter().copied().collect::<Vec<_>>();
+        if frequencies.len() != channels as usize {
+            return Err(model_error(
+                "legacy imager interpolation axis length does not match its model",
+            ));
+        }
+        let increment = frequencies[1] - frequencies[0];
+        let grid = SpectralAxis::tabular(&frequencies, increment).map_err(model_error)?;
+        SpectralResampler::channel_local(grid, kernel).with_legacy_prediction_axis(axis.clone())
+    } else {
+        SpectralResampler::channel_local(axis.clone(), kernel)
+    };
+    Ok((basis, resampler))
 }
 
 fn image_spectral_axis(

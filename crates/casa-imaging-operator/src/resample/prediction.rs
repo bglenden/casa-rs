@@ -257,25 +257,19 @@ impl Gathered {
 /// in the halo the maximum is −2 and CASA's unsigned loop flags nothing, so
 /// every channel is degridded. `None` when nothing maps.
 fn degridded_channels(
-    (axis, order): (&SpectralAxis, Order),
-    native: &[f64],
+    planes: u32,
+    native: impl Iterator<Item = f64> + Clone,
+    map: impl Fn(f64) -> i64,
 ) -> Option<std::ops::RangeInclusive<u32>> {
-    let native_width_hz = native[1] - native[0];
-    let map = |frequency_hz: f64| match axis.nearest_channel(frequency_hz) {
-        Some(channel) => i64::from(channel),
-        None if axis.in_halo(frequency_hz, native_width_hz, order) => -2,
-        None => -1,
-    };
-    let maximum = native.iter().map(|frequency_hz| map(*frequency_hz)).max()?;
+    let maximum = native.clone().map(&map).max()?;
     if maximum == -1 {
         return None;
     }
     if maximum == -2 {
-        return Some(0..=axis.channels - 1);
+        return Some(0..=planes - 1);
     }
     let minimum = native
-        .iter()
-        .map(|frequency_hz| match map(*frequency_hz) {
+        .map(|frequency_hz| match map(frequency_hz) {
             -1 => maximum,
             channel => channel,
         })
@@ -422,13 +416,57 @@ impl SpectralResampler {
         self.finish_prediction_with_coverage(operator, row, placed, scratch, output)
     }
 
+    fn prediction_channels<'a>(&self, native: &'a [f64]) -> impl Iterator<Item = f64> + Clone + 'a {
+        let [start, count, step] = self
+            .legacy_prediction_map
+            .as_ref()
+            .and_then(|mapping| mapping.selection)
+            .unwrap_or([0, native.len(), 1]);
+        native
+            .iter()
+            .copied()
+            .skip(start)
+            .step_by(step.max(1))
+            .take(count)
+    }
+
+    fn prediction_channel(
+        &self,
+        axis: &SpectralAxis,
+        order: Order,
+        frequency: f64,
+        width: f64,
+    ) -> i64 {
+        if let Some(mapping) = self.legacy_prediction_map.as_ref() {
+            mapping
+                .axis
+                .legacy_prediction_channel(frequency, width, order)
+        } else if let Some(channel) = axis.nearest_channel(frequency) {
+            i64::from(channel)
+        } else if axis.in_halo(frequency, width, order) {
+            -2
+        } else {
+            -1
+        }
+    }
+
+    fn matching_axis<'a>(&'a self, axis: &'a SpectralAxis) -> &'a SpectralAxis {
+        self.legacy_prediction_map
+            .as_ref()
+            .map_or(axis, |mapping| &mapping.axis)
+    }
+
     /// The axis and order by which `row`'s prediction interpolates
     /// degridded output channels to its native channels, when it does (see
     /// [`Self::predict_row`]).
     fn interpolated_prediction(&self, row: &NativeRow<'_>) -> Option<(&SpectralAxis, Order)> {
         match &self.sampling {
             Sampling::Interpolated(axis, order)
-                if axis.channels > 1 && row.frequencies_hz.len() > 1 =>
+                if axis.channels > 1
+                    && self
+                        .prediction_channels(row.frequencies_hz)
+                        .nth(1)
+                        .is_some() =>
             {
                 Some((axis, *order))
             }
@@ -543,7 +581,7 @@ impl SpectralResampler {
                     let plane = match &self.sampling {
                         Sampling::Direct => Some(0),
                         Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => {
-                            axis.nearest_channel(*frequency_hz)
+                            self.matching_axis(axis).nearest_channel(*frequency_hz)
                         }
                     };
                     if let Some(plane) = plane {
@@ -551,8 +589,16 @@ impl SpectralResampler {
                     }
                 }
             }
-            Some(interpolation @ (axis, _)) => {
-                if let Some(channels) = degridded_channels(interpolation, native) {
+            Some((axis, order)) => {
+                let mut selected = self.prediction_channels(native);
+                let width = selected
+                    .next()
+                    .zip(selected.next())
+                    .map_or(0., |(first, next)| next - first);
+                let map = |frequency| self.prediction_channel(axis, order, frequency, width);
+                if let Some(channels) =
+                    degridded_channels(axis.channels, self.prediction_channels(native), map)
+                {
                     for channel in channels {
                         place(channel, axis.centre_hz(channel), channel as usize);
                     }
@@ -591,7 +637,7 @@ impl SpectralResampler {
             let plane = match &self.sampling {
                 Sampling::Direct => Some(0),
                 Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => {
-                    axis.nearest_channel(native[channel])
+                    self.matching_axis(axis).nearest_channel(native[channel])
                 }
             }
             .filter(|plane| prepared.contains(*plane))?;
@@ -732,8 +778,18 @@ impl SpectralResampler {
         // −2; −1 stays zero); the end points extrapolate (casacore
         // `InterpolateArray1D`, linear or cubic).
         index_slots(axis.channels as usize);
-        let width = (axis.increment_hz / (native[1] - native[0])).abs();
-        let per_channel = axis.fine_samples_per_plane(width);
+        let mut selected = self.prediction_channels(native);
+        let native_width_hz = selected
+            .next()
+            .zip(selected.next())
+            .map_or(0., |(first, next)| next - first);
+        let width = (axis.increment_hz / native_width_hz).abs();
+        let legacy = self.legacy_prediction_map.is_some();
+        let per_channel = if legacy {
+            1
+        } else {
+            axis.fine_samples_per_plane(width)
+        };
         let fine_increment = axis.increment_hz / per_channel as f64;
         let fine_start = if per_channel > 1 {
             axis.first_hz - axis.increment_hz / 2.0 + fine_increment / 2.0
@@ -742,21 +798,19 @@ impl SpectralResampler {
         };
         let points = axis.channels as usize * per_channel;
         let point = |index: usize| {
-            if width <= 1.0 && (axis.reporting_axis.is_some() || axis.tabular.is_some()) {
+            if legacy || (width <= 1.0 && (axis.reporting_axis.is_some() || axis.tabular.is_some()))
+            {
                 axis.centre_hz(index as u32)
             } else {
                 fine_start + index as f64 * fine_increment
             }
         };
-        let native_width_hz = native[1] - native[0];
         for (channel, frequency_hz) in native.iter().enumerate() {
-            if axis.nearest_channel(*frequency_hz).is_none()
-                && !axis.in_halo(*frequency_hz, native_width_hz, order)
-            {
+            if self.prediction_channel(axis, order, *frequency_hz, native_width_hz) == -1 {
                 term(channel, &[]);
                 continue;
             }
-            let position = if width <= 1.0 {
+            let position = if legacy || width <= 1.0 {
                 axis.tabular_pixel(*frequency_hz)
             } else {
                 None
