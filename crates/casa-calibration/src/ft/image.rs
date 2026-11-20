@@ -933,21 +933,15 @@ fn mosaic_image(
     shape: [usize; 2],
     voltage_table: Option<&Path>,
 ) -> MsResult<MosaicImage> {
-    let (beam, sampling) = if let Some(table) = voltage_table {
-        (MosaicBeam::Image(table.to_owned()), MOSAIC_OVERSAMPLING)
+    let beam = if let Some(table) = voltage_table {
+        MosaicBeam::Image(table.to_owned())
     } else {
-        let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
-        if telescope == "VLA" {
-            (
-                MosaicBeam::Common(telescope),
-                MosaicPb::simple_oversampling(shape),
-            )
-        } else {
-            (
-                MosaicBeam::Array(legacy_mosaic_beam_class(&telescope)?),
-                MOSAIC_OVERSAMPLING,
-            )
-        }
+        legacy_mosaic_beam(ms.observation()?.string(0, "TELESCOPE_NAME")?)
+    };
+    let sampling = if matches!(beam, MosaicBeam::Common(_)) {
+        MosaicPb::simple_oversampling(shape)
+    } else {
+        MOSAIC_OVERSAMPLING
     };
     Ok(MosaicImage {
         stokes: stokes.stokes().iter().map(|stokes| stokes.name()).collect(),
@@ -956,19 +950,17 @@ fn mosaic_image(
     })
 }
 
-fn legacy_mosaic_beam_class(telescope: &str) -> MsResult<i32> {
+fn legacy_mosaic_beam(telescope: String) -> MosaicBeam {
     // CASA enumerates these names before selecting SimplePBConvFunc.
-    match telescope {
-        "EVLA" => Ok(1),
-        "DEFAULT" | "ATCA_L1" | "ATCA_L2" | "ATCA_L3" | "ATCA_16" | "ATCA_S" | "ATCA_C"
-        | "ATCA_C_RI" | "ATCA" | "ATCA_X" | "ATCA_K" | "ATCA_Q" | "ATCA_W" | "HATCREEK"
-        | "BIMA" | "NGVLA" | "VLA_INVERSE" | "VLA_NVSS" | "VLA_2NULL" | "VLA_4" | "VLA_P"
-        | "VLA_L" | "VLA_C" | "VLA_X" | "VLA_U" | "VLA_K" | "VLA_Q" | "WSRT" | "WSRT_LOW"
-        | "GBT" | "GMRT" | "NRAO12M" | "IRAMPDB" | "IRAM30M" | "NRAO140FT" | "ALMASD" | "SMA"
-        | "ATA" | "NONE" => Err(invalid(
-            "legacy mosaic common primary-beam convolution is pending in #1520",
-        )),
-        _ => Ok(2),
+    match telescope.as_str() {
+        "EVLA" => MosaicBeam::Array(1),
+        "ATCA_L1" | "ATCA_L2" | "ATCA_L3" | "ATCA_16" | "ATCA_S" | "ATCA_C" | "ATCA_C_RI"
+        | "ATCA" | "ATCA_X" | "ATCA_K" | "ATCA_Q" | "ATCA_W" | "HATCREEK" | "BIMA" | "NGVLA"
+        | "VLA" | "VLA_INVERSE" | "VLA_NVSS" | "VLA_2NULL" | "VLA_4" | "VLA_P" | "VLA_L"
+        | "VLA_C" | "VLA_X" | "VLA_U" | "VLA_K" | "VLA_Q" | "WSRT" | "WSRT_LOW" | "GBT"
+        | "GMRT" | "NRAO12M" | "IRAMPDB" | "IRAM30M" | "NRAO140FT" | "ALMASD" | "SMA" | "ATA"
+        | "NONE" | "DEFAULT" => MosaicBeam::Common(telescope),
+        _ => MosaicBeam::Array(2),
     }
 }
 

@@ -1852,18 +1852,34 @@ produced SIGBUS during cleanup on one run. The isolated child writes its
 reference DATA before cleanup; the parent accepts only these identified
 cleanup failures and records the process exit separately from prediction.
 
-## Legacy imager cleanup aborts after VLA common-beam prediction
+## Legacy imager cleanup aborts after common-beam prediction
 
 CASA 6.7.6.14 returns success from `imager.ft` with
 `setoptions(ftmachine='mosaic')` on a 1.5 GHz VLA MeasurementSet. Both
 scratch and virtual predictions reach disk. The next `imager.done()`
 call raises SIGABRT with “pure virtual method called.” A separate CASA
 process reopens the virtual recipe and reads its model through `uvsub`.
+The same cleanup failure occurs with ATCA, GMRT, WSRT, GBT, NRAO140FT,
+and the `NONE` telescope pattern.
 
 casa-rs publishes both products and closes the tool normally. The
 common-beam oracle verifies that CASA finished prediction before the
 cleanup failure and checks live and reopened output against their own
 references.
+[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Legacy MosaicFT cannot reopen a DEFAULT telescope beam
+
+CASA 6.7.6.14 selects `SimplePBConvFunc` for the literal telescope name
+`DEFAULT`. Its live `VPSkyJones` uses a numeric beam from the first dish
+diameter. The virtual writer records the telescope name. On reopening,
+`MosaicFT::fromRecord` looks up the name through `PBMath` and rejects the
+recipe with “Failed to recovermosaic FTmachine” when the lookup is unknown.
+
+casa-rs uses the first dish's numeric beam when reopening the record.
+The paired oracle uses the pinned live prediction as that beam's reference
+and checks the documented failure from the CASA reader.
 [`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
