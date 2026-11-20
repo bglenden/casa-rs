@@ -23,6 +23,62 @@ crate::subtables::define_generic_subtable!(
 );
 
 impl MsPointing<'_> {
+    /// Resolve `SDGrid` pointings in visibility order. Each request gives the
+    /// first antenna, MAIN time and MAIN interval in seconds. A nonempty
+    /// POINTING table leaves unmatched samples blank.
+    ///
+    /// # Errors
+    /// A pointing row or its direction is malformed.
+    pub fn single_dish_directions(
+        &self,
+        requests: &[(i32, f64, f64)],
+    ) -> MsResult<Vec<Option<MDirection>>> {
+        let mut antennas: BTreeMap<_, _> = requests
+            .iter()
+            .map(|&(antenna, _, _)| (antenna, (0, Vec::new())))
+            .collect();
+        for row in 0..self.row_count() {
+            if let Some((_, samples)) = antennas.get_mut(&self.i32(row, "ANTENNA_ID")?) {
+                samples.push((row, self.f64(row, "TIME")?, self.f64(row, "INTERVAL")?));
+            }
+        }
+        let mut directions = BTreeMap::new();
+        requests
+            .iter()
+            .map(|&(antenna, time, interval)| {
+                let (last, samples) = antennas.get_mut(&antenna).expect("requested antenna");
+                let find = |tolerance: f64| {
+                    (*last..samples.len())
+                        .chain((0..*last).rev())
+                        .find_map(|index| {
+                            let (_, epoch, span) = samples[index];
+                            if span < 0. {
+                                Some(*last)
+                            } else {
+                                ((epoch - time).abs() <= span / 2. + tolerance).then_some(index)
+                            }
+                        })
+                };
+                let Some(index) = find(time.abs() * f64::EPSILON).or_else(|| find(interval / 2.))
+                else {
+                    return Ok(None);
+                };
+                *last = index;
+                let row = samples[index].0;
+                let order = self.i32(row, "NUM_POLY")?;
+                if order != 0 {
+                    return self.read_direction(row, Some((order, time))).map(Some);
+                }
+                if let Some(direction) = directions.get(&row) {
+                    return Ok(Some(MDirection::clone(direction)));
+                }
+                let direction = self.read_direction(row, None)?;
+                directions.insert(row, direction.clone());
+                Ok(Some(direction))
+            })
+            .collect()
+    }
+
     /// Read the pointing used by CASA's legacy visibility buffer for an
     /// antenna and visibility time. The returned direction is the recorded
     /// direction at the pointing row's epoch.

@@ -47,6 +47,34 @@ pub(crate) struct ImageModel {
 }
 
 impl ImageModel {
+    pub(super) fn prepare(
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+        keep_zero: bool,
+        scratch: bool,
+        write: impl FnOnce(&Path) -> MsResult<(RecordValue, bool)>,
+    ) -> MsResult<Option<Self>> {
+        let mut path = virtual_model_image_path(ms)?;
+        if scratch {
+            let name = path.file_name().expect("the model image has a name");
+            path.set_file_name(format!("scratch-{}", name.to_string_lossy()));
+        }
+        let backing = GridLifetime {
+            path,
+            retained: false,
+        };
+        let (container, nonzero) = write(&backing.path)?;
+        if !nonzero && !keep_zero {
+            return Ok(None);
+        }
+        let entry = model_entry(ms, selected, VirtualModelKind::FtMachine, container)?;
+        Ok(Some(Self {
+            entry,
+            nonzero,
+            backing,
+        }))
+    }
+
     pub(super) fn track(&mut self, tracking: &MovingSourceAnchor) -> MsResult<()> {
         let record = &mut self.entry.container;
         let Some(Value::Record(image)) = record.get("mimage_rec") else {
@@ -208,33 +236,15 @@ fn write_model_grid(
     scratch: bool,
     layout: ImageTransform,
 ) -> MsResult<Option<ImageModel>> {
-    let mut path = virtual_model_image_path(ms)?;
-    if scratch {
-        let name = path
-            .file_name()
-            .expect("the grid has a name")
-            .to_string_lossy();
-        path.set_file_name(format!("scratch-{name}"));
-    }
-    let backing = GridLifetime {
-        path,
-        retained: false,
-    };
-    let nonzero = layout.grid(image, &backing.path)?;
-    if !nonzero && !keep_zero {
-        return Ok(None);
-    }
-    let record = layout.record(ms, selected, &backing.path, scratch)?;
-    let container = match taylor {
-        Some(term) => legacy_multi_term(record, term.count, term.index, term.reference_hz),
-        None => record,
-    };
-    let entry = model_entry(ms, selected, VirtualModelKind::FtMachine, container)?;
-    Ok(Some(ImageModel {
-        entry,
-        nonzero,
-        backing,
-    }))
+    ImageModel::prepare(ms, selected, keep_zero, scratch, |path| {
+        let nonzero = layout.grid(image, path)?;
+        let record = layout.record(ms, selected, path, scratch)?;
+        let record = match taylor {
+            Some(term) => legacy_multi_term(record, term.count, term.index, term.reference_hz),
+            None => record,
+        };
+        Ok((record, nonzero))
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -1090,7 +1100,11 @@ fn legacy_mosaic_beam(telescope: String) -> MosaicBeam {
     }
 }
 
-fn match_channels(axis: &SpectralCoordinate, channels: usize, frequencies: &[f64]) -> Vec<i32> {
+pub(crate) fn match_channels(
+    axis: &SpectralCoordinate,
+    channels: usize,
+    frequencies: &[f64],
+) -> Vec<i32> {
     frequencies
         .iter()
         .map(|&frequency| {
@@ -1103,7 +1117,7 @@ fn match_channels(axis: &SpectralCoordinate, channels: usize, frequencies: &[f64
         .collect()
 }
 
-fn record_selection(
+pub(super) fn record_selection(
     record: &mut RecordValue,
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
@@ -1182,18 +1196,24 @@ fn selection_mask(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResu
     Ok(mask)
 }
 
-fn first_correlations(ms: &MeasurementSet, selected: &ResolvedMsSelection) -> MsResult<Vec<i32>> {
+pub(super) fn first_correlations(
+    ms: &MeasurementSet,
+    selected: &ResolvedMsSelection,
+) -> MsResult<Vec<i32>> {
     ms.polarization()?
         .corr_type(selected.selected_rows[0].polarization_id as usize)
 }
 
-fn coordinate_index(coordinates: &CoordinateSystem, kind: CoordinateType) -> MsResult<usize> {
+pub(crate) fn coordinate_index(
+    coordinates: &CoordinateSystem,
+    kind: CoordinateType,
+) -> MsResult<usize> {
     coordinates
         .find_coordinate(kind)
         .ok_or_else(|| invalid(format!("model image has no {kind:?} coordinate")))
 }
 
-fn grid_stokes(plane: &GridPolarization) -> MsResult<StokesType> {
+pub(super) fn grid_stokes(plane: &GridPolarization) -> MsResult<StokesType> {
     match plane {
         GridPolarization::StokesI => Ok(StokesType::I),
         GridPolarization::Correlation(correlation) => {

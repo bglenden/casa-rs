@@ -22,6 +22,7 @@ use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_
 use super::imager_definition::ImagerDefinitionRequest;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
 use super::settings::{ImagerGridder, ImagerTransformOptions, PredictionGeometry};
+use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::ImagerVoltagePattern;
 use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
@@ -660,6 +661,43 @@ impl ImagerPrediction {
     ) -> MsResult<Vec<ImageModel>> {
         let terms = self.taylor.0;
         let facets = self.facet_count();
+        let dish = self.options.single_dish;
+        if let Some(choice) = dish {
+            if choice.combined && model.images.len() > 1 {
+                return Err(invalid(
+                    "joint single-dish and synthesis prediction needs one model image",
+                ));
+            }
+            let moving = matches!(&self.definition, Some(ImageDefinition::Requested(request)) if request.moving_source.is_some());
+            let components =
+                model.components.is_some() && (!choice.combined || !model.images.is_empty());
+            if terms > 1
+                || facets > 1
+                || moving
+                || components
+                || self.options.frequency_interpolation != 0
+            {
+                return Err(invalid(
+                    "this single-dish imager model combination is pending #1520",
+                ));
+            }
+        }
+        if dish.is_some() && voltage_pattern.is_some() {
+            return Err(invalid(
+                "single-dish image prediction with an applied voltage pattern is pending #1520",
+            ));
+        }
+        if dish
+            .is_some_and(|dish| dish.kernel == super::settings::ImagerSingleDishKernel::PrimaryBeam)
+            && self
+                .voltage_pattern
+                .as_ref()
+                .is_some_and(|pattern| pattern.table.is_some())
+        {
+            return Err(invalid(
+                "custom single-dish primary beams are pending #1520",
+            ));
+        }
         let tangent = match &self.definition {
             Some(ImageDefinition::Requested(definition))
                 if !matches!(self.options.gridder, ImagerGridder::Mosaic) =>
@@ -691,15 +729,28 @@ impl ImagerPrediction {
             });
             let keep_zero = facets > 1
                 || (scratch && !model.incremental && model.components.is_none() && index == 0);
-            images.extend(prepare_configured_images(
-                ms,
-                selected,
-                path,
-                taylor,
-                keep_zero,
-                scratch,
-                &mut geometry,
-            )?);
+            if dish.is_none_or(|choice| choice.combined) {
+                images.extend(prepare_configured_images(
+                    ms,
+                    selected,
+                    path,
+                    taylor,
+                    keep_zero,
+                    scratch,
+                    &mut geometry,
+                )?);
+            }
+            if let Some(choice) = dish {
+                images.extend(single_dish::prepare_model(
+                    ms,
+                    selected,
+                    path,
+                    choice.kernel,
+                    &geometry,
+                    keep_zero,
+                    scratch,
+                )?);
+            }
             // WFCleanImageSkyModel subdivides the first model image.
             geometry.facets = 1;
         }

@@ -751,6 +751,13 @@ fn open_grid(
             "unsupported Fourier image type in virtual model",
         ));
     }
+    open_complex_model_image(record, ms)
+}
+
+pub(super) fn open_complex_model_image(
+    record: &RecordValue,
+    ms: &MeasurementSet,
+) -> Result<PagedImage<Complex32>, GainSolveError> {
     let recorded = Path::new(record_text(record, "diskimage")?);
     let path = match (recorded.exists(), ms.path(), recorded.file_name()) {
         (false, Some(ms), Some(name)) => [ms.join("SOURCE").join(name), ms.join(name)]

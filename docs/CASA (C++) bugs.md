@@ -7583,3 +7583,33 @@ whose increment is zero. A scratch probe used a 7 × 7 float image and a
 point component, with the first increment of a region covering [1, 1]
 through [5, 5] set to zero. Casa-rs raises a Python error during region
 validation and preserves the stored pixels and history (#1625).
+
+## Legacy imager single-dish Gaussian settings and virtual recipes
+
+CASA 6.7.6.14 constructs the default single-dish imager with an empty
+`convertfirst` string. An explicit `setsdoptions(convertfirst='NEVER')`
+allows `imager.ft` to proceed. casa-rs starts with that default.
+
+The legacy `SDGrid` copy constructor omits the Gaussian widths and
+cutoff that `CubeSkyEquation` needs when it initializes the live model.
+On a smooth ALMA model with off-centre recorded pointings, pinned SF and
+BOX produce nonzero scratch models. The pinned GAUSS control returns
+zero even with an explicit positive cutoff. casa-rs evaluates GAUSS and
+GJINC from their kernel equations. The paired oracle uses the pinned
+pointing coordinates and independent Gaussian and Bessel evaluations.
+
+CASA publishes an `SDGrid` record for `sd` without the kernel settings.
+For `both`, `GridBoth::toRecord` writes its two transforms into the same
+record, leaving the SDGrid name and image with some GridFT fields.
+Pinned `uvsub` rejects the records for both modes. casa-rs saves the
+single-dish settings with the complex SDGrid image and gives GridFT its
+own entry for `both`. The CASA image tool opens both backing images, and
+native `uvsub` reopens the models. An incomplete CASA recipe raises an
+error that identifies the missing settings.
+
+SDGrid can include a cross-correlation when all of its UVW components
+are nonpositive. casa-rs applies the single-dish contribution to
+autocorrelations. In `both`, the ordinary GridFT path predicts the
+cross-correlations.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_single_dish_oracle.py`](../tools/casa-compat/imager_single_dish_oracle.py)

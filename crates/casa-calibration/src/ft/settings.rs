@@ -9,6 +9,55 @@ use casa_types::measures::position::MPosition;
 
 use super::voltage_pattern::PreparedVoltagePattern;
 
+/// Legacy `SDGrid` convolution selected by `imager.setoptions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImagerSingleDishKernel {
+    /// Nearest-cell box convolution.
+    Box,
+    /// Prolate spheroidal convolution.
+    Spheroidal,
+    /// Gaussian convolution.
+    Gaussian,
+    /// Gaussian-times-jinc convolution.
+    GaussianJinc,
+    /// Telescope primary beam.
+    PrimaryBeam,
+}
+
+impl ImagerSingleDishKernel {
+    /// Parse a CASA single-dish grid function, case independently.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "box" => Some(Self::Box),
+            "sf" => Some(Self::Spheroidal),
+            "gauss" => Some(Self::Gaussian),
+            "gjinc" => Some(Self::GaussianJinc),
+            "pb" => Some(Self::PrimaryBeam),
+            _ => None,
+        }
+    }
+
+    /// Grid function name used by CASA records.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Box => "BOX",
+            Self::Spheroidal => "SF",
+            Self::Gaussian => "GAUSS",
+            Self::GaussianJinc => "GJINC",
+            Self::PrimaryBeam => "PB",
+        }
+    }
+}
+
+/// Single-dish image-plane sampling, optionally combined with synthesis.
+#[derive(Clone, Copy, Debug)]
+pub struct ImagerSingleDish {
+    /// The kernel applied to each antenna's pointing.
+    pub kernel: ImagerSingleDishKernel,
+    /// Predict interferometric visibilities using GridFT as well.
+    pub combined: bool,
+}
+
 /// Convolution selected for the legacy imager's Fourier transform.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum ImagerGridder {
@@ -41,6 +90,8 @@ impl ImagerGridder {
 pub struct ImagerTransformOptions {
     /// Convolution kernel.
     pub gridder: ImagerGridder,
+    /// The optional image-plane transform for total-power measurements.
+    pub single_dish: Option<ImagerSingleDish>,
     /// CASA grid padding factor.
     pub padding: f32,
     /// FFT and gridding precision.
@@ -62,6 +113,7 @@ impl Default for ImagerTransformOptions {
     fn default() -> Self {
         Self {
             gridder: ImagerGridder::Spheroidal,
+            single_dish: None,
             padding: 1.0,
             precision: GridPrecision::F64,
             frequency_interpolation: 0,
