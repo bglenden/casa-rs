@@ -80,9 +80,25 @@ def pair(root, source, model, mode, method, *, virtual=True, spw='', overlap=Tru
     return expected
 
 
-def run(root):
+def reject_active_short(root, source, valid, short):
     from casars.tools import imager as native
 
+    for scratch in (True, False):
+        path = root / f'short-{scratch}.ms'
+        prepare_ms(source, path, 'sd', scratch=scratch)
+        assert predict(native, path, valid, 'sd', 'nearest', scratch=scratch)
+        if scratch:
+            _, before, _ = correlations(path)
+        assert not predict(native, path, short, 'sd', 'cubic', scratch=scratch)
+        if scratch:
+            _, result, _ = correlations(path)
+            np.testing.assert_array_equal(result, before)
+        else:
+            result = read_virtual(path, 'sd', 'BOX', sd_method=0)
+            assert np.abs(result).max() > .1
+
+
+def run(root):
     assert casatasks.version_string() == '6.7.6.14'
     root.mkdir(parents=True)
     _, source, template = fixture(root)
@@ -121,10 +137,7 @@ def run(root):
     prepare_ms(source, pinned_short, 'sd')
     subprocess.run([sys.executable, __file__, '--casa', str(pinned_short), str(short),
                     'sd', 'cubic', '--reject'], check=True)
-    for scratch in (True, False):
-        path = root / f'short-{scratch}.ms'
-        prepare_ms(source, path, 'sd', scratch=scratch)
-        assert not predict(native, path, short, 'sd', 'cubic', scratch=scratch)
+    reject_active_short(root, source, model, short)
 
 
 def main():
