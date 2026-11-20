@@ -109,7 +109,8 @@ def test_subimage_publish_only_and_failed_overwrite(tmp_path):
     target = str(tmp_path / "out.im")
     writer = tools.image()
     assert writer.fromshape(source, [3, 4, 1])
-    assert writer.subimage(outfile=target, wantreturn=False) is None
+    unpublished_tool = writer.subimage(outfile=target, wantreturn=False)
+    assert not unpublished_tool.isopen() and unpublished_tool.done()
     with pytest.raises(RuntimeError, match="already exists|exists"):
         writer.subimage(outfile=target)
     with pytest.raises(RuntimeError, match="keepaxes"):

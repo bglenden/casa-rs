@@ -54,19 +54,55 @@ def oracle():
     return casa
 
 
-def test_subimage_refuses_direct_fits_without_publishing(tmp_path):
+def test_subimage_cannot_replace_its_direct_fits_source(tmp_path):
     source = tmp_path / "image.fits"
-    output = tmp_path / "subimage.im"
     content = _hdu(True, [1, 2, 3, 4])
     source.write_bytes(content)
     tool = tools.image()
     assert tool.open(str(source))
-    with pytest.raises(NotImplementedError, match=r"subimage.*#1627"):
-        tool.subimage(str(output))
-    assert not output.exists()
+    with pytest.raises(RuntimeError, match="matches or contains input"):
+        tool.subimage(str(source), overwrite=True)
     assert source.read_bytes() == content
     np.testing.assert_array_equal(tool.getchunk(), [[1, 3], [2, 4]])
     assert tool.done()
+
+
+@pytest.mark.parametrize("bitpix,blank", [(16, -999), (-32, np.nan)])
+def test_subimage_of_attached_fits_survives_parent_close(tmp_path, oracle, bitpix, blank):
+    source = tmp_path / "input.fits"
+    content = _hdu(True, [1, blank, 3, 4], bitpix=bitpix)
+    source.write_bytes(content)
+    expected_pixels = np.array([[1., 3.], [np.nan, 4.]])
+    expected_mask = np.array([[True, True], [False, True]])
+    records = []
+    for index, (writer, reader) in enumerate(((oracle, tools), (tools, oracle))):
+        parent = writer.image()
+        assert parent.open(str(source))
+        child = parent.subimage(list=False)
+        assert parent.done()
+        _assert_value(child.getchunk(), expected_pixels)
+        _assert_value(child.getchunk(getmask=True), expected_mask)
+        assert child.brightnessunit() == "Jy/beam"
+        assert child.history()[0] == "first custom history"
+        assert child.done()
+        assert parent.open(str(source))
+        saved = tmp_path / f"section-{index}.im"
+        region = oracle.regionmanager().box([0, 1], [1, 1])
+        result = parent.subimage(
+            str(saved), region=region, mask=f'"{source}" > 3',
+            dropdeg=True, keepaxes=[1], wantreturn=False, list=False,
+        )
+        assert not result.isopen() and result.done() and parent.done()
+        reopened = reader.image()
+        assert reopened.open(str(saved))
+        _assert_value(reopened.getchunk(), expected_pixels[:, 1:])
+        _assert_value(reopened.getchunk(getmask=True), np.array([[False], [True]]))
+        assert reopened.brightnessunit() == "Jy/beam"
+        assert reopened.history()[-2] == "Ran ia.subimage"
+        records.append(reopened.coordsys().torecord())
+        assert reopened.done()
+    _assert_value(*records)
+    assert source.read_bytes() == content
 
 
 @pytest.mark.parametrize("writer", ["casa", "casars"])
