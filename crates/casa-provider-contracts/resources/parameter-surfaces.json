@@ -13046,7 +13046,7 @@
           "projections": {
             "cli": {"flags": ["--field"], "metavar": "IDS"},
             "provider": {"field": "field", "adapter": "omit_none"},
-            "python": {"name": "field"},
+            "python": {"name": "field", "type_hint": "str"},
             "presentation": {"label": "Field", "group": "Selection"}
           }
         },
@@ -13062,7 +13062,7 @@
           "projections": {
             "cli": {"flags": ["--spw"], "metavar": "SPW[:CHANNELS]"},
             "provider": {"field": "spw", "adapter": "omit_none"},
-            "python": {"name": "spw"},
+            "python": {"name": "spw", "type_hint": "str"},
             "presentation": {"label": "Spectral Window", "group": "Selection"}
           }
         },
@@ -13077,7 +13077,7 @@
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "IDS"},
             "provider": {"field": "scan", "adapter": "omit_none"},
-            "python": {"name": "scan"},
+            "python": {"name": "scan", "type_hint": "str"},
             "presentation": {"label": "Scan", "group": "Selection"}
           }
         },
@@ -13092,7 +13092,7 @@
           "projections": {
             "cli": {"flags": ["--antenna"], "metavar": "IDS"},
             "provider": {"field": "antenna", "adapter": "omit_none"},
-            "python": {"name": "antenna"},
+            "python": {"name": "antenna", "type_hint": "str"},
             "presentation": {"label": "Antenna", "group": "Selection"}
           }
         },
@@ -13122,7 +13122,7 @@
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "START~END"},
             "provider": {"field": "timerange", "adapter": "omit_none"},
-            "python": {"name": "timerange"},
+            "python": {"name": "timerange", "type_hint": "str"},
             "presentation": {"label": "Time Range", "group": "Selection"}
           }
         },
@@ -13861,7 +13861,7 @@
           "projections": {
             "cli": {"flags": ["--field"], "metavar": "IDS"},
             "provider": {"field": "field", "adapter": "omit_none"},
-            "python": {"name": "field"},
+            "python": {"name": "field", "type_hint": "str | int"},
             "presentation": {"label": "Field", "group": "Selection"}
           }
         },
@@ -13876,7 +13876,7 @@
           "projections": {
             "cli": {"flags": ["--spw"], "metavar": "SPW[:CHANNELS]"},
             "provider": {"field": "spw", "adapter": "omit_none"},
-            "python": {"name": "spw"},
+            "python": {"name": "spw", "type_hint": "str | int"},
             "presentation": {"label": "Spectral Window", "group": "Selection"}
           }
         },
@@ -13890,7 +13890,7 @@
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "IDS"},
             "provider": {"field": "scan", "adapter": "omit_none"},
-            "python": {"name": "scan"},
+            "python": {"name": "scan", "type_hint": "str | int"},
             "presentation": {"label": "Scan", "group": "Selection"}
           }
         },
@@ -13904,7 +13904,7 @@
           "projections": {
             "cli": {"flags": ["--antenna"], "metavar": "IDS"},
             "provider": {"field": "antenna", "adapter": "omit_none"},
-            "python": {"name": "antenna"},
+            "python": {"name": "antenna", "type_hint": "str | int"},
             "presentation": {"label": "Antenna", "group": "Selection"}
           }
         },
@@ -13932,7 +13932,7 @@
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "START~END"},
             "provider": {"field": "timerange", "adapter": "omit_none"},
-            "python": {"name": "timerange"},
+            "python": {"name": "timerange", "type_hint": "str"},
             "presentation": {"label": "Time Range", "group": "Selection"}
           }
         },
