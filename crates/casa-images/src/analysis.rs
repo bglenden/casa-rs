@@ -25,6 +25,7 @@ mod custom_values;
 mod exportfits;
 mod extrema;
 mod imhead_fits;
+mod imhead_masks;
 mod immath;
 mod importfits;
 mod imsubimage;
@@ -777,7 +778,7 @@ pub fn imhead_put_observation_date(
     )?;
     // MVTime formatting uses integer calendar arithmetic. Refuse extreme
     // values before writing rather than overflowing while building the reply.
-    if !days.is_finite() || days.abs() > 1.0e9 {
+    if !valid_imhead_calendar_date(days) {
         return Err(ImageError::InvalidMetadata(
             "Non-finite or extreme observation dates are unsupported (#977)".into(),
         ));
@@ -792,7 +793,7 @@ pub fn imhead_put_observation_date(
                 .date
                 .as_ref()
                 .map_or(0.0, |epoch| epoch.value().as_mjd());
-            if !old.is_finite() || old.abs() > 1.0e9 {
+            if !valid_imhead_calendar_date(old) {
                 return Err(ImageError::InvalidMetadata(
                     "Existing observation date is non-finite or extreme (#977)".into(),
                 ));
@@ -819,6 +820,31 @@ pub fn imhead_put_observation_date(
         )],
     )?;
     imhead(path)
+}
+
+fn valid_imhead_calendar_date(days: f64) -> bool {
+    // Casacore's ifloor decrements negative whole numbers too. MVTime uses
+    // Int for the MJD and Julian day and Long for the Gregorian correction.
+    let casa_floor = |value: f64| {
+        if value < 0.0 {
+            (value - 1.0).trunc()
+        } else {
+            value.trunc()
+        }
+    };
+    let day = casa_floor(days);
+    let julian_day = casa_floor(day + 2_400_001.0);
+    let calendar_range = f64::from(i32::MIN)..=f64::from(i32::MAX);
+    if !calendar_range.contains(&day) || !calendar_range.contains(&julian_day) {
+        return false;
+    }
+    let gregorian = if julian_day >= 2_299_161.0 {
+        let centuries = ((julian_day - 1_867_216.25) / 36_524.25).floor();
+        1.0 + centuries - (centuries / 4.0).floor()
+    } else {
+        0.0
+    };
+    calendar_range.contains(&(julian_day + gregorian + 1524.0))
 }
 
 /// Set CASA's native direction reference while retaining its conversion frame.
@@ -1174,6 +1200,7 @@ fn imhead_put_axis_text(
 }
 
 /// Add or remove a supported string-valued CASA image header field.
+/// For `del` of `masks`, an empty value removes all masks.
 pub fn imhead_add_delete(
     path: impl AsRef<Path>,
     mode: &str,
@@ -1184,6 +1211,12 @@ pub fn imhead_add_delete(
         return Err(ImageError::InvalidMetadata(format!(
             "unknown imhead operation {mode:?}"
         )));
+    }
+    if mode == "del" && hdkey == "masks" {
+        let path = path.as_ref();
+        validate_imhead_writable(path)?;
+        imhead_masks::remove(path, hdvalue)?;
+        return imhead(path);
     }
     imhead_change_string(path, mode, hdkey, if mode == "del" { "" } else { hdvalue })
 }
@@ -1248,7 +1281,7 @@ pub fn imhead_custom_value(
         let value = info
             .get(key)
             .or_else(|| info.get(&key.to_ascii_lowercase()))
-            .ok_or_else(|| ImageError::InvalidMetadata(format!("Unknown keyword {key}")))?;
+            .ok_or_else(|| imhead_unknown_keyword(key))?;
         match value {
             Value::Scalar(ScalarValue::String(value)) => Ok(CasaValue::string(value)),
             Value::Scalar(ScalarValue::Int32(value)) => Ok(CasaValue::Int {
@@ -1292,6 +1325,14 @@ pub fn imhead_custom_value(
         AnyPagedImage::Complex32(image) => get(image, key),
         AnyPagedImage::Complex64(image) => get(image, key),
     }
+}
+
+fn imhead_unknown_keyword(key: &str) -> ImageError {
+    ImageError::InvalidMetadata(format!(
+        "Unknown keyword {key}. If you are trying to use a key name from the imhead summary \
+         dictionary, note that some keys in mode='put'/'get' are different from mode='summary'. \
+         Please see imhead description in the CASA online documentation for complete details."
+    ))
 }
 
 /// Write or remove user-defined scalar, record, and array metadata.

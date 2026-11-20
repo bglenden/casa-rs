@@ -4017,6 +4017,16 @@ wcslib's `mjdobs`, so the scale is gone by then. casa-rs reads `MJD-OBS` or `DAT
 when it names none (`casa_coordinates::fits::from_fits_header`), so the
 round trip keeps the date.
 
+## `imhead` displays a bogus observation date after calendar overflow
+
+On a CASA image, CASA 6.7.6.14 accepts `imhead(mode='put', hdkey='epoch',
+hdvalue={'value': 1e20, 'unit': 'd'})` and then reports
+`-5884082/10/30/00:00:00.000000`. The stored MJD exceeds the signed integer
+range used by `MVTime::ymd` for the Julian day. casa-rs rejects the out-of-range
+edit before changing the image. Dates inside the representable range still
+work, including 1.01 billion MJD days, which both render as
+`2767144/12/15/00:00:00.000000` (#977).
+
 ## `feather` fails on an image whose direction is not on its first two axes
 
 - Date noted: 2026-10-30

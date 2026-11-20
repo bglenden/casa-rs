@@ -91,6 +91,7 @@ fn run_imhead(
             let spectral_reference = mode == "put" && key == "reffreqtype";
             let direction_reference = mode == "put" && key == "equinox";
             let projection = mode == "put" && key == "projection";
+            let remove_masks = mode == "del" && hdkey == "masks";
             let beam_key =
                 ["beammajor", "beamminor", "beampa", "bmaj", "bmin", "bpa"].contains(&key.as_str());
             let axis_quantity =
@@ -105,6 +106,7 @@ fn run_imhead(
                 && !spectral_reference
                 && !direction_reference
                 && !projection
+                && !remove_masks
                 && !beam_key
                 && !axis_quantity
                 && !casa_images::analysis::imhead_is_custom_key(&hdkey)
@@ -154,7 +156,12 @@ fn run_imhead(
             } else if casa_images::analysis::imhead_is_custom_key(&hdkey) {
                 casa_images::analysis::imhead_custom_value_change(&path, &mode, &hdkey, value)
             } else if mode == "del" {
-                imhead_add_delete(&path, &mode, &hdkey, "")
+                let name = match (remove_masks, value) {
+                    (true, ParameterValue::String(name)) => name.clone(),
+                    (true, value) => history_value(value),
+                    (false, _) => String::new(),
+                };
+                imhead_add_delete(&path, &mode, &hdkey, &name)
             } else if let ParameterValue::String(value) = value {
                 if mode == "put" {
                     imhead_put(&path, &hdkey, value)
