@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Sample a legacy SDGrid model at each autocorrelation's pointing.
 
+mod spectral;
+
 use std::sync::Mutex;
 
 use casa_coordinates::{
@@ -26,6 +28,7 @@ use super::fourier::{
     FourierRow, complex_model_image_path, lsrk_frequency_ratio, scratch_channel_masked,
 };
 use super::{GainSolveError, model_error, read_error};
+use spectral::ImageSpectrum;
 
 const IMAGE_METADATA_BYTES: u64 = 65_536;
 
@@ -49,6 +52,7 @@ struct PreparedModel {
     kernel: KernelTable,
     pixel: Option<[f64; 2]>,
     sampled: Vec<Option<Complex32>>,
+    interpolated: Option<ImageSpectrum>,
     convert_frequencies: bool,
     cache_pointings: bool,
     cached_pointing: Option<(PointingFrame, Option<[f64; 2]>)>,
@@ -240,6 +244,7 @@ impl PreparedModel {
         let direction = direction.clone();
         let stokes = stokes.clone();
         drop(image);
+        let interpolated = ImageSpectrum::load(record, &spectral, channels, ms, &host)?;
         memory.retain(
             image_bytes
                 .saturating_add(sample_bytes)
@@ -254,6 +259,7 @@ impl PreparedModel {
             kernel,
             pixel: None,
             sampled: vec![None; sample_count],
+            interpolated,
             convert_frequencies,
             cache_pointings: recipe_cache(record)?,
             cached_pointing: None,
@@ -337,6 +343,30 @@ impl PreparedModel {
         } else {
             1.
         };
+        let sampled = &mut self.sampled;
+        let cells = &self.cells;
+        let kernel = &self.kernel;
+        let mut sample = |plane: usize, pol: usize| {
+            *sampled[plane * cells.shape()[2] + pol].get_or_insert_with(|| {
+                let spectra = cells.index_axis(Axis(3), plane);
+                let pixels = spectra
+                    .index_axis(Axis(2), pol)
+                    .into_dimensionality::<Ix2>()
+                    .expect("individual SDGrid model plane");
+                kernel.degrid_complex(pixels.reversed_axes(), pixel).conj()
+            })
+        };
+        if let Some(interpolated) = &mut self.interpolated
+            && interpolated.predict(row, (ratio, selection_mask), output, |plane, values| {
+                for (value, &pol) in values.iter_mut().zip(routing.pol_map()) {
+                    if let Some(pol) = pol {
+                        *value = sample(plane as usize, pol as usize);
+                    }
+                }
+            })?
+        {
+            return Ok(());
+        }
         for (channel, &frequency) in row.frequencies.iter().enumerate() {
             let plane = match_channel(&self.spectral, self.cells.shape()[3], frequency * ratio);
             if plane < 0
@@ -344,23 +374,12 @@ impl PreparedModel {
             {
                 continue;
             }
-            let spectra = self.cells.index_axis(Axis(3), plane as usize);
             for (correlation, &pol) in routing.pol_map().iter().enumerate() {
                 let Some(pol) = pol else { continue };
                 if row.raw_flags.get([correlation, channel].as_slice()) == Some(&true) {
                     continue;
                 }
-                let pixels = spectra
-                    .index_axis(Axis(2), pol as usize)
-                    .into_dimensionality::<Ix2>()
-                    .expect("individual SDGrid model plane");
-                let sample = self.sampled[plane as usize * self.cells.shape()[2] + pol as usize]
-                    .get_or_insert_with(|| {
-                        self.kernel
-                            .degrid_complex(pixels.reversed_axes(), pixel)
-                            .conj()
-                    });
-                output[[correlation, channel]] += *sample;
+                output[[correlation, channel]] += sample(plane as usize, pol as usize);
             }
         }
         Ok(())

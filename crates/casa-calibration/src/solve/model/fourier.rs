@@ -595,7 +595,7 @@ fn uses_projected_tangent(
     Ok(!telescope.contains("ATCA") && !telescope.contains("WSRT"))
 }
 
-fn spectral_layout(
+pub(super) fn spectral_layout(
     record: &RecordValue,
     axis: &SpectralAxis,
     continuum_basis: Basis,

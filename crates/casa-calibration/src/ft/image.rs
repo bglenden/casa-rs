@@ -449,7 +449,7 @@ fn automatic_w_planes(
     })
 }
 
-fn validate_short_cubic(
+pub(super) fn validate_short_cubic(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
     matching_frequencies: &[f64],
