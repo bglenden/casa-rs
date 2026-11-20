@@ -506,10 +506,10 @@ def split(
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     outputvis: StrPath = '',
     keepmms: bool = True,
-    field: str = '',
-    spw: str = '',
-    scan: str = '',
-    antenna: str = '',
+    field: str | int = '',
+    spw: str | int = '',
+    scan: str | int = '',
+    antenna: str | int = '',
     correlation: str | list[str] = '',
     timerange: str = '',
     intent: str = '',
@@ -528,8 +528,6 @@ def split(
     """Create a selected MeasurementSet subset, equivalent to CASA split.
 
     CASA's ``split``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #978:
-    ``keepmms``.
     """
     return _call_casa(split, locals())
 

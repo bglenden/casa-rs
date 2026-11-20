@@ -182,10 +182,43 @@ pub fn set_grid_tangent(record: &mut RecordValue, tangent: &MDirection) {
     );
 }
 
+/// Save the legacy moving source and its initially observed direction.
+pub fn set_grid_motion(
+    record: &mut RecordValue,
+    source: &MDirection,
+    anchor: &MDirection,
+    location: &casa_types::measures::position::MPosition,
+) {
+    let measure = |value: &MDirection| {
+        let (longitude, latitude) = value.as_angles();
+        direction([longitude, latitude], value.refer().as_str())
+    };
+    record.upsert("movingdir_rec", measure(source));
+    record.upsert("firstmovingdir_rec", measure(anchor));
+    record.upsert("fixmovingsource", boolean(true));
+    let (lon, lat, radius) = location.as_spherical();
+    record.upsert("mlocation_rec", position([lon, lat, radius]));
+}
+
 /// Turn the common Fourier record into the legacy `MosaicFT` state.
 /// CASA's reader constructs the convolution from the next buffer when
 /// the `HetArrayConvFunc` cache is empty.
 pub fn legacy_mosaic(record: &mut RecordValue, stokes: &str, beam_class: i32, sampling: u16) {
+    legacy_array_mosaic(record, stokes, beam_class, "", sampling);
+}
+
+/// Record an externally supplied table of per-antenna image voltage patterns.
+pub fn legacy_image_mosaic(record: &mut RecordValue, stokes: &str, table: &str, sampling: u16) {
+    legacy_array_mosaic(record, stokes, 8, table, sampling);
+}
+
+fn legacy_array_mosaic(
+    record: &mut RecordValue,
+    stokes: &str,
+    beam_class: i32,
+    table: &str,
+    sampling: u16,
+) {
     let beam = RecordValue::new(vec![
         RecordField::new("name", text("HetArrayConvFunc")),
         RecordField::new("ndefined", int(0)),
@@ -194,9 +227,35 @@ pub fn legacy_mosaic(record: &mut RecordValue, stokes: &str, beam_class: i32, sa
             "donemainconv",
             Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[0]), false))),
         ),
-        RecordField::new("vptable", text("")),
+        RecordField::new("vptable", text(table)),
         RecordField::new("pbclass", int(beam_class)),
     ]);
+    legacy_mosaic_record(record, stokes, sampling, beam);
+}
+
+/// Record a legacy MosaicFT common beam. The C++ reader rebuilds the
+/// convolution when it initializes the next visibility buffer.
+pub fn legacy_common_mosaic(
+    record: &mut RecordValue,
+    stokes: &str,
+    telescope: &str,
+    sampling: u16,
+) {
+    let beam = RecordValue::new(vec![
+        RecordField::new("name", text("SimplePBConvFunc")),
+        RecordField::new("numconv", int(0)),
+        RecordField::new("actualconvindex", int(-1)),
+        RecordField::new(
+            "donemainconv",
+            Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[0]), false))),
+        ),
+        RecordField::new("pbclass", int(1)),
+    ]);
+    record.upsert("telescope", text(telescope));
+    legacy_mosaic_record(record, stokes, sampling, beam);
+}
+
+fn legacy_mosaic_record(record: &mut RecordValue, stokes: &str, sampling: u16, beam: RecordValue) {
     record.upsert("name", text("MosaicFT"));
     record.upsert("stokes", text(stokes));
     record.upsert("usezero", boolean(true));

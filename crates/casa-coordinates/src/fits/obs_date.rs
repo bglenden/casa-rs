@@ -17,8 +17,12 @@ use casa_types::quanta::format::{FITS, format_time};
 /// casacore names Terrestrial Time `TDT` and UT1 `UT`; this writes the FITS
 /// standard's `TT` and `UT1`, which casacore reads as the same scales.
 pub(super) fn fits_date(epoch: &MEpoch) -> (String, String) {
+    // ObsInfo::toFITS constructs MVTime from obsDate().get("s").
+    // Converting those seconds back into days can round by one f64 step.
+    const SECONDS_IN_DAY: f64 = 86_400.0;
+    let seconds = epoch.value().as_mjd() * SECONDS_IN_DAY;
     (
-        format_time(epoch.value().as_mjd(), FITS, 12),
+        format_time(seconds / SECONDS_IN_DAY, FITS, 12),
         epoch.refer().as_str().to_string(),
     )
 }
@@ -88,6 +92,19 @@ mod tests {
             fits_date(&MEpoch::from_mjd(59_000.5, EpochRef::TAI)),
             ("2020-05-31T12:00:00.000000".to_string(), "TAI".to_string())
         );
+    }
+
+    #[test]
+    fn fits_dates_round_trip_through_seconds_before_formatting() {
+        for (epoch, expected) in [
+            (61_364.609_530_936_24, "2026-11-20T14:37:43.472892"),
+            (61_364.609_530_936_31, "2026-11-20T14:37:43.472896"),
+        ] {
+            assert_eq!(
+                fits_date(&MEpoch::from_mjd(epoch, EpochRef::UTC)),
+                (expected.to_string(), "UTC".to_string())
+            );
+        }
     }
 
     #[test]

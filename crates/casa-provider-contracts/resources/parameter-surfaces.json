@@ -13036,7 +13036,8 @@
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 7},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13045,13 +13046,14 @@
           "projections": {
             "cli": {"flags": ["--field"], "metavar": "IDS"},
             "provider": {"field": "field", "adapter": "omit_none"},
-            "python": {"name": "field"},
+            "python": {"name": "field", "type_hint": "str"},
             "presentation": {"label": "Field", "group": "Selection"}
           }
         },
         {
           "name": "spw",
-          "concept": {"id": "ms.selection.spw", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 5},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13060,13 +13062,14 @@
           "projections": {
             "cli": {"flags": ["--spw"], "metavar": "SPW[:CHANNELS]"},
             "provider": {"field": "spw", "adapter": "omit_none"},
-            "python": {"name": "spw"},
+            "python": {"name": "spw", "type_hint": "str"},
             "presentation": {"label": "Spectral Window", "group": "Selection"}
           }
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 5},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13074,13 +13077,14 @@
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "IDS"},
             "provider": {"field": "scan", "adapter": "omit_none"},
-            "python": {"name": "scan"},
+            "python": {"name": "scan", "type_hint": "str"},
             "presentation": {"label": "Scan", "group": "Selection"}
           }
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 6},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13088,7 +13092,7 @@
           "projections": {
             "cli": {"flags": ["--antenna"], "metavar": "IDS"},
             "provider": {"field": "antenna", "adapter": "omit_none"},
-            "python": {"name": "antenna"},
+            "python": {"name": "antenna", "type_hint": "str"},
             "presentation": {"label": "Antenna", "group": "Selection"}
           }
         },
@@ -13109,7 +13113,8 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 5},
+          "reviewed_homonym": {"review_id": "ADR-0006", "reason": "MeasurementSet transform tasks accept CASA selector variants at the task boundary."},
           "order": 11,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13117,7 +13122,7 @@
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "START~END"},
             "provider": {"field": "timerange", "adapter": "omit_none"},
-            "python": {"name": "timerange"},
+            "python": {"name": "timerange", "type_hint": "str"},
             "presentation": {"label": "Time Range", "group": "Selection"}
           }
         },
@@ -13842,12 +13847,11 @@
             "provider": {"field": "keepmms"},
             "python": {"name": "keepmms"},
             "presentation": {"label": "Keep MMS", "group": "Output", "advanced": true}
-          },
-          "unimplemented": {"issue": 978}
+          }
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 7},
           "order": 3,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13856,13 +13860,13 @@
           "projections": {
             "cli": {"flags": ["--field"], "metavar": "IDS"},
             "provider": {"field": "field", "adapter": "omit_none"},
-            "python": {"name": "field"},
+            "python": {"name": "field", "type_hint": "str | int"},
             "presentation": {"label": "Field", "group": "Selection"}
           }
         },
         {
           "name": "spw",
-          "concept": {"id": "ms.selection.spw", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 5},
           "order": 4,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13871,13 +13875,13 @@
           "projections": {
             "cli": {"flags": ["--spw"], "metavar": "SPW[:CHANNELS]"},
             "provider": {"field": "spw", "adapter": "omit_none"},
-            "python": {"name": "spw"},
+            "python": {"name": "spw", "type_hint": "str | int"},
             "presentation": {"label": "Spectral Window", "group": "Selection"}
           }
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 5},
           "order": 5,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13885,13 +13889,13 @@
           "projections": {
             "cli": {"flags": ["--scan"], "metavar": "IDS"},
             "provider": {"field": "scan", "adapter": "omit_none"},
-            "python": {"name": "scan"},
+            "python": {"name": "scan", "type_hint": "str | int"},
             "presentation": {"label": "Scan", "group": "Selection"}
           }
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 6},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13899,7 +13903,7 @@
           "projections": {
             "cli": {"flags": ["--antenna"], "metavar": "IDS"},
             "provider": {"field": "antenna", "adapter": "omit_none"},
-            "python": {"name": "antenna"},
+            "python": {"name": "antenna", "type_hint": "str | int"},
             "presentation": {"label": "Antenna", "group": "Selection"}
           }
         },
@@ -13919,7 +13923,7 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 5},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -13927,7 +13931,7 @@
           "projections": {
             "cli": {"flags": ["--timerange"], "metavar": "START~END"},
             "provider": {"field": "timerange", "adapter": "omit_none"},
-            "python": {"name": "timerange"},
+            "python": {"name": "timerange", "type_hint": "str"},
             "presentation": {"label": "Time Range", "group": "Selection"}
           }
         },

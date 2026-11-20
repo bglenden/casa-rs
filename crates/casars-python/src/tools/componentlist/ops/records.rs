@@ -5,6 +5,7 @@ use super::super::records;
 use super::State;
 use crate::convert::{ConvertError, ConvertResult};
 use crate::tools::LogLine;
+use casa_components::ComponentList;
 use casa_types::RecordValue;
 
 impl State {
@@ -55,23 +56,30 @@ impl State {
         Ok(())
     }
 
-    /// Decode the list for image.deconvolvecomponentlist, which invokes
-    /// casacore directly and reports record failures in its own context.
+    /// Decode a casacore list with the image operation's import diagnostics.
     pub(crate) fn image_components(
         record: &RecordValue,
         lines: &mut Vec<LogLine>,
+        invalid_record: impl Fn(String) -> ConvertError,
     ) -> ConvertResult<Self> {
         let mut source = Self::default();
         source.import_record(record, lines, |e| {
             if records::is_direct_import_error(&e) {
                 ConvertError::runtime(e)
             } else {
-                ConvertError::runtime(format!(
-                    "Exception: Input dictionary is not a valid component list: {e}."
-                ))
+                invalid_record(e)
             }
         })?;
         Ok(source)
+    }
+
+    pub(crate) fn into_image_model(self) -> ConvertResult<ComponentList> {
+        if self.offsets.is_empty() {
+            return Ok(self.list);
+        }
+        self.materialized()
+            .map(std::borrow::Cow::into_owned)
+            .map_err(ConvertError::runtime)
     }
     pub(crate) fn concatenate_record(
         &mut self,

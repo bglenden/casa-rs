@@ -15,6 +15,7 @@ use casa_ms::derived::engine::MsCalEngine;
 pub(super) struct MosaicPointing {
     pub(super) buffer: usize,
     pub(super) antenna: usize,
+    pub(super) second_antenna: i32,
     pub(super) epoch: f64,
     pub(super) direction: MDirection,
 }
@@ -106,6 +107,7 @@ impl FeedOffsets {
         Ok(MosaicPointing {
             buffer: first.row_index,
             antenna,
+            second_antenna: first.antenna2,
             epoch,
             direction,
         })

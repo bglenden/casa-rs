@@ -215,6 +215,18 @@ On `refim_mawproject` (CASA 6.7.6.14, Stokes I, `wbawp=True`,
 dirty image. casa-rs compiles CASA's pairing (`casa-imaging-operator`,
 `aw::routing` into `MuellerRouting`) and agrees with CASA to 2e-7.
 
+
+## FLAG_CMD rewrites may truncate a longer saved command
+
+CASA 6.7.6.14 reads FLAG_CMD.COMMAND into a NumPy string array during
+`split` and `mstransform` post-processing. The array holds strings no longer
+than the longest original command. Replacing a spectral selector with a longer
+one can cut off later arguments before the table is written. The paired
+`ms_flag_commands_oracle.py` test reproduces the truncation when an inactive
+channel bin is negative and checks the complete rewritten command independently.
+casa-rs writes the full command to the variable-length table column.
+[Owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
+
 ## AW-projection predicts with the unrotated w
 
 - Date noted: 2026-10-09
@@ -1839,6 +1851,52 @@ after `sm.done()` as well. Predicting the same mosaic image twice also
 produced SIGBUS during cleanup on one run. The isolated child writes its
 reference DATA before cleanup; the parent accepts only these identified
 cleanup failures and records the process exit separately from prediction.
+
+## Legacy imager cleanup aborts after common-beam prediction
+
+CASA 6.7.6.14 returns success from `imager.ft` with
+`setoptions(ftmachine='mosaic')` on a 1.5 GHz VLA MeasurementSet. Both
+scratch and virtual predictions reach disk. The next `imager.done()`
+call raises SIGABRT with “pure virtual method called.” A separate CASA
+process reopens the virtual recipe and reads its model through `uvsub`.
+The same cleanup failure occurs with ATCA, GMRT, WSRT, GBT, NRAO140FT,
+and the `NONE` telescope pattern.
+
+casa-rs publishes both products and closes the tool normally. The
+common-beam oracle verifies that CASA finished prediction before the
+cleanup failure and checks live and reopened output against their own
+references.
+[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Legacy MosaicFT cannot reopen a DEFAULT telescope beam
+
+CASA 6.7.6.14 selects `SimplePBConvFunc` for the literal telescope name
+`DEFAULT`. Its live `VPSkyJones` uses a numeric beam from the first dish
+diameter. The virtual writer records the telescope name. On reopening,
+`MosaicFT::fromRecord` looks up the name through `PBMath` and rejects the
+recipe with “Failed to recovermosaic FTmachine” when the lookup is unknown.
+
+casa-rs uses the first dish's numeric beam when reopening the record.
+The paired oracle uses the pinned live prediction as that beam's reference
+and checks the documented failure from the CASA reader.
+[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## Legacy nift can abort while preparing a virtual model
+
+In CASA 6.7.6.14, `imager.setoptions(ftmachine='nift')` constructs an
+`rGridFT`. Live scratch prediction agrees with GridFT for the paired
+visibility fixtures. `CubeSkyEquation::init` falls through to a `GridFT`
+cast for the `rGridFT` object. Some virtual and faceted scratch runs
+abort during `ft` in that path.
+
+casa-rs uses the shared interferometric prediction and publishes a
+`GridFT` virtual recipe. CASA reads that recipe through `uvsub`. The
+paired oracle checks the scratch prediction against pinned `nift` and
+the virtual prediction against a readable pinned GridFT reference.
+[`imager_nift_oracle.py`](../tools/casa-compat/imager_nift_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
 ## Mosaic multi-image prediction depends on image order
 
@@ -7509,3 +7567,29 @@ case in `crates/casa-images/tests/data/imregrid/expected.json` records a
 beam. casa-rs matches the samples, mask and template frequency grid and retains
 the original units and beam. Copying channels does not change the calibration
 of the pixels being copied.
+
+## Legacy MosaicFT rejects split voltage-pattern image records
+
+The CASA 6.7.6.14 legacy `HetArrayConvFunc::findAntennaSizes` checks
+for `realimage` and `imagimage` in a custom `IMAGE` record. It reads
+the imaginary image from `imagim`. `vpmanager.setpbimage` saves the
+standard field `imagimage`. The public `imager.ft` then reports that
+`imagim` is unknown and returns false.
+
+The same responses packaged as complex Jones images work through the
+public legacy imager. Adding `imagim` as an alias in the split records
+also works and gives the same CASA prediction. casa-rs reads the standard
+field for native prediction. For virtual interoperation, the Fourier grid
+owns a copy of the voltage-pattern table with the alias. A real-only
+pattern uses a zero-valued imaginary image owned by the same grid.
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
+[`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
+
+## A zero-stride region aborts `image.modify`
+
+CASA 6.7.6.14 terminates with SIGABRT and an uncaught
+`casacore::ArraySlicerError` when `image.modify` uses an LCSlicer record
+whose increment is zero. A scratch probe used a 7 × 7 float image and a
+point component, with the first increment of a region covering [1, 1]
+through [5, 5] set to zero. Casa-rs raises a Python error during region
+validation and preserves the stored pixels and history (#1625).

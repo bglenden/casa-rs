@@ -717,15 +717,15 @@ const METHODS: &[Method] = &[
     method(
         "modify",
         &[
-            param("model", K::Any, Required),
+            param("model", K::Record, Required),
             param("region", K::Record, EmptyRecord),
             param("mask", K::Text, Text("")),
             param("subtract", K::Bool, Bool(true)),
             param("list", K::Bool, Bool(true)),
             param("stretch", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "moments",

@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use casa_tables::{
     ColumnOverrides, ColumnType, StreamedScalarType, StreamedTiledShapeValueType, Table,
-    TableError, TableOptions,
+    TableError, TableInfo, TableOptions,
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
@@ -40,9 +40,12 @@ use crate::write_session::{
 
 mod channel_average;
 mod correlation_metadata;
+mod flag_commands;
 mod main_arrays;
+mod multi_ms;
 mod selection_metadata;
 mod spectral_metadata;
+mod task_history;
 mod time_average;
 mod time_projection;
 mod visibility_columns;
@@ -50,6 +53,7 @@ mod visibility_columns;
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
+pub use task_history::TransformTaskHistory;
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
 
@@ -110,6 +114,15 @@ pub struct MsTransformTaskOptions {
     pub channel_widths: Option<Vec<usize>>,
     /// Average visibilities along each baseline within this time bin.
     pub time_averaging: Option<TimeAverageOptions>,
+    /// Provenance rows to append to the output's HISTORY table.
+    pub history: Option<TransformTaskHistory>,
+    /// Supplied bin widths used when rewriting saved FLAG_CMD selectors.
+    /// CASA interprets them independently of visibility averaging.
+    pub flag_command_widths: Option<Vec<i64>>,
+    /// The split task's decision to retain or flatten a Multi-MS input.
+    pub keep_mms: Option<bool>,
+    /// The raw numeric timebin for retained split's exact combine="scan" check.
+    pub retained_scan_span: Option<f64>,
 }
 
 /// Time averaging parameters shared by the split and mstransform tasks.
@@ -157,6 +170,9 @@ pub struct MsTransformReport {
 /// Errors returned by [`mstransform`].
 #[derive(Debug, Error)]
 pub enum MsTransformError {
+    /// The retained Multi-MS cannot average across the selected scans.
+    #[error("Unable to continue with MMS processing")]
+    MultiMsScanSpan,
     /// Opening an MS failed.
     #[error("failed to open MeasurementSet {path}: {source}")]
     OpenMeasurementSet {
@@ -302,6 +318,9 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
 }
 
 /// Materialize the selection with the CASA split and mstransform task grammar.
+///
+/// Retained Multi-MS splits that select no partition report zero rows and
+/// do not publish an output.
 pub fn mstransform_task(
     request: &MsTransformRequest,
     options: &MsTransformTaskOptions,
@@ -333,7 +352,45 @@ fn materialize_transform(
         })?;
     let mut physical_request = request.clone();
     physical_request.output_ms = target.staging_path().to_path_buf();
-    let mut report = mstransform_staged(&physical_request, grammar, options)?;
+    let members = if options.keep_mms.is_some() {
+        multi_ms::members(&request.input_ms)?
+    } else {
+        None
+    };
+    let mut report = match (options.keep_mms, members) {
+        (Some(true), Some(members)) => {
+            let Some(report) = multi_ms::retain(
+                &physical_request,
+                &request.output_ms,
+                grammar,
+                options,
+                &members,
+            )?
+            else {
+                return Ok(MsTransformReport {
+                    input_ms: request.input_ms.clone(),
+                    output_ms: request.output_ms.clone(),
+                    row_count: 0,
+                    source_column: String::new(),
+                    output_column: String::new(),
+                    spw: request.spw.clone(),
+                    spectral_window_ids: Vec::new(),
+                    output_channels_by_spw: BTreeMap::new(),
+                    width: normalized_width(request.width),
+                    elapsed_ns: 0,
+                    write_telemetry: MeasurementSetWriteTelemetry::default(),
+                });
+            };
+            report
+        }
+        (Some(false), Some(members)) => transform_product(
+            &physical_request,
+            grammar,
+            options,
+            members.first().map(PathBuf::as_path),
+        )?,
+        _ => transform_product(&physical_request, grammar, options, None)?,
+    };
     target
         .commit()
         .map_err(|error| MsTransformError::PrepareOutput {
@@ -341,6 +398,19 @@ fn materialize_transform(
             reason: error.to_string(),
         })?;
     report.output_ms = request.output_ms.clone();
+    Ok(report)
+}
+
+fn transform_product(
+    request: &MsTransformRequest,
+    grammar: RowGrammar,
+    options: &MsTransformTaskOptions,
+    metadata_template: Option<&Path>,
+) -> Result<MsTransformReport, MsTransformError> {
+    let report = mstransform_staged(request, grammar, options, metadata_template)?;
+    if let Some(history) = &options.history {
+        task_history::append_task_history(&request.output_ms, history)?;
+    }
     Ok(report)
 }
 
@@ -352,6 +422,7 @@ fn mstransform_staged(
     request: &MsTransformRequest,
     grammar: RowGrammar,
     options: &MsTransformTaskOptions,
+    metadata_template: Option<&Path>,
 ) -> Result<MsTransformReport, MsTransformError> {
     let started_at = Instant::now();
     tracing::info!(
@@ -568,7 +639,7 @@ fn mstransform_staged(
     })?;
     prepare_output_root(&request.output_ms)?;
     let mut output_main = materialize_empty_main_table(
-        &request.input_ms,
+        metadata_template.unwrap_or(&request.input_ms),
         selected_rows.len(),
         &request.output_ms,
         &visibility,
@@ -582,6 +653,19 @@ fn mstransform_staged(
     );
     let stage_started_at = Instant::now();
     copy_subtables(&request.input_ms, &request.output_ms)?;
+    if grammar == RowGrammar::Transform
+        && (task_average || !matches!(request.spw.as_str(), "" | "*"))
+    {
+        flag_commands::rewrite(
+            &input,
+            &request.output_ms,
+            &request.spw,
+            &channel_selection,
+            normalized_width(request.width),
+            options.flag_command_widths.as_deref(),
+            options.channel_widths.as_deref(),
+        )?;
+    }
     maybe_log_transform_progress(
         "copy_subtables",
         stage_started_at.elapsed(),
@@ -1875,6 +1959,17 @@ fn materialize_empty_main_table(
             path: output_path.display().to_string(),
             source: Box::new(source),
         })?;
+    if grammar == RowGrammar::Transform {
+        table.keywords_mut().remove("SORTED_TABLE");
+        table.set_info(TableInfo {
+            table_type: "Measurement Set".into(),
+            sub_type: "UVFITS".into(),
+            readme: vec![
+                "This is a MeasurementSet Table holding measurements from a Telescope".into(),
+                "This is a measurement set Table holding astronomical observations".into(),
+            ],
+        });
+    }
     let renamed_keywords = visibility
         .copies()
         .iter()
@@ -2162,6 +2257,17 @@ fn is_visibility_column(column: &str) -> bool {
         column,
         "DATA" | "CORRECTED_DATA" | "MODEL_DATA" | "FLOAT_DATA" | "LAG_DATA"
     )
+}
+
+fn open_staged_subtable_for_write(path: &Path) -> Result<Table, TableError> {
+    let options = TableOptions::new(path);
+    #[cfg(unix)]
+    return Table::open_with_lock(
+        options,
+        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait),
+    );
+    #[cfg(not(unix))]
+    Table::open(options)
 }
 
 fn copy_subtables(input_path: &Path, output_path: &Path) -> Result<(), MsTransformError> {
