@@ -622,10 +622,15 @@ impl<T: ImageExprValue> CompileCtx<T> {
                     mask: Arc::new(mask.clone()),
                 }
             }
-            NumericExprNode::TypeBridge { eval_fn } => {
+            NumericExprNode::TypeBridge { eval_fn, mask_fn } => {
+                let start = vec![0; node_shape.len()];
                 let stride = vec![1; node_shape.len()];
-                let data = eval_fn(&vec![0; node_shape.len()], node_shape, &stride)?;
-                let source_id = self.register_snapshot_source(data, None);
+                let mask = match mask_fn {
+                    Some(eval) => eval(&start, node_shape)?,
+                    None => None,
+                };
+                let data = eval_fn(&start, node_shape, &stride)?;
+                let source_id = self.register_snapshot_source(data, mask.map(Arc::new));
                 CompiledNumericExprNode::Source(source_id)
             }
             NumericExprNode::StripMask { child } => CompiledNumericExprNode::StripMask {
@@ -1452,7 +1457,7 @@ fn eval_child_mask_slice_broadcast<T: ImageExprValue>(
     shape: &[usize],
     stride: &[usize],
 ) -> Result<Option<ArrayD<bool>>, LatticeError> {
-    if !child.may_have_mask(arena) || child_shape.is_empty() {
+    if !child.may_have_mask(arena) {
         return Ok(None);
     }
     if child_shape.len() == start.len() && !child_shape.contains(&1) {
@@ -1578,13 +1583,17 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
         match self {
             Self::Source(source_id) => arena.sources[*source_id].has_mask,
             Self::Scalar(_)
-            | Self::Reduction { .. }
-            | Self::Fractile { .. }
-            | Self::FractileRange { .. }
+            | Self::Reduction {
+                op: ReductionOp::Sum,
+                ..
+            }
             | Self::MaskCount { .. }
             | Self::StripMask { .. } => false,
             Self::UnaryOp { child, .. }
             | Self::CustomUnary { child, .. }
+            | Self::Reduction { child, .. }
+            | Self::Fractile { child, .. }
+            | Self::FractileRange { child, .. }
             | Self::Rebin { child, .. } => child.may_have_mask(arena),
             Self::BinaryOp { lhs, rhs, .. }
             | Self::CustomBinary { lhs, rhs, .. }
@@ -1703,11 +1712,24 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
             Self::Source(source_id) => arena.sources[*source_id]
                 .eval_mask_slice(arena, ctx, *source_id, start, shape, stride),
             Self::Scalar(_)
-            | Self::Reduction { .. }
-            | Self::Fractile { .. }
-            | Self::FractileRange { .. }
+            | Self::Reduction {
+                op: ReductionOp::Sum,
+                ..
+            }
             | Self::MaskCount { .. }
             | Self::StripMask { .. } => Ok(None),
+            Self::Reduction {
+                child, child_shape, ..
+            }
+            | Self::Fractile {
+                child, child_shape, ..
+            }
+            | Self::FractileRange {
+                child, child_shape, ..
+            } => {
+                let valid = child.any_valid_pixel(arena, ctx, child_shape)?;
+                Ok((!valid).then(|| ArrayD::from_elem(IxDyn(shape), false)))
+            }
             Self::UnaryOp { child, .. } | Self::CustomUnary { child, .. } => {
                 child.eval_mask_slice(arena, ctx, start, shape, stride)
             }
@@ -1815,6 +1837,43 @@ impl<T: ImageExprValue> CompiledNumericExprNode<T> {
                 Ok(Some(rebin_mask_slice(&child_mask, factors, shape, stride)))
             }
         }
+    }
+
+    fn any_valid_pixel(
+        &self,
+        arena: &CompiledImageArena<T>,
+        ctx: &mut CompiledEvalContext<T>,
+        shape: &[usize],
+    ) -> Result<bool, LatticeError> {
+        if !self.may_have_mask(arena) {
+            return Ok(true);
+        }
+        if shape.is_empty() {
+            return Ok(self
+                .eval_mask_slice(arena, ctx, &[], &[], &[])?
+                .is_none_or(|mask| mask[IxDyn(&[])]));
+        }
+        let cursor = clamp_cursor_shape(
+            &self
+                .preferred_cursor_shape(shape, arena, thread_parallelism())
+                .map_err(|error| LatticeError::InvalidTraversal(error.to_string()))?,
+            shape,
+        );
+        for cursor in TraversalCursorIter::new(
+            shape.to_vec(),
+            cursor.clone(),
+            TraversalSpec::chunks(cursor),
+        ) {
+            let cursor = cursor?;
+            let stride = vec![1; shape.len()];
+            if self
+                .eval_mask_slice(arena, ctx, &cursor.position, &cursor.shape, &stride)?
+                .is_none_or(|mask| mask.iter().any(|&valid| valid))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn eval_slice(

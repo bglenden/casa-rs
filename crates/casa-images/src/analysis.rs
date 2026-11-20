@@ -29,7 +29,8 @@ mod immath;
 mod importfits;
 mod imsubimage;
 pub use imsubimage::{
-    SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
+    ImagePixelSelection, SubimageOptions, SubimagePlan, SubimageRegion,
+    ensure_outfile_does_not_alias_input,
 };
 mod list_log;
 mod planes;
@@ -49,6 +50,7 @@ use self::axes::{direction_plane_axes, other_axes};
 pub use self::exportfits::{ImageFitsHeader, image_fits_header};
 pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
+pub use self::lel_mask::evaluate_pixel_expression;
 pub use self::list_log::imhead_list_log;
 use self::planes::{PlaneAt, unravel_index};
 #[cfg(casa_prebuilt_image_provider)]

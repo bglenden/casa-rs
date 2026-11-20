@@ -4,7 +4,10 @@
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
 pub(super) mod coords;
+mod pixel_edit;
 pub(super) mod region;
+
+pub use pixel_edit::ImagePixelSelection;
 
 use std::collections::BTreeSet;
 use std::fs;

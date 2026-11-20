@@ -1053,8 +1053,8 @@ const METHODS: &[Method] = &[
             param("region", K::Record, EmptyRecord),
             param("list", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "setbrightnessunit",

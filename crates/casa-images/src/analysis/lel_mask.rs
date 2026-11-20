@@ -9,7 +9,9 @@ use casa_coordinates::CoordinateSystem;
 use casa_types::{ArrayD, Complex32, Complex64};
 
 use crate::analysis::mask_error_wording;
-use crate::expr_parser::{HashMapResolver, parse_subimage_mask_expr, referenced_images};
+use crate::expr_parser::{
+    HashMapResolver, evaluate_real_scalar, parse_subimage_mask_expr, referenced_images,
+};
 use crate::image_expr_lel::broadcast_array;
 use crate::{
     AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage, TempImage,
@@ -47,6 +49,38 @@ impl Operand {
             ),
         }
     }
+}
+
+/// Evaluate a scalar LEL pixel expression, resolving the same image operands
+/// as the task mask evaluator.
+pub fn evaluate_pixel_expression(expression: &str) -> Result<f32, ImageError> {
+    let opened: Vec<_> = referenced_images(expression)?
+        .into_iter()
+        .map(|name| {
+            let image = open_operand(&name)?;
+            Ok::<_, ImageError>((name, image))
+        })
+        .collect::<Result<_, _>>()?;
+    let (real, complex) = operand_resolvers(&opened);
+    evaluate_real_scalar(expression, &real, &complex).map(|number| number as f32)
+}
+
+fn operand_resolvers(
+    opened: &[(String, Operand)],
+) -> (HashMapResolver<'_, f64>, HashMapResolver<'_, Complex64>) {
+    let mut real = HashMap::new();
+    let mut complex = HashMap::new();
+    for (name, operand) in opened {
+        match operand {
+            Operand::Real(source) => {
+                real.insert(name.clone(), source.as_interface());
+            }
+            Operand::Complex(source) => {
+                complex.insert(name.clone(), source.as_interface());
+            }
+        }
+    }
+    (HashMapResolver(real), HashMapResolver(complex))
 }
 
 /// Evaluates an optional `mask` expression over `window` `(start, shape)` of a
@@ -106,20 +140,8 @@ fn evaluate(
     window: (&[usize], &[usize]),
     opened: &[(String, Operand)],
 ) -> Result<Option<ArrayD<bool>>, ImageError> {
-    let mut real = HashMap::new();
-    let mut complex = HashMap::new();
-    for (name, operand) in opened {
-        match operand {
-            Operand::Real(source) => {
-                real.insert(name.clone(), source.as_interface());
-            }
-            Operand::Complex(source) => {
-                complex.insert(name.clone(), source.as_interface());
-            }
-        }
-    }
-    let parsed = parse_subimage_mask_expr(expr, &HashMapResolver(real), &HashMapResolver(complex))
-        .map_err(mask_parse_error)?;
+    let (real, complex) = operand_resolvers(opened);
+    let parsed = parse_subimage_mask_expr(expr, &real, &complex).map_err(mask_parse_error)?;
     let mask_shape = parsed.shape();
     if mask_shape != target_shape && !mask_shape.is_empty() {
         if !stretch {

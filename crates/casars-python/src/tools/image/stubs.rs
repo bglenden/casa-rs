@@ -826,18 +826,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pixels = None, pixelmask = None, region = None, list = None), text_signature = "($self, pixels=[], pixelmask=-1, region={}, list=False)")]
-    fn set(
-        &self,
-        pixels: Option<&Bound<'_, PyAny>>,
-        pixelmask: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("set")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (axes = None, region = None, mask = None, includepix = None, excludepix = None, list = None, force = None, disk = None, robust = None, verbose = None, stretch = None, logfile = None, append = None, algorithm = None, fence = None, center = None, lside = None, zscore = None, maxiter = None, clmethod = None, niter = None), text_signature = "($self, axes=[-1], region='', mask='', includepix=[-1.0], excludepix=[-1.0], list=False, force=False, disk=False, robust=False, verbose=False, stretch=False, logfile='', append=True, algorithm='classic', fence=-1.0, center='mean', lside=True, zscore=-1.0, maxiter=-1, clmethod='auto', niter=3)")]
     fn statistics(
         &self,

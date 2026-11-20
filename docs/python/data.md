@@ -76,6 +76,10 @@ restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
 Use `ia.isconform("other.im")` to check whether a float image has the same
 shape and compatible coordinates as a native float or complex image.
+Use `ia.set(pixels=3.5)` to fill the attached float image. `pixels` can also
+be a scalar lattice expression. Use `region` to restrict the edit and set
+`pixelmask=0` to invalidate the selected pixels or `pixelmask=1` to validate
+them in the default mask.
 Use `ia.fitsheader()` to inspect the FITS header for a float image without
 exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
 dictionary. Use `retstr=True` to return the complete string of 80-byte cards.

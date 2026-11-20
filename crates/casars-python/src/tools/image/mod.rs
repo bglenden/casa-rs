@@ -17,6 +17,7 @@ mod lifecycle;
 mod mask_expression;
 mod masks;
 mod metadata;
+mod pixel_edit;
 mod pixels;
 mod point;
 mod records;

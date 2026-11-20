@@ -740,6 +740,8 @@ impl ImageExprMeta {
 /// not `Send + Sync` because `ImageInterface` references are not thread-safe.
 type SliceEvalFn<'a, T> =
     Arc<dyn Fn(&[usize], &[usize], &[usize]) -> Result<ArrayD<T>, LatticeError> + 'a>;
+type SliceMaskFn<'a> =
+    Arc<dyn Fn(&[usize], &[usize]) -> Result<Option<ArrayD<bool>>, LatticeError> + 'a>;
 
 #[derive(Clone)]
 #[allow(clippy::arc_with_non_send_sync)]
@@ -806,6 +808,7 @@ enum NumericExprNode<'a, T: ImageExprValue> {
     /// Type bridge: an opaque evaluation closure for cross-type operations.
     TypeBridge {
         eval_fn: SliceEvalFn<'a, T>,
+        mask_fn: Option<SliceMaskFn<'a>>,
     },
     /// Strip mask: `value(expr)` keeps values and clears pixel masks.
     StripMask {
@@ -1282,7 +1285,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         })
     }
 
-    fn custom_unary(
+    pub(crate) fn custom_unary(
         self,
         name: &'static str,
         func: impl Fn(T) -> T + Send + Sync + 'static,
@@ -1340,9 +1343,15 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         self,
         convert: impl Fn(T) -> U + Copy + 'static,
     ) -> Result<ImageExprBuilder<'a, U>, ImageError> {
-        let compiled = self.compile()?;
+        let compiled = Arc::new(self.compile()?);
+        let mask_source = Arc::clone(&compiled);
         Ok(ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: Some(Arc::new(move |start, shape| {
+                    mask_source
+                        .get_mask_slice(start, shape)
+                        .map_err(|error| LatticeError::Table(error.to_string()))
+                })),
                 eval_fn: Arc::new(move |start, shape, stride| {
                     compiled
                         .get_slice_with_stride(start, shape, stride)
@@ -1478,7 +1487,7 @@ impl<'a, T: ImageExprValue> ImageExprBuilder<'a, T> {
         })
     }
 
-    fn binary_expr_with_name(
+    pub(crate) fn binary_expr_with_name(
         self,
         rhs: Self,
         name: &'static str,
@@ -2196,6 +2205,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2226,6 +2236,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2256,6 +2267,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex32> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2286,6 +2298,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2314,6 +2327,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2342,6 +2356,7 @@ impl<'a> ImageExprBuilder<'a, casa_types::Complex64> {
         let meta = self.meta;
         ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let data = compiled
                         .as_ref()
@@ -2379,6 +2394,7 @@ impl<'a> ImageExprBuilder<'a, f32> {
         let meta = self.meta;
         Ok(ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let re = real_compiled
                         .as_ref()
@@ -2421,6 +2437,7 @@ impl<'a> ImageExprBuilder<'a, f64> {
         let meta = self.meta;
         Ok(ImageExprBuilder {
             node: NumericExprNode::TypeBridge {
+                mask_fn: None,
                 eval_fn: Arc::new(move |start, shape, stride| {
                     let re = real_compiled
                         .as_ref()

@@ -7421,3 +7421,10 @@ pixels from the edges. Examples are a reversed horizontal cut from
 input direction plane before the same sky-coordinate cut restores the CASA
 result. casa-rs interpolates only the requested strip and agrees with the
 padded CASA reference without requiring callers to pad the input (#1024).
+
+## Setting the pixels of a complex image can terminate CASA
+
+On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
+type="c")` followed by `image.set(pixels=2)` terminates Python with SIGSEGV.
+casa-rs raises `RuntimeError` and preserves the complex image. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
