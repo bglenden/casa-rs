@@ -399,7 +399,7 @@ const METHODS: &[Method] = &[
             param("which", K::Int, Int(-10)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("stokes", &[], R::Any, Yes),
     method(

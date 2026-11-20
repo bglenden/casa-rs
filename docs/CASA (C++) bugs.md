@@ -5814,6 +5814,15 @@ leaves the increments at `[3.0, 0.0]`. Casa-rs validates the edited record
 before replacing the active system, so a rejected edit leaves the original
 increments and the transform usable.
 
+## A rejected unit conversion can leave some coordinates changed
+
+In CASA 6.7.6.14, create a coordinate system with direction and spectral
+coordinates and two linear axes. Applying
+`cs.setunits(["deg", "deg", "m", "m", "m"])` raises an incompatible-unit error
+for the spectral axis and still converts the direction and linear axes.
+Casa-rs validates the entire conversion before replacing the coordinate
+record, so a rejected call preserves all units and the transform (#1626).
+
 ## Batch coordinate conversion can reshape ragged inputs or misread byte order
 
 CASA 6.7.6.14 can pad or truncate a ragged sequence while converting it to

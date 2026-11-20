@@ -54,7 +54,7 @@ IMPLEMENTED["coordsys"] = {
     "names", "naxes", "ncoordinates", "newcoordsys",
     "observer", "parentname", "projection", "referencecode", "referencepixel", "restfrequency",
     "setepoch", "setincrement", "setreferencevalue",
-    "setnames", "setobserver", "setparentname", "setstokes",
+    "setnames", "setobserver", "setparentname", "setstokes", "setunits",
     "setreferencepixel", "settelescope",
     "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
 }
