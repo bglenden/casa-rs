@@ -48,7 +48,7 @@ mod impbcor;
 mod impv;
 mod lel_mask;
 
-use self::axes::{direction_plane_axes, other_axes};
+use self::axes::direction_plane_axes;
 pub use self::exportfits::{
     ImageFitsExportOptions, ImageFitsHeader, export_attached_fits, image_fits_header,
     image_fits_header_with_beams,
