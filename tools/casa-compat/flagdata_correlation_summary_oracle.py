@@ -107,7 +107,16 @@ def main():
         shared = compare("flagged.ms", correlation="XX", **axes)
         check_plane_counts("flagged.ms", np.ones_like(ddids, dtype=bool),
                            0, slice(None), shared, "XX")
-    print("25 stored correlation summaries and seven missing reports matched CASA 6.7.6.14")
+        copytree(path, "flagged-window.ms")
+        with table("flagged-window.ms/SPECTRAL_WINDOW", readonly=False, ack=False) as spw:
+            spw.putcell("FLAG_ROW", 1, True)
+        compare_no_report("flagged-window.ms", correlation="RR")
+        with table("flagged-window.ms/DATA_DESCRIPTION", readonly=False, ack=False) as dd:
+            dd.putcell("POLARIZATION_ID", 1, 0)
+        shared = compare("flagged-window.ms", correlation="XX", **axes)
+        check_plane_counts("flagged-window.ms", np.ones_like(ddids, dtype=bool),
+                           0, slice(None), shared, "XX")
+    print("26 stored correlation summaries and eight missing reports matched CASA 6.7.6.14")
 
 
 if __name__ == "__main__":
