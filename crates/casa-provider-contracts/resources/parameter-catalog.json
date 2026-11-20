@@ -9315,6 +9315,18 @@
       "persistence_class": "profile"
     },
     {
+      "id": "flagdata.timeavg",
+      "semantic_revision": 2,
+      "casa_name": "timeavg",
+      "value_domain": {"kind": "variant"},
+      "normalization": {"kind": "identity"},
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {"summary": "Average baseline integrations within each scan before clipping.", "details": "Clip decisions propagate to the original selected integrations. A Boolean vector passes validation and is rejected by the clipping agent.", "examples": ["false", "true"]},
+      "persistence_class": "profile"
+    },
+    {
       "id": "flagdata.quackincrement",
       "semantic_revision": 1,
       "casa_name": "quackincrement",
