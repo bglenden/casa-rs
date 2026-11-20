@@ -178,19 +178,26 @@ impl PyImageTool {
         let names = string_vector(name, "name")?;
         py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(Vec::new());
             };
             let operation = MaskOperation::parse(op)?;
-            let mut image = image.lock();
-            let result = apply_mask_operation(&mut image, operation, &names)?;
-            if matches!(
+            let mut image = attachment.lock();
+            let writes = matches!(
                 operation,
                 MaskOperation::Set
                     | MaskOperation::Rename
                     | MaskOperation::Delete
                     | MaskOperation::Copy
-            ) {
+            );
+            let kind = if writes {
+                casa_tables::LockType::Write
+            } else {
+                casa_tables::LockType::Read
+            };
+            attachment.require_lock(&mut image, kind)?;
+            let result = apply_mask_operation(&mut image, operation, &names)?;
+            if writes {
                 if state.history
                     && (!matches!(operation, MaskOperation::Copy)
                         || op.to_ascii_uppercase().starts_with("COPY"))

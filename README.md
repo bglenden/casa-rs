@@ -88,24 +88,23 @@ The distribution is named `casa-rs-python`; import it as `casars`.
 ### Persistent data in process
 
 ```python
-from casars.data import Image
-from casars.tools import table
+from casars.tools import image, table
 
 ms = table()
 ms.open("observation.ms")
 print(ms.nrows(), ms.colnames())
 ms.close()
 
-image = Image.open("target.image")
-print(image.shape, image.units)
+ia = image()
+ia.open("target.image")
+print(ia.shape(), ia.brightnessunit())
+ia.done()
 ```
 
-Numeric reads return NumPy arrays where the shape permits. Tables support
-cell and column reads/writes; images support pixel-slice writes to existing
-persistent images. Use `nomodify=False` to open a writable table and
-`writable=True` to open a writable `Image`. Image
-creation and coordinate-system editing are not part of the current Python
-object API. See the [data API](docs/python/data.md) for the exact scope.
+Use `nomodify=False` to open a writable table. The image tool can create a
+native image, edit coordinates and write a slice with `putchunk`. See the
+[data API](docs/python/data.md) for examples and migration from the former
+`casars.data.Image` class.
 
 ### Tasks and reusable parameters
 

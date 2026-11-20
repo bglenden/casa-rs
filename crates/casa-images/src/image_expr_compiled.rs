@@ -44,6 +44,7 @@ enum CompiledImageSourceKind<T: ImageExprValue> {
     Paged {
         path: Arc<PathBuf>,
         cache_bytes: usize,
+        lock_reads: bool,
     },
 }
 
@@ -113,7 +114,10 @@ impl<T: ImageExprValue> CompiledEvalContext<T> {
     {
         if self.opened_tiled_sources[source_id].is_none() {
             let source = &arena.sources[source_id];
-            let CompiledImageSourceKind::Paged { path, cache_bytes } = &source.kind else {
+            let CompiledImageSourceKind::Paged {
+                path, cache_bytes, ..
+            } = &source.kind
+            else {
                 return Err(LatticeError::InvalidTraversal(
                     "compiled paged source expected persistent image".to_string(),
                 ));
@@ -147,13 +151,28 @@ impl<T: ImageExprValue> CompiledEvalContext<T> {
     ) -> Result<&'a mut PagedImage<T>, LatticeError> {
         if self.opened_sources[source_id].is_none() {
             let source = &arena.sources[source_id];
-            let CompiledImageSourceKind::Paged { path, cache_bytes } = &source.kind else {
+            let CompiledImageSourceKind::Paged {
+                path,
+                cache_bytes,
+                lock_reads,
+            } = &source.kind
+            else {
                 return Err(LatticeError::InvalidTraversal(
                     "compiled paged source expected persistent image".to_string(),
                 ));
             };
-            let image = PagedImage::<T>::open_with_cache(path.as_path(), *cache_bytes)
-                .map_err(|e| LatticeError::Table(e.to_string()))?;
+            #[cfg(unix)]
+            let image = if *lock_reads {
+                PagedImage::<T>::open_read_locked_with_cache(path.as_path(), *cache_bytes)
+            } else {
+                PagedImage::<T>::open_with_cache(path.as_path(), *cache_bytes)
+            };
+            #[cfg(not(unix))]
+            let image = {
+                let _ = lock_reads;
+                PagedImage::<T>::open_with_cache(path.as_path(), *cache_bytes)
+            };
+            let image = image.map_err(|e| LatticeError::Table(e.to_string()))?;
             self.opened_sources[source_id] = Some(image);
         }
         Ok(self.opened_sources[source_id]
@@ -181,7 +200,9 @@ impl<T: ImageExprValue> CompiledImageSource<T> {
             }
             CompiledImageSourceKind::Sections(source) => (source.read)(start, shape, stride)
                 .map_err(|error| LatticeError::Table(error.to_string())),
-            CompiledImageSourceKind::Paged { .. } if stride.iter().all(|&step| step == 1) => ctx
+            CompiledImageSourceKind::Paged {
+                lock_reads: false, ..
+            } if stride.iter().all(|&step| step == 1) => ctx
                 .source_tiled_io_mut(arena, source_id)?
                 .get_slice::<T>(start, shape)
                 .map_err(|e| LatticeError::Table(e.to_string())),
@@ -473,8 +494,20 @@ impl<T: ImageExprValue> CompileCtx<T> {
                 && let Some(path) = paged.name()
             {
                 paged.flush_pixels_for_reopen()?;
+                #[cfg(unix)]
+                let lock_reads = paged.has_lock(casa_tables::LockType::Read);
+                #[cfg(not(unix))]
+                let lock_reads = false;
                 if let Some(&source_id) = self.paged_source_ids.get(path) {
-                    self.sources[source_id].reference_count += 1;
+                    let source = &mut self.sources[source_id];
+                    source.reference_count += 1;
+                    if let CompiledImageSourceKind::Paged {
+                        lock_reads: existing,
+                        ..
+                    } = &mut source.kind
+                    {
+                        *existing |= lock_reads;
+                    }
                     return Ok(source_id);
                 }
                 let cursor_shape = clamp_cursor_shape(&paged.nice_cursor_shape(), paged.shape());
@@ -490,6 +523,7 @@ impl<T: ImageExprValue> CompileCtx<T> {
                             &cursor_shape,
                             paged.cache_bytes(),
                         )?,
+                        lock_reads,
                     },
                     tile_shape: Some(paged.tile_shape().to_vec()),
                     reference_count: 1,
@@ -3615,6 +3649,48 @@ mod tests {
             compiled.arena.sources[0].tile_shape.as_deref(),
             Some(&[2, 2, 2][..])
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compiled_locked_source_reacquires_read_lock_for_pixel_sections() {
+        let directory = tempfile::tempdir().unwrap();
+        let initial = make_paged_image(
+            &directory,
+            "locked.image",
+            vec![4, 4],
+            vec![2, 2],
+            (0..16).map(|value| value as f32).collect(),
+        );
+        let path = initial.name().unwrap().to_path_buf();
+        drop(initial);
+        let locked = PagedImage::<f32>::open_read_locked_with_cache(&path, 0).unwrap();
+        let unlocked = PagedImage::<f32>::open(&path).unwrap();
+        let expressions = [(&unlocked, &locked), (&locked, &unlocked)].map(|(first, second)| {
+            ImageExprBuilder::from_image(first)
+                .unwrap()
+                .add_image(second)
+                .unwrap()
+                .compile()
+                .unwrap()
+        });
+        drop((locked, unlocked));
+
+        for expression in expressions {
+            let arena = &expression.arena;
+            assert_eq!(arena.sources.len(), 1);
+            let mut context = CompiledEvalContext::new(arena.sources.len());
+            let pixels = arena.sources[0]
+                .read_slice_uncached(arena, &mut context, 0, &[0, 0], &[2, 2], &[1, 1])
+                .unwrap();
+            assert_eq!(pixels.shape(), [2, 2]);
+            assert!(
+                context.opened_sources[0]
+                    .as_ref()
+                    .unwrap()
+                    .has_lock(casa_tables::LockType::Read)
+            );
+        }
     }
 
     #[test]

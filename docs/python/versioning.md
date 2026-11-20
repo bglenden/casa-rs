@@ -73,12 +73,6 @@ That means Python package compatibility has two layers:
 2. runtime contract compatibility with the resolved suite and its
    catalog-owned task executables
 
-The `casars.data` surface has its own narrower stability boundary in v1:
-
-- stable in v1: reading existing persistent images
-- stable in v1: writing pixel slices into existing persistent images with `Image.put_slice`
-- deferred from v1: image creation, coordinate-system authoring, and broader image metadata editing
-
 The direct object-surface contract published by `casars.data.protocol_info()`
 and `casars.data.schema_bundle()` is currently:
 
@@ -86,11 +80,12 @@ and `casars.data.schema_bundle()` is currently:
 - protocol version: `1`
 - surface kind: `object`
 
-Persistent table access uses the CASA tool `casars.tools.table`; the old
-`casars.data.Table` and `casars.Table` names were retired. The image data
-surface continues to cover file-backed reads and pixel updates.
+Persistent image and table access use `casars.tools.image` and
+`casars.tools.table`. The former `casars.data.Image`, `casars.Image`,
+`casars.data.Table` and `casars.Table` exports are retired. See the
+[Data API](data.md#migrate-an-existing-image-reader-or-writer) for image migration.
 
-The same bundle, still at protocol version 1, also describes the `casars.tools`
+The bundle describes the `casars.tools`
 classes (`simulator`, `measures`, `quanta`, `componentlist`, `image`,
 `coordsys`, `table`, `msmetadata`, `ms`). The bundle's Python projection
 names `casars.data` as its module; a tool's projection entry names its own

@@ -25,7 +25,10 @@ def invoke(binary,path,key,value):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__); parser.add_argument('binary',type=lambda path:Path(path).resolve()); args = parser.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('binary', type=lambda path: Path(path).resolve())
+    parser.add_argument('--exportfits', type=lambda path: Path(path).resolve())
+    args = parser.parse_args()
     root = Path('crates/casars-imexplore/tests/data/imhead_crpix'); expected = json.loads((root/'direction_edit_expected.json').read_text())
     assert version_string() == expected['casa_version']
     with tempfile.TemporaryDirectory(prefix='imhead-direction-interop-') as temp:
@@ -55,6 +58,13 @@ def main():
             if 'fits' in case:
                 fits=Path(temp)/f'{index}.fits';exportfits(str(path),fitsimage=str(fits),overwrite=True)
                 assert fits_fields(fits)==case['fits'],(index,fits_fields(fits),case['fits'])
+                if args.exportfits and case['get'] == 'B1950_VLA':
+                    output = Path(temp) / f'{index}-native.fits'
+                    request = {'surface': 'exportfits', 'values': {'imagename': str(path), 'fitsimage': str(output)}}
+                    result = subprocess.run([str(args.exportfits), '--json-run', '-'], input=json.dumps(request), text=True, capture_output=True)
+                    assert result.returncode == 0, (index, result.stderr)
+                    assert fits_fields(output) == case['fits'], (index, fits_fields(output), case['fits'])
+                    assert imhead(str(output), mode='get', hdkey='equinox') == case['get'], index
     print(f"CASA {version_string()} reopened {len(expected['cases'])} direction-frame edit results")
 
 

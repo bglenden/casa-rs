@@ -57,6 +57,7 @@ impl PyImageTool {
             if image.fits().is_some() {
                 return Err(raised("Failed AlwaysAssert to.isWritable()"));
             }
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             match (&mut *image, expression) {
                 (ImageHandle::Float(storage), ImageToolPixelExpression::Real(expression)) =>
                     with_storage!(storage, target => calculate_real_pixels(target.as_mut(), &expression)),

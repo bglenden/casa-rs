@@ -1,5 +1,8 @@
 """Pinned CASA coverage for native and lazy image calculator products."""
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +38,46 @@ def product_sources(tmp_path, monkeypatch):
     assert coordinates.done()
     assert source.done()
     return casa, pixels, real_beam
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+@pytest.mark.parametrize("named_mask", [False, True])
+def test_imagecalc_lazy_releases_and_reacquires_native_input_lock(product_sources, named_mask):
+    casa, _, _ = product_sources
+    writer = """
+import sys
+from casatools import image
+from numpy import full
+source = image()
+assert source.open(sys.argv[1])
+acquired = source.lock(writelock=True, nattempts=1)
+assert acquired == (sys.argv[2] == "write")
+if acquired:
+    assert source.putchunk(full((3, 4), 7.0))
+assert source.done()
+"""
+    for backend in (casa, tools):
+        name = f"{backend.__name__}.im"
+        factory = backend.image()
+        assert factory.fromshape(name, [3, 4])
+        assert factory.calcmask("T", name="selected")
+        assert factory.done()
+        operand = f"{name}:selected" if named_mask else name
+        result = factory.imagecalc(pixels=f'"{operand}" + 1')
+        try:
+            np.testing.assert_array_equal(result.haslock(), [True, False])
+            subprocess.run([sys.executable, "-c", writer, name, "blocked"],
+                           check=True, capture_output=True, timeout=10)
+            assert result.unlock()
+            np.testing.assert_array_equal(result.haslock(), [False, False])
+            subprocess.run([sys.executable, "-c", writer, name, "write"],
+                           check=True, capture_output=True, timeout=10)
+            np.testing.assert_array_equal(result.getchunk(), np.full((3, 4), 8.0))
+            np.testing.assert_array_equal(result.haslock(), [True, False])
+            assert result.lock(writelock=True, nattempts=1)
+            np.testing.assert_array_equal(result.haslock(), [True, True])
+        finally:
+            assert result.done()
 
 
 @pytest.mark.parametrize(

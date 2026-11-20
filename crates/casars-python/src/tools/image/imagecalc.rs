@@ -188,7 +188,12 @@ impl PyImageTool {
             };
             let inputs = ImageToolExpressionInputs::resolve(pixels).map_err(raised)?;
             let retained = AttachedImage::open_expression_inputs(inputs.paths())?;
-            let expression = inputs.compile().map_err(raised)?;
+            let expression = if outfile.is_empty() {
+                inputs.compile_lazy()
+            } else {
+                inputs.compile()
+            }
+            .map_err(raised)?;
             if !outfile.is_empty() && !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
                 return Err(raised(format!("Exception: File {outfile} exists, and the user does not want to remove it..")));
             }

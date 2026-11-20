@@ -11,9 +11,9 @@ use casa_ms::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest,
     FlagSummaryOptions, QuackMode, calculate_flagdata_path, flagdata_empty_record,
     flagdata_named_summary_record, flagdata_path, flagdata_task_schema_bundle, ms_task_success,
-    parse_numeric_id_selector, task_selection_text,
+    task_selection_text,
 };
-use casa_provider_contracts::ParameterValue;
+use casa_provider_contracts::{NumpyScalarType, ParameterValue, python_repr};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
@@ -101,11 +101,17 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
             );
         }
     };
+    let (quackinterval, quackmode, quackincrement) = quack_options(task)?;
+    if mode == FlagDataMode::Quack && quackmode == QuackMode::Disabled {
+        tracing::warn!("quack mode and interval require supported scalar options");
+    }
     Ok(FlagDataRequest {
         selection: selection(task, &spw)?,
+        casa_row_selection: true,
         spw: (!spw.is_empty()).then_some(spw),
         mode,
         action,
+        autocorr: task.flag("autocorr")?,
         data_column: data_column(&task.required_text("datacolumn")?, mode)?,
         flagbackup: task.flag("flagbackup")?,
         summary_options: FlagSummaryOptions {
@@ -121,8 +127,9 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
         clipzeros: task.flag("clipzeros")?,
         clipminmax,
         clipoutside,
-        quackinterval: task.number("quackinterval")?,
-        quackmode: quackmode(&task.required_text("quackmode")?)?,
+        quackinterval,
+        quackmode,
+        quackincrement,
         timecutoff: task.number("timecutoff")?,
         freqcutoff: task.number("freqcutoff")?,
         timedevscale: task.number("timedevscale")?,
@@ -138,47 +145,64 @@ fn flagdata_request(task: &TaskInvocation<'_>) -> Result<FlagDataRequest, TaskFa
     })
 }
 
-/// The row selection of `spw`, `field`, `scan` and `antenna`.
+/// The row and channel selection passed to the flagging engine.
 fn selection(task: &TaskInvocation<'_>, spw: &str) -> Result<MsSelection, TaskFailure> {
-    let mut selection = MsSelection::new();
+    let field = task_selection_text(task, "field")?;
+    if !field.is_empty() && field.trim().is_empty() {
+        // The CASA lexer accepts a space token, even when followed by an
+        // unrecognized non-ASCII byte. Other whitespace alone is an error.
+        let prefix = field
+            .split(|character: char| !character.is_ascii())
+            .next()
+            .unwrap_or_default();
+        if prefix.is_empty() || !prefix.bytes().all(|byte| byte == b' ') {
+            return Err(TaskFailure::execution(format!(
+                "Field Expression: invalid whitespace selector {field:?}"
+            ))
+            .at("field"));
+        }
+    }
+    let selector = |name| -> Result<Option<String>, TaskFailure> {
+        let text = task_selection_text(task, name)?;
+        Ok((!text.is_empty()).then_some(text))
+    };
+    let mut selection = MsSelection {
+        field: (!field.is_empty()).then_some(field),
+        scan: selector("scan")?,
+        antenna: selector("antenna")?,
+        timerange: selector("timerange")?,
+        observation: observation_text(task)?,
+        array: selector("array")?,
+        feed: selector("feed")?,
+        intent: selector("intent")?,
+        uvrange: selector("uvrange")?,
+        ..MsSelection::default()
+    };
     if !spw.is_empty() {
         selection = selection
             .spw_selector(spw)
             .map_err(|error| TaskFailure::validation(error.to_string()).at("spw"))?;
     }
-    for name in ["field", "scan"] {
-        let text = task_selection_text(task, name)?;
-        if text.is_empty() {
-            continue;
-        }
-        let ids = parse_numeric_id_selector(&text, name)
-            .map_err(|error| TaskFailure::validation(error.to_string()).at(name))?;
-        selection = match name {
-            "field" => selection.field(&ids),
-            _ => selection.scan(&ids),
-        };
-    }
-    let antenna = task_selection_text(task, "antenna")?;
-    if !antenna.is_empty() {
-        selection = antenna_selection(selection, &antenna);
-    }
     Ok(selection)
 }
 
-/// Antenna ids when every item is one, names otherwise.
-fn antenna_selection(selection: MsSelection, value: &str) -> MsSelection {
-    let parts = value
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    match parts
-        .iter()
-        .map(|part| part.parse::<i32>())
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(ids) => selection.antenna(&ids),
-        Err(_) => selection.antenna_name(&parts),
+fn observation_text(task: &TaskInvocation<'_>) -> Result<Option<String>, TaskFailure> {
+    let Some(value) = task.value("observation") else {
+        return Ok(None);
+    };
+    let value = match value {
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            value,
+        } => value,
+        value => value,
+    };
+    match value {
+        ParameterValue::String(text) => Ok((!text.is_empty()).then(|| text.clone())),
+        ParameterValue::Integer(_) | ParameterValue::Bool(_) => Ok(Some(python_repr(value))),
+        _ => Err(
+            TaskFailure::validation("observation must be a string or integer").at("observation"),
+        ),
     }
 }
 
@@ -219,15 +243,81 @@ fn data_column(text: &str, mode: FlagDataMode) -> Result<FlagDataColumn, TaskFai
     }
 }
 
-/// CASA's `quackmode`: `beg` flags the first `quackinterval` of each scan
-/// and `endb` the last; `end` and `tail`, which flag all but those, are
-/// #978.
-fn quackmode(text: &str) -> Result<QuackMode, TaskFailure> {
-    match text.to_ascii_lowercase().as_str() {
-        "beg" => Ok(QuackMode::Beg),
-        "endb" => Ok(QuackMode::End),
-        "end" | "tail" => Err(not_yet("quackmode", text)),
-        _ => Err(unknown("quackmode", text, "'beg', 'endb', 'end' or 'tail'")),
+fn quack_options(task: &TaskInvocation<'_>) -> Result<(f64, QuackMode, bool), TaskFailure> {
+    let interval = match task.value("quackinterval") {
+        Some(ParameterValue::Float(value)) => Some(*value),
+        Some(ParameterValue::Integer(value)) => Some(*value as f64),
+        Some(ParameterValue::Bool(value)) => Some(f64::from(u8::from(*value))),
+        Some(ParameterValue::Array(items))
+            if items.iter().all(|item| {
+                matches!(
+                    item,
+                    ParameterValue::Float(_) | ParameterValue::Integer(_) | ParameterValue::Bool(_)
+                )
+            }) =>
+        {
+            None
+        }
+        _ => {
+            return Err(TaskFailure::validation(
+                "quackinterval must be a number or numeric vector",
+            )
+            .at("quackinterval"));
+        }
+    };
+    let increment = match task.value("quackincrement") {
+        Some(ParameterValue::Bool(value)) => Some(*value),
+        Some(ParameterValue::Array(items))
+            if items
+                .iter()
+                .all(|item| matches!(item, ParameterValue::Bool(_))) =>
+        {
+            None
+        }
+        _ => {
+            return Err(TaskFailure::validation(
+                "quackincrement must be a Boolean or Boolean vector",
+            )
+            .at("quackincrement"));
+        }
+    };
+    let requested_mode = match task.value("quackmode") {
+        Some(ParameterValue::String(text)) => quackmode(text),
+        Some(ParameterValue::Array(items))
+            if items
+                .iter()
+                .all(|item| matches!(item, ParameterValue::String(_))) =>
+        {
+            QuackMode::Disabled
+        }
+        _ => {
+            return Err(
+                TaskFailure::validation("quackmode must be a string or string vector")
+                    .at("quackmode"),
+            );
+        }
+    };
+    // The wrapper admits correctly typed vectors, but the CASA agent
+    // requires scalar options before it starts.
+    let mode = if interval.is_some() && increment.is_some() {
+        requested_mode
+    } else {
+        QuackMode::Disabled
+    };
+    Ok((
+        interval.unwrap_or_default(),
+        mode,
+        increment.unwrap_or_default(),
+    ))
+}
+
+fn quackmode(text: &str) -> QuackMode {
+    match text {
+        "beg" => QuackMode::Beg,
+        "endb" => QuackMode::End,
+        "end" => QuackMode::BeforeEnd,
+        "tail" => QuackMode::Tail,
+        _ => QuackMode::Disabled,
     }
 }
 
@@ -349,12 +439,54 @@ mod tests {
     }
 
     #[test]
+    fn scan_edge_options_preserve_cli_switches_and_numeric_intervals() {
+        let request = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "quack",
+            "--quackmode",
+            "tail",
+            "--quackinterval",
+            "2.5",
+            "--quackincrement",
+        ])
+        .unwrap();
+        assert_eq!(request.quackmode, QuackMode::Tail);
+        assert_eq!(request.quackinterval, 2.5);
+        assert!(request.quackincrement);
+
+        let request = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "quack",
+            "--quackmode",
+            "end",
+            "--no-quackincrement",
+        ])
+        .unwrap();
+        assert_eq!(request.quackmode, QuackMode::BeforeEnd);
+        assert!(!request.quackincrement);
+
+        let error = request_for(&[
+            "--vis",
+            "in.ms",
+            "--mode",
+            "quack",
+            "--quackinterval",
+            "typo",
+        ])
+        .unwrap_err();
+        assert_eq!(error.parameter.as_deref(), Some("quackinterval"));
+    }
+
+    #[test]
     fn casa_values_not_implemented_yet_name_978() {
         for (name, value) in [
             ("--mode", "shadow"),
             ("--mode", "list"),
             ("--datacolumn", "MODEL"),
-            ("--quackmode", "tail"),
         ] {
             let error = request_for(&["--vis", "in.ms", name, value]).unwrap_err();
             assert!(error.message.contains("#978"), "{name} {value}: {error:?}");

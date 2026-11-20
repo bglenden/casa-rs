@@ -13,8 +13,8 @@ impl PyImageTool {
     fn calcmask(&self, py: Python<'_>, mask: &str, name: &str, asdefault: bool) -> PyResult<bool> {
         py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else { return Ok(false) };
-            let mut image = image.lock();
+            let Some(attachment) = state.image.as_ref() else { return Ok(false) };
+            let mut image = attachment.lock();
             let kind = image.image_type_name();
             if !mask.is_empty() && matches!(kind, "FITSImage" | "ImageExpr") {
                 return Err(raised(format!("Exception: Cannot make requested mask for this image type which is {kind}.")));
@@ -22,6 +22,7 @@ impl PyImageTool {
             if mask.is_empty() {
                 return Err(raised("Exception: You must specify an expression."));
             }
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             let values = evaluate_image_tool_mask(mask, image.shape()).map_err(raised)?;
             let generated;
             let mask_name = if name.is_empty() {

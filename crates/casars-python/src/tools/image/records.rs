@@ -55,10 +55,11 @@ impl PyImageTool {
         let record = table::casa_record(py, Some(info))?;
         py.detach(|| {
             let state = self.state();
-            let Some(image) = state.image.as_ref() else {
+            let Some(attachment) = state.image.as_ref() else {
                 return Ok(false);
             };
-            let mut image = image.lock();
+            let mut image = attachment.lock();
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_misc_info(record)))
                 .map_err(raised)?;
             if state.history {
@@ -90,9 +91,9 @@ impl PyImageTool {
                 } else {
                     format!("::{origin}")
                 };
-                let mut image = image.lock();
-                image.append_history_at(&location, &messages)?;
-                image.save().map_err(raised)?;
+                let mut handle = image.lock();
+                image.check_bound_name(&handle)?;
+                handle.append_history_at(&location, &messages)?;
             }
             Ok::<_, PyErr>(true)
         })?;

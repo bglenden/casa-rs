@@ -1,5 +1,6 @@
 """The public image calculator against native products from pinned CASA."""
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,19 @@ def calculator_sources(tmp_path, monkeypatch):
     assert image.tofits("source.fits")
     assert image.done()
     return casa, source
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_calc_takes_native_write_lock_after_unlock(calculator_sources):
+    casa, _ = calculator_sources
+    for backend in (casa, tools):
+        image = backend.image()
+        assert image.fromshape(f"{backend.__name__}.im", [2, 2])
+        assert image.unlock()
+        np.testing.assert_array_equal(image.haslock(), [False, False])
+        assert image.calc("1", verbose=False)
+        np.testing.assert_array_equal(image.haslock(), [True, True])
+        assert image.done()
 
 
 @pytest.mark.parametrize("complex_target", [False, True])

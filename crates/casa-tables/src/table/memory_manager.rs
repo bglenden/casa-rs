@@ -3,11 +3,8 @@
 
 use std::fs;
 
-use crate::storage::data_type::CasacoreDataType;
-use crate::storage::stman_array_file::make_empty_array;
 use crate::storage::table_control::{TableDatContents, write_table_dat};
 use crate::storage::{DataManagerInfo, StorageError, TABLE_CONTROL_FILE, TABLE_INFO_FILE};
-use casa_types::ScalarValue;
 
 use super::*;
 
@@ -120,7 +117,11 @@ impl Table {
         for manager in &mut snapshot.dm_info {
             manager.name = MANAGER.into();
         }
-        let default = default_row(snapshot.schema.as_ref().expect("memory table has a schema"));
+        let default = snapshot
+            .schema
+            .as_ref()
+            .expect("memory table has a schema")
+            .default_row();
         let inner = TableImpl::with_rows_keywords_and_schema(
             vec![default; rows],
             Vec::new(),
@@ -142,40 +143,5 @@ impl Table {
             #[cfg(unix)]
             lock_state: None,
         }
-    }
-}
-
-fn default_row(schema: &TableSchema) -> RecordValue {
-    let value = |column: &ColumnSchema| match (column.column_type(), column.data_type()) {
-        (ColumnType::Scalar, Some(ty)) => Some(Value::Scalar(zero(ty))),
-        (ColumnType::Array(ArrayShapeContract::Fixed { shape }), Some(ty)) => Some(
-            make_empty_array(CasacoreDataType::from_primitive_type(ty, false), shape),
-        ),
-        _ => None,
-    };
-    RecordValue::new(
-        schema
-            .columns()
-            .iter()
-            .filter_map(|col| value(col).map(|value| RecordField::new(col.name(), value)))
-            .collect(),
-    )
-}
-
-fn zero(ty: PrimitiveType) -> ScalarValue {
-    use PrimitiveType::*;
-    match ty {
-        Bool => ScalarValue::Bool(false),
-        UInt8 => ScalarValue::UInt8(0),
-        UInt16 => ScalarValue::UInt16(0),
-        UInt32 => ScalarValue::UInt32(0),
-        Int16 => ScalarValue::Int16(0),
-        Int32 => ScalarValue::Int32(0),
-        Int64 => ScalarValue::Int64(0),
-        Float32 => ScalarValue::Float32(0.0),
-        Float64 => ScalarValue::Float64(0.0),
-        Complex32 => ScalarValue::Complex32(Default::default()),
-        Complex64 => ScalarValue::Complex64(Default::default()),
-        String => ScalarValue::String(Default::default()),
     }
 }

@@ -242,9 +242,27 @@ impl SpectralCoordinate {
         start: usize,
         length: usize,
     ) -> Result<bool, CoordinateError> {
+        Self::subimage_tabular_record_with_stride(record, start, length, 1)
+    }
+
+    /// Rebuild a tabular spectral record for a strided image section.
+    ///
+    /// # Errors
+    /// Returns an error if the lookup table or section is invalid.
+    pub fn subimage_tabular_record_with_stride(
+        record: &mut RecordValue,
+        start: usize,
+        length: usize,
+        stride: usize,
+    ) -> Result<bool, CoordinateError> {
         let Some(Value::Record(table)) = record.get("tabular") else {
             return Ok(false);
         };
+        if length == 0 || stride == 0 {
+            return Err(CoordinateError::InvalidRecord(
+                "tabular spectral image section needs a positive length and stride".into(),
+            ));
+        }
         let table_unit = get_optional_vec_string(table, "units")
             .and_then(|units| units.into_iter().next())
             .unwrap_or_else(|| "Hz".into());
@@ -263,15 +281,16 @@ impl SpectralCoordinate {
             / frequency_unit_scale(&table_unit).ok_or_else(|| {
                 CoordinateError::InvalidRecord("invalid tabular spectral unit".into())
             })?;
-        let count = if world_values.len() == 1 {
-            1
-        } else {
-            length.max(2)
-        };
+        let count = if world_values.len() == 1 { 1 } else { length };
         let values = (0..count)
             .map(|pixel| {
-                interpolate(pixel_values, world_values, (start + pixel) as f64)
-                    .map(|world| world * factor)
+                let source = pixel
+                    .checked_mul(stride)
+                    .and_then(|offset| start.checked_add(offset))
+                    .ok_or_else(|| {
+                        CoordinateError::InvalidRecord("spectral image section overflows".into())
+                    })?;
+                interpolate(pixel_values, world_values, source as f64).map(|world| world * factor)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let increment = (values[count - 1] - values[0]) / (count - 1).max(1) as f64;
@@ -320,7 +339,10 @@ impl SpectralCoordinate {
     pub fn fits_linearized_axis_hz(&self) -> Result<(f64, f64, f64), CoordinateError> {
         if let SpectralMapping::Tabular { pixel_values, .. } = &self.mapping {
             let first = self.world_frequency_hz(pixel_values[0])?;
-            let second = self.world_frequency_hz(pixel_values[1])?;
+            let second = match pixel_values.get(1) {
+                Some(&pixel) => self.world_frequency_hz(pixel)?,
+                None => first,
+            };
             Ok((pixel_values[0], first, second - first))
         } else {
             let pixel = self.reference_pixel()[0];
@@ -990,6 +1012,27 @@ mod tests {
         // 10 channels above reference
         let world = coord.to_world(&[110.0]).unwrap();
         assert!((world[0] - 1.01e9).abs() < 1.0);
+    }
+
+    #[test]
+    fn singleton_tabular_subimage_writes_the_casa_fits_frequency() {
+        let coordinate = SpectralCoordinate::from_tabular(
+            FrequencyRef::LSRK,
+            vec![0.0, 1.0, 2.0, 3.0],
+            vec![1.4e9, 1.401e9, 1.4025e9, 1.4043e9],
+            1.4e9,
+            1e6,
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let mut record = coordinate.to_record();
+        assert!(SpectralCoordinate::subimage_tabular_record(&mut record, 2, 1).unwrap());
+        let cropped = SpectralCoordinate::from_record(&record).unwrap();
+        assert_eq!(
+            cropped.fits_linearized_axis_hz().unwrap(),
+            (0.0, 1.4025e9, 0.0)
+        );
     }
 
     #[test]

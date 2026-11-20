@@ -5,7 +5,7 @@ use std::path::Path;
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType};
 use casa_images::{ImagePixel, PagedImage};
-use casa_tables::{Table, TableOptions};
+use casa_ms::voltage_pattern::VoltagePatternTable;
 use casa_types::{ArrayValue, Complex32, RecordValue, Value};
 use ndarray::{Array2, Axis, Ix2};
 
@@ -18,15 +18,9 @@ pub(super) struct ImageBeams {
 
 impl ImageBeams {
     pub(super) fn load(path: &Path, row: &FourierRow<'_>) -> Result<Self, GainSolveError> {
-        let table = Table::open(TableOptions::new(path)).map_err(model_error)?;
-        let records = (0..table.row_count())
-            .map(|row| {
-                table
-                    .cell_accessor(row, "pbdescription")
-                    .and_then(|cell| cell.record())
-                    .map_err(model_error)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let records = VoltagePatternTable::open(path)
+            .and_then(|table| table.definitions())
+            .map_err(model_error)?;
         let patterns = records
             .iter()
             .filter(|record| matches!(record_text(record, "name"), Ok("IMAGE")))
@@ -71,8 +65,11 @@ impl ImageBeams {
         self.records.len()
     }
 
-    pub(super) fn screens(&self) -> Result<Vec<ImageBeam>, GainSolveError> {
-        self.records.iter().map(ImageBeam::load).collect()
+    pub(super) fn screens(&self, legacy: bool) -> Result<Vec<ImageBeam>, GainSolveError> {
+        self.records
+            .iter()
+            .map(|record| ImageBeam::load(record, legacy))
+            .collect()
     }
 }
 
@@ -199,13 +196,20 @@ pub(super) struct ImageBeam {
 }
 
 impl ImageBeam {
-    fn load(record: &RecordValue) -> Result<Self, GainSolveError> {
-        let (real, imaginary) = match record.get("realimage") {
-            Some(_) => {
+    fn load(record: &RecordValue, legacy: bool) -> Result<Self, GainSolveError> {
+        let (real, imaginary) = match (record.get("realimage"), record.get("imagimage"), legacy) {
+            (Some(_), Some(_), _) | (Some(_), _, false) => {
                 let real = ImagePlane::load::<f32>(record_text(record, "realimage")?, None, |v| {
                     Complex32::new(v, 0.)
                 })?;
-                let path = record_text(record, "imagimage")?;
+                // Use the standard record field when a legacy table lacks
+                // the compatibility alias that CASA's reader expects.
+                let key = if legacy && record.get("imagim").is_some() {
+                    "imagim"
+                } else {
+                    "imagimage"
+                };
+                let path = record_text(record, key)?;
                 let imaginary = if path.is_empty() {
                     None
                 } else {
@@ -225,7 +229,7 @@ impl ImageBeam {
                 };
                 (real, imaginary)
             }
-            None => (
+            _ => (
                 ImagePlane::load::<Complex32>(record_text(record, "compleximage")?, None, |v| v)?,
                 None,
             ),

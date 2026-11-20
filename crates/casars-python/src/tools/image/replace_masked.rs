@@ -66,6 +66,7 @@ impl PyImageTool {
             if image.fits().is_some() {
                 return Err(raised("This image is not writable.  It is probably a reference or expression virtual image"));
             }
+            attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             let selection = MaskReplacementOptions {
                 expression,
                 region: region.as_ref().map(Region::as_region),

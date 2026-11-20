@@ -12,7 +12,7 @@ use super::PyImageTool;
 use super::attachment::{self, AttachedImage};
 use super::handle::raised;
 
-fn open_image(infile: &str) -> PyResult<AttachedImage> {
+pub(super) fn open_image(infile: &str) -> PyResult<AttachedImage> {
     if infile.is_empty() {
         return Err(raised("Exception: File name is empty."));
     }
@@ -21,7 +21,7 @@ fn open_image(infile: &str) -> PyResult<AttachedImage> {
         return Err(raised(format!("Exception: File {infile} does not exist..")));
     }
     let path = std::path::absolute(path).map_err(raised)?;
-    AttachedImage::open(&mut attachment::registry(), &path)
+    AttachedImage::open(&path)
 }
 
 #[pymethods]
