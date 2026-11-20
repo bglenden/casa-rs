@@ -268,6 +268,12 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             return run(name, **values).value
         except TaskParameterError as error:
             message = error.completion.message or ""
+            if error.completion.parameter == "outputvis":
+                if message.startswith("Output MS "):
+                    raise OSError(message) from error
+                if message.startswith("input and output MeasurementSet paths must differ: "):
+                    path = arguments["outputvis"]
+                    raise OSError(f"Output MS {path} already exists - will not overwrite it.") from error
             if error.completion.parameter == "spw" and message.startswith("invalid spectral-window selection "):
                 raise RuntimeError(message) from error
             if error.completion.parameter == "datacolumn" and message.startswith("unsupported datacolumn "):
@@ -721,8 +727,10 @@ def _coerce_ms_transform_selectors(task: str, values: dict[str, Any]) -> None:
         if name == "observation" or (task == "split" and name in ("array", "feed")):
             values[name] = converted
         elif record_type is None:
-            # CASA's tool record conversion omits this scalar variant.
-            del values[name]
+            # The Rust tool omits NumPy integer selectors where CASA
+            # does. Keep their values available for provenance.
+            if name == "intent":
+                del values[name]
         else:
             raise RuntimeError(
                 "RecordRep::get_pointer - incorrect data type String   "
@@ -744,7 +752,6 @@ def _coerce_ms_channel_width(task: str, values: dict[str, Any]) -> None:
     if isinstance(value, integers):
         return
     if name == "width" and isinstance(value, str):
-        values[name] = int(value) if value.isdigit() else 1
         return
     if not isinstance(value, (str, bytes)):
         try:

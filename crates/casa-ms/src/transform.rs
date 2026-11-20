@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use casa_tables::{
     ColumnOverrides, ColumnType, StreamedScalarType, StreamedTiledShapeValueType, Table,
-    TableError, TableOptions,
+    TableError, TableInfo, TableOptions,
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
@@ -40,9 +40,11 @@ use crate::write_session::{
 
 mod channel_average;
 mod correlation_metadata;
+mod flag_commands;
 mod main_arrays;
 mod selection_metadata;
 mod spectral_metadata;
+mod task_history;
 mod time_average;
 mod time_projection;
 mod visibility_columns;
@@ -50,6 +52,7 @@ mod visibility_columns;
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 use main_arrays::MainArrayBlock;
+pub use task_history::TransformTaskHistory;
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
 
@@ -110,6 +113,11 @@ pub struct MsTransformTaskOptions {
     pub channel_widths: Option<Vec<usize>>,
     /// Average visibilities along each baseline within this time bin.
     pub time_averaging: Option<TimeAverageOptions>,
+    /// Provenance rows to append to the output's HISTORY table.
+    pub history: Option<TransformTaskHistory>,
+    /// Supplied bin widths used when rewriting saved FLAG_CMD selectors.
+    /// CASA interprets them independently of visibility averaging.
+    pub flag_command_widths: Option<Vec<i64>>,
 }
 
 /// Time averaging parameters shared by the split and mstransform tasks.
@@ -334,6 +342,9 @@ fn materialize_transform(
     let mut physical_request = request.clone();
     physical_request.output_ms = target.staging_path().to_path_buf();
     let mut report = mstransform_staged(&physical_request, grammar, options)?;
+    if let Some(history) = &options.history {
+        task_history::append_task_history(&physical_request.output_ms, history)?;
+    }
     target
         .commit()
         .map_err(|error| MsTransformError::PrepareOutput {
@@ -582,6 +593,19 @@ fn mstransform_staged(
     );
     let stage_started_at = Instant::now();
     copy_subtables(&request.input_ms, &request.output_ms)?;
+    if grammar == RowGrammar::Transform
+        && (task_average || !matches!(request.spw.as_str(), "" | "*"))
+    {
+        flag_commands::rewrite(
+            &input,
+            &request.output_ms,
+            &request.spw,
+            &channel_selection,
+            normalized_width(request.width),
+            options.flag_command_widths.as_deref(),
+            options.channel_widths.as_deref(),
+        )?;
+    }
     maybe_log_transform_progress(
         "copy_subtables",
         stage_started_at.elapsed(),
@@ -1875,6 +1899,16 @@ fn materialize_empty_main_table(
             path: output_path.display().to_string(),
             source: Box::new(source),
         })?;
+    if grammar == RowGrammar::Transform {
+        table.set_info(TableInfo {
+            table_type: "Measurement Set".into(),
+            sub_type: "UVFITS".into(),
+            readme: vec![
+                "This is a MeasurementSet Table holding measurements from a Telescope".into(),
+                "This is a measurement set Table holding astronomical observations".into(),
+            ],
+        });
+    }
     let renamed_keywords = visibility
         .copies()
         .iter()
@@ -2162,6 +2196,17 @@ fn is_visibility_column(column: &str) -> bool {
         column,
         "DATA" | "CORRECTED_DATA" | "MODEL_DATA" | "FLOAT_DATA" | "LAG_DATA"
     )
+}
+
+fn open_staged_subtable_for_write(path: &Path) -> Result<Table, TableError> {
+    let options = TableOptions::new(path);
+    #[cfg(unix)]
+    return Table::open_with_lock(
+        options,
+        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait),
+    );
+    #[cfg(not(unix))]
+    Table::open(options)
 }
 
 fn copy_subtables(input_path: &Path, output_path: &Path) -> Result<(), MsTransformError> {
