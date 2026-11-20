@@ -12,7 +12,7 @@ use pyo3::types::{PyDict, PyString};
 use crate::convert::Variant;
 use crate::tools::table::casa_record;
 
-use super::beams::{image_info, image_info_record, plane_axes, stored_beam_record};
+use super::beams::{axis_length, image_info, image_info_record, plane_axes, stored_beam_record};
 use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
@@ -59,9 +59,25 @@ fn selected_image_info(original: &ImageHandle, selection: &Selection) -> PyResul
         return Ok(record);
     }
     let (spectral, stokes) = plane_axes(&original.coordinate_record())?;
-    let indices = |axis: Option<usize>, beams| match axis {
-        Some(axis) if beams > 1 => (0..selection.shape[axis])
-            .map(|index| (selection.start[axis] + index * selection.stride[axis]).min(beams - 1))
+    for (axis, planes, diagnostic) in [
+        (
+            spectral,
+            beams.n_channels(),
+            "Number of channels is not consistent",
+        ),
+        (
+            stokes,
+            beams.n_stokes(),
+            "Number of polarizations is not consistent",
+        ),
+    ] {
+        if planes != 1 && planes != axis_length(original, axis)? {
+            return Err(raised(diagnostic));
+        }
+    }
+    let indices = |axis: Option<usize>, planes| match axis {
+        Some(axis) if planes > 1 => (0..selection.shape[axis])
+            .map(|index| selection.start[axis] + index * selection.stride[axis])
             .collect::<Vec<_>>(),
         _ => vec![0],
     };

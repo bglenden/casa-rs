@@ -290,11 +290,6 @@ impl Selection {
             })
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| raised("Stokes coordinate does not cover the selected pixels"))?;
-        let first = f64::from(values[0].code());
-        record.upsert(
-            format!("worldreplace{}", &stored.field["stokes".len()..]),
-            Value::Array(ArrayValue::from_f64_vec(vec![first])),
-        );
         record.upsert(
             stored.field,
             Value::Record(CoordinateModel::from(StokesCoordinate::new(values)).to_record()),
