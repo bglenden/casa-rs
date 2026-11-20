@@ -28,6 +28,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='imhead-projection-interop-') as temp:
         for index, case in enumerate(expected['cases']):
             path = Path(temp) / f'{index}.im'; shutil.copytree(root / f"{case['image']}.im", path)
+            if 'initial' in case:
+                imhead(str(path), mode='put', hdkey='projection', hdvalue=case['initial'])
             tb = table(); tb.open(str(path)); before = plain(tb.getkeyword('coords')); tb.close()
             ia = image(); ia.open(str(path)); count = len(ia.history(list=False)); ia.done()
             request = {'surface': 'imhead', 'values': {'imagename': str(path), 'mode': 'put', 'hdkey': case['key'], 'hdvalue': case['value']}}
@@ -36,6 +38,11 @@ def main():
             assert imhead(str(path), mode='get', hdkey='projection') == case['get'], case
             tb.open(str(path)); after = plain(tb.getkeyword('coords')); tb.close()
             before['direction0']['projection'] = case['get']
+            before['direction0']['projection_parameters'] = case['parameters']
+            # WCSLIB and the native transform can round the pole differently.
+            saved_pole = after['direction0']['latpole']
+            assert math.isclose(saved_pole, case['latpole'], rel_tol=0, abs_tol=1e-12), (case, saved_pole)
+            before['direction0']['latpole'] = saved_pole
             assert before == after, (case, before, after)
             ia = image(); ia.open(str(path)); history = ia.history(list=False)[count:]
             assert len(history) == len(case['history']), (case, history)

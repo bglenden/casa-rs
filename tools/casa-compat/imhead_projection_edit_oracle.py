@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Capture CASA imhead zenithal projection edits."""
+"""Capture CASA imhead projection edits and their saved parameters."""
 import json
 import shutil
 import tempfile
 from pathlib import Path
 import numpy as np
 from casatasks import imhead
-from casatools import image, quanta, version_string
+from casatools import image, quanta, table, version_string
 
 
 def main():
@@ -24,15 +24,33 @@ def main():
     cases = [(source, 'projection', value) for source in ('normal', 'transposed') for value in ('SIN', 'TAN', 'ARC', 'ZEA', 'STG', 'tan')]
     cases += [('projection_pointing', 'projection', value) for value in ('TAN', 'ARC', 'ZEA', 'STG')]
     cases += [('normal', 'PROJECTION', 'ARC'), ('normal', 'projection', 'NCP'), ('normal', 'projection', 'bad'), ('normal', 'projection', 'T'), ('car', 'projection', 'CAR')]
+    cases += [(source, 'projection', target) for source in ('normal', 'car')
+              for target in ('AZP', 'SZP', 'AIR')]
+    cases += [('../imhead_projection/slant', 'projection', 'TAN'),
+              ('../imhead_projection/ncp', 'projection', 'ARC')]
+    cases += [(source, 'projection', 'SZP') for source in ('../imhead_projection/slant', '../imhead_projection/ncp')]
+    cases = [(*case, None) for case in cases]
+    cases += [('car', 'projection', target, 'AIR') for target in ('SIN', 'AZP')]
     expected = {'casa_version': version_string(), 'cases': []}
     with tempfile.TemporaryDirectory(prefix='imhead-projection-') as temp:
-        for index, (source, key, value) in enumerate(cases):
+        for index, (source, key, value, initial) in enumerate(cases):
             path = Path(temp) / f'{index}.im'; shutil.copytree(root / f'{source}.im', path)
+            if initial is not None:
+                imhead(str(path), mode='put', hdkey='projection', hdvalue=initial)
             ia = image(); ia.open(str(path)); count = len(ia.history(list=False)); ia.done()
             case = {'image': source, 'key': key, 'value': value}
+            if initial is not None:
+                case['initial'] = initial
             try: imhead(str(path), mode='put', hdkey=key, hdvalue=value)
-            except RuntimeError as error: case['error'] = str(error).split(' at File:', 1)[0]
+            except RuntimeError as error:
+                case['error'] = str(error).splitlines()[0]
             case['get'] = imhead(str(path), mode='get', hdkey='projection')
+            tb = table()
+            tb.open(str(path))
+            stored_direction = tb.getkeyword('coords')['direction0']
+            case['parameters'] = stored_direction['projection_parameters'].tolist()
+            case['latpole'] = stored_direction['latpole']
+            tb.close()
             ia = image(); ia.open(str(path)); case['history'] = [line.replace(str(path), '<IMAGE>') for line in ia.history(list=False)[count:]]
             cs = ia.coordsys(); rec = cs.torecord(); cs.done()
             pmap, wmap = rec['pixelmap0'], rec['worldmap0']
