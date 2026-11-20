@@ -2,7 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
-use casa_images::analysis::{ExportFitsRequest, ImageFitsExportOptions, export_attached_fits};
+use casa_images::analysis::{
+    ExportFitsRequest, ImageFitsExportOptions, export_attached_fits, validate_attached_fits_target,
+};
 use casa_images::image::image_history_entries;
 use pyo3::prelude::*;
 
@@ -54,6 +56,7 @@ impl PyImageTool {
             wavelength,
             airwavelength,
             beam_record: None,
+            operand_paths: &[],
         };
         py.detach(|| {
             let state = self.state();
@@ -66,15 +69,6 @@ impl PyImageTool {
                     "Only writing float-valued images to FITS is supported",
                 ));
             }
-            attachment.require_pixel_read_lock(&mut handle)?;
-            let ImageHandle::Float(storage) = &*handle else {
-                unreachable!("image storage stays fixed while locked");
-            };
-            let beams = attachment.beam_view();
-            let options = ImageFitsExportOptions {
-                beam_record: Some(beams.record()),
-                ..options
-            };
             let request = ExportFitsRequest {
                 imagename: handle.path().map_or_else(PathBuf::new, Path::to_path_buf),
                 fitsimage: PathBuf::from(outfile),
@@ -88,6 +82,25 @@ impl PyImageTool {
                 stokeslast,
                 history,
                 dropdeg,
+            };
+            let operand_paths = attachment.operand_paths();
+            validate_attached_fits_target(
+                &request,
+                handle
+                    .path()
+                    .into_iter()
+                    .chain(operand_paths.iter().map(PathBuf::as_path)),
+            )
+            .map_err(raised)?;
+            attachment.require_pixel_read_lock(&mut handle)?;
+            let ImageHandle::Float(storage) = &*handle else {
+                unreachable!("image storage stays fixed while locked");
+            };
+            let beams = attachment.beam_view();
+            let options = ImageFitsExportOptions {
+                beam_record: Some(beams.record()),
+                operand_paths,
+                ..options
             };
             let entries = if history {
                 match storage {

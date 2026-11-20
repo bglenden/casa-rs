@@ -32,7 +32,9 @@ mod tool_header;
 use publication::StagedFitsFile;
 use tool_export::Wavelength;
 
-pub use tool_export::{ImageFitsExportOptions, export_attached_fits};
+pub use tool_export::{
+    ImageFitsExportOptions, export_attached_fits, validate_attached_fits_target,
+};
 
 pub use tool_header::{ImageFitsHeader, image_fits_header, image_fits_header_with_beams};
 

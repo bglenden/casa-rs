@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -63,6 +64,80 @@ def test_lazy_imagecalc_export_reads_native_operand(casa, tmp_path):
         np.testing.assert_array_equal(reader.getchunk(), pixels + 1)
         assert reader.done()
         assert result.done()
+
+
+def test_lazy_export_preserves_native_and_fits_operands(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source = tools.image()
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    assert source.fromarray("source.im", pixels)
+    assert source.tofits("source.fits")
+    assert source.done()
+
+    for operand, target, message in (
+        ("source.im", tmp_path / "source.im" / "table.dat", "inside input image"),
+        ("source.fits", tmp_path / "source.fits", "matches or contains input image"),
+    ):
+        original = target.read_bytes()
+        result = source.imagecalc(pixels=f'"{operand}" + 1')
+        with pytest.raises(RuntimeError, match=message):
+            result.tofits(str(target), overwrite=True)
+        assert target.read_bytes() == original
+        np.testing.assert_array_equal(result.getchunk(), pixels + 1)
+        assert result.done()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
+def test_export_rejects_invalid_requests_while_a_writer_holds_the_lock(tmp_path):
+    path = tmp_path / "source.im"
+    target = tmp_path / "existing.fits"
+    target.write_bytes(b"existing output")
+    writer = tools.image()
+    assert writer.fromshape(str(path), [3, 4])
+    assert writer.unlock()
+    code = """
+import sys
+from pathlib import Path
+
+from casars import tools
+
+reader = tools.image()
+assert reader.open("source.im")
+assert reader.unlock()
+Path("ready").touch()
+assert sys.stdin.readline().strip() == "locked"
+for options, message in (
+    ({}, "FITS output already exists"),
+    ({"bitpix": 8, "overwrite": True}, "unsupported bitpix"),
+):
+    try:
+        reader.tofits("existing.fits", **options)
+    except RuntimeError as error:
+        assert message in str(error), error
+    else:
+        raise AssertionError("accepted invalid FITS request")
+assert reader.haslock().tolist() == [False, False]
+assert reader.done()
+"""
+    with subprocess.Popen(
+        [sys.executable, "-c", code], cwd=tmp_path,
+        stdin=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    ) as child:
+        try:
+            deadline = time.monotonic() + 10
+            ready = tmp_path / "ready"
+            while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert ready.exists()
+            assert writer.lock(writelock=True, nattempts=1)
+            _, stderr = child.communicate("locked\n", timeout=10)
+            assert child.returncode == 0, stderr
+            assert target.read_bytes() == b"existing output"
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.communicate(timeout=5)
+            writer.done()
 
 
 @pytest.mark.parametrize("persistent", [False, True])

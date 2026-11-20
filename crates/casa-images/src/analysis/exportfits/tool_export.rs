@@ -2,6 +2,7 @@
 //! Selection and spectral options specific to the public image tool.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use casa_coordinates::FitsValue;
 use casa_types::RecordValue;
@@ -32,6 +33,22 @@ pub struct ImageFitsExportOptions<'a> {
     pub airwavelength: bool,
     /// Saved restoring beams from the attached tool.
     pub beam_record: Option<&'a RecordValue>,
+    /// Resolved paths read by a lazy expression attachment.
+    pub operand_paths: &'a [PathBuf],
+}
+
+/// Check the destination of an attached image export before reading pixels.
+///
+/// # Errors
+/// Returns an error for invalid output options or a destination that aliases an input.
+pub fn validate_attached_fits_target<'a>(
+    request: &ExportFitsRequest,
+    inputs: impl IntoIterator<Item = &'a Path>,
+) -> Result<(), ImageError> {
+    for source in inputs {
+        ensure_outfile_does_not_alias_input(&request.fitsimage, source)?;
+    }
+    validate_output_target(request)
 }
 
 /// Write a selected part of an attached float image using the shared FITS writer.
@@ -42,10 +59,13 @@ pub fn export_attached_fits(
     history: &[ImageHistoryEntry],
     options: ImageFitsExportOptions<'_>,
 ) -> Result<FitsExportSummary, ImageError> {
-    if let Some(source) = image.name() {
-        ensure_outfile_does_not_alias_input(&request.fitsimage, source)?;
-    }
-    validate_output_target(request)?;
+    validate_attached_fits_target(
+        request,
+        image
+            .name()
+            .into_iter()
+            .chain(options.operand_paths.iter().map(PathBuf::as_path)),
+    )?;
     let wavelength = options.wavelength.then_some(if options.airwavelength {
         Wavelength::Air
     } else {
