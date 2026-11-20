@@ -640,9 +640,27 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
     /// Replaces a named mask.
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError>;
 
+    /// Creates a named mask with uniform validity.
+    fn create_filled_mask(&mut self, name: &str, value: bool) -> Result<(), ImageError> {
+        validate_new_mask_name(name, &self.mask_names())?;
+        self.put_mask(name, &ArrayD::from_elem(IxDyn(self.shape()), value))
+    }
+
     /// Whether an existing named mask accepts writes.
     fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
         Ok(self.mask_names().iter().any(|entry| entry == name))
+    }
+
+    /// Edit several sections of an existing mask through one writer.
+    fn with_mask_slice_writer(
+        &mut self,
+        name: &str,
+        edit: impl FnOnce(&mut MaskSliceWriter<'_>) -> Result<(), ImageError>,
+    ) -> Result<(), ImageError>
+    where
+        Self: Sized,
+    {
+        edit(&mut |data, start| self.put_mask_slice(name, data, start))
     }
 
     /// Write a unit-stride section of a named mask. New masks start false.
@@ -737,6 +755,9 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
         SubImageMut::with_stride(self, start, shape, stride)
     }
 }
+
+/// Write a contiguous section of a named mask at its image pixel origin.
+pub type MaskSliceWriter<'a> = dyn FnMut(&ArrayD<bool>, &[usize]) -> Result<(), ImageError> + 'a;
 
 /// Convenience alias for the common `Float` image case.
 pub type Image = PagedImage<f32>;
@@ -886,13 +907,22 @@ impl<T: ImagePixel> PagedImage<T> {
     }
 
     fn set_cache_bytes_shared(&self, max_cache_bytes: usize) -> Result<(), ImageError> {
-        self.max_cache_bytes.set(if max_cache_bytes == 0 {
+        // Cache replacement drops the previous handle. Surface any pending
+        // write error before reopening it with a different budget.
+        if self.tiled_io.is_some() {
+            self.flush_pixels_for_reopen()?;
+        }
+        let previous = self.max_cache_bytes.replace(if max_cache_bytes == 0 {
             DEFAULT_TILED_ARRAY_CACHE_BYTES
         } else {
             max_cache_bytes
         });
+        if let Err(error) = self.refresh_tiled_io() {
+            self.max_cache_bytes.set(previous);
+            return Err(error);
+        }
         self.persistent_masks.borrow_mut().clear();
-        self.refresh_tiled_io()
+        Ok(())
     }
 
     fn persistent_mask_relative_path(record: &RecordValue) -> Result<String, ImageError> {
@@ -2955,6 +2985,51 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
         PagedImage::put_mask(self, name, data)
     }
 
+    fn create_filled_mask(&mut self, name: &str, value: bool) -> Result<(), ImageError> {
+        validate_new_mask_name(name, &self.mask_names())?;
+        let Some(image_path) = &self.path else {
+            return self.put_mask(name, &ArrayD::from_elem(IxDyn(self.shape()), value));
+        };
+        let stage = tempfile::tempdir_in(image_path).map_err(|e| ImageError::Io(e.to_string()))?;
+        let staged_path = stage.path().join("mask");
+        let tiled = TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?;
+        let layout = PagedArray::<bool>::storage_layout(tiled, self.cache_bytes())?;
+        TiledArrayStorage::create_filled_bool_table(&staged_path, &layout, value)
+            .map_err(|e| ImageError::Table(e.to_string()))?;
+        casa_tables::publication::rename_without_replacing(&staged_path, &image_path.join(name))
+            .map_err(|e| ImageError::Io(e.to_string()))?;
+        self.register_paged_mask(name);
+        Ok(())
+    }
+
+    fn with_mask_slice_writer(
+        &mut self,
+        name: &str,
+        edit: impl FnOnce(&mut MaskSliceWriter<'_>) -> Result<(), ImageError>,
+    ) -> Result<(), ImageError> {
+        let record = match self.table.keywords().get(MASKS_KEYWORD) {
+            Some(Value::Record(masks)) => masks.get(name),
+            _ => None,
+        };
+        let (Some(image_path), Some(Value::Record(record))) = (&self.path, record) else {
+            return edit(&mut |data, start| self.put_mask_slice(name, data, start));
+        };
+        let relative_path = Self::persistent_mask_relative_path(record)?;
+        let path = casa_tables::add_directory(&relative_path, image_path);
+        let mut mask = PagedArray::<bool>::open_with_cache(path, self.cache_bytes())?;
+        if mask.shape() != self.shape() {
+            return Err(ImageError::ShapeMismatch {
+                expected: self.shape.clone(),
+                got: mask.shape().to_vec(),
+            });
+        }
+        let edited = edit(&mut |data, start| mask.put_slice(data, start).map_err(Into::into));
+        let flushed = mask.flush().map_err(Into::into);
+        // Other names can point at the same on-disk mask.
+        self.persistent_masks.borrow_mut().clear();
+        edited.and(flushed)
+    }
+
     fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
         let Some(Value::Record(masks)) = self.table.keywords().get(MASKS_KEYWORD) else {
             return Ok(false);
@@ -3491,6 +3566,20 @@ pub(crate) fn slice_mask_array(
         .collect();
     let view = mask.slice(slice_info.as_slice());
     Ok(view.to_owned())
+}
+
+fn validate_new_mask_name(name: &str, existing: &[String]) -> Result<(), ImageError> {
+    if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "Invalid mask name {name}"
+        )));
+    }
+    if existing.iter().any(|entry| entry == name) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "Mask {name} already exists"
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_mask_slice_write(

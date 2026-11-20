@@ -29,20 +29,26 @@ impl Region {
         value: Option<&Bound<'_, PyAny>>,
         method: &str,
     ) -> PyResult<Option<Self>> {
+        let region = Self::capture(py, value)?;
+        if let Some(Self::Record(record)) = &region
+            && !matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name)))
+                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"))
+        {
+            return Err(super::stub(method).unwrap_err());
+        }
+        Ok(region)
+    }
+
+    pub(super) fn capture(
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<Self>> {
         let Some(value) = value else {
             return Ok(None);
         };
         if let Ok(record) = value.cast::<PyDict>() {
             let record = casa_record(py, Some(record))?;
-            if record.is_empty() {
-                return Ok(None);
-            }
-            if !matches!(record.get("name"), Some(Value::Scalar(ScalarValue::String(name)))
-                if matches!(name.as_str(), "LCSlicer" | "LCBox" | "WCBox" | "WCPolygon" | "WCEllipsoid" | "WCUnion"))
-            {
-                return Err(super::stub(method).unwrap_err());
-            }
-            return Ok(Some(Self::Record(record)));
+            return Ok((!record.is_empty()).then_some(Self::Record(record)));
         }
         if let Ok(text) = value.cast::<PyString>() {
             let text = text.to_str()?;
