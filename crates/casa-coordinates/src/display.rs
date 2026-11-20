@@ -6,12 +6,13 @@
 //! axis with `", "`. This module reproduces that rendering for the
 //! forms those surfaces reach:
 //!
-//! - direction longitudes as hours `HH:MM:SS.sss` and latitudes as
-//!   signed `±DDD.MM.SS.sss` (casacore's `MVAngle` TIME and ANGLE
-//!   forms with the statistics surfaces' three decimals),
+//! - equatorial directions as sexagesimal coordinates and Galactic,
+//!   ecliptic, and horizontal directions as fixed decimal degrees,
 //! - Stokes parameters by name,
 //! - every other axis as C++'s default `ostream <<` rendering of the
 //!   world value with its unit appended directly.
+
+use casa_types::measures::direction::DirectionRef;
 
 use crate::coordinate::CoordinateModel;
 use crate::coordinate_system::CoordinateSystem;
@@ -76,9 +77,12 @@ pub fn format_world_display(
         let world = coord.to_world(&pixel[pixel_offset..pixel_offset + n])?;
         pixel_offset += n;
         match coord {
-            CoordinateModel::Direction(_) => {
-                fields.push(format_longitude_hours(world[0]));
-                fields.push(format_latitude_dms(world[1]));
+            CoordinateModel::Direction(direction) => {
+                fields.extend(direction_fields(
+                    direction.direction_ref(),
+                    world[0],
+                    world[1],
+                ));
             }
             CoordinateModel::Stokes(_) => {
                 let code = world.first().copied().unwrap_or_default() as i32;
@@ -96,6 +100,31 @@ pub fn format_world_display(
         }
     }
     Ok(fields.join(", "))
+}
+
+fn direction_fields(frame: DirectionRef, longitude: f64, latitude: f64) -> [String; 2] {
+    let longitude_deg = longitude.to_degrees();
+    let wrapped = match frame {
+        DirectionRef::ECLIPTIC | DirectionRef::MECLIPTIC | DirectionRef::TECLIPTIC => {
+            (longitude_deg + 180.0).rem_euclid(360.0) - 180.0
+        }
+        DirectionRef::GALACTIC
+        | DirectionRef::SUPERGAL
+        | DirectionRef::AZEL
+        | DirectionRef::AZELSW
+        | DirectionRef::AZELGEO
+        | DirectionRef::AZELSWGEO => longitude_deg.rem_euclid(360.0),
+        _ => {
+            return [
+                format_longitude_hours(longitude),
+                format_latitude_dms(latitude),
+            ];
+        }
+    };
+    [
+        format!("{wrapped:.6}deg"),
+        format!("{:.6}deg", latitude.to_degrees()),
+    ]
 }
 
 /// Format a longitude in radians as hours `HH:MM:SS.sss`, wrapped into

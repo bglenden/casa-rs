@@ -48,17 +48,22 @@ PARTIAL = {
 }
 
 IMPLEMENTED["coordsys"] = {
+    "frequencytofrequency", "frequencytovelocity", "velocitytofrequency",
     "increment", "referencevalue",
     "addcoordinate", "axesmap", "axiscoordinatetypes", "conversiontype", "coordinatetype", "copy", "done", "epoch",
     "findaxis", "findaxisbyname", "findcoordinate", "fromrecord", "getconversiontype", "lineartransform",
     "names", "naxes", "ncoordinates", "newcoordsys",
     "observer", "parentname", "projection", "referencecode", "referencepixel", "restfrequency",
-    "setepoch",
-    "setnames", "setobserver", "setparentname", "setstokes",
-    "setreferencepixel", "settelescope",
-    "stokes", "telescope", "topixelmany", "torecord", "toworldmany", "type", "units",
+    "setepoch", "setincrement", "setreferencevalue",
+    "setnames", "setobserver", "setparentname", "setstokes", "setunits",
+    "setreferencelocation", "setreferencepixel", "setrestfrequency", "settelescope",
+    "stokes", "telescope", "toabs", "toabsmany", "topixel", "topixelmany", "torecord", "torel",
+    "torelmany", "toworld", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
+    "crop",
+    "decimate",
+    "boundingbox",
     "insert",
     "addnoise",
     "coordmeasures", "topixel", "toworld",
@@ -69,7 +74,7 @@ IMPLEMENTED["image"] = {
     "newimage", "newimagefromarray", "newimagefromfile", "newimagefromfits", "newimagefromshape",
     "deconvolvecomponentlist", "fromrecord", "makecomplex", "modify", "replacemaskedpixels", "torecord",
     "makearray", "maketestimage", "maskhandler", "miscinfo", "pixelvalue", "rotatebeam", "setbrightnessunit", "setcoordsys", "sethistory", "setmiscinfo", "setrestoringbeam", "shape", "subimage", "type",
-    "summary", "set", "tofits",
+    "summary", "set", "tofits", "putregion",
 }
 IMPLEMENTED["table"] = {
     "fromASDM", "fromascii", "fromfits", "toasciifmt",

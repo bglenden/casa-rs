@@ -128,7 +128,7 @@ impl ImageInsertion {
         source: &dyn ImageInterface<T>,
         target: &mut dyn MutableImageInterface<T>,
     ) -> Result<(), ImageError> {
-        let mut mask = target.default_mask_name();
+        let mut mask = target.active_pixel_mask_name();
         if let Some(name) = &mask
             && !target.named_mask_is_writable(name)?
         {

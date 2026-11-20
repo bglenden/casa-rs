@@ -51,6 +51,26 @@ Use `cs.referencevalue()` and `cs.increment()` to read the world-axis
 reference values and spacing. Pass `type` to select a coordinate, or combine
 `n`, `q`, `s`, and `m` in `format` to request numbers, quantities, display
 strings, and CASA measures.
+Use `cs.setreferencevalue(values)` and `cs.setincrement(values)` to edit
+the coordinate record. Numeric values use the declared world-axis units.
+Quantity strings can specify their own units, and `type` selects one
+coordinate.
+Use `cs.setreferencelocation(pixel, world, mask)` to set pixel and world
+references together. A full-length boolean mask can limit the edit to
+specific axes. Stokes references stay fixed.
+Use `cs.setunits(values)` to change the declared units and rescale the
+coordinate values. On a selected linear or tabular coordinate,
+`overwrite=True` relabels units while keeping the numeric values.
+Use `cs.setrestfrequency(values, which=0, append=False)` to choose the active
+spectral rest frequency. Floating-point inputs use the coordinate's unit.
+Pass quantity strings or a quantity record to supply units explicitly.
+With `append=True`, `which` indexes the combined old and new list.
+Use `cs.frequencytovelocity(values)` and `cs.velocitytofrequency(values)`
+to convert relative to the active rest frequency. The default convention is
+radio Doppler and the default velocity unit is `km/s`. Pass `doppler`,
+`velunit`, or `frequnit` to choose other conventions or units.
+Use `cs.frequencytofrequency(values, velocity="10km/s")` to shift a vector
+by a velocity. A dimensionless `velocity` is a fraction of the speed of light.
 
 To build a coordinate system without an image, call
 `tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
@@ -65,12 +85,21 @@ Use `cs.setobserver(name)` and `cs.settelescope(name)` to update observation
 metadata. An unknown telescope name is stored and the setter returns
 `False`. The record retains the last known telescope position.
 
+Use `cs.toworld(pixel)` and `cs.topixel(world)` for a single absolute
+coordinate. `toworld` supports the same numeric, quantity, string, and
+measure format letters as `referencevalue`.
 Use `cs.toworldmany(pixels)["numeric"]` and
 `cs.topixelmany(world)["numeric"]` to convert a floating-point matrix with
 one point per column. The rows follow the coordinate system's axis order.
 World values use the units reported by `cs.units()`.
 NumPy `float32`, `float64`, `longdouble`, `longlong`, and `ulonglong`
 matrices are converted to double precision, as in CASA.
+
+Use `cs.torel(value, isworld=1)` for world offsets from the reference and
+`cs.toabs` to recover absolute positions. Use `isworld=0` for pixels, or
+pass the tagged record from a coordinate conversion. The corresponding
+`torelmany` and `toabsmany` methods take matrices with one coordinate per
+column.
 
 Use `ia.toworld(pixels, format="nqsm")` to convert one image position.
 Each format letter requests numeric values, quantities, strings, or
@@ -152,8 +181,17 @@ without waiting. `ia.unlock()` flushes pending changes and releases the
 lock. `putchunk` normally releases the lock after writing. Pass
 `locking=False` to keep it while making several updates.
 
+Use `ia.putregion(pixels, pixelmask, region)` to edit pixels and validity in
+the same region. The default `usemask=True` skips masked pixels after applying
+the supplied mask. Pass `replicate=True` to fill omitted axes and use the
+region's stride.
+
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
+Use `ia.subimage(...)` on that attachment for a temporary or native
+section with its WCS and validity mask. With `wantreturn=False`
+and an output path, the tool publishes the section and returns a detached
+image tool.
 Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
 reopens the moved file and reads its stored metadata again.
 
@@ -164,7 +202,7 @@ coordinates before applying the selection to the source. An existing writable
 destination mask receives the source validity over the inserted section.
 
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
-writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
+writable native CASA image for pixel edits. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.
 `zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
@@ -185,13 +223,22 @@ forms are tracked in #1625.
 Use `ia.getregion(region=...)` to read that same selection. Pass
 `getmask=True` to read validity, `mask` to apply a lattice expression,
 or `axes` to average the valid pixels along selected axes.
+Use `ia.boundingbox(region=...)` to inspect the inclusive pixel corners,
+stride, sampled shape and world coordinates of the corners.
+Use `ia.crop(axes=...)` to trim fully masked edge planes along the selected
+axes. The method applies the region and optional mask expression before
+finding the crop bounds. Pass `region=[]` when using `box`, `chans`, or
+`stokes` separately.
+Use `ia.decimate(axis=..., factor=..., method="copy")` to keep every nth
+plane. With `method="mean"`, it averages valid samples in each complete
+group and drops the trailing partial group.
 
-`ia.statistics()` returns statistics over a real native CASA or
-temporary image. Pass `axes` for per-plane results, `region` or `mask` to
-select pixels, and `robust=True` for the median, quartiles, and median absolute
-deviation. The tool supports classical, biweight, Chauvenet, fit-to-half and
-hinges-and-fences statistics. FITS statistics, disk storage, logfile output,
-and flux for per-plane beams are tracked in
+`ia.statistics()` returns statistics over a real native CASA image, an
+attached FITS image, or a temporary image. Pass `axes` for per-plane results,
+`region` or `mask` to select pixels, and `robust=True` for the median,
+quartiles, and median absolute deviation. The tool supports classical,
+biweight, Chauvenet, fit-to-half and hinges-and-fences statistics. Disk
+storage, logfile output, and flux for per-plane beams are tracked in
 [#1627](https://github.com/bglenden/casa-rs/issues/1627).
 
 The remaining CASA image and coordinate operations are tracked in

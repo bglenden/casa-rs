@@ -43,7 +43,7 @@ const PROJECTIONS: &[(&str, i64)] = &[
     ("HPX", 0),
 ];
 
-fn coordinate(
+pub(super) fn coordinate(
     state: &CoordinateState,
     kind: CoordinateType,
 ) -> PyResult<Option<(&CoordinateModel, RecordCoordinate)>> {
@@ -53,7 +53,7 @@ fn coordinate(
         .map(|(_, coordinate, placement)| (coordinate, placement)))
 }
 
-fn missing(kind: CoordinateType) -> PyErr {
+pub(super) fn missing(kind: CoordinateType) -> PyErr {
     PyRuntimeError::new_err(format!(
         "No coordinate of type {kind} in this CoordinateSystem"
     ))

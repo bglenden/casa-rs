@@ -133,7 +133,7 @@ const METHODS: &[Method] = &[
             param("velocity", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "frequencytovelocity",
@@ -144,7 +144,7 @@ const METHODS: &[Method] = &[
             param("velunit", K::Text, Text("km/s")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fromrecord",
@@ -267,7 +267,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setlineartransform",
@@ -326,7 +326,7 @@ const METHODS: &[Method] = &[
             param("mask", K::Bools, Bools(&[false])),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setreferencepixel",
@@ -344,7 +344,7 @@ const METHODS: &[Method] = &[
             param("type", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setrestfrequency",
@@ -354,7 +354,7 @@ const METHODS: &[Method] = &[
             param("append", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "setspectral",
@@ -399,7 +399,7 @@ const METHODS: &[Method] = &[
             param("which", K::Int, Int(-10)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("stokes", &[], R::Any, Yes),
     method(
@@ -428,7 +428,7 @@ const METHODS: &[Method] = &[
             param("isworld", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "toabsmany",
@@ -437,9 +437,9 @@ const METHODS: &[Method] = &[
             param("isworld", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("topixel", &[param("value", K::Any, Empty)], R::Any, No),
+    method("topixel", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("topixelmany", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("torecord", &[], R::Any, Yes),
     method(
@@ -449,7 +449,7 @@ const METHODS: &[Method] = &[
             param("isworld", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "torelmany",
@@ -458,7 +458,7 @@ const METHODS: &[Method] = &[
             param("isworld", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "toworld",
@@ -467,7 +467,7 @@ const METHODS: &[Method] = &[
             param("format", K::Text, Text("n")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("toworldmany", &[param("value", K::Any, Empty)], R::Any, Yes),
     method("transpose", &[param("order", K::Any, Required)], R::Any, No),
@@ -482,7 +482,7 @@ const METHODS: &[Method] = &[
             param("velunit", K::Text, Text("km/s")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
 ];
 

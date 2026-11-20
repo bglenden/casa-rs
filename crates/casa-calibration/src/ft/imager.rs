@@ -2,15 +2,16 @@
 //! Prepare a legacy imager model using the object's effective image and FT settings.
 
 use std::collections::BTreeMap;
+use std::f64::consts::TAU;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_components::ComponentList;
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{ImageInfo, PagedImage};
 use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
 use casa_ms::{
-    MeasurementSet, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+    MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry,
+    VirtualModelKind,
 };
 use casa_types::measures::position::MPosition;
 use casa_types::{RecordValue, ScalarValue, Value};
@@ -18,8 +19,10 @@ use casa_types::{RecordValue, ScalarValue, Value};
 use crate::model_columns::has_column;
 use crate::{AttachmentError, CalibrationAttachment, ImagerAttachments};
 
-use super::image::{ImageModel, TaylorTerm, prepare_configured_images, reference_frequency};
-use super::imager_definition::ImagerDefinitionRequest;
+use super::image::{ImageModel, TaylorTerm, image_reference_frequency, prepare_configured_images};
+use super::imager_definition::{ImagerDefinitionRequest, model_tile_shape};
+use super::imager_sources::ModelSources;
+use super::legacy_pbw::pointing::LegacyEpOffsets;
 use super::moving_source::{MovingSourceAnchor, ObservedSource, first_tracking_frame};
 use super::settings::{
     ImagerGridder, ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerSingleDishSetup,
@@ -27,8 +30,12 @@ use super::settings::{
 };
 use super::single_dish;
 use super::virtual_publication::VirtualFtPublication;
-use super::voltage_pattern::ImagerVoltagePattern;
+use super::voltage_pattern::{
+    ImagerVoltagePattern, pointing_may_use_local_frame, scratch_voltage_batches,
+};
 use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
+
+const DISABLED_AW_TERMS: &str = "Both, psterm and aterm cannot be set to NoOp.";
 
 /// Geometry installed by the imager before creating a model image.
 pub struct ImagerImageDefinition {
@@ -59,13 +66,17 @@ pub struct ImagerPrediction {
     frequency_frame_valid: bool,
     ft_location: Option<MPosition>,
     options: ImagerTransformOptions,
-    legacy_pbw: Option<ImagerLegacyPbWOptions>,
-    legacy_aw: Option<ImagerLegacyAwOptions>,
+    image_tile_volume: i32,
+    legacy_pbw: Option<(ImagerLegacyPbWOptions, Option<PathBuf>)>,
+    legacy_ep: Option<(Option<PathBuf>, LegacyEpOffsets)>,
+    retained_sources: Option<ModelSources>,
+    legacy_aw: Option<(ImagerLegacyAwOptions, [bool; 2])>,
     single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
     apply_voltage_pattern: bool,
     voltage_squint: bool,
+    voltage_angle_increment: f64,
     mosaic_voltage_pattern: Option<ImagerVoltagePattern>,
     pending_publication: Option<PendingPublication>,
     partial_batch: Option<PartialBatch>,
@@ -124,13 +135,17 @@ impl Default for ImagerPrediction {
             frequency_frame_valid: false,
             ft_location: None,
             options: ImagerTransformOptions::default(),
+            image_tile_volume: 0,
             legacy_pbw: None,
+            legacy_ep: None,
+            retained_sources: None,
             legacy_aw: None,
             single_dish_setup: ImagerSingleDishSetup::default(),
             taylor: (1, None),
             voltage_pattern: None,
             apply_voltage_pattern: false,
             voltage_squint: false,
+            voltage_angle_increment: TAU,
             mosaic_voltage_pattern: None,
             pending_publication: None,
             partial_batch: None,
@@ -176,6 +191,7 @@ impl ImagerPrediction {
     pub fn set_options(&mut self, options: ImagerTransformOptions) {
         self.ft_location = options.observatory_override();
         self.options = options;
+        self.image_tile_volume = 0;
         self.legacy_pbw = None;
         self.legacy_aw = None;
         self.reset_fourier_machine();
@@ -184,11 +200,17 @@ impl ImagerPrediction {
     /// Discard the Fourier machine after a visibility selection change.
     pub fn reset_fourier_machine(&mut self) {
         self.mosaic_voltage_pattern = None;
+        self.legacy_ep = None;
     }
 
     /// The current settings, including prior buffer sizes retained by setoptions.
     pub fn transform_options(&self) -> ImagerTransformOptions {
         self.options
+    }
+
+    /// Set the tile volume used when the imager creates a model image.
+    pub fn set_image_tile_volume(&mut self, volume: i32) {
+        self.image_tile_volume = volume;
     }
 
     /// Select the legacy primary-beam and W projection prediction.
@@ -200,8 +222,21 @@ impl ImagerPrediction {
         options: ImagerTransformOptions,
         legacy_pbw: ImagerLegacyPbWOptions,
     ) -> MsResult<()> {
+        self.configure_legacy_pbw_with_pointing(options, legacy_pbw, None)
+    }
+
+    /// Select legacy primary-beam and W projection with an optional EP Jones table.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_legacy_pbw_with_pointing(
+        &mut self,
+        options: ImagerTransformOptions,
+        legacy_pbw: ImagerLegacyPbWOptions,
+        pointing_table: Option<PathBuf>,
+    ) -> MsResult<()> {
         self.configure_transform(options)?;
-        self.legacy_pbw = Some(legacy_pbw);
+        self.legacy_pbw = Some((legacy_pbw, pointing_table));
         Ok(())
     }
 
@@ -214,8 +249,32 @@ impl ImagerPrediction {
         options: ImagerTransformOptions,
         legacy_aw: ImagerLegacyAwOptions,
     ) -> MsResult<()> {
+        self.configure_legacy_aw_terms(options, legacy_aw, [true; 2])
+    }
+
+    /// Select legacy A/W prediction and its `[PS term, A term]` switches.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_legacy_aw_terms(
+        &mut self,
+        options: ImagerTransformOptions,
+        legacy_aw: ImagerLegacyAwOptions,
+        terms: [bool; 2],
+    ) -> MsResult<()> {
         self.configure_transform(options)?;
-        self.legacy_aw = Some(legacy_aw);
+        self.legacy_aw = Some((legacy_aw, terms));
+        Ok(())
+    }
+
+    fn validate_legacy_aw_terms(&self) -> MsResult<()> {
+        if self
+            .legacy_aw
+            .as_ref()
+            .is_some_and(|(_, terms)| *terms == [false; 2])
+        {
+            return Err(invalid(DISABLED_AW_TERMS));
+        }
         Ok(())
     }
 
@@ -265,6 +324,7 @@ impl ImagerPrediction {
         self.apply_voltage_pattern = pattern.is_some();
         self.voltage_pattern = pattern;
         self.voltage_squint = false;
+        self.voltage_angle_increment = TAU;
     }
 
     /// Update the voltage pattern for future predictions.
@@ -303,6 +363,21 @@ impl ImagerPrediction {
         apply: bool,
         squint: bool,
     ) -> MsResult<()> {
+        self.configure_voltage_pattern_rotation(pattern, apply, squint, TAU)
+    }
+
+    /// Set the sky gain and its legacy parallactic angle refresh increment,
+    /// in radians. A saved model retains the first applied sky gain.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_voltage_pattern_rotation(
+        &mut self,
+        pattern: Option<ImagerVoltagePattern>,
+        apply: bool,
+        squint: bool,
+        increment: f64,
+    ) -> MsResult<()> {
         if self.partial_batch.is_some() || self.pending_publication.is_some() {
             return Err(invalid(
                 "finish publishing the previous imager prediction before changing the voltage pattern",
@@ -311,6 +386,7 @@ impl ImagerPrediction {
         self.voltage_pattern = pattern;
         self.apply_voltage_pattern = apply;
         self.voltage_squint = squint;
+        self.voltage_angle_increment = increment;
         Ok(())
     }
 
@@ -400,6 +476,46 @@ impl ImagerPrediction {
         Ok(true)
     }
 
+    /// Predict with the source images and components retained by a live sky equation.
+    ///
+    /// # Errors
+    /// The model cannot be prepared or published to the selected attachments.
+    pub fn predict_attached_retaining_sources(
+        &mut self,
+        attachments: &ImagerAttachments,
+        model: ImagerPredictionModel<'_>,
+        scratch: bool,
+    ) -> Result<bool, AttachmentError> {
+        let previous = self
+            .retained_sources
+            .get_or_insert_with(ModelSources::default)
+            .paths();
+        let result = self.predict_attached(attachments, model, scratch);
+        if !matches!(result, Ok(true))
+            && !result.as_ref().is_err_and(Self::retains_prepared_model)
+            && self.partial_batch.is_none()
+            && self.pending_publication.is_none()
+            && let Some(sources) = &mut self.retained_sources
+        {
+            sources.retain(&previous.0, previous.1.as_deref());
+        }
+        result
+    }
+
+    /// The legacy A/W constructor can fail after the sky model has been filled.
+    pub fn retains_prepared_model(error: &AttachmentError) -> bool {
+        matches!(
+            error,
+            AttachmentError::PredictionPreparation(MsError::InvalidInput(message))
+                if message == DISABLED_AW_TERMS
+        )
+    }
+
+    /// Drop model inputs when a legacy sky equation is rebuilt.
+    pub fn clear_retained_model_sources(&mut self) {
+        self.retained_sources = None;
+    }
+
     /// Predict and publish the model for one already-selected attachment.
     ///
     /// Returns false when an absent image needs an image definition.
@@ -452,16 +568,60 @@ impl ImagerPrediction {
                 previous.publication.publish([(ms, lock)].into_iter())?;
                 return Ok(true);
             }
-            if selection.selected_rows.is_empty()
-                || (model.images.is_empty() && model.components.is_none())
-            {
+            if selection.selected_rows.is_empty() {
+                return Ok(true);
+            }
+            if model.images.is_empty() && model.components.is_none() {
+                self.validate_legacy_aw_terms().map_err(AttachmentError::PredictionPreparation)?;
                 return Ok(true);
             }
             if scratch && !has_column(ms, ModelData) {
                 return Ok(false);
             }
+            let supported_voltage_geometry = matches!(self.options.gridder, ImagerGridder::Spheroidal | ImagerGridder::Boxcar)
+                && self.options.single_dish.is_none()
+                && self.legacy_pbw.is_none()
+                && self.legacy_aw.is_none()
+                && self.facet_count() <= 1
+                && self.taylor.0 <= 1;
+            let apply_sky_voltage = self.apply_voltage_pattern && self.voltage_pattern.is_some();
+            if apply_sky_voltage && (supported_voltage_geometry || self.voltage_angle_increment != TAU) {
+                if !supported_voltage_geometry {
+                    return Err(AttachmentError::PredictionPreparation(invalid(
+                        "changing voltage patterns for this legacy Fourier mode are pending #1520",
+                    )));
+                }
+                if scratch {
+                    let local_pointings = pointing_may_use_local_frame(ms);
+                    let groups = scratch_voltage_batches(ms, selection, self.voltage_angle_increment, local_pointings)
+                        .map_err(AttachmentError::PredictionPreparation)?;
+                    let mut batch = selection.clone();
+                    batch.selected_rows = Vec::new();
+                    batch.row_blocks.clear();
+                    for rows in groups {
+                        batch.selected_rows = rows;
+                        let Some((mut components, mut images)) = self
+                            .prepare(ms, &batch, selection, &model, true)
+                            .map_err(AttachmentError::PredictionPreparation)?
+                        else {
+                            if writing_scratch {
+                                return Err(AttachmentError::PredictionPreparation(invalid(
+                                    "a model became unreadable after writing a voltage-pattern batch",
+                                )));
+                            }
+                            return Ok(false);
+                        };
+                        self.track_images(ms, &batch, &mut images, moving_anchor)
+                            .map_err(AttachmentError::PredictionPreparation)?;
+                        components.extend(images.iter().map(|image| image.entry.clone()));
+                        writing_scratch |= !components.is_empty();
+                        write_model_scratch(ms, &batch, &components, model.incremental, false, None, lock)?;
+                    }
+                    return Ok(true);
+                }
+            }
             let Some((mut components, mut images)) =
-                self.prepare(ms, selection, &model, scratch)
+                self.prepare(ms, selection, selection, &model, scratch)
                     .map_err(AttachmentError::PredictionPreparation)?
             else {
                 return Ok(false);
@@ -541,8 +701,27 @@ impl ImagerPrediction {
         &mut self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
+        image_selection: &ResolvedMsSelection,
         model: &ImagerPredictionModel<'_>,
         scratch: bool,
+    ) -> MsResult<Option<(Vec<VirtualModelEntry>, Vec<ImageModel>)>> {
+        let mut retained = self.retained_sources.take();
+        let mut temporary = ModelSources::default();
+        let sources = retained.as_mut().unwrap_or(&mut temporary);
+        let result =
+            self.prepare_with_sources(ms, selected, image_selection, model, scratch, sources);
+        self.retained_sources = retained;
+        result
+    }
+
+    fn prepare_with_sources(
+        &mut self,
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+        image_selection: &ResolvedMsSelection,
+        model: &ImagerPredictionModel<'_>,
+        scratch: bool,
+        sources: &mut ModelSources,
     ) -> MsResult<Option<(Vec<VirtualModelEntry>, Vec<ImageModel>)>> {
         if model
             .images
@@ -560,6 +739,7 @@ impl ImagerPrediction {
                 "this legacy beam-squint Fourier mode is pending #1520",
             ));
         }
+        self.prepare_legacy_ep(ms, selected)?;
         // MosaicFT uses its convolution beam directly.
         let pattern = self
             .voltage_pattern
@@ -579,17 +759,19 @@ impl ImagerPrediction {
                 "the number of model images must match the Taylor terms",
             ));
         }
+
+        sources.retain(model.images, model.components);
         let requested = match self.definition.as_ref() {
             Some(ImageDefinition::Requested(request))
-                if model.images.iter().any(|path| !path.exists()) =>
+                if model.images.iter().any(|path| sources.needs_image(path)) =>
             {
                 let location = self.options.observatory_override();
-                Some(request.build_for_selection(ms, selected, location)?)
+                Some(request.build_for_selection(ms, image_selection, location)?)
             }
             _ => None,
         };
         for path in model.images {
-            if !path.exists() {
+            if sources.needs_image(path) {
                 let definition = match &self.definition {
                     Some(ImageDefinition::Coordinates(definition)) => Some(definition),
                     _ => requested.as_ref(),
@@ -597,8 +779,9 @@ impl ImagerPrediction {
                 let Some(definition) = definition else {
                     return Ok(None);
                 };
-                let mut image = PagedImage::<f32>::create(
+                let mut image = PagedImage::<f32>::create_with_tile_shape(
                     definition.shape.to_vec(),
+                    model_tile_shape(definition.shape, self.image_tile_volume)?.to_vec(),
                     definition.coordinates.clone(),
                     path,
                 )
@@ -636,26 +819,28 @@ impl ImagerPrediction {
                     });
             }
         }
+        sources.open_images(model.images)?;
         let reference_hz = if terms == 1 || model.images.is_empty() {
             None
         } else {
             Some(match explicit_reference {
                 Some(reference) => reference,
-                None => reference_frequency(&model.images[0])?,
+                None => image_reference_frequency(sources.image(&model.images[0])?)?,
             })
         };
         let mut components = Vec::new();
         if let Some(path) = model.components {
-            let list = ComponentList::read_table(path).map_err(invalid)?;
+            let list = sources.component_record(path)?;
             if !model.incremental {
                 components.push(model_entry(
                     ms,
                     selected,
                     VirtualModelKind::ComponentList,
-                    list.to_record().map_err(invalid)?,
+                    list.clone(),
                 )?);
             }
         }
+        self.validate_legacy_aw_terms()?;
         if mosaic {
             // setvp rebuilds the sky equation. The Fourier machine retains
             // its beam until setoptions or selectvis invalidates it.
@@ -676,7 +861,7 @@ impl ImagerPrediction {
                     images.extend(self.prepare_images(
                         ms,
                         &field,
-                        model,
+                        (model, sources),
                         reference_hz,
                         true,
                         Some(voltage_pattern),
@@ -693,7 +878,7 @@ impl ImagerPrediction {
                 images = self.prepare_images(
                     ms,
                     selected,
-                    model,
+                    (model, sources),
                     reference_hz,
                     scratch,
                     voltage_pattern,
@@ -701,6 +886,30 @@ impl ImagerPrediction {
             }
         }
         Ok(Some((components, images)))
+    }
+
+    fn prepare_legacy_ep(
+        &mut self,
+        ms: &MeasurementSet,
+        selected: &ResolvedMsSelection,
+    ) -> MsResult<()> {
+        let Some((options, path)) = &self.legacy_pbw else {
+            return Ok(());
+        };
+        if !options.apply_pointing_offsets {
+            return Ok(());
+        }
+        if let Some((owner, offsets)) = &self.legacy_ep
+            && owner.as_deref() == ms.path()
+        {
+            return offsets.check_selection(selected);
+        }
+        let path = path
+            .as_deref()
+            .ok_or_else(|| invalid("epjtablename is required to apply legacy pointing offsets"))?;
+        let offsets = LegacyEpOffsets::for_selection(path, ms, selected)?;
+        self.legacy_ep = Some((ms.path().map(Path::to_path_buf), offsets));
+        Ok(())
     }
 
     fn track_images(
@@ -746,11 +955,12 @@ impl ImagerPrediction {
         &self,
         ms: &MeasurementSet,
         selected: &ResolvedMsSelection,
-        model: &ImagerPredictionModel<'_>,
+        inputs: (&ImagerPredictionModel<'_>, &ModelSources),
         reference_hz: Option<f64>,
         scratch: bool,
         voltage_pattern: Option<super::voltage_pattern::PreparedVoltagePattern>,
     ) -> MsResult<Vec<ImageModel>> {
+        let (model, sources) = inputs;
         let terms = self.taylor.0;
         let facets = self.facet_count();
         let dish = self.options.single_dish;
@@ -819,6 +1029,7 @@ impl ImagerPrediction {
         }
         let mut images = Vec::new();
         for (index, path) in model.images.iter().enumerate() {
+            let image = sources.image(path)?;
             let taylor = reference_hz.map(|reference_hz| TaylorTerm {
                 count: terms,
                 // The faceted sky model has one Taylor plane per image.
@@ -827,19 +1038,28 @@ impl ImagerPrediction {
             });
             let keep_zero = facets > 1
                 || (scratch && !model.incremental && model.components.is_none() && index == 0);
-            if let Some(legacy_pbw) = legacy_pbw {
+            if let Some((legacy_pbw, _)) = legacy_pbw {
                 images.extend(super::legacy_pbw::prepare_model(
-                    ms, selected, path, &geometry, legacy_pbw, keep_zero, scratch,
+                    ms,
+                    selected,
+                    image,
+                    &geometry,
+                    (
+                        legacy_pbw,
+                        self.legacy_ep.as_ref().map(|(_, offsets)| offsets),
+                    ),
+                    keep_zero,
+                    scratch,
                 )?);
-            } else if let Some(legacy_aw) = legacy_aw {
+            } else if let Some((legacy_aw, _)) = legacy_aw {
                 images.extend(super::legacy_aw::prepare_model(
-                    ms, selected, path, &geometry, legacy_aw, keep_zero, scratch,
+                    ms, selected, image, &geometry, legacy_aw, keep_zero, scratch,
                 )?);
             } else if dish.is_none_or(|choice| choice.combined) {
                 images.extend(prepare_configured_images(
                     ms,
                     selected,
-                    path,
+                    image,
                     taylor,
                     keep_zero,
                     scratch,
@@ -850,7 +1070,7 @@ impl ImagerPrediction {
                 images.extend(single_dish::prepare_model(
                     ms,
                     selected,
-                    path,
+                    image,
                     choice.kernel,
                     &geometry,
                     keep_zero,

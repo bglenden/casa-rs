@@ -33,7 +33,7 @@ pub(crate) const MACHINE: &str = "AWProjectWBFT";
 pub(super) fn prepare_model(
     ms: &MeasurementSet,
     selected: &ResolvedMsSelection,
-    path: &Path,
+    model: &PagedImage<f32>,
     geometry: &PredictionGeometry,
     options: &ImagerLegacyAwOptions,
     keep_zero: bool,
@@ -55,8 +55,7 @@ pub(super) fn prepare_model(
         ));
     }
     let _cache_lock = NativeCacheLock::shared(&options.cache_directory).map_err(invalid)?;
-    let model = PagedImage::<f32>::open(path).map_err(invalid)?;
-    let (shape, increment, coordinates) = model_geometry(&model)?;
+    let (shape, increment, coordinates) = model_geometry(model)?;
     let [side, _, _, _] = shape;
     let host = HostResources::detect().map_err(invalid)?;
     let _memory = reserve_model(&host, side)?;

@@ -93,7 +93,7 @@ fn calculate_pixels<S: ImageExprValue, T: ImageExprValue>(
         )
     };
     let stride = vec![1; shape.len()];
-    let has_default_mask = image.default_mask_name().is_some();
+    let has_default_mask = image.active_pixel_mask_name().is_some();
     let new_mask = (expression.may_have_mask() && !has_default_mask)
         .then(|| fresh_default_mask_name(image))
         .transpose()?;

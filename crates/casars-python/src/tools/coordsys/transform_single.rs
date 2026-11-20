@@ -26,14 +26,18 @@ fn raised(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
-fn numeric_record_value(value: &Value) -> PyResult<Vec<f64>> {
+pub(super) fn numeric_record_value(value: &Value) -> PyResult<Vec<f64>> {
     match value {
         Value::Scalar(ScalarValue::Float64(value)) => Ok(vec![*value]),
         Value::Scalar(ScalarValue::Float32(value)) => Ok(vec![f64::from(*value)]),
-        Value::Array(ArrayValue::Float64(values)) if values.ndim() == 1 => {
+        Value::Array(ArrayValue::Float64(values))
+            if values.shape().iter().filter(|&&size| size != 1).count() <= 1 =>
+        {
             Ok(values.iter().copied().collect())
         }
-        Value::Array(ArrayValue::Float32(values)) if values.ndim() == 1 => {
+        Value::Array(ArrayValue::Float32(values))
+            if values.shape().iter().filter(|&&size| size != 1).count() <= 1 =>
+        {
             Ok(values.iter().copied().map(f64::from).collect())
         }
         Value::Array(ArrayValue::Float32(_) | ArrayValue::Float64(_)) => {
@@ -88,22 +92,32 @@ pub(in crate::tools) fn image_pixel_argument(
     py: Python<'_>,
     value: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Vec<f64>> {
+    pixel_argument(
+        py,
+        value,
+        "Unsupported record type for value",
+        "Unsupported data type for value",
+    )
+}
+
+fn pixel_argument(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+    record_error: &str,
+    type_error: &str,
+) -> PyResult<Vec<f64>> {
     let Some(value) = value.filter(|value| !value.is_none()) else {
         return Ok(Vec::new());
     };
     if let Ok(dict) = value.cast::<PyDict>() {
         let record = casa_record(py, Some(dict))?;
-        return numeric_record_value(
-            record
-                .get("numeric")
-                .ok_or_else(|| raised("Unsupported record type for value"))?,
-        );
+        return numeric_record_value(record.get("numeric").ok_or_else(|| raised(record_error))?);
     }
     if let Some(empty) = bool_vector(value)? {
         return if empty {
             Ok(Vec::new())
         } else {
-            Err(raised("Unsupported data type for value"))
+            Err(raised(type_error))
         };
     }
     if let Ok(array) = value.cast::<PyUntypedArray>()
@@ -115,11 +129,12 @@ pub(in crate::tools) fn image_pixel_argument(
     match value.extract::<Variant>()? {
         Variant::Numbers(values) | Variant::Array { values, .. } => Ok(values),
         Variant::Empty => Ok(Vec::new()),
-        _ => Err(raised("Unsupported data type for value")),
+        _ => Err(raised(type_error)),
     }
 }
 
 pub(in crate::tools) enum WorldArgument {
+    Unset,
     Numeric(Vec<f64>),
     Text(String),
     Texts(Vec<String>),
@@ -132,13 +147,13 @@ impl WorldArgument {
         value: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let Some(value) = value.filter(|value| !value.is_none()) else {
-            return Ok(Self::Numeric(Vec::new()));
+            return Ok(Self::Unset);
         };
         if let Ok(dict) = value.cast::<PyDict>() {
             return Ok(Self::Record(casa_record(py, Some(dict))?));
         }
         if bool_vector(value)?.is_some() {
-            return Ok(Self::Numeric(Vec::new()));
+            return Ok(Self::Unset);
         }
         if let Ok(array) = value.cast::<PyUntypedArray>()
             && matches!(array.dtype().char(), b'S' | b'U')
@@ -165,38 +180,98 @@ impl WorldArgument {
         }
     }
 
-    fn values(self, state: &CoordinateState) -> PyResult<Vec<f64>> {
-        let coordinates = &state.coordinates;
-        let units = native_world_units(coordinates);
-        let mut world = models(coordinates)
-            .flat_map(CoordinateModel::reference_value)
-            .collect::<Vec<_>>();
-        let values = match self {
+    pub(super) fn values(self, state: &CoordinateState) -> PyResult<Vec<f64>> {
+        self.values_with_defaults(state, None, world_reference(&state.coordinates))
+    }
+
+    pub(super) fn values_with_defaults(
+        self,
+        state: &CoordinateState,
+        selected: Option<(usize, &CoordinateState)>,
+        mut world: Vec<f64>,
+    ) -> PyResult<Vec<f64>> {
+        let coordinates = selected.map_or(&state.coordinates, |(_, part)| &part.coordinates);
+        let input = WorldInput {
+            state,
+            coordinates,
+            selected: selected.map(|(index, _)| index),
+            units: native_world_units(coordinates),
+        };
+        let decoded = match self {
+            Self::Unset => input.reference_prefix()?,
             Self::Numeric(values) => declared_to_native(values, coordinates)?,
             Self::Text(text) => {
                 let parts: Vec<_> = text.split_whitespace().take(50).collect();
                 if parts.len() == 1 {
                     vec![read_quantity(
                         parts[0],
-                        units.first().map_or("", String::as_str),
+                        input.units.first().map_or("", String::as_str),
                     )?]
                 } else {
-                    text_values(coordinates, &units, parts.into_iter())?
+                    input.texts(parts.into_iter())?
                 }
             }
-            Self::Texts(texts) => {
-                text_values(coordinates, &units, texts.iter().map(String::as_str))?
-            }
-            Self::Record(record) => {
-                match world_record_values(&record, state, &units, &mut world)? {
-                    Some(values) => values,
-                    None => return Ok(world),
-                }
-            }
+            Self::Texts(texts) => input.texts(texts.iter().map(String::as_str))?,
+            Self::Record(record) => world_record_values(&record, &input)?,
         };
-        overwrite_prefix(&mut world, values);
+        overwrite_prefix(&mut world, decoded);
         Ok(world)
     }
+}
+
+struct WorldInput<'a> {
+    state: &'a CoordinateState,
+    coordinates: &'a CoordinateSystem,
+    selected: Option<usize>,
+    units: Vec<String>,
+}
+
+impl WorldInput<'_> {
+    fn reference_prefix(&self) -> PyResult<Vec<f64>> {
+        if self.selected.is_none() {
+            return Ok(world_reference(&self.state.coordinates));
+        }
+        // CASA uses the full declared reference vector as a prefix for a
+        // selected coordinate's string vector or unset argument.
+        let declared = models(&self.state.coordinates)
+            .flat_map(|coordinate| match coordinate {
+                CoordinateModel::Direction(direction) => {
+                    direction.reference_and_increment_in_world_units().0
+                }
+                _ => coordinate.reference_value(),
+            })
+            .collect();
+        declared_to_native(declared, self.coordinates)
+    }
+
+    fn texts<'a>(&self, texts: impl Iterator<Item = &'a str>) -> PyResult<Vec<f64>> {
+        let mut values = self.reference_prefix()?;
+        let supplied = text_values(&self.state.coordinates, &self.units, texts)?;
+        overwrite_prefix(&mut values, supplied);
+        Ok(values)
+    }
+
+    fn measures(&self, record: &RecordValue) -> PyResult<Vec<f64>> {
+        let system = &self.state.coordinates;
+        let mut values = world_reference(system);
+        let units = native_world_units(system);
+        update_measures(record, self.state, &units, &mut values)?;
+        if let Some(index) = self.selected {
+            let start: usize = models(system)
+                .take(index)
+                .map(CoordinateModel::n_world_axes)
+                .sum();
+            let end = start + system.coordinate(index).n_world_axes();
+            return Ok(values[start..end].to_vec());
+        }
+        Ok(values)
+    }
+}
+
+fn world_reference(coordinates: &CoordinateSystem) -> Vec<f64> {
+    models(coordinates)
+        .flat_map(CoordinateModel::reference_value)
+        .collect()
 }
 
 fn models(coordinates: &CoordinateSystem) -> impl Iterator<Item = &CoordinateModel> {
@@ -271,7 +346,9 @@ fn text_values<'a>(
                 if value.unit().name().is_empty() {
                     return Ok(value.value());
                 }
-                return mvangle_radians(&value).map_err(|_| invalid());
+                let radians = mvangle_radians(&value).map_err(|_| invalid())?;
+                let angle = Quantity::new(radians, "rad").map_err(raised)?;
+                return Ok(get_value(&angle, &Unit::new(unit).map_err(raised)?));
             }
             read_quantity(text, unit)
         })
@@ -338,13 +415,7 @@ fn quantity_vector(record: &RecordValue, units: &[String]) -> PyResult<Vec<f64>>
         .collect()
 }
 
-fn world_record_values(
-    record: &RecordValue,
-    state: &CoordinateState,
-    units: &[String],
-    world: &mut [f64],
-) -> PyResult<Option<Vec<f64>>> {
-    let coordinates = &state.coordinates;
+fn world_record_values(record: &RecordValue, input: &WorldInput<'_>) -> PyResult<Vec<f64>> {
     if let Some(kind) = record.get("pw_type") {
         scalar_text(kind, "pw_type")?;
     }
@@ -357,28 +428,26 @@ fn world_record_values(
         ));
     }
     if let Some(value) = record.get("numeric") {
-        return declared_to_native(numeric_record_value(value)?, coordinates).map(Some);
+        return declared_to_native(numeric_record_value(value)?, input.coordinates);
     }
     if let Some(value) = record.get("quantity") {
-        return quantity_vector(subrecord(value, "quantity")?, units).map(Some);
+        return quantity_vector(subrecord(value, "quantity")?, &input.units);
     }
     if let Some(value) = record.get("measure") {
-        update_measures(subrecord(value, "measure")?, state, units, world)?;
-    } else if let Some(value) = record.get("string") {
-        let values = match value {
+        return input.measures(subrecord(value, "measure")?);
+    }
+    if let Some(value) = record.get("string") {
+        return match value {
             Value::Array(ArrayValue::String(values)) if values.ndim() == 1 => {
-                text_values(coordinates, units, values.iter().map(String::as_str))?
+                input.texts(values.iter().map(String::as_str))
             }
             Value::Scalar(ScalarValue::String(value)) => {
-                text_values(coordinates, units, std::iter::once(value.as_str()))?
+                input.texts(std::iter::once(value.as_str()))
             }
-            _ => return Err(raised("Coordinate string record must be one-dimensional")),
+            _ => Err(raised("Coordinate string record must be one-dimensional")),
         };
-        return Ok(Some(values));
-    } else {
-        update_measures(record, state, units, world)?;
     }
-    Ok(None)
+    input.measures(record)
 }
 
 fn update_measures(
@@ -438,11 +507,13 @@ fn update_measures(
                     frequency_from_record(subrecord(measure, "frequency")?).map_err(raised)?;
                 axes[0] = spectral.value_from_hz(frequency.hz()).map_err(raised)?;
             }
-            CoordinateModel::Stokes(_) => {
+            CoordinateModel::Stokes(stokes) => {
                 let name = scalar_text(value, "stokes")?;
-                axes[0] = StokesType::from_name(name)
-                    .unwrap_or(StokesType::Undefined)
-                    .code() as f64;
+                let polarization = StokesType::from_name(name).unwrap_or(StokesType::Undefined);
+                if !stokes.stokes().contains(&polarization) {
+                    return Err(raised(format!("Illegal Stokes coordinate {name}")));
+                }
+                axes[0] = f64::from(polarization.code());
             }
             CoordinateModel::Linear(_) => {
                 let full = sliced
@@ -477,7 +548,7 @@ impl PyCoordsys {
         format: &str,
         velocities: bool,
     ) -> PyResult<CasaValue> {
-        image_world_record(&self.state(), pixel, format, velocities)
+        image_world_record(&self.state(), pixel, format, velocities, false)
     }
 
     pub(in crate::tools) fn image_measures(
@@ -488,11 +559,11 @@ impl PyCoordsys {
     ) -> PyResult<CasaValue> {
         let state = self.state();
         if direction_frame.eq_ignore_ascii_case("cl") && spectral_frame.eq_ignore_ascii_case("cl") {
-            return image_world_record(&state, pixel, "m", true);
+            return image_world_record(&state, pixel, "m", true, false);
         }
         let mut state = state.clone();
         select_measure_frames(&mut state.coordinates, direction_frame, spectral_frame)?;
-        image_world_record(&state, pixel, "m", true)
+        image_world_record(&state, pixel, "m", true, false)
     }
 
     pub(in crate::tools) fn image_pixel(&self, value: WorldArgument) -> PyResult<CasaValue> {
@@ -507,11 +578,38 @@ impl PyCoordsys {
     }
 }
 
+#[pymethods]
+impl PyCoordsys {
+    #[pyo3(signature = (value=None), text_signature = "($self, value=[])")]
+    fn topixel(&self, py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
+        let world = WorldArgument::capture(py, value)?;
+        py.detach(|| self.image_pixel(world))?.into_python(py)
+    }
+
+    #[pyo3(signature = (value=None, format="n"), text_signature = "($self, value=[], format='n')")]
+    fn toworld(
+        &self,
+        py: Python<'_>,
+        value: Option<&Bound<'_, PyAny>>,
+        format: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let pixel = pixel_argument(
+            py,
+            value,
+            "unsupported record type for pixel",
+            "unsupported data type for pixel",
+        )?;
+        py.detach(|| image_world_record(&self.state(), pixel, format, true, true))?
+            .into_python(py)
+    }
+}
+
 fn image_world_record(
     state: &CoordinateState,
     pixel: Vec<f64>,
     format: &str,
     velocities: bool,
+    coordinate_tags: bool,
 ) -> PyResult<CasaValue> {
     let mut complete: Vec<_> = models(&state.coordinates)
         .flat_map(CoordinateModel::reference_pixel)
@@ -522,7 +620,7 @@ fn image_world_record(
             "Exception: Error converting to world coordinates: {error}"
         ))
     })?;
-    format_transformed_world(state, &world, format, velocities, false)
+    format_transformed_world(state, &world, format, velocities, coordinate_tags)
 }
 
 fn select_measure_frames(

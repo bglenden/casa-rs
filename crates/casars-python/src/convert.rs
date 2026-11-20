@@ -32,7 +32,9 @@ pub(crate) mod value;
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::ffi::{CString, c_char};
 use std::fmt;
+use std::ptr;
 
 use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
 use num_complex::Complex64;
@@ -878,6 +880,33 @@ impl<'a, 'py> FromPyObject<'a, 'py> for RecordArg {
             _ => unreachable!("a dict reads as a record"),
         }
     }
+}
+
+/// Read a C numeric string prefix in CASA vector typemaps that accept text.
+pub(crate) fn double_vector_element(value: &Bound<'_, PyAny>) -> PyResult<f64> {
+    if let Some(text) = numeric_text(value)? {
+        // SAFETY: text is NUL-terminated and no end pointer was requested.
+        return Ok(unsafe { strtod(text.as_ptr(), ptr::null_mut()) });
+    }
+    value.extract()
+}
+
+pub(crate) fn numeric_text(value: &Bound<'_, PyAny>) -> PyResult<Option<CString>> {
+    let bytes = if let Ok(text) = value.cast::<PyString>() {
+        text.to_str()?.as_bytes()
+    } else if let Ok(text) = value.cast::<PyBytes>() {
+        text.as_bytes()
+    } else {
+        return Ok(None);
+    };
+    let prefix = bytes.split(|byte| *byte == 0).next().unwrap_or_default();
+    Ok(Some(
+        CString::new(prefix).expect("the prefix contains no NUL"),
+    ))
+}
+
+unsafe extern "C" {
+    fn strtod(text: *const c_char, end: *mut *mut c_char) -> f64;
 }
 
 /// A vector-of-doubles parameter: a sequence of numbers, or one number.

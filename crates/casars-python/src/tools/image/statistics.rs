@@ -3,7 +3,8 @@
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, format_world_display};
 use casa_images::{ImageInterface, ImagePixel, analysis::statistics_flux_scale};
 use casa_lattices::{
-    FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm, StatsElement,
+    ExecutionResources, FitHalfCenter, Lattice, LatticeStatistics, Statistic, StatisticsAlgorithm,
+    StatsElement,
 };
 use casa_types::quanta::{Quantity, Unit};
 use ndarray::{ArrayD, Zip};
@@ -94,6 +95,7 @@ struct StatsOptions {
     expression: Option<ArrayD<bool>>,
     algorithm: StatisticsAlgorithm,
     single_precision: bool,
+    fits_backed: bool,
 }
 
 fn calculate<T: ImagePixel + StatsElement>(
@@ -132,6 +134,14 @@ fn calculate<T: ImagePixel + StatsElement>(
             &selection
         };
     let mut stats = LatticeStatistics::new(lattice);
+    if options.fits_backed {
+        // Keep queued FITS sections bounded while workers reduce their tiles.
+        stats.set_execution_resources(ExecutionResources {
+            worker_limit: 4,
+            prefetch_cap: 2,
+            ..ExecutionResources::default()
+        });
+    }
     if !global {
         stats.set_axes(options.axes.clone());
     }
@@ -371,7 +381,7 @@ impl PyImageTool {
                 (zscore, maxiter),
                 niter,
             )?;
-            if disk || !logfile.is_empty() || image.fits().is_some() {
+            if disk || !logfile.is_empty() {
                 return Err(stub("statistics").unwrap_err());
             }
             // casatools stores its public thresholds as Float even when the
@@ -421,8 +431,14 @@ impl PyImageTool {
                     expression,
                     algorithm,
                     single_precision,
+                    fits_backed: image.fits().is_some(),
                 };
                 match &*image {
+                    ImageHandle::Float(Storage::Temp {
+                        image,
+                        fits: Some(fits),
+                        ..
+                    }) => calculate(&fits.image_view(image), &chunk, options),
                     ImageHandle::Float(storage) => {
                         with_storage!(storage, image => calculate(image.as_ref(), &chunk, options))
                     }
