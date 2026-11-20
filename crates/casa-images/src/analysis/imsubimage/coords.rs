@@ -8,9 +8,9 @@ use casa_coordinates::{CoordinateSystem, CoordinateType, StokesType};
 use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 
 use crate::analysis::axes::subimage_coordinates_with_stokes;
-use crate::{ImageBeamSet, ImageError, ImageInfo, ImagePixel, PagedImage};
+use crate::{ImageBeamSet, ImageError, ImageInfo};
 
-use super::super::axes::legacy_subimage_coordinates_with_stokes;
+use super::super::axes::{replace_stokes_in_record, shift_record_reference_pixels};
 
 pub(super) struct CoordReductionSpec<'a> {
     pub(super) full_shape: &'a [usize],
@@ -20,9 +20,9 @@ pub(super) struct CoordReductionSpec<'a> {
     pub(super) selected_stokes: Option<&'a [StokesType]>,
 }
 
-pub(super) fn reduce_coordinates_and_beams<T: ImagePixel>(
+pub(super) fn reduce_coordinates_and_beams(
     input_coords: &CoordinateSystem,
-    paged: Option<&PagedImage<T>>,
+    native: Option<RecordValue>,
     spec: CoordReductionSpec<'_>,
     mut image_info: ImageInfo,
 ) -> Result<(CoordinateSystem, Option<RecordValue>, ImageInfo), ImageError> {
@@ -33,8 +33,12 @@ pub(super) fn reduce_coordinates_and_beams<T: ImagePixel>(
         spec.shape,
         spec.selected_stokes,
     )?;
-    let shifted_legacy = paged.and_then(|img| {
-        legacy_subimage_coordinates_with_stokes(img, spec.start, spec.shape, spec.selected_stokes)
+    let shifted_legacy = native.and_then(|mut record| {
+        shift_record_reference_pixels(&mut record, spec.start, spec.shape).ok()?;
+        if let Some(stokes) = spec.selected_stokes {
+            replace_stokes_in_record(&mut record, stokes).ok()?;
+        }
+        Some(record)
     });
 
     let (out_coords, out_legacy) = if spec.kept_axes.len() == ndim {

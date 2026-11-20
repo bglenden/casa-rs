@@ -903,23 +903,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outfile = None, region = None, mask = None, dropdeg = None, overwrite = None, list = None, stretch = None, wantreturn = None, keepaxes = None), text_signature = "($self, outfile='', region='', mask='', dropdeg=False, overwrite=False, list=True, stretch=False, wantreturn=True, keepaxes=[])")]
-    fn subimage(
-        &self,
-        outfile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        mask: Option<&Bound<'_, PyAny>>,
-        dropdeg: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-        stretch: Option<&Bound<'_, PyAny>>,
-        wantreturn: Option<&Bound<'_, PyAny>>,
-        keepaxes: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("subimage")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (doppler = None, list = None, pixelorder = None, verbose = None), text_signature = "($self, doppler='RADIO', list=True, pixelorder=True, verbose=False)")]
     fn summary(
         &self,

@@ -28,6 +28,9 @@ mod extrema;
 mod imhead_fits;
 mod immath;
 mod imsubimage;
+pub use imsubimage::{
+    SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
+};
 mod list_log;
 mod planes;
 mod projection_header;

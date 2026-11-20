@@ -1137,7 +1137,7 @@ const METHODS: &[Method] = &[
             param("keepaxes", K::Any, Empty),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "summary",

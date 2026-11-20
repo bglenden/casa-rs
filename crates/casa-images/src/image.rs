@@ -100,9 +100,17 @@ impl ImageHistoryEntry {
 
 /// Read the image log including CASA priority, timestamp, and location.
 pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
+    Ok(image_history_rows(path)?
+        .into_iter()
+        .map(|row| row.entry)
+        .collect())
+}
+
+/// Reads the original log rows including their object identifiers.
+pub fn image_history_rows(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryRow>, ImageError> {
     let image = path.as_ref();
     if image.is_file() {
-        return crate::fits_read::history_entries(image);
+        return crate::fits_read::history_rows(image);
     }
     let logtable_path = image.join(LOGTABLE_NAME);
     if !logtable_path.exists() {
@@ -131,16 +139,27 @@ pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryE
             .unwrap_or_else(|| "INFO".to_string());
         let location = table.cell_accessor(row, "LOCATION")?.value()?;
         let message = table.cell_accessor(row, "MESSAGE")?.value()?;
+        let object_id = match table
+            .cell_accessor(row, "OBJECT_ID")
+            .ok()
+            .and_then(|cell| cell.value().ok().flatten())
+        {
+            Some(Value::Scalar(ScalarValue::String(value))) => value.clone(),
+            _ => String::new(),
+        };
         match (time, location, message) {
             (
                 Some(Value::Scalar(ScalarValue::Float64(time))),
                 Some(Value::Scalar(ScalarValue::String(location))),
                 Some(Value::Scalar(ScalarValue::String(message))),
-            ) => entries.push(ImageHistoryEntry {
-                time_mjd_seconds: *time,
-                priority,
-                location: location.clone(),
-                message: message.clone(),
+            ) => entries.push(ImageHistoryRow {
+                entry: ImageHistoryEntry {
+                    time_mjd_seconds: *time,
+                    priority,
+                    location: location.clone(),
+                    message: message.clone(),
+                },
+                object_id,
             }),
             _ => {
                 return Err(ImageError::InvalidMetadata(format!(

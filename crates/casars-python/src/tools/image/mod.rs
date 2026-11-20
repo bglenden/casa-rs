@@ -18,6 +18,7 @@ mod pixels;
 mod point;
 mod records;
 mod stubs;
+mod subimage;
 pub(crate) mod surface;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};

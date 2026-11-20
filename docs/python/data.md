@@ -78,6 +78,21 @@ a separate image tool. The remaining
 CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
 
+### Extract a subimage
+
+Use `ia.subimage(outfile="cutout.im", region=region)` to copy a selection
+to a native CASA image. The method returns a separate image tool. Leave
+`outfile` empty for a temporary image, or set `wantreturn=False` to write the
+file and return `None`. The copy shifts its reference pixels, keeps the
+applicable restoring beams and input history, and combines the region with
+the input's validity mask and any supplied `mask` expression.
+
+Use `dropdeg=True` to drop singleton axes. List the singleton axes you want
+to keep in `keepaxes`. Region inputs include CRTF text and files, saved region
+references, and unit-stride boxes and polygon records.
+An existing entry inside the input image cannot be replaced, protecting
+the source's history and mask tables.
+
 ### Access an existing image through the Data API
 
 Use `Image.open(path, writable=False)` to open an existing CASA-compatible image. The v1 surface is intentionally narrow:
