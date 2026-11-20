@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 810
+- Concepts: 811
 - Surfaces: 45 (45 task, 0 session)
 - Surface bindings: 1089
 
