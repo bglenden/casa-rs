@@ -321,16 +321,20 @@ impl Projection {
 
     fn airy_coefficient(&self) -> Result<f64, CoordinateError> {
         let latitude = self.parameters.first().copied().unwrap_or(90.0);
-        if !(latitude > -90.0 && latitude <= 90.0) {
+        let half_angle = (((90.0 - latitude) / 2.0) % 360.0).abs();
+        let half_angle = half_angle.min(360.0 - half_angle);
+        if !latitude.is_finite() || latitude <= -90.0 || half_angle > 90.0 {
             return Err(CoordinateError::ConversionFailed(
-                "AIR requires a reference latitude in (-90, 90] degrees".into(),
+                "AIR requires a finite reference latitude above -90 degrees and a real coefficient"
+                    .into(),
             ));
         }
-        match latitude {
-            0.0 => Ok(LN_2),
-            90.0 => Ok(1.0),
+        match half_angle {
+            0.0 => Ok(1.0),
+            45.0 => Ok(LN_2),
+            90.0 => Ok(0.0),
             _ => {
-                let tangent = ((90.0 - latitude) * DEG_TO_RAD / 2.0).tan();
+                let tangent = (half_angle * DEG_TO_RAD).tan();
                 Ok(airy_logarithmic_factor(tangent * tangent))
             }
         }
@@ -496,8 +500,8 @@ fn airy_logarithmic_factor(squared: f64) -> f64 {
     squared.ln_1p() / squared
 }
 
-/// Invert the radius in t. Use WCSLIB's first decreasing-cosine bracket
-/// when a small coefficient can give multiple intersections.
+/// Invert the radius in t. A small coefficient can give several
+/// intersections, where the solution follows WCSLIB's branch selection.
 fn deproject_air(x: f64, y: f64, coefficient: f64) -> Result<(f64, f64), CoordinateError> {
     let radius = x.hypot(y);
     if radius == 0.0 {
@@ -508,9 +512,14 @@ fn deproject_air(x: f64, y: f64, coefficient: f64) -> Result<(f64, f64), Coordin
     if linear < AIR_LINEAR_LIMIT {
         return Ok((phi, FRAC_PI_2 - 2.0 * linear));
     }
+    if coefficient < LN_2 {
+        return air_inverse_with_wcslib_branch(radius, coefficient)
+            .map(|half_zenith| (phi, FRAC_PI_2 - 2.0 * half_zenith));
+    }
 
-    let (mut low, mut high) = air_inverse_bracket(radius, coefficient, linear)?;
-    let mut tangent = low.max(linear);
+    // In this range the radius is monotone, with ln(1+t²)/t² in [0, 1].
+    let (mut low, mut high) = (linear, radius / coefficient);
+    let mut tangent = low;
     for _ in 0..32 {
         let squared = tangent * tangent;
         let logarithmic_factor = airy_logarithmic_factor(squared);
@@ -536,25 +545,38 @@ fn deproject_air(x: f64, y: f64, coefficient: f64) -> Result<(f64, f64), Coordin
     ))
 }
 
-fn air_inverse_bracket(
-    radius: f64,
-    coefficient: f64,
-    linear: f64,
-) -> Result<(f64, f64), CoordinateError> {
-    if coefficient >= LN_2 {
-        // In this range the radius is monotone. Since ln(1+t²)/t² lies
-        // between zero and one, both bounds follow directly from the radius.
-        return Ok((linear, radius / coefficient));
-    }
-    let mut cosine = 1.0_f64;
-    let mut low = 0.0;
+fn air_inverse_with_wcslib_branch(radius: f64, coefficient: f64) -> Result<f64, CoordinateError> {
+    let radius_at = |cosine: f64| {
+        let tangent = (1.0 - cosine * cosine).sqrt() / cosine;
+        -2.0 * cosine.ln() / tangent + coefficient * tangent
+    };
+    // Several roots can share the first bracket. Follow WCSLIB's weighted
+    // division of the cosine interval to select the same intersection.
+    let (mut near_cosine, mut near_radius) = (1.0, 0.0);
+    let (mut far_cosine, mut far_radius) = (1.0, 0.0);
     for _ in 0..30 {
-        cosine *= 0.5;
-        let high = (1.0 - cosine * cosine).sqrt() / cosine;
-        if high * (coefficient + airy_logarithmic_factor(high * high)) >= radius {
-            return Ok((low, high));
+        far_cosine = near_cosine * 0.5;
+        far_radius = radius_at(far_cosine);
+        if far_radius >= radius {
+            break;
         }
-        low = high;
+        (near_cosine, near_radius) = (far_cosine, far_radius);
+    }
+    if far_radius >= radius {
+        for _ in 0..100 {
+            let fraction = ((far_radius - radius) / (far_radius - near_radius)).clamp(0.1, 0.9);
+            let cosine = far_cosine + fraction * (near_cosine - far_cosine);
+            let trial_radius = radius_at(cosine);
+            // WCSLIB tests against 1e-12 in units of half the radius.
+            if (trial_radius - radius).abs() < 2e-12 {
+                return Ok(cosine.acos());
+            }
+            if trial_radius < radius {
+                (near_cosine, near_radius) = (cosine, trial_radius);
+            } else {
+                (far_cosine, far_radius) = (cosine, trial_radius);
+            }
+        }
     }
     Err(CoordinateError::ConversionFailed(
         "AIR deproject: pixel outside the projected region".into(),
@@ -1016,7 +1038,7 @@ mod tests {
             (ProjectionType::SZP, vec![1.0, 0.0, 90.0]),
             (ProjectionType::SZP, vec![0.0, 0.0, 45.0]),
             (ProjectionType::AIR, vec![-90.0]),
-            (ProjectionType::AIR, vec![91.0]),
+            (ProjectionType::AIR, vec![300.0]),
         ] {
             let projection = Projection::with_parameters(kind, parameters);
             assert!(projection.project(0.4, 1.2).is_err(), "{kind:?}");
@@ -1105,6 +1127,21 @@ mod tests {
                 projection.deproject(expected[0], expected[1]).unwrap();
             assert!((actual_phi - phi * DEG_TO_RAD).abs() < TOL);
             assert!((actual_theta - theta * DEG_TO_RAD).abs() < TOL);
+        }
+    }
+
+    #[test]
+    fn airy_uses_wcslib_branch_when_the_radius_has_several_solutions() {
+        for (reference, plane, expected) in [
+            (-85.0, -35.91553840292542, 12.844743211493224),
+            (-76.48329678302335, 54.352917860275376, -60.7625099804296),
+        ] {
+            let projection = Projection::with_parameters(ProjectionType::AIR, vec![reference]);
+            let (_, latitude) = projection.deproject(0.0, plane * DEG_TO_RAD).unwrap();
+            assert!(
+                (latitude - expected * DEG_TO_RAD).abs() < 1e-9,
+                "{latitude}"
+            );
         }
     }
 

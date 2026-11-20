@@ -334,8 +334,9 @@ fn restricted_zenithal_records_accept_supported_parameters() {
                 vec![0.0, 0.0],
                 vec![0.0, 0.0, 90.0],
                 vec![45.0],
+                vec![120.0],
             ],
-            vec![vec![-90.0], vec![91.0]],
+            vec![vec![-90.0], vec![300.0]],
         ),
     ] {
         let record_with = |parameters| {
