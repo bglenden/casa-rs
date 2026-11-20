@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 import casatasks as casa
-from casatools import componentlist, image, table
+from casatools import componentlist, image, imager, table
 import numpy as np
 
 from applycal_mms_oracle import referenced_tables
@@ -97,6 +97,64 @@ def validation_paths(root, source, native, point):
         outcomes[f'refused-{label}'] = {'scratch_initialized': added}
     return outcomes
 
+
+
+def scratch_attachment(root, source, native, point):
+    """Scratch attachment side effects precede model validation and retry."""
+    missing = str(root / "missing-attachment.image")
+    for name in ("open", "selectvis"):
+        path = root / f"scratch-attachment-{name}.ms"
+        prepare(source, path, model=True, virtual=True)
+        before, (_, source_keywords, _) = state(path)
+        assert len(source_keywords) == 4
+        tool = imager()
+        try:
+            if name == "open":
+                assert tool.open(str(path), usescratch=True) is True
+            else:
+                assert tool.selectvis(vis=str(path), usescratch=True) is True
+            attached, virtual = state(path)
+            assert virtual[:2] == ({}, {})
+            np.testing.assert_equal(attached, before)
+            assert tool.ft(model=[missing]) is False
+            compare_outputs(state(path), (attached, virtual))
+            assert tool.ft(complist=str(point)) is True
+            assert np.any(state(path)[0]["MODEL_DATA"] != before["MODEL_DATA"])
+        finally:
+            tool.done()
+        print(f"scratch-attachment-{name}: cleared at attachment and retried on the same object",
+              flush=True)
+
+    for existing in (False, True):
+        outputs = []
+        for engine, api in (("casa", casa), ("native", native)):
+            path = root / f"scratch-attachment-{existing}-{engine}.ms"
+            prepare(source, path, model=existing, virtual=True)
+            before, (_, source_keywords, _) = state(path)
+            assert len(source_keywords) == 4
+            try:
+                api.ft(str(path), usescratch=True, model=missing)
+            except ValueError as error:
+                message = getattr(getattr(error, "completion", None), "message", str(error))
+                assert message == f"Model image {missing} cannot be found", message
+            else:
+                raise AssertionError("ft accepted a missing image")
+            attached, virtual = state(path)
+            assert virtual[:2] == ({}, {}), (engine, existing, "virtual recipes survived attachment")
+            if existing:
+                np.testing.assert_equal(attached, before)
+            else:
+                np.testing.assert_equal({key: value for key, value in attached.items()
+                                         if key != "MODEL_DATA"}, before)
+                assert "MODEL_DATA" in attached
+            assert api.ft(str(path), usescratch=True, complist=str(point)) is None
+            output = state(path)
+            assert np.any(output[0]["MODEL_DATA"] != attached["MODEL_DATA"])
+            outputs.append(((attached, virtual), output))
+        for expected, actual in zip(*outputs, strict=True):
+            compare_outputs(actual, expected)
+        print(f"scratch-attachment-existing-{existing}: paired failure, storage and retry", flush=True)
+    return {"scratch-attachment": {"public_tool_sequences": 2, "paired_task_sequences": 2}}
 
 def make_images(root, source):
     phase = coordinates(source)
@@ -420,6 +478,8 @@ def main():
         evidence.update(mms_workflows(root, source, tasks, point))
     if args.case is None:
         evidence.update(validation_paths(root, source, tasks, point))
+    if args.case is None or args.case in "scratch-attachment":
+        evidence.update(scratch_attachment(root, source, tasks, point))
     if args.chain:
         spectral = root/'spectral-point.cl'
         cl = componentlist()

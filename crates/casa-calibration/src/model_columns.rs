@@ -107,13 +107,18 @@ fn reset_existing_scratch(
     reset(ms, selected, columns, false, clear_virtual, lock)
 }
 
-/// Add one absent visibility scratch column before data selection.
+/// Prepare a visibility scratch column at attachment, before data selection.
 pub(crate) fn initialize_scratch_column(
     ms: &mut MeasurementSet,
     column: VisibilityDataColumn,
-    lock: TableWriteLock,
+    mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
     if has_column(ms, column) {
+        if column == MODEL {
+            // CASA invalidates virtual recipes when it attaches a scratch
+            // model iterator, even if the scratch samples already exist.
+            scratch_columns::prepare_write_holding(ms, column, false, &mut lock)?;
+        }
         return Ok(lock);
     }
     let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
