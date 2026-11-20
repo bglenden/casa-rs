@@ -203,6 +203,10 @@ Use `ia.getregion(region=...)` to read that same selection. Pass
 or `axes` to average the valid pixels along selected axes.
 Use `ia.boundingbox(region=...)` to inspect the inclusive pixel corners,
 stride, sampled shape and world coordinates of the corners.
+Use `ia.crop(axes=...)` to trim fully masked edge planes along the selected
+axes. The method applies the region and optional mask expression before
+finding the crop bounds. Pass `region=[]` when using `box`, `chans`, or
+`stokes` separately.
 
 `ia.statistics()` returns statistics over a real native CASA image, an
 attached FITS image, or a temporary image. Pass `axes` for per-plane results,

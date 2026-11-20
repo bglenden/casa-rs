@@ -50,6 +50,36 @@ pub(super) fn stored_beam_record(
     beams.beam(channel, polarization).to_record()
 }
 
+pub(super) fn subset_beam_record(
+    output: &mut RecordValue,
+    stored: Option<&RecordValue>,
+    beams: &ImageBeamSet,
+    channels: &[usize],
+    polarizations: &[usize],
+) -> Result<(), ImageError> {
+    let subset = beams.subset(channels, polarizations)?;
+    let beam = |channel, polarization| {
+        Value::Record(stored_beam_record(stored, beams, channel, polarization))
+    };
+    output.remove("perplanebeams");
+    output.remove("restoringbeam");
+    if subset.is_single() {
+        output.upsert("restoringbeam", beam(channels[0], polarizations[0]));
+    } else {
+        let mut grid = subset.to_record();
+        for (plane, &polarization) in polarizations.iter().enumerate() {
+            for (slot, &channel) in channels.iter().enumerate() {
+                grid.upsert(
+                    format!("*{}", plane * channels.len() + slot),
+                    beam(channel, polarization),
+                );
+            }
+        }
+        output.upsert("perplanebeams", Value::Record(grid));
+    }
+    Ok(())
+}
+
 fn beam_matrix(
     beams: &ImageBeamSet,
     stokes_first: bool,
