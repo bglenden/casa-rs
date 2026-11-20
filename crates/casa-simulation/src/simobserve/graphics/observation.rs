@@ -68,8 +68,12 @@ pub(crate) fn antenna_panel(
         [lo - margin, hi + margin]
     });
     let mut output = panel("antennas", "", ["", ""], limits, true);
-    let x = payload.values(local.iter().map(|p| p[0]))?;
-    let y = payload.values(local.iter().map(|p| p[1]))?;
+    let x = payload
+        .values(local.iter().map(|p| p[0]))
+        .map_err(failure)?;
+    let y = payload
+        .values(local.iter().map(|p| p[1]))
+        .map_err(failure)?;
     output.layers.push(layer(
         "pads",
         PlotLayerKind::Scatter,
@@ -81,7 +85,9 @@ pub(crate) fn antenna_panel(
         Some(if circles { "," } else { "o" }),
     ));
     if circles {
-        let radii = payload.values(diameters.iter().map(|d| d / 2.0))?;
+        let radii = payload
+            .values(diameters.iter().map(|d| d / 2.0))
+            .map_err(failure)?;
         output.layers.push(layer(
             "dishes",
             PlotLayerKind::Circles,
@@ -140,7 +146,7 @@ pub(crate) fn uv_panel(
             return Err(failure("nonfinite UV plot coordinate"));
         }
         for value in [u, v, -u, -v] {
-            payload.f64(value)?;
+            payload.f64(value).map_err(failure)?;
         }
         xmax = xmax.max(u.abs());
         ymax = ymax.max(v.abs());

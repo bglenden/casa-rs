@@ -296,11 +296,23 @@ mod tests {
                     .provider
                     .as_ref()
                     .map(|projection| &projection.adapter);
-                // A later revision (tclean's selectors, one per
-                // MeasurementSet; its scan and observation keep their exact
-                // text, so `none` is a value the native parser refuses)
-                // passes its value as it is.
-                if binding.concept.semantic_revision.0 > 1 {
+                // These transform selectors still omit the absent value
+                // after their domains widened to accept CASA variants.
+                let transform_variant = matches!(surface.id(), "mstransform" | "split")
+                    && matches!(
+                        binding.name.as_str(),
+                        "field" | "spw" | "scan" | "antenna" | "timerange"
+                    );
+                if transform_variant {
+                    assert_eq!(default, absence, "{}.{}", surface.id(), binding.name);
+                    assert_eq!(
+                        adapter,
+                        Some(&crate::ValueAdapter::OmitNone),
+                        "{}.{}",
+                        surface.id(),
+                        binding.name
+                    );
+                } else if binding.concept.semantic_revision.0 > 1 {
                     assert_eq!(
                         adapter,
                         Some(&crate::ValueAdapter::Identity),
@@ -644,7 +656,7 @@ mod tests {
                 None,
             ),
             (
-                &["msexplore", "plotms"][..],
+                &["msexplore"][..],
                 "output",
                 "measurementset.summary.output",
                 Some("msexplore"),
@@ -718,6 +730,7 @@ mod tests {
             [
                 "data.input.vis",
                 "data.output.vis",
+                "plotms.vis",
                 "simulation.analysis.vis"
             ]
             .into_iter()
@@ -741,6 +754,7 @@ mod tests {
                 "imager.width",
                 "impv.width",
                 "ms.transform.width",
+                "plotms.width",
                 "regridms.width",
                 "single_dish.width"
             ]
@@ -779,7 +793,13 @@ mod tests {
         assert_eq!(role("data.output.vis"), ParameterRole::OutputData);
         assert_eq!(role("image.input.imagename"), ParameterRole::InputData);
         assert_eq!(role("image.output.imagename"), ParameterRole::OutputData);
-        for id in concept_ids("width").into_iter().chain(concept_ids("mode")) {
+        assert_eq!(role("plotms.vis"), ParameterRole::InputData);
+        assert_eq!(role("plotms.width"), ParameterRole::Presentation);
+        for id in concept_ids("width")
+            .into_iter()
+            .chain(concept_ids("mode"))
+            .filter(|id| id != "plotms.width")
+        {
             assert_eq!(role(&id), ParameterRole::Algorithm);
         }
     }
@@ -828,8 +848,8 @@ mod tests {
                             RunProductSource::DecodedArtifacts => None,
                         })
                         .collect::<BTreeSet<_>>();
-                    // The imager and simobserve name their products in their
-                    // managed results; the others by their output bindings.
+                    // Some tasks name products in the managed result,
+                    // including the moment images derived from outfile.
                     let decoded = products.iter().any(|product| {
                         matches!(product.source, RunProductSource::DecodedArtifacts)
                     });
@@ -837,7 +857,13 @@ mod tests {
                         decoded,
                         matches!(
                             surface.id(),
-                            "tclean" | "simobserve" | "simanalyze" | "simalma" | "tsdimaging"
+                            "tclean"
+                                | "simobserve"
+                                | "simanalyze"
+                                | "simalma"
+                                | "tsdimaging"
+                                | "plotms"
+                                | "immoments"
                         ),
                         "{} product sources",
                         surface.id()

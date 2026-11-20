@@ -49,6 +49,8 @@ const LOGTABLE_NAME: &str = "logtable";
 pub struct ImageHistoryEntry {
     /// Time in seconds since MJD zero.
     pub time_mjd_seconds: f64,
+    /// Original CASA log priority.
+    pub priority: String,
     /// Original CASA log location.
     pub location: String,
     /// History message.
@@ -58,10 +60,8 @@ pub struct ImageHistoryEntry {
 /// Complete casacore log metadata retained when importing history records.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageHistoryRow {
-    /// Time, source location and message of the entry.
+    /// Time, priority, source location and message of the entry.
     pub entry: ImageHistoryEntry,
-    /// Severity as stored in the CASA log table.
-    pub priority: String,
     /// Object identifier as stored in the CASA log table.
     pub object_id: String,
 }
@@ -70,7 +70,6 @@ impl ImageHistoryRow {
     pub(crate) fn informational(entry: ImageHistoryEntry) -> Self {
         Self {
             entry,
-            priority: "INFO".into(),
             object_id: String::new(),
         }
     }
@@ -100,11 +99,81 @@ impl ImageHistoryEntry {
     }
 }
 
-mod history;
 #[cfg(unix)]
 mod locking;
-pub use history::{image_history_entries, image_history_rows};
 
+/// Read the image log including CASA priority, timestamp, and location.
+pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
+    Ok(image_history_rows(path)?
+        .into_iter()
+        .map(|row| row.entry)
+        .collect())
+}
+
+/// Reads the original log rows including their object identifiers.
+pub fn image_history_rows(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryRow>, ImageError> {
+    let image = path.as_ref();
+    if image.is_file() {
+        return crate::fits_read::history_rows(image);
+    }
+    let logtable_path = image.join(LOGTABLE_NAME);
+    if !logtable_path.exists() {
+        let table = Table::open(TableOptions::new(image))?;
+        if table.keywords().get(LOGTABLE_KEYWORD).is_some() {
+            return Err(ImageError::InvalidMetadata(
+                "image history table is missing".into(),
+            ));
+        }
+        return Ok(Vec::new());
+    }
+    let table = Table::open(TableOptions::new(logtable_path))?;
+    let mut entries = Vec::with_capacity(table.row_count());
+    for row in 0..table.row_count() {
+        let time = table.cell_accessor(row, "TIME")?.value()?;
+        let priority = table
+            .cell_accessor(row, "PRIORITY")
+            .ok()
+            .and_then(|cell| cell.value().ok().flatten())
+            .and_then(|value| match value {
+                Value::Scalar(ScalarValue::String(priority)) if !priority.trim().is_empty() => {
+                    Some(priority.trim().to_string())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| "INFO".to_string());
+        let location = table.cell_accessor(row, "LOCATION")?.value()?;
+        let message = table.cell_accessor(row, "MESSAGE")?.value()?;
+        let object_id = match table
+            .cell_accessor(row, "OBJECT_ID")
+            .ok()
+            .and_then(|cell| cell.value().ok().flatten())
+        {
+            Some(Value::Scalar(ScalarValue::String(value))) => value.clone(),
+            _ => String::new(),
+        };
+        match (time, location, message) {
+            (
+                Some(Value::Scalar(ScalarValue::Float64(time))),
+                Some(Value::Scalar(ScalarValue::String(location))),
+                Some(Value::Scalar(ScalarValue::String(message))),
+            ) => entries.push(ImageHistoryRow {
+                entry: ImageHistoryEntry {
+                    time_mjd_seconds: *time,
+                    priority,
+                    location: location.clone(),
+                    message: message.clone(),
+                },
+                object_id,
+            }),
+            _ => {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "invalid history entry at row {row}"
+                )));
+            }
+        }
+    }
+    Ok(entries)
+}
 const REGION_TYPE_FIELD: &str = "isRegion";
 const REGION_NAME_FIELD: &str = "name";
 const REGION_COMMENT_FIELD: &str = "comment";
@@ -570,6 +639,23 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
 
     /// Replaces a named mask.
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError>;
+
+    /// Write a unit-stride section of a named mask. New masks start false.
+    fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        validate_mask_slice_write(self.shape(), data.shape(), start)?;
+        let mut mask = match self.get_named_mask(name) {
+            Ok(mask) => mask,
+            Err(ImageError::MaskNotFound(_)) => ArrayD::from_elem(IxDyn(self.shape()), false),
+            Err(error) => return Err(error),
+        };
+        assign_mask_slice(&mut mask, data, start)?;
+        self.put_mask(name, &mask)
+    }
 
     /// Removes a named mask.
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError>;
@@ -1608,6 +1694,12 @@ impl<T: ImagePixel> PagedImage<T> {
     ///
     /// Returns an error if the value or spectral metadata is invalid.
     pub fn set_rest_frequency(&mut self, value: f64) -> Result<f64, ImageError> {
+        if !value.is_finite() || value <= 0.0 {
+            return Err(casa_coordinates::CoordinateError::InvalidRecord(
+                "rest frequency must be positive and finite".into(),
+            )
+            .into());
+        }
         self.edit_coordinates(|record| {
             CoordinateSystem::set_rest_frequency_in_record(record, value)
         })
@@ -1902,6 +1994,57 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Saves image metadata with history while holding the native log write lock.
+    /// With `info == None` the operation appends history only.
+    ///
+    /// # Errors
+    /// Returns an error if the record is invalid or if the image or its log
+    /// cannot be read, locked or written.
+    pub fn save_image_info_with_history(
+        &mut self,
+        info: Option<&RecordValue>,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        let path = Self::logtable_path(self.path.as_ref().ok_or(ImageError::NotPersistent)?);
+        self.ensure_logtable()?;
+        let mut lock = TableWriteLock::acquire_to_reread(&path, 0)?;
+        let mut log = Table::open(TableOptions::new(&path))?;
+        let time = ImageHistoryEntry::current_time()?;
+        Self::add_logtable_entries(
+            &mut log,
+            messages
+                .iter()
+                .map(|message| (time, location, message.as_str(), "INFO", "")),
+        )?;
+        let previous = self.table.keywords().get("imageinfo").cloned();
+        if let Some(info) = info {
+            self.set_image_info_record(info.clone())?;
+        }
+        let publish = self
+            .save()
+            .and_then(|()| log.save(TableOptions::new(&path)).map_err(ImageError::from));
+        if let Err(error) = publish {
+            if info.is_some() {
+                let keywords = self.table.keywords_mut();
+                if let Some(previous) = previous {
+                    keywords.upsert("imageinfo", previous);
+                } else {
+                    keywords.remove("imageinfo");
+                }
+                if let Err(restore) = self.save() {
+                    return Err(ImageError::Io(format!(
+                        "{error}; restoring the previous image metadata also failed: {restore}"
+                    )));
+                }
+            }
+            return Err(error);
+        }
+        lock.record_write();
+        lock.release()?;
+        Ok(())
+    }
+
     /// Append imported history with its original location and MJD time.
     ///
     /// # Errors
@@ -1922,7 +2065,7 @@ impl<T: ImagePixel> PagedImage<T> {
                         entry.entry.time_mjd_seconds,
                         entry.entry.location.as_str(),
                         entry.entry.message.as_str(),
-                        entry.priority.as_str(),
+                        entry.entry.priority.as_str(),
                         entry.object_id.as_str(),
                     )
                 }),
@@ -2241,32 +2384,45 @@ impl<T: ImagePixel> PagedImage<T> {
         start: &[usize],
     ) -> Result<(), ImageError> {
         validate_mask_slice_write(&self.shape, data.shape(), start)?;
-        let record = make_paged_mask_record(&subtable_reference(name), &self.shape);
-        let mut masks = match self.table.keywords().get(MASKS_KEYWORD) {
-            Some(Value::Record(rec)) => rec.clone(),
-            _ => RecordValue::default(),
+        let entry = match self.table.keywords_mut().get_mut(MASKS_KEYWORD) {
+            Some(Value::Record(masks)) => masks.get_mut(name),
+            _ => None,
         };
-        masks.upsert(name, Value::Record(record));
-        self.table
-            .keywords_mut()
-            .upsert(MASKS_KEYWORD, Value::Record(masks));
+        let relative_path = match entry {
+            Some(Value::Array(ArrayValue::Bool(mask))) => {
+                if mask.shape() != self.shape.as_slice() {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: self.shape.clone(),
+                        got: mask.shape().to_vec(),
+                    });
+                }
+                return assign_mask_slice(mask, data, start);
+            }
+            Some(Value::Record(record)) => Some(Self::persistent_mask_relative_path(record)?),
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "mask keyword is neither a bool array nor a paged-mask record".to_string(),
+                ));
+            }
+            None => None,
+        };
 
         if let Some(path) = &self.path {
-            let mask_path = path.join(name);
-            if !mask_path.exists() {
-                let mut mask = PagedArray::<bool>::create_with_cache(
-                    TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
-                    &mask_path,
-                    self.cache_bytes(),
-                )
-                .map_err(ImageError::from)?;
-                mask.put_slice(data, start)?;
-                mask.flush().map_err(ImageError::from)?;
+            let mask_path = relative_path.as_ref().map_or_else(
+                || path.join(name),
+                |reference| casa_tables::add_directory(reference, path),
+            );
+            let mut mask = if relative_path.is_some() || mask_path.exists() {
+                PagedArray::<bool>::open_with_cache(mask_path, self.cache_bytes())?
             } else {
-                let mut mask = PagedArray::<bool>::open_with_cache(&mask_path, self.cache_bytes())?;
-                mask.put_slice(data, start)?;
-                mask.flush().map_err(ImageError::from)?;
-            }
+                PagedArray::<bool>::create_with_cache(
+                    TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
+                    mask_path,
+                    self.cache_bytes(),
+                )?
+            };
+            mask.put_slice(data, start)?;
+            mask.flush()?;
         } else {
             let mask = self
                 .temp_masks
@@ -2274,7 +2430,12 @@ impl<T: ImagePixel> PagedImage<T> {
                 .or_insert_with(|| ArrayD::from_elem(IxDyn(&self.shape), false));
             assign_mask_slice(mask, data, start)?;
         }
-        self.persistent_masks.borrow_mut().remove(name);
+        if relative_path.is_none() {
+            self.register_paged_mask(name);
+        } else {
+            // Multiple region names can reference the same on-disk table.
+            self.persistent_masks.borrow_mut().clear();
+        }
         Ok(())
     }
 
@@ -2421,6 +2582,13 @@ impl<T: ImagePixel> PagedImage<T> {
         &self.table
     }
 
+    /// Set the subtype of the image's on-disk table.
+    pub fn set_table_subtype(&mut self, subtype: impl Into<String>) {
+        let mut info = self.table.info().clone();
+        info.sub_type = subtype.into();
+        self.table.set_info(info);
+    }
+
     fn initialize_keywords(table: &mut Table, coords: &CoordinateSystem) {
         table
             .keywords_mut()
@@ -2563,11 +2731,26 @@ impl<T: ImagePixel> PagedImage<T> {
         path: &Path,
         entries: impl IntoIterator<Item = (f64, &'a str, &'a str, &'a str, &'a str)>,
     ) -> Result<(), ImageError> {
+        let mut entries = entries.into_iter().peekable();
+        if entries.peek().is_none() {
+            return Ok(());
+        }
         // casacore takes a reopened table's row count from the sync data in
         // `table.lock`, which this lock publishes: a save alone leaves a
         // `logtable` CASA wrote unreadable to it.
         let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
+        Self::add_logtable_entries(&mut table, entries)?;
+        table.save(TableOptions::new(path))?;
+        lock.record_write();
+        lock.release()?;
+        Ok(())
+    }
+
+    fn add_logtable_entries<'a>(
+        table: &mut Table,
+        entries: impl IntoIterator<Item = (f64, &'a str, &'a str, &'a str, &'a str)>,
+    ) -> Result<(), ImageError> {
         for (time, location, message, priority, object_id) in entries {
             table.add_row(RecordValue::new(vec![
                 RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
@@ -2581,7 +2764,7 @@ impl<T: ImagePixel> PagedImage<T> {
                 ),
                 RecordField::new(
                     "LOCATION",
-                    Value::Scalar(ScalarValue::String(location.to_string())),
+                    Value::Scalar(ScalarValue::String(location.into())),
                 ),
                 RecordField::new(
                     "OBJECT_ID",
@@ -2589,9 +2772,6 @@ impl<T: ImagePixel> PagedImage<T> {
                 ),
             ]))?;
         }
-        table.save(TableOptions::new(path))?;
-        lock.record_write();
-        lock.release()?;
         Ok(())
     }
 
@@ -2725,6 +2905,30 @@ pub fn add_image_history(
     )
 }
 
+/// Appends full [`ImageHistoryEntry`] rows to the `logtable` of `image` in
+/// a single table write, preserving timestamps, priorities, and locations.
+///
+/// # Errors
+///
+/// When the `logtable` cannot be opened or saved.
+pub fn append_image_history_entries(
+    image: &Path,
+    entries: &[ImageHistoryEntry],
+) -> Result<(), ImageError> {
+    PagedImage::<f32>::append_logtable_entries(
+        &image.join(LOGTABLE_NAME),
+        entries.iter().map(|entry| {
+            (
+                entry.time_mjd_seconds,
+                entry.location.as_str(),
+                entry.message.as_str(),
+                entry.priority.as_str(),
+                "",
+            )
+        }),
+    )
+}
+
 impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
     fn set_coordinates(&mut self, coords: CoordinateSystem) -> Result<(), ImageError> {
         PagedImage::set_coordinates(self, coords)
@@ -2744,6 +2948,15 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
 
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
         PagedImage::put_mask(self, name, data)
+    }
+
+    fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        PagedImage::put_mask_slice(self, name, data, start)
     }
 
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {
@@ -3218,7 +3431,7 @@ fn slice_mask_array(
     Ok(view.to_owned())
 }
 
-fn validate_mask_slice_write(
+pub(crate) fn validate_mask_slice_write(
     full_shape: &[usize],
     data_shape: &[usize],
     start: &[usize],
@@ -3246,7 +3459,7 @@ fn validate_mask_slice_write(
     Ok(())
 }
 
-fn assign_mask_slice(
+pub(crate) fn assign_mask_slice(
     mask: &mut ArrayD<bool>,
     data: &ArrayD<bool>,
     start: &[usize],
@@ -4260,6 +4473,52 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(untouched.iter().all(|value| !*value));
+    }
+
+    #[test]
+    fn paged_image_mask_slice_preserves_existing_storage_and_pixels() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing_masks.image");
+        let shape = vec![4, 3];
+        let mut image = PagedImage::<f32>::create(shape.clone(), make_coords(), &path).unwrap();
+        let initial = ArrayD::from_shape_fn(IxDyn(&shape), |index| index[0] != 0);
+        image.put_mask("backing", &initial).unwrap();
+        let mut masks = RecordValue::default();
+        masks.upsert("inline", Value::Array(ArrayValue::Bool(initial.clone())));
+        for name in ["aliased", "same_backing"] {
+            masks.upsert(
+                name,
+                Value::Record(make_paged_mask_record(
+                    &subtable_reference("backing"),
+                    &shape,
+                )),
+            );
+        }
+        image
+            .table
+            .keywords_mut()
+            .upsert(MASKS_KEYWORD, Value::Record(masks));
+        image.set_default_mask("inline").unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let mut image = PagedImage::<f32>::open(&path).unwrap();
+        let patch = ArrayD::from_elem(IxDyn(&[1, 1]), false);
+        assert!(image.get_named_mask("same_backing").unwrap()[[2, 1]]);
+        for name in ["inline", "aliased"] {
+            MutableImageInterface::put_mask_slice(&mut image, name, &patch, &[2, 1]).unwrap();
+        }
+        assert!(!image.get_named_mask("same_backing").unwrap()[[2, 1]]);
+        image.save().unwrap();
+        drop(image);
+
+        let mut expected = initial;
+        expected[[2, 1]] = false;
+        let image = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(image.get_mask().unwrap(), Some(expected.clone()));
+        assert_eq!(image.get_named_mask("aliased").unwrap(), expected);
+        assert!(!path.join("inline").exists());
+        assert!(!path.join("aliased").exists());
     }
 
     #[test]

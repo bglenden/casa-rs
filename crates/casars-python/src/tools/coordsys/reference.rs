@@ -1,24 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_coordinates::CoordinateSystem;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use super::PyCoordsys;
+use super::{PyCoordsys, inspect::coordinate_type};
 use crate::convert::{DoubleList, value::CasaValue};
 
 fn axes(coordinates: &CoordinateSystem, kind: &str) -> Option<std::ops::Range<usize>> {
     if kind.is_empty() {
         return Some(0..coordinates.n_pixel_axes());
     }
-    let kind = kind.to_ascii_uppercase();
-    let kind = match kind.as_bytes() {
-        [b'D', ..] => CoordinateType::Direction,
-        [b'S', b'T', ..] => CoordinateType::Stokes,
-        [b'S', b'P', ..] => CoordinateType::Spectral,
-        [b'T', ..] => CoordinateType::Tabular,
-        _ => CoordinateType::Linear,
-    };
+    let kind = coordinate_type(kind);
     let mut first = 0;
     for index in 0..coordinates.n_coordinates() {
         let coordinate = coordinates.coordinate(index);
@@ -69,7 +62,9 @@ impl PyCoordsys {
                 CoordinateSystem::set_reference_pixel_in_record(&mut record, axis, value)
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             }
-            *state = super::CoordinateState::from_record(record)?;
+            let mut edited = super::CoordinateState::from_record(record)?;
+            edited.parent_name = std::mem::take(&mut state.parent_name);
+            *state = edited;
             Ok(true)
         })
     }
@@ -82,7 +77,11 @@ impl PyCoordsys {
     }
 
     fn done(&self, py: Python<'_>) -> bool {
-        py.detach(|| *self.state() = super::CoordinateState::empty());
+        py.detach(|| {
+            let mut state = self.lock_state();
+            *state = super::CoordinateState::empty();
+            state.parent_name.clear();
+        });
         true
     }
 

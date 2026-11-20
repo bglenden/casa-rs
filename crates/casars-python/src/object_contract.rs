@@ -286,7 +286,9 @@ mod tests {
                 "coordsys",
                 "table",
                 "msmetadata",
-                "ms"
+                "ms",
+                "calibrater",
+                "imager"
             ]
         );
         let annotated = bundle.annotations["python"]["objects"]

@@ -192,7 +192,7 @@ def test_data_schema_bundle_reports_object_surface() -> None:
     # The CASA tools of casars.tools share the bundle (test_tools_*.py).
     assert set(objects) == {
         "simulator", "measures", "quanta", "componentlist",
-        "image", "coordsys", "table", "msmetadata", "ms",
+        "image", "coordsys", "table", "msmetadata", "ms", "calibrater", "imager",
     }
     assert "Image" not in bundle["annotations"]["python"]["objects"]
     assert all(obj["name"] != "Image" for obj in bundle["projections"]["python"]["objects"])

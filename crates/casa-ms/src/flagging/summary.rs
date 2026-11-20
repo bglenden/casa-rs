@@ -42,14 +42,70 @@ impl FlagCounts {
     }
 }
 
+/// Breakdowns and filters requested by CASA's flagdata summary task.
+#[derive(Debug, Clone, Copy)]
+pub struct FlagSummaryOptions {
+    /// Report counts for each selected channel in its spectral window.
+    pub spwchan: bool,
+    /// Report counts for each correlation in its spectral window.
+    pub spwcorr: bool,
+    /// Report baseline and antenna/scan counts.
+    pub basecnt: bool,
+    /// Report a separate breakdown for each field.
+    pub fieldcnt: bool,
+    /// Minimum flagged fraction of a reported entry.
+    pub minrel: f64,
+    /// Maximum flagged fraction of a reported entry.
+    pub maxrel: f64,
+    /// Minimum flagged samples of a reported entry.
+    pub minabs: i64,
+    /// Maximum flagged samples of a reported entry. Negative values are unbounded.
+    pub maxabs: i64,
+}
+
+impl Default for FlagSummaryOptions {
+    fn default() -> Self {
+        Self {
+            spwchan: false,
+            spwcorr: false,
+            basecnt: false,
+            fieldcnt: false,
+            minrel: 0.0,
+            maxrel: 1.0,
+            minabs: 0,
+            maxabs: -1,
+        }
+    }
+}
+
+impl FlagSummaryOptions {
+    fn includes(self, counts: FlagCounts) -> bool {
+        let fraction = counts.flagged as f64 / counts.total as f64;
+        !((self.minabs > 0 && counts.flagged < self.minabs as u64)
+            || (self.maxabs >= 0 && counts.flagged > self.maxabs as u64)
+            || fraction < self.minrel
+            || fraction > self.maxrel)
+    }
+
+    fn has_bounds(self) -> bool {
+        self.minrel != 0.0 || self.maxrel != 1.0 || self.minabs > 0 || self.maxabs >= 0
+    }
+}
+
 /// CASA's flagdata summary of a selection: the counts overall and broken
 /// down by each axis CASA's summary agent reports.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FlagSummaryBreakdown {
     /// Per antenna name.
     pub antenna: BTreeMap<String, FlagCounts>,
+    /// Per antenna and scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub antenna_scan: Option<BTreeMap<String, FlagCounts>>,
     /// Per ARRAY_ID.
     pub array: BTreeMap<String, FlagCounts>,
+    /// Per baseline in the stored antenna order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<BTreeMap<String, FlagCounts>>,
     /// Per correlation, by its Stokes name (`XX`, `RR`, `I`...).
     pub correlation: BTreeMap<String, FlagCounts>,
     /// Per field name.
@@ -60,8 +116,53 @@ pub struct FlagSummaryBreakdown {
     pub scan: BTreeMap<String, FlagCounts>,
     /// Per spectral window id.
     pub spw: BTreeMap<String, FlagCounts>,
+    /// Per spectral window and selected channel index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spw_channel: Option<BTreeMap<String, FlagCounts>>,
+    /// Per spectral window and correlation name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spw_correlation: Option<BTreeMap<String, FlagCounts>>,
     /// The whole selection.
     pub overall: FlagCounts,
+    /// Separate summaries keyed by field name when fieldcnt is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_field: Option<BTreeMap<String, FlagSummaryBreakdown>>,
+}
+
+impl FlagSummaryBreakdown {
+    fn with_options(options: FlagSummaryOptions) -> Self {
+        Self {
+            antenna_scan: options.basecnt.then(BTreeMap::new),
+            baseline: options.basecnt.then(BTreeMap::new),
+            spw_channel: options.spwchan.then(BTreeMap::new),
+            spw_correlation: options.spwcorr.then(BTreeMap::new),
+            ..Self::default()
+        }
+    }
+
+    fn filter_entries(&mut self, options: FlagSummaryOptions) {
+        if !options.has_bounds() {
+            return;
+        }
+        let axes = [
+            &mut self.antenna,
+            &mut self.array,
+            &mut self.correlation,
+            &mut self.field,
+            &mut self.observation,
+            &mut self.scan,
+            &mut self.spw,
+        ];
+        for axis in axes
+            .into_iter()
+            .chain(&mut self.antenna_scan)
+            .chain(&mut self.baseline)
+            .chain(&mut self.spw_channel)
+            .chain(&mut self.spw_correlation)
+        {
+            axis.retain(|_, counts| options.includes(*counts));
+        }
+    }
 }
 
 /// The names and windows a row's ids resolve to.
@@ -114,6 +215,13 @@ impl Lookup {
             ddid_correlations,
         })
     }
+
+    fn field_name(&self, ms: &MeasurementSet, row: usize, id: i32) -> Result<&str, FlaggingError> {
+        self.field
+            .get(usize::try_from(id).unwrap_or(usize::MAX))
+            .map(String::as_str)
+            .ok_or_else(|| invalid(ms, format!("row {row}: no field {id}")))
+    }
 }
 
 /// The ids of a block of rows.
@@ -150,8 +258,9 @@ pub(super) fn report(
     ms: &MeasurementSet,
     rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    options: FlagSummaryOptions,
 ) -> Result<FlagDataReport, FlaggingError> {
-    let summary = summarize(ms, rows, channel_selections)?;
+    let summary = summarize(ms, rows, channel_selections, options)?;
     let report = FlagDataReport {
         mode: FlagDataMode::Summary,
         selected_rows: rows.len(),
@@ -180,22 +289,47 @@ fn summarize(
     ms: &MeasurementSet,
     rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+    options: FlagSummaryOptions,
 ) -> Result<FlagSummaryBreakdown, FlaggingError> {
     let lookup = Lookup::read(ms)?;
-    let mut summary = FlagSummaryBreakdown::default();
+    let mut summary = FlagSummaryBreakdown::with_options(options);
+    let mut fields = options.fieldcnt.then(BTreeMap::new);
     for block in rows.chunks(BLOCK_ROWS) {
         let ids = BlockIds::read(ms, block)?;
         for (slot, &row) in block.iter().enumerate() {
-            add_row(
-                ms,
-                &lookup,
-                &ids,
-                slot,
-                row,
-                channel_selections,
-                &mut summary,
-            )?;
+            let target = match &mut fields {
+                Some(fields) => fields
+                    .entry(lookup.field_name(ms, row, ids.field[slot])?)
+                    .or_insert_with(|| FlagSummaryBreakdown::with_options(options)),
+                None => &mut summary,
+            };
+            add_row(ms, &lookup, &ids, slot, row, channel_selections, target)?;
         }
+    }
+    if let Some(fields) = fields {
+        if let Some(reserved) = ["type", "name"]
+            .into_iter()
+            .find(|name| fields.contains_key(name))
+        {
+            return Err(invalid(
+                ms,
+                format!(
+                    "RecordRep::defineDataField - incorrect data type used for field {reserved}"
+                ),
+            ));
+        }
+        let mut by_field = BTreeMap::new();
+        for (name, field) in fields {
+            summary.overall.add(field.overall);
+            // CASA filters the whole field by its totals and keeps its
+            // nested breakdowns intact when that field passes.
+            if options.includes(field.overall) {
+                by_field.insert(name.to_string(), field);
+            }
+        }
+        summary.by_field = Some(by_field);
+    } else {
+        summary.filter_entries(options);
     }
     Ok(summary)
 }
@@ -244,33 +378,63 @@ fn add_row(
             .entry(name.to_string())
             .or_default()
             .add(counts);
+        if let Some(spw_correlation) = &mut summary.spw_correlation {
+            spw_correlation
+                .entry(format!("{spw}:{name}"))
+                .or_default()
+                .add(counts);
+        }
         row_counts.add(counts);
     }
-    let antenna = |id: i32| -> Result<String, FlaggingError> {
+    if let Some(spw_channel) = &mut summary.spw_channel {
+        // CASA indexes the selected channel vector within each window.
+        for (index, &channel) in selected.iter().enumerate() {
+            let flagged = (0..correlations)
+                .filter(|&correlation| flags[[correlation, channel]])
+                .count() as u64;
+            spw_channel
+                .entry(format!("{spw}:{index}"))
+                .or_default()
+                .add(FlagCounts {
+                    flagged,
+                    total: correlations as u64,
+                });
+        }
+    }
+    let antenna = |id: i32| -> Result<&str, FlaggingError> {
         lookup
             .antenna
             .get(usize::try_from(id).unwrap_or(usize::MAX))
-            .cloned()
+            .map(String::as_str)
             .ok_or_else(|| invalid(ms, format!("row {row}: no antenna {id}")))
     };
     let (antenna1, antenna2) = (ids.antenna1[slot], ids.antenna2[slot]);
     let add = |axis: &mut BTreeMap<String, FlagCounts>, key: String| {
         axis.entry(key).or_default().add(row_counts);
     };
-    add(&mut summary.antenna, antenna(antenna1)?);
+    let first = antenna(antenna1)?;
+    let second = antenna(antenna2)?;
+    add(&mut summary.antenna, first.to_string());
     if antenna2 != antenna1 {
-        add(&mut summary.antenna, antenna(antenna2)?);
+        add(&mut summary.antenna, second.to_string());
     }
-    let field = ids.field[slot];
-    let field_name = lookup
-        .field
-        .get(usize::try_from(field).unwrap_or(usize::MAX))
-        .cloned()
-        .ok_or_else(|| invalid(ms, format!("row {row}: no field {field}")))?;
-    add(&mut summary.field, field_name);
+    let scan = ids.scan[slot];
+    if let Some(antenna_scan) = &mut summary.antenna_scan {
+        add(antenna_scan, format!("{first}:{scan}"));
+        if antenna2 != antenna1 {
+            add(antenna_scan, format!("{second}:{scan}"));
+        }
+    }
+    if let Some(baseline) = &mut summary.baseline {
+        add(baseline, format!("{first}&&{second}"));
+    }
+    add(
+        &mut summary.field,
+        lookup.field_name(ms, row, ids.field[slot])?.to_string(),
+    );
     add(&mut summary.array, ids.array[slot].to_string());
     add(&mut summary.observation, ids.observation[slot].to_string());
-    add(&mut summary.scan, ids.scan[slot].to_string());
+    add(&mut summary.scan, scan.to_string());
     add(&mut summary.spw, spw.to_string());
     summary.overall.add(row_counts);
     Ok(())

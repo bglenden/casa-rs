@@ -296,7 +296,7 @@ impl<T: LatticeElement> PagedArray<T> {
                 .map_err(tiled_io_err)?;
             return Ok(());
         }
-        if let Some(slice) = typed.as_slice_memory_order() {
+        if let Some(slice) = typed.view().reversed_axes().to_slice() {
             tio.put_slice_fortran::<U>(slice, start, typed.shape())
                 .map_err(tiled_io_err)?;
             return Ok(());

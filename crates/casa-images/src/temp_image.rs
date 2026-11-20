@@ -38,11 +38,12 @@ use casa_lattices::{
     TraversalCacheScope,
 };
 use casa_types::{ArrayD, RecordValue};
+use ndarray::IxDyn;
 
 use crate::error::ImageError;
 use crate::image::{
     ImageHistoryEntry, ImageHistoryRow, ImageInterface, ImagePixel, MutableImageInterface,
-    PagedImage,
+    PagedImage, assign_mask_slice, validate_mask_slice_write,
 };
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
@@ -404,11 +405,6 @@ impl<T: ImagePixel> TempImage<T> {
 // ---- History ----------------------------------------------------------------
 
 impl<T: ImagePixel> TempImage<T> {
-    /// Returns the complete history rows, including their provenance.
-    pub fn history_rows(&self) -> &[ImageHistoryRow] {
-        &self.history
-    }
-
     /// Returns the history entries.
     pub fn history(&self) -> Result<Vec<String>, ImageError> {
         Ok(self
@@ -435,6 +431,7 @@ impl<T: ImagePixel> TempImage<T> {
         let time = ImageHistoryEntry::current_time()?;
         self.history.extend(messages.iter().map(|message| {
             ImageHistoryRow::informational(ImageHistoryEntry {
+                priority: "INFO".into(),
                 time_mjd_seconds: time,
                 location: location.into(),
                 message: message.clone(),
@@ -450,6 +447,11 @@ impl<T: ImagePixel> TempImage<T> {
     ) -> Result<(), ImageError> {
         self.history.extend_from_slice(entries);
         Ok(())
+    }
+
+    /// Returns the temporary image's original log rows for derived images.
+    pub fn history_rows(&self) -> &[ImageHistoryRow] {
+        &self.history
     }
 
     /// Clears the history log.
@@ -737,6 +739,27 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
 
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
         TempImage::put_mask(self, name, data)
+    }
+
+    fn put_mask_slice(
+        &mut self,
+        name: &str,
+        data: &ArrayD<bool>,
+        start: &[usize],
+    ) -> Result<(), ImageError> {
+        validate_mask_slice_write(self.shape(), data.shape(), start)?;
+        let index = self
+            .masks
+            .iter()
+            .position(|(existing, _)| existing == name)
+            .unwrap_or_else(|| {
+                self.masks.push((
+                    name.to_owned(),
+                    ArrayD::from_elem(IxDyn(self.shape()), false),
+                ));
+                self.masks.len() - 1
+            });
+        assign_mask_slice(&mut self.masks[index].1, data, start)
     }
 
     fn remove_mask(&mut self, name: &str) -> Result<(), ImageError> {

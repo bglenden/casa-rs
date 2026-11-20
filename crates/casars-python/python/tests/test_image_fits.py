@@ -54,6 +54,21 @@ def oracle():
     return casa
 
 
+def test_subimage_refuses_direct_fits_without_publishing(tmp_path):
+    source = tmp_path / "image.fits"
+    output = tmp_path / "subimage.im"
+    content = _hdu(True, [1, 2, 3, 4])
+    source.write_bytes(content)
+    tool = tools.image()
+    assert tool.open(str(source))
+    with pytest.raises(NotImplementedError, match=r"subimage.*#1627"):
+        tool.subimage(str(output))
+    assert not output.exists()
+    assert source.read_bytes() == content
+    np.testing.assert_array_equal(tool.getchunk(), [[1, 3], [2, 4]])
+    assert tool.done()
+
+
 @pytest.mark.parametrize("writer", ["casa", "casars"])
 @pytest.mark.parametrize("bitpix", [16, -32])
 @pytest.mark.parametrize("zero", [False, True])

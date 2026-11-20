@@ -207,6 +207,8 @@ fn resolve_product_path(workspace: &Path, value: &str) -> PathBuf {
 enum DecodedManagedResult {
     Calibration(CalibrationResultWire),
     Imager(ImagerOutputWire),
+    Immoments(Vec<ArtifactWire>),
+    Plotms(Vec<ArtifactWire>),
     Simobserve(SimobserveOutputWire),
 }
 
@@ -216,6 +218,7 @@ impl DecodedManagedResult {
         match self {
             Self::Calibration(_) => None,
             Self::Imager(result) => Some(&result.artifacts),
+            Self::Immoments(artifacts) | Self::Plotms(artifacts) => Some(artifacts),
             Self::Simobserve(result) => Some(&result.artifacts),
         }
     }
@@ -234,6 +237,8 @@ impl DecodedManagedResult {
                 ),
                 result.run.warnings,
             ),
+            Self::Immoments(products) => (format!("{} moment images", products.len()), Vec::new()),
+            Self::Plotms(_) => ("plotms completed".into(), Vec::new()),
             Self::Simobserve(result) => (
                 format!("{} products of {}", result.artifacts.len(), result.run.stem),
                 result.run.warnings,
@@ -258,9 +263,48 @@ fn decode_managed_result(
         ManagedResultDecoder::ImagerRunV1 => serde_json::from_str(stdout)
             .map(DecodedManagedResult::Imager)
             .map_err(malformed),
+        ManagedResultDecoder::ImmomentsRunV1 => serde_json::from_str::<MomentsOutputWire>(stdout)
+            .map(|output| DecodedManagedResult::Immoments(output.artifacts()))
+            .map_err(malformed),
+        ManagedResultDecoder::PlotmsRunV1 => serde_json::from_str::<PlotmsOutputWire>(stdout)
+            .map(|output| DecodedManagedResult::Plotms(output.artifacts()))
+            .map_err(malformed),
         ManagedResultDecoder::SimobserveRunV1 => serde_json::from_str(stdout)
             .map(DecodedManagedResult::Simobserve)
             .map_err(malformed),
+    }
+}
+
+#[derive(Deserialize)]
+struct MomentsOutputWire {
+    result: MomentProductsWire,
+}
+
+#[derive(Deserialize)]
+struct MomentProductsWire {
+    products: Vec<MomentProductWire>,
+}
+
+#[derive(Deserialize)]
+struct MomentProductWire {
+    moment: i32,
+    outfile: String,
+}
+
+impl MomentsOutputWire {
+    fn artifacts(self) -> Vec<ArtifactWire> {
+        self.result
+            .products
+            .into_iter()
+            .map(|product| ArtifactWire {
+                kind: product.moment.to_string(),
+                label: format!("Moment {}", product.moment),
+                path: product.outfile,
+                exists: true,
+                render_pending: false,
+                resource_kind: Some(RunProductKind::CasaImage),
+            })
+            .collect()
     }
 }
 
@@ -273,6 +317,51 @@ struct CalibrationResultWire {
 struct ImagerOutputWire {
     run: ImagerRunWire,
     artifacts: Vec<ArtifactWire>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct PlotmsOutputWire {
+    text_file: Option<String>,
+    plot_export: Option<PlotmsTextExport>,
+    plots: Vec<PlotmsFigure>,
+}
+
+impl PlotmsOutputWire {
+    fn artifacts(self) -> Vec<ArtifactWire> {
+        let text = self
+            .text_file
+            .or_else(|| self.plot_export.map(|export| export.output_path));
+        text.into_iter()
+            .map(|path| (path, false))
+            .chain(
+                self.plots
+                    .into_iter()
+                    .filter_map(|plot| plot.output_file.map(|path| (path, true))),
+            )
+            .enumerate()
+            .map(|(index, (path, render_pending))| ArtifactWire {
+                kind: (index + 1).to_string(),
+                label: Path::new(&path)
+                    .file_name()
+                    .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned()),
+                path,
+                exists: !render_pending,
+                render_pending,
+                resource_kind: Some(RunProductKind::File),
+            })
+            .collect()
+    }
+}
+
+#[derive(Deserialize)]
+struct PlotmsTextExport {
+    output_path: String,
+}
+
+#[derive(Deserialize)]
+struct PlotmsFigure {
+    output_file: Option<String>,
 }
 
 #[derive(Deserialize)]

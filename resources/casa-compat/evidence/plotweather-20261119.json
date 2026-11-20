@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "oracle": "Installed CASA Python task and Matplotlib artists",
+  "casa_version": "6.7.6.14",
+  "execution_date": "2026-11-19",
+  "revision": "3b459173040b1758f761ba68e95d59e2d5d60214",
+  "plotweather": {
+    "command": "MPLBACKEND=Agg PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotweather_oracle.py --work <empty-directory> --native-bin <calibrate>",
+    "scope": "Zenith opacity per spectral window and the five-panel weather figure. Includes weather and seasonal weighting, fallback for absent, empty or unreadable WEATHER tables, fractional UTC times, named and default PNGs, and typed validation.",
+    "result": "passed",
+    "opacity_cases": 10,
+    "matched_panels": 15,
+    "exact_errors": 13,
+    "numerical_laws": 5,
+    "fixed_model": {
+      "generation": "tools/casa-compat/generate_plotweather_opacity.py",
+      "sha256": "5a952e8ceb3c36a6806a4904971a40e6c3952de6ba473bd331e0de8cc639b3d9",
+      "model": "VLA fixed 20-profile zenith fit over 2,000 channel centres"
+    }
+  }
+}

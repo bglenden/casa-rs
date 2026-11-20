@@ -5,10 +5,11 @@
 use std::process::ExitCode;
 
 use casa_ms::{
-    FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, MeasurementSet,
-    delete_flag_version, flagmanager_list_record, flagmanager_task_schema_bundle,
-    list_flag_versions, ms_task_success, rename_flag_version, restore_flag_version,
-    save_flag_version, task_flag_merge,
+    FlagManagerMutationResult, FlagManagerTaskRequest, FlagManagerTaskResult, FlaggingError,
+    MeasurementSet, delete_flag_version, flag_version_ms_path, flagmanager_list_record,
+    flagmanager_task_schema_bundle, initialize_flag_versions, list_flag_versions, ms_task_success,
+    rename_flag_version, rename_flag_version_for_task, restore_flag_version, save_flag_version,
+    task_flag_merge,
 };
 use casa_provider_contracts::CasaValue;
 use casa_task_runtime::{
@@ -53,17 +54,19 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 
 fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, TaskFailure> {
     let failed = |error: casa_ms::FlaggingError| TaskFailure::execution(error.to_string());
-    let required = |name: &str, value: Option<String>| {
-        value.ok_or_else(|| {
-            TaskFailure::validation(format!(
-                "flagmanager mode {:?} requires {name}",
-                request.mode
-            ))
-            .at(name)
-        })
+    let require_version = |message| {
+        request
+            .versionname
+            .clone()
+            .ok_or_else(|| TaskFailure::validation(message).at("versionname"))
     };
-    let mut ms = MeasurementSet::open(&request.vis)
-        .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let vis = if request.mode == "rename" {
+        request.vis.clone()
+    } else {
+        flag_version_ms_path(&request.vis)
+    };
+    let mut ms =
+        MeasurementSet::open(vis).map_err(|error| TaskFailure::execution(error.to_string()))?;
     let mutation = |mode: &str, versionname, oldname| {
         Ok(FlagManagerTaskResult::Mutation(FlagManagerMutationResult {
             mode: mode.to_string(),
@@ -72,33 +75,48 @@ fn execute(request: FlagManagerTaskRequest) -> Result<FlagManagerTaskResult, Tas
         }))
     };
     match request.mode.as_str() {
-        "list" => Ok(FlagManagerTaskResult::Versions(
-            list_flag_versions(&ms).map_err(failed)?,
-        )),
+        "list" => {
+            initialize_flag_versions(&ms).map_err(failed)?;
+            Ok(FlagManagerTaskResult::Versions(
+                list_flag_versions(&ms).map_err(failed)?,
+            ))
+        }
         "save" => {
-            let name = required("versionname", request.versionname.clone())?;
+            let name = require_version("Illegal empty versionname: ''")?;
             let comment = request.comment.as_deref().unwrap_or("");
             keep_existing_version(&ms, &name)?;
             save_flag_version(&ms, &name, comment, request.merge).map_err(failed)?;
             mutation("save", Some(name), None)
         }
         "restore" => {
-            let name = required("versionname", request.versionname.clone())?;
+            let name = require_version("Illegal versionname: ''")?;
+            initialize_flag_versions(&ms).map_err(failed)?;
             restore_flag_version(&mut ms, &name, request.merge).map_err(failed)?;
             ms.save_main_table_only()
                 .map_err(|error| TaskFailure::execution(error.to_string()))?;
             mutation("restore", Some(name), None)
         }
         "delete" => {
-            let name = required("versionname", request.versionname.clone())?;
+            let name = require_version("Illegal versionname: ''")?;
             delete_flag_version(&ms, &name).map_err(failed)?;
             mutation("delete", Some(name), None)
         }
         "rename" => {
-            let old = required("oldname", request.oldname.clone())?;
-            let name = required("versionname", request.versionname.clone())?;
+            let name = request.versionname.ok_or_else(|| {
+                TaskFailure::validation("Illegal versionname: ''").at("versionname")
+            })?;
+            let old = request
+                .oldname
+                .ok_or_else(|| TaskFailure::validation("Illegal oldname: ''").at("oldname"))?;
             let comment = request.comment.as_deref().unwrap_or("");
-            rename_flag_version(&ms, &old, &name, comment).map_err(failed)?;
+            rename_flag_version_for_task(&ms, &old, &name, comment).map_err(
+                |error| match error {
+                    FlaggingError::FlagVersionRenameArgument { parameter, message } => {
+                        TaskFailure::validation(message).at(parameter)
+                    }
+                    error => failed(error),
+                },
+            )?;
             mutation("rename", Some(name), Some(old))
         }
         other => Err(TaskFailure::validation(format!(

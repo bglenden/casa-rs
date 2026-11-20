@@ -9,12 +9,9 @@ use crate::{
     image::{ImageHistoryEntry, ImageHistoryRow},
 };
 
-pub(crate) fn history_entries(path: &Path) -> Result<Vec<ImageHistoryEntry>, ImageError> {
+pub(crate) fn history_rows(path: &Path) -> Result<Vec<ImageHistoryRow>, ImageError> {
     let cards = read_cards(path)?;
-    Ok(history_from_cards(&cards, false)
-        .into_iter()
-        .map(|row| row.entry)
-        .collect())
+    Ok(history_from_cards(&cards, false))
 }
 
 pub(super) fn history_from_cards(
@@ -102,10 +99,10 @@ fn append_group(
             entries.push(ImageHistoryRow {
                 entry: ImageHistoryEntry {
                     time_mjd_seconds: parse_time(date).unwrap_or(-1.0),
+                    priority: priority.into(),
                     location: quoted("SRCCODE='", preserve_casacore_location).into(),
                     message: pair[1].clone(),
                 },
-                priority: priority.into(),
                 object_id: quoted("OBJID='", false).into(),
             });
         }
@@ -113,6 +110,7 @@ fn append_group(
         entries.extend(lines.iter().map(|line| {
             ImageHistoryRow::informational(ImageHistoryEntry {
                 time_mjd_seconds: -1.0,
+                priority: "INFO".into(),
                 location: String::new(),
                 message: line.clone(),
             })

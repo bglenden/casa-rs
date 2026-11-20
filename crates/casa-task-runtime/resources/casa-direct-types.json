@@ -50,6 +50,10 @@
     "interp": "cStrVec",
     "parang": "cBool"
   },
+  "calstat": {
+    "axis": "cStr",
+    "datacolumn": "cStr"
+  },
   "clearcal": {
     "field": "cStr",
     "spw": "cStr",
@@ -353,6 +357,13 @@
     "spwmap": "cIntVec",
     "dowtsp": "cBool"
   },
+  "listcal": {
+    "field": "cStr",
+    "antenna": "cStr",
+    "spw": "cStr",
+    "listfile": "cStr",
+    "pagerows": "cInt"
+  },
   "mstransform": {
     "outputvis": "cStr",
     "createmms": "cBool",
@@ -391,6 +402,41 @@
     "taql": "cStr",
     "monolithic_processing": "cBool",
     "reindex": "cBool"
+  },
+  "plotbandpass": {
+    "yaxis": "cStr",
+    "xaxis": "cStr",
+    "figfile": "cStr",
+    "plotrange": "cFloatVec",
+    "caltable2": "cStr",
+    "overlay": "cStr",
+    "showflagged": "cBool",
+    "timeranges": "cStr",
+    "buildpdf": "cBool",
+    "caltable3": "cStr",
+    "markersize": "cInt",
+    "density": "cInt",
+    "interactive": "cBool",
+    "zoom": "cStr",
+    "showatm": "cBool",
+    "gs": "cStr",
+    "convert": "cStr",
+    "solutionTimeThresholdSeconds": "cFloat",
+    "debug": "cBool",
+    "vis": "cStr",
+    "showtsky": "cBool",
+    "showfdm": "cBool",
+    "showimage": "cBool",
+    "showatmpoints": "cBool",
+    "parentms": "cStr",
+    "pdftk": "cStr",
+    "edge": "cInt",
+    "resample": "cInt",
+    "platformingThreshold": "cFloat",
+    "platformingSigma": "cFloat",
+    "showBasebandNumber": "cBool",
+    "figfileSequential": "cBool",
+    "chanrangeSetXrange": "cBool"
   },
   "plotms": {
     "vis": "cStr",
@@ -478,6 +524,16 @@
     "showtsky": "cBool",
     "showimage": "cBool",
     "colorizeoverlay": "cBool"
+  },
+  "plotweather": {
+    "seasonal_weight": "cFloat",
+    "doPlot": "cBool",
+    "plotName": "cStr"
+  },
+  "rerefant": {
+    "caltable": "cStr",
+    "refantmode": "cStr",
+    "refant": "cStr"
   },
   "simalma": {
     "project": "cStr",
@@ -583,6 +639,12 @@
     "graphics": "cStr",
     "verbose": "cBool",
     "overwrite": "cBool"
+  },
+  "smoothcal": {
+    "caltable": "cStr",
+    "field": "cStrVec",
+    "smoothtype": "cStr",
+    "ratesmooth": "cBool"
   },
   "split": {
     "outputvis": "cPath",

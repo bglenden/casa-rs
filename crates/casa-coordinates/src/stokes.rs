@@ -15,10 +15,12 @@ use crate::record_utils::{get_optional_vec_string, get_required_vec_i32};
 
 /// Stokes parameter types, matching C++ `Stokes::StokesTypes`.
 ///
-/// The integer codes follow the FITS convention (AIPS Memo 114):
-/// I=1, Q=2, U=3, V=4, RR=5, RL=6, LR=7, LL=8, XX=9, XY=10, YX=11, YY=12.
+/// The integer codes are the casacore Stokes enumeration used in native
+/// records. FITS uses different numeric codes for correlation products.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StokesType {
+    /// An unspecified polarization.
+    Undefined = 0,
     /// Stokes I (total intensity).
     I = 1,
     /// Stokes Q (linear polarization).
@@ -43,6 +45,36 @@ pub enum StokesType {
     YX = 11,
     /// Y-Y linear correlation.
     YY = 12,
+    /// Mixed RX correlation.
+    RX = 13,
+    /// Mixed RY correlation.
+    RY = 14,
+    /// Mixed LX correlation.
+    LX = 15,
+    /// Mixed LY correlation.
+    LY = 16,
+    /// Mixed XR correlation.
+    XR = 17,
+    /// Mixed XL correlation.
+    XL = 18,
+    /// Mixed YR correlation.
+    YR = 19,
+    /// Mixed YL correlation.
+    YL = 20,
+    /// Quasi-orthogonal PP correlation.
+    PP = 21,
+    /// Quasi-orthogonal PQ correlation.
+    PQ = 22,
+    /// Quasi-orthogonal QP correlation.
+    QP = 23,
+    /// Quasi-orthogonal QQ correlation.
+    QQ = 24,
+    /// Single-dish right-circular polarization.
+    RCircular = 25,
+    /// Single-dish left-circular polarization.
+    LCircular = 26,
+    /// Single-dish linear polarization.
+    Linear = 27,
     /// Total polarized intensity: `sqrt(Q^2 + U^2 + V^2)`.
     Ptotal = 28,
     /// Linearly polarized intensity: `sqrt(Q^2 + U^2)`.
@@ -56,7 +88,7 @@ pub enum StokesType {
 }
 
 impl StokesType {
-    /// Returns the integer code for this Stokes type (FITS convention).
+    /// Returns the integer code for this Stokes type in native records.
     pub fn code(self) -> i32 {
         self as i32
     }
@@ -64,6 +96,7 @@ impl StokesType {
     /// Converts an integer code to a [`StokesType`], if valid.
     pub fn from_code(code: i32) -> Option<Self> {
         match code {
+            0 => Some(Self::Undefined),
             1 => Some(Self::I),
             2 => Some(Self::Q),
             3 => Some(Self::U),
@@ -76,6 +109,21 @@ impl StokesType {
             10 => Some(Self::XY),
             11 => Some(Self::YX),
             12 => Some(Self::YY),
+            13 => Some(Self::RX),
+            14 => Some(Self::RY),
+            15 => Some(Self::LX),
+            16 => Some(Self::LY),
+            17 => Some(Self::XR),
+            18 => Some(Self::XL),
+            19 => Some(Self::YR),
+            20 => Some(Self::YL),
+            21 => Some(Self::PP),
+            22 => Some(Self::PQ),
+            23 => Some(Self::QP),
+            24 => Some(Self::QQ),
+            25 => Some(Self::RCircular),
+            26 => Some(Self::LCircular),
+            27 => Some(Self::Linear),
             28 => Some(Self::Ptotal),
             29 => Some(Self::Plinear),
             30 => Some(Self::PFtotal),
@@ -87,49 +135,19 @@ impl StokesType {
 
     /// Converts a standard Stokes string name to the corresponding type.
     pub fn from_name(name: &str) -> Option<Self> {
-        match name.to_ascii_uppercase().as_str() {
-            "I" => Some(Self::I),
-            "Q" => Some(Self::Q),
-            "U" => Some(Self::U),
-            "V" => Some(Self::V),
-            "RR" => Some(Self::RR),
-            "RL" => Some(Self::RL),
-            "LR" => Some(Self::LR),
-            "LL" => Some(Self::LL),
-            "XX" => Some(Self::XX),
-            "XY" => Some(Self::XY),
-            "YX" => Some(Self::YX),
-            "YY" => Some(Self::YY),
-            "PTOTAL" => Some(Self::Ptotal),
-            "PLINEAR" => Some(Self::Plinear),
-            "PFTOTAL" => Some(Self::PFtotal),
-            "PFLINEAR" => Some(Self::PFlinear),
-            "PANGLE" => Some(Self::Pangle),
-            _ => None,
+        if name == "??" {
+            return Some(Self::Undefined);
         }
+        casa_types::Correlation::ALL
+            .into_iter()
+            .find(|value| value.label().eq_ignore_ascii_case(name))
+            .and_then(|value| Self::from_code(value.casacore_code()))
     }
 
     /// Returns the standard string name (e.g. "I", "RR", "XX", "Pangle").
     pub fn name(self) -> &'static str {
-        match self {
-            Self::I => "I",
-            Self::Q => "Q",
-            Self::U => "U",
-            Self::V => "V",
-            Self::RR => "RR",
-            Self::RL => "RL",
-            Self::LR => "LR",
-            Self::LL => "LL",
-            Self::XX => "XX",
-            Self::XY => "XY",
-            Self::YX => "YX",
-            Self::YY => "YY",
-            Self::Ptotal => "Ptotal",
-            Self::Plinear => "Plinear",
-            Self::PFtotal => "PFtotal",
-            Self::PFlinear => "PFlinear",
-            Self::Pangle => "Pangle",
-        }
+        casa_types::Correlation::from_casacore_code(self.code())
+            .map_or("??", casa_types::Correlation::label)
     }
 }
 
@@ -242,14 +260,14 @@ impl Coordinate for StokesCoordinate {
                 got: pixel.len(),
             });
         }
-        let idx = pixel[0].round() as i64;
-        if idx < 0 || idx as usize >= self.stokes.len() {
+        let index = (pixel[0] + 0.5).trunc();
+        if !index.is_finite() || index < 0.0 || index >= self.stokes.len() as f64 {
             return Err(CoordinateError::AxisOutOfRange {
-                index: idx.max(0) as usize,
+                index: index as usize,
                 naxes: self.stokes.len(),
             });
         }
-        Ok(vec![self.stokes[idx as usize].code() as f64])
+        Ok(vec![self.stokes[index as usize].code() as f64])
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
@@ -259,13 +277,23 @@ impl Coordinate for StokesCoordinate {
                 got: world.len(),
             });
         }
-        let code = world[0].round() as i32;
+        let world = world[0];
         let pos = self
             .stokes
             .iter()
-            .position(|s| s.code() == code)
+            .position(|stokes| {
+                // casacore::near uses a relative tolerance except at zero.
+                let code = f64::from(stokes.code());
+                if code == 0.0 {
+                    world.abs() <= (1.0 + 1.0e-13) * f64::MIN_POSITIVE
+                } else {
+                    world.is_finite() && (world - code).abs() <= 1.0e-13 * world.abs().max(code)
+                }
+            })
             .ok_or_else(|| {
-                CoordinateError::ConversionFailed(format!("Stokes code {code} not in coordinate"))
+                CoordinateError::ConversionFailed(format!(
+                    "Stokes value {world} is not contained in this StokesCoordinate"
+                ))
             })?;
         Ok(vec![pos as f64])
     }
@@ -349,13 +377,14 @@ mod tests {
 
     #[test]
     fn stokes_code_roundtrip() {
-        for code in (1..=12).chain(28..=32) {
+        // Native CASA records support unspecified (0) and the entire
+        // casacore enumeration, including mixed correlations.
+        for code in 0..=32 {
             let st = StokesType::from_code(code).unwrap();
             assert_eq!(st.code(), code);
             assert_eq!(StokesType::from_name(st.name()), Some(st));
         }
-        assert!(StokesType::from_code(0).is_none());
-        assert!(StokesType::from_code(13).is_none());
+        assert!(StokesType::from_code(-1).is_none());
         assert!(StokesType::from_code(33).is_none());
     }
 
@@ -388,7 +417,9 @@ mod tests {
     fn to_world_out_of_range() {
         let coord = make_iquv();
         assert!(coord.to_world(&[4.0]).is_err());
-        assert!(coord.to_world(&[-1.0]).is_err());
+        assert!(coord.to_world(&[-1.5]).is_err());
+        assert_eq!(coord.to_world(&[-1.0]).unwrap(), vec![1.0]);
+        assert_eq!(coord.to_world(&[0.5]).unwrap(), vec![2.0]);
     }
 
     #[test]
@@ -396,6 +427,8 @@ mod tests {
         let coord = make_iquv();
         // RR (code 5) is not in I/Q/U/V
         assert!(coord.to_pixel(&[5.0]).is_err());
+        assert!(coord.to_pixel(&[1.49]).is_err());
+        assert_eq!(coord.to_pixel(&[1.0 + 1e-14]).unwrap(), vec![0.0]);
     }
 
     #[test]

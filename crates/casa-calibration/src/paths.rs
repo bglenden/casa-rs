@@ -59,8 +59,31 @@ pub(crate) fn overlap(left: &Path, right: &Path) -> io::Result<bool> {
     Ok(left.starts_with(&right) || right.starts_with(&left))
 }
 
+/// The plain table whose record owns inherited subtable links.
+pub(crate) fn subtable_owner(
+    table: &casa_tables::Table,
+    path: &Path,
+) -> Result<PathBuf, casa_tables::TableError> {
+    if table.is_reference_table()?
+        && let Some(plain) = table.cache_plain_table_paths()?.into_iter().next()
+    {
+        return Ok(plain);
+    }
+    Ok(path.to_path_buf())
+}
+
 /// Copy a table tree, keeping its physical storage and relative links.
 pub(crate) fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> {
+    copy_table_tree(source, destination, false)
+}
+
+/// Copy table files by value before editing, including regular file links.
+/// Directory links remain available for the caller to resolve as subtables.
+pub(crate) fn copy_editable_table_tree(source: &Path, destination: &Path) -> io::Result<()> {
+    copy_table_tree(source, destination, true)
+}
+
+fn copy_table_tree(source: &Path, destination: &Path, detach_file_links: bool) -> io::Result<()> {
     std::fs::create_dir_all(destination)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
@@ -68,8 +91,10 @@ pub(crate) fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::
         let destination_path = destination.join(entry.file_name());
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
+            copy_table_tree(&source_path, &destination_path, detach_file_links)?;
+        } else if file_type.is_file()
+            || (detach_file_links && file_type.is_symlink() && source_path.is_file())
+        {
             std::fs::copy(&source_path, &destination_path)?;
         } else if file_type.is_symlink() {
             let target = std::fs::read_link(&source_path)?;

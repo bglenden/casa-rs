@@ -211,7 +211,7 @@ pub(super) fn publish_image(
     let product = stage.path().join("image");
     drop(build(Some(&product))?);
     let mut registry = attachment::registry();
-    let mut leases = BTreeMap::new();
+    let mut replacement_locks = BTreeMap::new();
     let existed = match path.symlink_metadata() {
         Ok(_) if !overwrite => {
             return Err(raised(format!(
@@ -244,7 +244,7 @@ pub(super) fn publish_image(
                     path.display()
                 )));
             }
-            attachment::lock_table_tree(&key, &mut leases)?;
+            attachment::lock_table_tree(&key, &mut replacement_locks)?;
             true
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
@@ -256,7 +256,12 @@ pub(super) fn publish_image(
         rename_without_replacing(&product, &path).map_err(raised)?;
     }
     match AttachedImage::open_created(&mut registry, &path) {
-        Ok(image) => Ok(image),
+        Ok(image) => {
+            // The old table is inside the private staging directory after an exchange.
+            drop(stage);
+            drop(replacement_locks);
+            Ok(image)
+        }
         Err(error) => {
             let restore = if existed {
                 exchange_directories(&product, &path)

@@ -3,10 +3,11 @@
 """Test CI scope selection without starting any CI jobs."""
 
 import json
+import subprocess
 import unittest
 from unittest.mock import patch
 
-from ci_scope import pr_scope, workspace_packages
+from ci_scope import affected_scope, changed_paths, workspace_packages
 
 
 class ScopeTests(unittest.TestCase):
@@ -26,13 +27,13 @@ class ScopeTests(unittest.TestCase):
         self.addCleanup(workspace.stop)
 
     def test_prose_and_tool_changes_only_select_relevant_jobs(self):
-        scope = pr_scope(["docs/install.md", "tools/perf/imager/test_run_workload.py"])
+        scope = affected_scope(["docs/install.md", "tools/perf/imager/test_run_workload.py"])
         self.assertEqual(scope.rust, "static")
         self.assertTrue(scope.docs and scope.perf)
         self.assertEqual(scope.python, "none")
 
     def test_rust_source_reaches_direct_consumers(self):
-        scope = pr_scope(["crates/casa-calibration/src/lib.rs"])
+        scope = affected_scope(["crates/casa-calibration/src/lib.rs"])
         self.assertEqual(scope.rust, "affected")
         self.assertEqual(scope.packages.split(), [
             "casa-calibration", "casa-task-runtime", "test-util",
@@ -40,42 +41,59 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(scope.python, "none")
 
     def test_rust_test_only_skips_package_builds(self):
-        scope = pr_scope(["crates/casa-calibration/tests/example.rs"])
+        scope = affected_scope(["crates/casa-calibration/tests/example.rs"])
         self.assertEqual(scope.packages, "casa-calibration")
         self.assertEqual(scope.python, "none")
 
     def test_direct_python_keeps_rust_contract_tests(self):
-        scope = pr_scope(["crates/casars-python/python/casars/tasks.py", "README.md"])
+        scope = affected_scope(["crates/casars-python/python/casars/tasks.py", "README.md"])
         self.assertEqual(scope.packages, "casars-python")
         self.assertEqual(scope.python, "editable")
         self.assertTrue(scope.docs)
 
-    def test_unknown_or_build_paths_use_full_ready_checks(self):
+    def test_unknown_or_build_paths_use_full_checks(self):
         for path in ["Cargo.lock", ".github/workflows/ci.yml", "scripts/test-slow.sh"]:
             with self.subTest(path=path):
-                scope = pr_scope([path])
+                scope = affected_scope([path])
                 self.assertEqual(scope.rust, "full")
                 self.assertEqual(scope.python, "full")
-                self.assertEqual(pr_scope([path], draft=True).rust, "static")
 
     def test_task_contract_changes_select_editable_python_checks(self):
-        scope = pr_scope(["crates/casa-task-runtime/src/lib.rs"])
+        scope = affected_scope(["crates/casa-task-runtime/src/lib.rs"])
         self.assertEqual(scope.packages, "casa-task-runtime casars-python")
         self.assertEqual(scope.python, "editable")
 
     def test_evidence_updates_preserve_scoped_checks(self):
-        scope = pr_scope([
+        scope = affected_scope([
             "crates/casa-calibration/src/lib.rs",
             "tools/casa-compat/calibration_initweights_oracle.py",
             "resources/casa-compat/evidence/initweights.json",
         ])
         self.assertEqual(scope.rust, "affected")
 
-    def test_draft_rust_checks_only_changed_packages(self):
-        scope = pr_scope(["crates/casa-calibration/src/lib.rs"], draft=True)
-        self.assertEqual(scope.packages, "casa-calibration")
-        self.assertEqual(scope.python, "none")
-        self.assertFalse(scope.docs or scope.perf)
+
+class RevisionTests(unittest.TestCase):
+    def test_dispatch_requires_a_pinned_base(self):
+        with self.assertRaisesRegex(ValueError, "full base commit SHA"):
+            changed_paths("main")
+
+    def test_head_cannot_be_its_own_base(self):
+        head = "a" * 40
+        with patch("ci_scope.command", return_value=head.encode()):
+            with self.assertRaisesRegex(ValueError, "must precede"):
+                changed_paths(head)
+
+    def test_unrelated_base_cannot_scope_the_revision(self):
+        base, head = "a" * 40, b"b" * 40
+        with patch("ci_scope.command", side_effect=[head, subprocess.CalledProcessError(1, "git")]):
+            with self.assertRaises(subprocess.CalledProcessError):
+                changed_paths(base)
+
+    def test_scopes_a_branch_head_against_its_reviewed_base(self):
+        base, head = "a" * 40, b"b" * 40
+        with patch("ci_scope.command", side_effect=[head, b"", b"docs/install.md\0"]) as git:
+            self.assertEqual(changed_paths(base), ["docs/install.md"])
+            git.assert_called_with("git", "diff", "--name-only", "--no-renames", "-z", base, "HEAD", "--")
 
 
 class CargoMetadataTests(unittest.TestCase):

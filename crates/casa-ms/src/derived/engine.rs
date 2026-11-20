@@ -288,8 +288,10 @@ impl MsCalEngine {
         self.field_directions.len()
     }
 
-    /// Build a MeasFrame for the given time and antenna.
-    fn make_frame(&self, time_mjd_sec: f64, antenna_id: usize) -> MsResult<MeasFrame> {
+    /// Build a measures frame at the specified visibility epoch and antenna.
+    /// # Errors
+    /// The antenna is outside the MeasurementSet antenna table.
+    pub fn antenna_frame(&self, time_mjd_sec: f64, antenna_id: usize) -> MsResult<MeasFrame> {
         let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, self.time_reference);
         let position = self
             .antenna_positions
@@ -534,7 +536,23 @@ impl MsCalEngine {
         field_id: usize,
         first_time_mjd_sec: f64,
     ) -> MsResult<Option<MDirection>> {
-        let Some((ephemeris, offset)) = self.field_series(field_id)? else {
+        self.moving_field_reference_direction_with_offset(field_id, first_time_mjd_sec, None)
+    }
+
+    /// The nominal direction at the FIELD reference epoch with a supplied
+    /// observing offset. Calibration table construction supplies
+    /// `REFERENCE_DIR` here. Without an override, use the field's
+    /// `PHASE_DIR` offset.
+    ///
+    /// # Errors
+    /// The field or its reference epoch is outside the ephemeris domain.
+    pub fn moving_field_reference_direction_with_offset(
+        &self,
+        field_id: usize,
+        first_time_mjd_sec: f64,
+        offset: Option<[f64; 2]>,
+    ) -> MsResult<Option<MDirection>> {
+        let Some((ephemeris, phase_offset)) = self.field_series(field_id)? else {
             return Ok(None);
         };
         let frame = MeasFrame::new().with_position(self.observatory_position.clone());
@@ -549,7 +567,8 @@ impl MsCalEngine {
             .flatten()
             .unwrap_or_else(|| MEpoch::from_mjd_seconds(first_time_mjd_sec, self.time_reference));
         let mjd_utc = origin.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
-        crate::ephemeris::reference_direction(ephemeris, mjd_utc, offset).map(Some)
+        crate::ephemeris::reference_direction(ephemeris, mjd_utc, offset.unwrap_or(phase_offset))
+            .map(Some)
     }
 
     /// The ephemeris `field_id` follows and its `PHASE_DIR` offset, or
@@ -644,7 +663,7 @@ impl MsCalEngine {
         if let Some(value) = cached_geometry_value(&self.parallactic_angle_cache, key) {
             return Ok(value);
         }
-        let frame = self.make_frame(time_mjd_sec, antenna_id)?;
+        let frame = self.antenna_frame(time_mjd_sec, antenna_id)?;
         let value = self
             .direction_at(time_mjd_sec, field_id)?
             .parallactic_angle(&frame)?;
@@ -689,7 +708,7 @@ impl MsCalEngine {
         if let Some(value) = cached_geometry_value(&self.azel_cache, key) {
             return Ok(value);
         }
-        let frame = self.make_frame(time_mjd_sec, antenna_id)?;
+        let frame = self.antenna_frame(time_mjd_sec, antenna_id)?;
         let dir = self.direction_at(time_mjd_sec, field_id)?;
         let azel = dir.convert_to(DirectionRef::AZEL, &frame)?;
         let value = azel.as_angles();
@@ -712,7 +731,7 @@ impl MsCalEngine {
     ///
     /// Cf. C++ `MSCalEngine::getLAST`.
     pub fn last(&self, time_mjd_sec: f64, antenna_id: usize) -> MsResult<f64> {
-        let frame = self.make_frame(time_mjd_sec, antenna_id)?;
+        let frame = self.antenna_frame(time_mjd_sec, antenna_id)?;
         let epoch = MEpoch::from_mjd_seconds(time_mjd_sec, EpochRef::UTC);
         let last_epoch = epoch.convert_to(EpochRef::LAST, &frame)?;
         // LAST is stored as fraction of a day; convert to radians (1 day = 2π)
@@ -750,7 +769,7 @@ impl MsCalEngine {
         if let Some(value) = cached_geometry_value(&self.hadec_cache, key) {
             return Ok(value);
         }
-        let frame = self.make_frame(time_mjd_sec, antenna_id)?;
+        let frame = self.antenna_frame(time_mjd_sec, antenna_id)?;
         let dir = self.direction_at(time_mjd_sec, field_id)?;
         let hadec = dir.convert_to(DirectionRef::HADEC, &frame)?;
         let value = hadec.as_angles();
@@ -771,7 +790,7 @@ impl MsCalEngine {
         ant1: usize,
         ant2: usize,
     ) -> MsResult<[f64; 3]> {
-        let frame = self.make_frame(time_mjd_sec, ant1)?;
+        let frame = self.antenna_frame(time_mjd_sec, ant1)?;
 
         let pos1 = self
             .antenna_positions

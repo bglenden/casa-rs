@@ -137,7 +137,10 @@ fn run(
             .push("simalma PNG rendering needs the Python host".into());
     }
     if let Some(path) = payload {
-        crate::simobserve::graphics::payload::Payload::open(path)?.finish()?;
+        crate::simobserve::graphics::payload::Payload::open(path)
+            .map_err(failure)?
+            .finish()
+            .map_err(failure)?;
         plan.observation.graphics = graphics::mode(&p).to_owned();
     }
     plan::publish_directory(&p, &plan)?;

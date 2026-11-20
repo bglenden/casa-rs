@@ -141,6 +141,7 @@ fn infer_parameter_family(
 
 fn summarize_subtables(path: &Path, table: &Table) -> Vec<CalibrationSubtableSummary> {
     let keywords = table.keywords();
+    let owner = crate::paths::subtable_owner(table, path).unwrap_or_else(|_| path.to_path_buf());
     STANDARD_SUBTABLE_KEYWORDS
         .iter()
         .map(|name| {
@@ -150,7 +151,7 @@ fn summarize_subtables(path: &Path, table: &Table) -> Vec<CalibrationSubtableSum
                 .map(ToOwned::to_owned);
             let resolved_path = stored_reference
                 .as_deref()
-                .map(|stored| add_directory(stored, path));
+                .map(|stored| add_directory(stored, &owner));
 
             match resolved_path.as_ref() {
                 Some(resolved) if resolved.exists() => {

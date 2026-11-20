@@ -4,14 +4,33 @@
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::CoordinateSystem;
-use crate::{Coordinate, CoordinateError, CoordinateType};
+use crate::{Coordinate, CoordinateError, CoordinateType, ProjectionType};
+
+/// Casacore's Projection constructor resizes a short vector without copying
+/// its original contents. Vectors already long enough retain all entries.
+fn apply_casa_projection_defaults(kind: ProjectionType, parameters: &mut Vec<f64>) {
+    let defaults: &[f64] = match kind {
+        ProjectionType::AZP | ProjectionType::SIN => &[0.0, 0.0],
+        ProjectionType::SZP => &[0.0, 0.0, 90.0],
+        ProjectionType::AIR => &[90.0],
+        _ => &[],
+    };
+    if parameters.len() < defaults.len() {
+        parameters.clear();
+        parameters.extend_from_slice(defaults);
+    }
+}
 
 /// Store WCSLIB's resolved latitude of the native pole after changing a
 /// direction's projection or reference value.
 fn refresh_direction_pole(record: &mut RecordValue) -> Result<(), CoordinateError> {
     let direction = crate::DirectionCoordinate::from_record(record)?;
     let pole = direction.native_pole()[1];
-    if ["CAR", "SFL", "MER", "AIT"].contains(&direction.projection().name()) {
+    if [
+        "CAR", "SFL", "MER", "AIT", "PAR", "MOL", "PCO", "TSC", "CSC", "QSC",
+    ]
+    .contains(&direction.projection().name())
+    {
         let latitude = direction.reference_value()[1].to_degrees();
         let longitude = direction.longpole().to_degrees();
         // WCSLIB checks the *unclamped* candidate pole latitude in degrees.
@@ -494,9 +513,9 @@ impl CoordinateSystem {
 
     /// Change the first direction coordinate's projection, preserving axis maps.
     ///
-    /// Returns the old projection when it changed. Supports standard zenithal
-    /// projections and CAR, SFL, MER, and AIT when no frame conversion or
-    /// nonzero projection parameters are present.
+    /// Returns the old projection when it changed. CASA carries the old
+    /// parameters when the vector is long enough, otherwise it uses the new
+    /// projection's defaults. The direction conversion frame is preserved.
     ///
     /// # Errors
     ///
@@ -521,50 +540,34 @@ impl CoordinateSystem {
         let (field, direction) = Self::first_direction_in_record(record)?
             .ok_or_else(|| CoordinateError::InvalidRecord("no direction coordinate".into()))?;
         let name = projection.to_ascii_uppercase();
-        let supported = [
-            "SIN", "TAN", "ARC", "ZEA", "STG", "CAR", "SFL", "MER", "AIT",
-        ];
         if name == "NCP" {
             return Err(CoordinateError::InvalidRecord(format!(
                 "unknown projection {projection:?}"
             )));
         }
-        if crate::ProjectionType::from_name(&name).is_none() {
-            return Err(CoordinateError::InvalidRecord(format!(
+        let kind = ProjectionType::from_name(&name).ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!(
                 "unknown or unsupported projection {projection:?} (#977)"
-            )));
-        }
-        let old = direction.projection().name().to_string();
+            ))
+        })?;
+        let previous = direction.projection();
+        let old = previous.name().to_string();
         if old == name {
             return Ok((system, None));
         }
-        let Some(Value::Record(stored)) = record.get(&field) else {
-            return Err(CoordinateError::InvalidRecord(
-                "missing direction record".into(),
-            ));
-        };
-        let conversion = crate::record_utils::get_optional_string(stored, "conversionSystem");
-        if !supported.contains(&old.as_str())
-            || !supported.contains(&name.as_str())
-            || direction
-                .projection()
-                .parameters()
-                .iter()
-                .any(|value| *value != 0.0)
-            || conversion.is_some_and(|frame| {
-                !frame.eq_ignore_ascii_case(direction.direction_ref().as_str())
-            })
-        {
-            return Err(CoordinateError::InvalidRecord(
-                "projection transition is not implemented (#977)".into(),
-            ));
-        }
+        let mut parameters = previous.parameters().to_vec();
+        apply_casa_projection_defaults(previous.projection_type(), &mut parameters);
+        apply_casa_projection_defaults(kind, &mut parameters);
         let mut updated = record.clone();
         let Some(Value::Record(direction)) = updated.get_mut(&field) else {
             unreachable!()
         };
         normalize_direction_matrix(direction)?;
         direction.upsert("projection", Value::Scalar(ScalarValue::String(name)));
+        direction.upsert(
+            "projection_parameters",
+            Value::Array(ArrayValue::from_f64_vec(parameters)),
+        );
         refresh_direction_pole(direction)?;
         let system = Self::from_record(&updated)?;
         *record = updated;
@@ -655,9 +658,7 @@ impl CoordinateSystem {
             .flat_map(|index| {
                 let coordinate = system.coordinate(index);
                 match coordinate {
-                    crate::CoordinateModel::Direction(direction) => {
-                        direction.world_units().to_vec()
-                    }
+                    crate::CoordinateModel::Direction(direction) => direction.visible_world_units(),
                     _ => coordinate.axis_units(),
                 }
             })
@@ -798,19 +799,20 @@ impl CoordinateSystem {
     /// Set the active rest frequency in the spectral coordinate's stored unit.
     ///
     /// Other listed rest frequencies and the coordinate's original mappings
-    /// remain intact. Returns the updated system and previous active value.
+    /// remain intact. Zero leaves the rest frequency unspecified. Returns the
+    /// updated system and previous active value.
     ///
     /// # Errors
     ///
     /// Returns an error for missing or malformed spectral metadata, or a
-    /// non-positive or non-finite frequency.
+    /// negative or non-finite frequency.
     pub fn set_rest_frequency_in_record(
         record: &mut RecordValue,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
-        if !value.is_finite() || value <= 0.0 {
+        if !value.is_finite() || value < 0.0 {
             return Err(CoordinateError::InvalidRecord(
-                "rest frequency must be positive and finite".into(),
+                "rest frequency must be non-negative and finite".into(),
             ));
         }
         let (field, _) = Self::first_spectral_in_record(record)?
@@ -1140,7 +1142,7 @@ impl CoordinateSystem {
                 std::f64::consts::FRAC_PI_2 + 1e-10_f64.to_radians() + 8.0 * f64::EPSILON;
             if field == "crval"
                 && let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
-                && direction.reference_value()[1].abs() > pole_limit
+                && direction.projection_reference()[1].abs() > pole_limit
             {
                 return Err(CoordinateError::InvalidRecord(
                     "direction latitude is out of range".into(),
@@ -1148,11 +1150,13 @@ impl CoordinateSystem {
             }
             if field == "cdelt"
                 && let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
-                && direction.increment().iter().any(|value| !value.is_normal())
+                && direction
+                    .increment()
+                    .iter()
+                    .any(|value| !value.is_finite() || *value == 0.0)
             {
                 return Err(CoordinateError::InvalidRecord(
-                    "zero, non-finite, or subnormal direction increments are unsupported (#977)"
-                        .into(),
+                    "direction increments must be finite and nonzero".into(),
                 ));
             }
         }

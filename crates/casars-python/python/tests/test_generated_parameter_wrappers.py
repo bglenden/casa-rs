@@ -207,11 +207,17 @@ def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
     importvla = _annotations(task_functions["importvla"])
     assert importvla["archivefiles"] == "StrPath | list[StrPath] | tuple[StrPath, ...]"
 
-    for plot_task in ("msexplore", "plotms"):
-        plot = _annotations(task_functions[plot_task])
-        assert "plot_output" in plot
-        assert "plot_width" not in plot
-        assert "plot_height" not in plot
+    msexplore = _annotations(task_functions["msexplore"])
+    assert "plot_output" in msexplore
+    assert "plot_width" not in msexplore
+    assert "plot_height" not in msexplore
+
+    plotms = _annotations(task_functions["plotms"])
+    assert plotms["plotfile"] == "StrPath"
+    assert plotms["width"] == "int"
+    assert plotms["height"] == "int"
+    assert plotms["yaxis"] == "str | list[str] | tuple[str, ...]"
+    assert plotms["symbolsize"] == "int | list[int] | tuple[int, ...]"
 
 
 def test_generator_honors_explicit_python_type_hint_metadata() -> None:

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-19",
+  "revision": "d3571932be189f719e83e2626ba7fab982d23d33",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "scope": "CASA 6.7.6.14 with casaplotms 2.9.1 on identical modern calibration tables, including Tsys and antenna position.",
+  "result": "passed",
+  "text_exports": 56,
+  "points": 1688,
+  "paired_errors": 14,
+  "paired_domain_refusals": 6,
+  "rendered_coordinates": 32,
+  "paired_iteration_modes": [
+    "scan",
+    "time",
+    "baseline",
+    "poln",
+    "antpos"
+  ]
+}

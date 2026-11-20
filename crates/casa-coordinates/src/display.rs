@@ -101,47 +101,78 @@ pub fn format_world_display(
 /// Format a longitude in radians as hours `HH:MM:SS.sss`, wrapped into
 /// one revolution, with the seconds rounded to three decimals.
 pub fn format_longitude_hours(radians: f64) -> String {
+    format_longitude_hours_with_precision(radians, 3)
+}
+
+/// Format a longitude in hours, with the requested number of second decimals.
+pub fn format_longitude_hours_with_precision(radians: f64, decimals: usize) -> String {
     let hours = (radians * 12.0 / std::f64::consts::PI).rem_euclid(24.0);
     let mut hour = hours.floor() as u32;
     let mut minute = ((hours - hour as f64) * 60.0).floor() as u32;
     let seconds = (hours - hour as f64) * 3600.0 - minute as f64 * 60.0;
-    let seconds = (seconds * 1000.0).round() / 1000.0;
+    let scale = 10.0_f64.powi(decimals as i32);
+    let seconds = (seconds * scale).round() / scale;
     if seconds >= 60.0 {
         minute += 1;
         if minute >= 60 {
             minute = 0;
             hour = (hour + 1) % 24;
         }
-        return format!("{hour:02}:{minute:02}:00.000");
+        return format!(
+            "{hour:02}:{minute:02}:{:0width$.decimals$}",
+            0.0,
+            width = decimals + 3
+        );
     }
-    format!("{hour:02}:{minute:02}:{seconds:06.3}")
+    format!(
+        "{hour:02}:{minute:02}:{seconds:0width$.decimals$}",
+        width = decimals + 3
+    )
 }
 
 /// Format a latitude in radians as signed `DDD.MM.SS.sss` with the
 /// seconds rounded to three decimals and the sign carried at zero
 /// degrees, as casacore's ANGLE rendering gives it.
 pub fn format_latitude_dms(radians: f64) -> String {
+    format_latitude_dms_with_precision(radians, 3)
+}
+
+/// Format a signed angle in degrees, with the requested number of second decimals.
+pub fn format_latitude_dms_with_precision(radians: f64, decimals: usize) -> String {
     let degrees = radians * 180.0 / std::f64::consts::PI;
     let sign = if degrees.is_sign_negative() { "-" } else { "+" };
     let absolute = degrees.abs();
     let mut degree = absolute.floor() as u32;
     let mut minute = ((absolute - degree as f64) * 60.0).floor() as u32;
     let seconds = (absolute - degree as f64) * 3600.0 - minute as f64 * 60.0;
-    let seconds = (seconds * 1000.0).round() / 1000.0;
+    let scale = 10.0_f64.powi(decimals as i32);
+    let seconds = (seconds * scale).round() / scale;
     if seconds >= 60.0 {
         minute += 1;
         if minute >= 60 {
             minute = 0;
             degree += 1;
         }
-        return format!("{sign}{degree:02}.{minute:02}.00.000");
+        return format!(
+            "{sign}{degree:02}.{minute:02}.{:0width$.decimals$}",
+            0.0,
+            width = decimals + 3
+        );
     }
-    format!("{sign}{degree:02}.{minute:02}.{seconds:06.3}")
+    format!(
+        "{sign}{degree:02}.{minute:02}.{seconds:0width$.decimals$}",
+        width = decimals + 3
+    )
 }
 
 /// Format a world value as C++'s default `ostream <<` rendering: `%g`
 /// with six significant digits, trailing zeros stripped.
 pub fn format_stream_value(value: f64) -> String {
+    format_stream_value_with_precision(value, 6)
+}
+
+/// Format a world value with the given number of significant digits.
+pub fn format_stream_value_with_precision(value: f64, precision: usize) -> String {
     if value == 0.0 {
         return "0".to_string();
     }
@@ -155,10 +186,12 @@ pub fn format_stream_value(value: f64) -> String {
         };
     }
 
-    // Six significant digits in scientific form: the mantissa carries
+    // In scientific form the mantissa carries
     // the digits, and the exponent decides %g's fixed-versus-scientific
     // choice.
-    let scientific = format!("{value:.5e}");
+    let precision = precision.max(1);
+    let fractional = precision - 1;
+    let scientific = format!("{value:.fractional$e}");
     let (mantissa, exponent) = scientific
         .split_once('e')
         .expect("scientific formatting carries an exponent");
@@ -166,7 +199,7 @@ pub fn format_stream_value(value: f64) -> String {
     let digits: String = mantissa.chars().filter(|c| c.is_ascii_digit()).collect();
     let sign = if mantissa.starts_with('-') { "-" } else { "" };
 
-    if !(-4..6).contains(&exponent) {
+    if !(-4..precision as i32).contains(&exponent) {
         let mut text = format!("{}.{}", &digits[..1], &digits[1..]);
         while text.ends_with('0') {
             text.pop();
@@ -178,7 +211,7 @@ pub fn format_stream_value(value: f64) -> String {
         let magnitude = exponent.unsigned_abs();
         format!("{sign}{text}e{sign_char}{magnitude:02}")
     } else {
-        let decimals = (5 - exponent).max(0) as usize;
+        let decimals = (fractional as i32 - exponent).max(0) as usize;
         let mut text = format!("{:.decimals$}", value.abs());
         if text.contains('.') {
             while text.ends_with('0') {

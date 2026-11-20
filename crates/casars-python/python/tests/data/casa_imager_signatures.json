@@ -1,0 +1,1558 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "advise": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "takeadvice"
+      },
+      {
+        "default": "0.05",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "amplitudeloss"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fieldofview"
+      }
+    ],
+    "advisechansel": [
+      {
+        "default": "1000000.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqstart"
+      },
+      {
+        "default": "1100000.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqend"
+      },
+      {
+        "default": "100.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqstep"
+      },
+      {
+        "default": "'LSRK'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqframe"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msname"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fieldid"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "getfreqrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwselection"
+      }
+    ],
+    "apparentsens": [],
+    "approximatepsf": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "psf"
+      }
+    ],
+    "boxmask": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "[0, 0, 0, 0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "blc"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "trc"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "calcuvw": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fields"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refcode"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reuse"
+      }
+    ],
+    "clean": [
+      {
+        "default": "'clark'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "algorithm"
+      },
+      {
+        "default": "1000",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "niter"
+      },
+      {
+        "default": "0.1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gain"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "displayprogress"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "[False]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "keepfixed"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "residual"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "psfimage"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interactive"
+      },
+      {
+        "default": "100",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "npercycle"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "masktemplate"
+      }
+    ],
+    "clipimage": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      }
+    ],
+    "clipvis": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      }
+    ],
+    "close": [],
+    "defineimage": [
+      {
+        "default": "128",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nx"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ny"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cellx"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "celly"
+      },
+      {
+        "default": "'I'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "phasecenter"
+      },
+      {
+        "default": "'mfs'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nchan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "step"
+      },
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "restfreq"
+      },
+      {
+        "default": "'LSRK'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outframe"
+      },
+      {
+        "default": "'radio'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "veltype"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "facets"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "movingsource"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "distance"
+      },
+      {
+        "default": "'SIN'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "projection"
+      }
+    ],
+    "done": [],
+    "drawmask": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "niter"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "npercycle"
+      },
+      {
+        "default": "'0 mJy'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      }
+    ],
+    "exprmask": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "expr"
+      }
+    ],
+    "feather": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "highres"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lowres"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lowpsf"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "effdishdiam"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "lowpassfiltersd"
+      }
+    ],
+    "filter": [
+      {
+        "default": "'gaussian'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bmaj"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bmin"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bpa"
+      }
+    ],
+    "fitpsf": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "psf"
+      }
+    ],
+    "fixvis": [
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fields"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "phasedirs"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refcode"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "distances"
+      },
+      {
+        "default": "'all'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datacolumn"
+      }
+    ],
+    "ft": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "incremental"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "phasecentertime"
+      }
+    ],
+    "getweightgrid": [
+      {
+        "default": "'imaging'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wgtimages"
+      }
+    ],
+    "linearmosaic": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "images"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mosaic"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fluxscale"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sensitivity"
+      },
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fieldids"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "usedefaultvp"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "vptable"
+      }
+    ],
+    "make": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      }
+    ],
+    "makeimage": [
+      {
+        "default": "'observed'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "compleximage"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ],
+    "makemodelfromsd": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sdimage"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "modelimage"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sdpsf"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maskimage"
+      }
+    ],
+    "mapextent": [
+      {
+        "default": "'J2000'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ref"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "movingsource"
+      },
+      {
+        "default": "'DIRECTION'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pointingcolumntouse"
+      }
+    ],
+    "mask": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "threshold"
+      }
+    ],
+    "mem": [
+      {
+        "default": "'entropy'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "algorithm"
+      },
+      {
+        "default": "20",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "niter"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "sigma"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "targetflux"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "constrainflux"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "displayprogress"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "[False]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "keepfixed"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "prior"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "residual"
+      }
+    ],
+    "nnls": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "[False]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "keepfixed"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "niter"
+      },
+      {
+        "default": "1e-06",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tolerance"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fluxmask"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datamask"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "residual"
+      }
+    ],
+    "open": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "thems"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "compress"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "usescratch"
+      }
+    ],
+    "pb": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "inimage"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outimage"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "incomps"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "outcomps"
+      },
+      {
+        "default": "'apply'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "operation"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pointingcenter"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "parangle"
+      },
+      {
+        "default": "'pb'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pborvp"
+      }
+    ],
+    "plotsummary": [],
+    "plotuv": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "rotate"
+      }
+    ],
+    "plotvis": [
+      {
+        "default": "'all'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "increment"
+      }
+    ],
+    "plotweights": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gridded"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "increment"
+      }
+    ],
+    "pointingsampling": [
+      {
+        "default": "'raster'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pattern"
+      },
+      {
+        "default": "'J2000'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ref"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "movingsource"
+      },
+      {
+        "default": "'DIRECTION'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pointingcolumntouse"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      }
+    ],
+    "predictcomp": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "objname"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "standard"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "epoch"
+      },
+      {
+        "default": "[100000000000.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqs"
+      },
+      {
+        "default": "'predictcomp'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pfx"
+      }
+    ],
+    "regionmask": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "boxes"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "circles"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "regiontoimagemask": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mask"
+      },
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "region"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "boxes"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "circles"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "value"
+      }
+    ],
+    "residual": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      }
+    ],
+    "restore": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "residual"
+      }
+    ],
+    "selectvis": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "vis"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nchan"
+      },
+      {
+        "default": "[0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "[1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "step"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "baseline"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "observation"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "taql"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "usescratch"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "datainmemory"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "writeaccess"
+      }
+    ],
+    "sensitivity": [],
+    "setbeam": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bmaj"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bmin"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bpa"
+      }
+    ],
+    "setjy": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "modimage"
+      },
+      {
+        "default": "[0.0, 0.0, 0.0, 0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fluxdensity"
+      },
+      {
+        "default": "'SOURCE'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "standard"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scalebychan"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spix"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reffreq"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polindex"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polangle"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "rotmeas"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "observation"
+      },
+      {
+        "default": "'nearest'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interpolation"
+      }
+    ],
+    "setmfcontrol": [
+      {
+        "default": "1.5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cyclefactor"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cyclespeedup"
+      },
+      {
+        "default": "0.8",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cyclemaxpsffraction"
+      },
+      {
+        "default": "2",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stoplargenegatives"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stoppointmode"
+      },
+      {
+        "default": "0.1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minpb"
+      },
+      {
+        "default": "'NONE'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scaletype"
+      },
+      {
+        "default": "0.4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "constpb"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fluxscale"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "flatnoise"
+      }
+    ],
+    "setoptions": [
+      {
+        "default": "'ft'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ftmachine"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cache"
+      },
+      {
+        "default": "16",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tile"
+      },
+      {
+        "default": "'SF'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gridfunction"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "location"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "padding"
+      },
+      {
+        "default": "'nearest'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freqinterp"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wprojplanes"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "epjtablename"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "applypointingoffsets"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dopbgriddingcorrections"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cfcachedirname"
+      },
+      {
+        "default": "5.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "rotpastep"
+      },
+      {
+        "default": "360.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pastep"
+      },
+      {
+        "default": "0.05",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pblimit"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "imagetilevol"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "singleprecisiononly"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "numthreads"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "psterm"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "aterm"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mterm"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wbawp"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "conjbeams"
+      }
+    ],
+    "setscales": [
+      {
+        "default": "'nscales'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scalemethod"
+      },
+      {
+        "default": "5",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nscales"
+      },
+      {
+        "default": "[0.0, 3.0, 10.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uservector"
+      }
+    ],
+    "setsdoptions": [
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scale"
+      },
+      {
+        "default": "1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "weight"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "convsupport"
+      },
+      {
+        "default": "'DIRECTION'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pointingcolumntouse"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "truncate"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gwidth"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "jwidth"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minweight"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "clipminmax"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "enablecache"
+      },
+      {
+        "default": "'NEVER'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "convertfirst"
+      }
+    ],
+    "setsmallscalebias": [
+      {
+        "default": "0.6",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "inbias"
+      }
+    ],
+    "settaylorterms": [
+      {
+        "default": "2",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ntaylorterms"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reffreq"
+      }
+    ],
+    "setvp": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dovp"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "usedefaultvp"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "vptable"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dosquint"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "parangleinc"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "skyposthreshold"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "telescope"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "verbose"
+      }
+    ],
+    "setweightgrid": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "weight"
+      },
+      {
+        "default": "'imaging'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      }
+    ],
+    "smooth": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "usefit"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bmaj"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bmin"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "bpa"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "normalize"
+      }
+    ],
+    "ssoflux": [],
+    "stop": [],
+    "summary": [],
+    "updateresidual": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "model"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "complist"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "image"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "residual"
+      }
+    ],
+    "uvrange": [
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvmin"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvmax"
+      }
+    ],
+    "weight": [
+      {
+        "default": "'natural'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "'none'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "rmode"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "noise"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "robust"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fieldofview"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "npixels"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mosaic"
+      }
+    ]
+  },
+  "tool": "imager"
+}

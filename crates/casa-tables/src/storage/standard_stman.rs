@@ -2037,6 +2037,7 @@ pub(crate) fn write_ssm_file_scalar_columns(
     col_descs: &[ColumnDescContents],
     scalar_columns: &[&[Option<ScalarValue>]],
     big_endian: bool,
+    manager_name: &str,
 ) -> Result<Vec<u8>, StorageError> {
     let nrrow = scalar_columns.first().map_or(0, |values| values.len());
     if scalar_columns.len() != col_descs.len() {
@@ -2062,7 +2063,14 @@ pub(crate) fn write_ssm_file_scalar_columns(
         ));
     }
     let column_sources = ColumnSources::materialized(nrrow, scalar_columns);
-    write_ssm_file_column_sources(file_path, col_descs, &column_sources, big_endian)
+    column_writer::write_ssm_file_columns(
+        file_path,
+        col_descs,
+        &column_sources,
+        big_endian,
+        true,
+        manager_name,
+    )
 }
 
 /// Write a StandardStMan data file from column sources: fixed-width scalar

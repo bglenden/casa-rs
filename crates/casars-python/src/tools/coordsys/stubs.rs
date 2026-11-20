@@ -15,37 +15,6 @@ use super::{PyCoordsys, stub};
 )]
 impl PyCoordsys {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (direction = None, spectral = None, stokes = None, linear = None, tabular = None), text_signature = "($self, direction=False, spectral=False, stokes=[], linear=0, tabular=False)")]
-    fn addcoordinate(
-        &self,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        tabular: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("addcoordinate")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (toworld = None), text_signature = "($self, toworld=True)")]
-    fn axesmap(&self, toworld: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("axesmap")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (world = None), text_signature = "($self, world=True)")]
-    fn axiscoordinatetypes(&self, world: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("axiscoordinatetypes")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None), text_signature = "($self, type='direction')")]
-    fn conversiontype(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("conversiontype")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (coordin, absin = None, dopplerin = None, unitsin = None, absout = None, dopplerout = None, unitsout = None, shape = None), text_signature = "($self, coordin, absin=[True], dopplerin='radio', unitsin=['Native'], absout=[True], dopplerout='radio', unitsout=['Native'], shape=[-1])")]
     fn convert(
         &self,
@@ -84,54 +53,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (which = None), text_signature = "($self, which=-1)")]
-    fn coordinatetype(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("coordinatetype")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn copy(&self) -> PyResult<Py<PyAny>> {
-        stub("copy")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn epoch(&self) -> PyResult<Py<PyAny>> {
-        stub("epoch")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (world = None, axis = None), text_signature = "($self, world=True, axis=0)")]
-    fn findaxis(
-        &self,
-        world: Option<&Bound<'_, PyAny>>,
-        axis: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("findaxis")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (axisname = None, allowfriendlyname = None), text_signature = "($self, axisname='', allowfriendlyname=True)")]
-    fn findaxisbyname(
-        &self,
-        axisname: Option<&Bound<'_, PyAny>>,
-        allowfriendlyname: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("findaxisbyname")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None, which = None), text_signature = "($self, type='direction', which=0)")]
-    fn findcoordinate(
-        &self,
-        r#type: Option<&Bound<'_, PyAny>>,
-        which: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("findcoordinate")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (value, frequnit = None, velocity = None), text_signature = "($self, value, frequnit='', velocity=[])")]
     fn frequencytofrequency(
         &self,
@@ -155,107 +76,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (record), text_signature = "($self, record)")]
-    fn fromrecord(&self, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("fromrecord")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None, showconversion = None), text_signature = "($self, type='', showconversion=True)")]
-    fn getconversiontype(
-        &self,
-        r#type: Option<&Bound<'_, PyAny>>,
-        showconversion: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getconversiontype")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (format = None, r#type = None), text_signature = "($self, format='n', type='')")]
-    fn increment(
-        &self,
-        format: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("increment")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type), text_signature = "($self, type)")]
-    fn lineartransform(&self, r#type: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("lineartransform")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None), text_signature = "($self, type='')")]
-    fn names(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("names")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (world = None), text_signature = "($self, world=True)")]
-    fn naxes(&self, world: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("naxes")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn ncoordinates(&self) -> PyResult<Py<PyAny>> {
-        stub("ncoordinates")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (direction = None, spectral = None, stokes = None, linear = None, tabular = None), text_signature = "($self, direction=False, spectral=False, stokes=[], linear=0, tabular=False)")]
-    fn newcoordsys(
-        &self,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectral: Option<&Bound<'_, PyAny>>,
-        stokes: Option<&Bound<'_, PyAny>>,
-        linear: Option<&Bound<'_, PyAny>>,
-        tabular: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("newcoordsys")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn observer(&self) -> PyResult<Py<PyAny>> {
-        stub("observer")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn parentname(&self) -> PyResult<Py<PyAny>> {
-        stub("parentname")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None), text_signature = "($self, type='')")]
-    fn projection(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("projection")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None, list = None), text_signature = "($self, type='', list=False)")]
-    fn referencecode(
-        &self,
-        r#type: Option<&Bound<'_, PyAny>>,
-        list: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("referencecode")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (format = None, r#type = None), text_signature = "($self, format='n', type='')")]
-    fn referencevalue(
-        &self,
-        format: Option<&Bound<'_, PyAny>>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("referencevalue")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn reorder(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("reorder")
@@ -270,12 +90,6 @@ impl PyCoordsys {
         whichout: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         stub("replace")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn restfrequency(&self) -> PyResult<Py<PyAny>> {
-        stub("restfrequency")
     }
 
     /// Not yet implemented in casa-rs.
@@ -305,12 +119,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn setepoch(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setepoch")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (value = None, r#type = None), text_signature = "($self, value=[], type='')")]
     fn setincrement(
         &self,
@@ -328,28 +136,6 @@ impl PyCoordsys {
         value: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("setlineartransform")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value, r#type = None), text_signature = "($self, value, type='')")]
-    fn setnames(
-        &self,
-        value: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setnames")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn setobserver(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setobserver")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (imagename), text_signature = "($self, imagename)")]
-    fn setparentname(&self, imagename: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setparentname")
     }
 
     /// Not yet implemented in casa-rs.
@@ -419,12 +205,6 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (stokes), text_signature = "($self, stokes)")]
-    fn setstokes(&self, stokes: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("setstokes")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (pixel = None, world = None, which = None), text_signature = "($self, pixel=[-1.0], world=[-1.0], which=0)")]
     fn settabular(
         &self,
@@ -433,12 +213,6 @@ impl PyCoordsys {
         which: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("settabular")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value), text_signature = "($self, value)")]
-    fn settelescope(&self, value: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("settelescope")
     }
 
     /// Not yet implemented in casa-rs.
@@ -451,12 +225,6 @@ impl PyCoordsys {
         which: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("setunits")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn stokes(&self) -> PyResult<Py<PyAny>> {
-        stub("stokes")
     }
 
     /// Not yet implemented in casa-rs.
@@ -477,12 +245,6 @@ impl PyCoordsys {
         list: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("summary")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn telescope(&self) -> PyResult<Py<PyAny>> {
-        stub("telescope")
     }
 
     /// Not yet implemented in casa-rs.
@@ -509,12 +271,6 @@ impl PyCoordsys {
     #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
     fn topixel(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("topixel")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
-    fn topixelmany(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("topixelmany")
     }
 
     /// Not yet implemented in casa-rs.
@@ -548,21 +304,9 @@ impl PyCoordsys {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (value = None), text_signature = "($self, value=[])")]
-    fn toworldmany(&self, value: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("toworldmany")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn transpose(&self, order: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("transpose")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (r#type = None), text_signature = "($self, type='')")]
-    fn units(&self, r#type: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("units")
     }
 
     /// Not yet implemented in casa-rs.

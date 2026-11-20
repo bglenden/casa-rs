@@ -62,6 +62,7 @@ use crate::plan::{
 mod availability;
 use availability::execute as execute_apply_plan;
 mod fields;
+pub(crate) use fields::load as load_interpolated_calibration_table;
 mod gain_validity;
 mod initialization;
 use gain_validity::correcting_gain;
@@ -417,6 +418,20 @@ pub(crate) struct EvaluatedApplyRow {
     /// `[correlation, channel]` factors the `calwt` tables scale weights by,
     /// when any table applies with `calwt`.
     pub(crate) weight_factors: Option<ArrayD<f32>>,
+    /// Actual corrected weights for a read-only PlotMS view.
+    pub(crate) plot_weights: Option<PlotWeights>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PlotWeights {
+    pub(crate) scalar: ArrayValue,
+    pub(crate) spectrum: Option<ArrayValue>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PreviewWeightSource {
+    UnitFactors,
+    FromSigma,
 }
 
 /// Errors returned while executing an apply plan.
@@ -543,10 +558,38 @@ pub(crate) fn evaluate_apply_rows(
     plan: &ApplyPlan,
     share_input_flags: bool,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
+    evaluate_rows(
+        ms,
+        plan,
+        share_input_flags,
+        PreviewWeightSource::UnitFactors,
+    )
+}
+
+pub(crate) fn evaluate_plot_rows(
+    ms: &MeasurementSet,
+    plan: &ApplyPlan,
+) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
+    evaluate_rows(ms, plan, false, PreviewWeightSource::FromSigma)
+}
+
+fn evaluate_rows(
+    ms: &MeasurementSet,
+    plan: &ApplyPlan,
+    share_input_flags: bool,
+    weight_source: PreviewWeightSource,
+) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
     let mut rows = HashMap::new();
-    for_each_apply_row(ms, plan, false, share_input_flags, |index, row| {
-        rows.insert(index, row);
-    })?;
+    for_each_apply_row(
+        ms,
+        plan,
+        false,
+        share_input_flags,
+        weight_source,
+        |index, row| {
+            rows.insert(index, row);
+        },
+    )?;
     Ok(rows)
 }
 
@@ -557,6 +600,7 @@ fn for_each_apply_row(
     plan: &ApplyPlan,
     forward_model: bool,
     share_input_flags: bool,
+    weight_source: PreviewWeightSource,
     mut consume: impl FnMut(usize, EvaluatedApplyRow),
 ) -> Result<(), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
@@ -589,15 +633,24 @@ fn for_each_apply_row(
             .iter()
             .zip(&loaded_tables)
             .any(|(table, loaded)| table.calwt && loaded.supports_calwt);
-    let columns: &[&str] = if forward_model {
-        &["FLAG"]
+    let mut columns = vec!["FLAG"];
+    if !forward_model {
+        columns.push(VisibilityDataColumn::Data.name());
+    }
+    let has_sigma_spectrum = if weight_source == PreviewWeightSource::FromSigma {
+        columns.push("SIGMA");
+        let first_row = plan.selected_rows.first().map(|row| row.row_index);
+        weights::has_spectrum(ms.main_table(), first_row, "SIGMA_SPECTRUM")?
     } else {
-        &[VisibilityDataColumn::Data.name(), "FLAG"]
+        false
     };
+    if has_sigma_spectrum {
+        columns.push("SIGMA_SPECTRUM");
+    }
     let mut main_rows = ms
         .main_table()
         .row_accessor()
-        .prepare(columns)
+        .prepare(&columns)
         .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
             path: ms_path.clone(),
             source: MsError::from(source),
@@ -606,6 +659,9 @@ fn for_each_apply_row(
     let flag_index = main_rows
         .column_index("FLAG")
         .expect("prepared apply reader includes FLAG");
+    let sigma_slots = main_rows
+        .column_index("SIGMA")
+        .map(|scalar| (scalar, main_rows.column_index("SIGMA_SPECTRUM")));
     let mut geometry_cache = RowGeometryCache::default();
     for row in &plan.selected_rows {
         let correlation_types = correlation_types_by_ddid
@@ -657,6 +713,9 @@ fn for_each_apply_row(
             ));
             &units
         };
+        let plot_weights = sigma_slots
+            .map(|slots| read_plot_weights(&main_rows, slots, &ms_path))
+            .transpose()?;
         if !availability::available(row, plan) {
             if plan.apply_mode == ApplyMode::Trial {
                 continue;
@@ -671,12 +730,13 @@ fn for_each_apply_row(
                     flags: ArrayValue::Bool(ArrayD::from_elem(shape.clone(), true)),
                     model_gains: None,
                     weight_factors: Some(ArrayD::zeros(shape)),
+                    plot_weights,
                 },
             );
             continue;
         }
         // Unit weights through the calwt update leave its factors.
-        let unit_weight = any_calwt.then(|| {
+        let unit_weight = (any_calwt && plot_weights.is_none()).then(|| {
             ArrayValue::Float32(ArrayD::from_elem(IxDyn(&[correlation_types.len()]), 1.0))
         });
 
@@ -686,9 +746,18 @@ fn for_each_apply_row(
                 correlation_types,
                 data,
                 original_flags: Some(original_flags),
-                original_weight: unit_weight.as_ref(),
-                original_weight_spectrum: None,
-                has_weight_spectrum: any_calwt,
+                original_weight: plot_weights
+                    .as_ref()
+                    .map(|weights| &weights.scalar)
+                    .or(unit_weight.as_ref()),
+                original_weight_spectrum: plot_weights
+                    .as_ref()
+                    .and_then(|weights| weights.spectrum.as_ref()),
+                has_weight_spectrum: if plot_weights.is_some() {
+                    has_sigma_spectrum
+                } else {
+                    any_calwt
+                },
                 preserved_corrected_data: None,
                 preserved_weight_spectrum: None,
                 channel_grid: None,
@@ -700,6 +769,22 @@ fn for_each_apply_row(
             Some(&mut geometry_cache),
             None,
         )?;
+        let (plot_weights, weight_factors) = match plot_weights {
+            Some(weights) => (
+                Some(PlotWeights {
+                    scalar: result.updated_weight.unwrap_or(weights.scalar),
+                    spectrum: result.updated_weight_spectrum.or(weights.spectrum),
+                }),
+                None,
+            ),
+            None => (
+                None,
+                match result.updated_weight_spectrum {
+                    Some(ArrayValue::Float32(factors)) => Some(factors),
+                    _ => None,
+                },
+            ),
+        };
         consume(
             row.row_index,
             EvaluatedApplyRow {
@@ -708,15 +793,35 @@ fn for_each_apply_row(
                 flags: result
                     .updated_flags
                     .unwrap_or_else(|| original_flags.clone()),
-                weight_factors: match result.updated_weight_spectrum {
-                    Some(ArrayValue::Float32(factors)) => Some(factors),
-                    _ => None,
-                },
+                weight_factors,
+                plot_weights,
             },
         );
     }
 
     Ok(())
+}
+
+fn read_plot_weights(
+    main_rows: &casa_tables::PreparedTableRow<'_>,
+    (scalar, spectrum): (usize, Option<usize>),
+    ms_path: &str,
+) -> Result<PlotWeights, ApplyExecutionError> {
+    let read = |slot, name| {
+        let values = main_rows.array_at(slot).map_err(|source| {
+            ApplyExecutionError::MutateMeasurementSet {
+                path: ms_path.to_owned(),
+                source: MsError::from(source),
+            }
+        })?;
+        weights::from_sigma(values.clone(), name)
+    };
+    Ok(PlotWeights {
+        scalar: read(scalar, "SIGMA")?,
+        spectrum: spectrum
+            .map(|slot| read(slot, "SIGMA_SPECTRUM"))
+            .transpose()?,
+    })
 }
 
 /// Plan and execute calibration application against an on-disk MeasurementSet.
@@ -777,7 +882,14 @@ pub(crate) fn execute_apply_with_preparation_error(
         if plan.apply_mode == ApplyMode::Trial {
             // Calibrater::correct2 still runs the calibration operators in
             // trial mode, including their input/basis validation.
-            for_each_apply_row(&ms, &plan, false, false, |_, _| {})?;
+            for_each_apply_row(
+                &ms,
+                &plan,
+                false,
+                false,
+                PreviewWeightSource::UnitFactors,
+                |_, _| {},
+            )?;
             return Ok(ApplyExecutionReport {
                 plan,
                 created_corrected_data_column: false,
@@ -874,7 +986,14 @@ pub fn execute_apply(
     let (plan, plan_timings) = plan_apply_with_timings(ms, request)?;
     let planning_ns = planning_started_at.elapsed().as_nanos() as u64;
     if plan.apply_mode == ApplyMode::Trial {
-        for_each_apply_row(ms, &plan, false, false, |_, _| {})?;
+        for_each_apply_row(
+            ms,
+            &plan,
+            false,
+            false,
+            PreviewWeightSource::UnitFactors,
+            |_, _| {},
+        )?;
         return Ok(ApplyExecutionReport {
             plan,
             created_corrected_data_column: false,
@@ -4103,6 +4222,24 @@ impl OpacityGrid {
 }
 
 impl LoadedCalibrationTable {
+    pub(crate) fn interpolation_windows(&self) -> Vec<i32> {
+        let mut windows = self.missing_grids.keys().copied().collect::<Vec<_>>();
+        windows.sort_unstable();
+        windows
+    }
+
+    pub(crate) fn complex_solution_for_field(
+        &self,
+        field: i32,
+        query: crate::lookup::TimeQuery,
+    ) -> Result<Option<crate::ComplexSolution>, ApplyExecutionError> {
+        self.time_plans
+            .get(&field)
+            .map(|plan| plan.solution(&self.path, query))
+            .transpose()
+            .map(Option::flatten)
+    }
+
     pub(crate) fn lookup(
         &self,
         field_id: i32,
@@ -4781,7 +4918,12 @@ fn infer_bpoly_receptor_count(
     })
 }
 
-fn legacy_bpoly_chebyshev_value(coefficients: &[f64], x_start: f64, x_end: f64, x: f64) -> f64 {
+pub(crate) fn legacy_bpoly_chebyshev_value(
+    coefficients: &[f64],
+    x_start: f64,
+    x_end: f64,
+    x: f64,
+) -> f64 {
     if coefficients.is_empty() {
         return 0.0;
     }

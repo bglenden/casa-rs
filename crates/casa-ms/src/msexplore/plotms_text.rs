@@ -1,0 +1,359 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Text coordinates and provenance for PlotMS on-the-fly calibration.
+
+use std::collections::{HashMap, hash_map::Entry};
+use std::io::{BufWriter, Write};
+use std::path::Path;
+use std::sync::Arc;
+
+use casa_task_runtime::{TaskFailure, TaskInvocation};
+
+use super::calibration::{
+    averaging,
+    text::{significant, write_averaging_header},
+};
+use super::{MsAxis, MsPlotPayload, MsScatterSeries, listobs};
+use crate::MeasurementSet;
+use crate::columns::main_ids;
+use crate::columns::time_columns::TimeColumn;
+
+pub(super) fn write_calibrated_export(
+    task: &TaskInvocation<'_>,
+    ms: &MeasurementSet,
+    payload: &MsPlotPayload,
+    output: &Path,
+    library: &[String],
+) -> Result<(), TaskFailure> {
+    let parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let io = |error: std::io::Error| {
+        TaskFailure::execution(format!("write PlotMS export {}: {error}", output.display()))
+    };
+    let file = tempfile::NamedTempFile::new_in(parent).map_err(io)?;
+    let mut writer = BufWriter::new(file.as_file());
+    write_header(&mut writer, task, &task.path("vis")?, library)?;
+    let index = task.integer("plotindex")?;
+    let verbose = task.flag("verbose")?;
+    let mut metadata = Metadata::new(ms).map_err(io)?;
+    match payload {
+        MsPlotPayload::Scatter(plot) => {
+            writeln!(writer, "# From plot {index}").map_err(io)?;
+            write_series(
+                &mut writer,
+                &mut metadata,
+                plot.x_axis,
+                &plot.series,
+                verbose,
+            )
+            .map_err(io)?;
+        }
+        MsPlotPayload::ScatterGrid(grid) => {
+            writeln!(writer, "# iteraxis: {}", grid.iteraxis.as_str()).map_err(io)?;
+            let capacity = grid.gridrows.saturating_mul(grid.gridcols);
+            for (panel, plot) in grid.panels.iter().take(capacity).enumerate() {
+                if panel == 0 {
+                    writeln!(writer, "# From plot {index}").map_err(io)?;
+                } else {
+                    writeln!(writer, "# From plot {panel} iteration {}", panel + 1).map_err(io)?;
+                }
+                write_series(
+                    &mut writer,
+                    &mut metadata,
+                    grid.x_axis,
+                    &plot.series,
+                    verbose,
+                )
+                .map_err(io)?;
+            }
+        }
+        _ => {
+            return Err(TaskFailure::validation(
+                "PlotMS calibration export requires scatter data",
+            ));
+        }
+    }
+    writer.flush().map_err(io)?;
+    drop(writer);
+    if task.flag("overwrite")? {
+        file.persist(output).map_err(|error| io(error.error))?;
+    } else {
+        file.persist_noclobber(output)
+            .map_err(|error| io(error.error))?;
+    }
+    Ok(())
+}
+
+fn write_header(
+    output: &mut dyn Write,
+    task: &TaskInvocation<'_>,
+    vis: &Path,
+    library: &[String],
+) -> Result<(), TaskFailure> {
+    let io = |error: std::io::Error| TaskFailure::execution(error.to_string());
+    writeln!(
+        output,
+        "# file: {}",
+        vis.file_name().unwrap_or(vis.as_os_str()).to_string_lossy()
+    )
+    .map_err(io)?;
+    if task.flag("selectdata")? {
+        for (name, label) in [
+            ("field", "field"),
+            ("spw", "spw"),
+            ("timerange", "timerange"),
+            ("uvrange", "uvrange"),
+            ("antenna", "antenna"),
+            ("scan", "scan"),
+            ("correlation", "correlation/polarization"),
+            ("polarization", "correlation/polarization"),
+            ("array", "array"),
+            ("observation", "observation"),
+            ("intent", "intent"),
+            ("feed", "feed"),
+            ("msselect", "msselect"),
+        ] {
+            if let Some(value) = task.text(name)?.filter(|value| !value.is_empty()) {
+                writeln!(output, "# {label}: {value}").map_err(io)?;
+            }
+        }
+    }
+    let average = averaging::options(task)?;
+    let requested_channels = if task.flag("averagedata")? {
+        task.text("avgchannel")?
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|&value| value > 0.0)
+    } else {
+        None
+    };
+    write_averaging_header(output, &average, requested_channels).map_err(io)?;
+    let label = match library {
+        [filename] if !filename.contains('=') => std::path::absolute(filename)
+            .map_err(io)?
+            .display()
+            .to_string(),
+        entries => entries.join(","),
+    };
+    writeln!(output, "# cal library: {label}").map_err(io)
+}
+
+fn write_series(
+    output: &mut dyn Write,
+    metadata: &mut Metadata<'_>,
+    x_axis: MsAxis,
+    data: &[MsScatterSeries],
+    verbose: bool,
+) -> std::io::Result<()> {
+    let mut previous_y = None;
+    for series in data {
+        if previous_y != Some(series.y_axis) {
+            previous_y = Some(series.y_axis);
+            let (x, y) = (name(x_axis), name(series.y_axis));
+            if verbose {
+                writeln!(
+                    output,
+                    "# x y chan scan field ant1 ant2 ant1name ant2name time freq spw poln obs"
+                )?;
+                writeln!(
+                    output,
+                    "# {x} {y} None None None None None None None MJD(seconds) GHz None None None"
+                )?;
+            } else {
+                writeln!(output, "# x y ")?;
+                writeln!(output, "# {x} {y}")?;
+            }
+        }
+        for (index, (&(x, y), point)) in series.points.iter().zip(&series.provenance).enumerate() {
+            let display = series.plotms_metadata.get(index);
+            let x = coordinate(x_axis, x);
+            let y = coordinate(series.y_axis, y);
+            if verbose {
+                let row = metadata.row(point.row)?;
+                let freq = row
+                    .frequencies
+                    .get(point.chan_start..point.chan_end)
+                    .filter(|values| !values.is_empty())
+                    .map_or(f64::NAN, |values| {
+                        values.iter().sum::<f64>() / values.len() as f64 / 1e9
+                    });
+                let pol = row
+                    .correlations
+                    .get(point.corr)
+                    .map_or("?", |&code| listobs::stokes_name(code));
+                writeln!(
+                    output,
+                    "{x} {y} {} {} {} {} {} {} {} {:.3} {freq:.9} {} {pol} {}",
+                    display.map_or(point.chan_start, |point| point.channel),
+                    row.scan,
+                    row.field,
+                    row.ant1,
+                    row.ant2,
+                    row.ant1name,
+                    row.ant2name,
+                    display
+                        .and_then(|point| point.average_time)
+                        .unwrap_or(row.time),
+                    row.spw,
+                    row.observation
+                )?;
+            } else {
+                writeln!(output, "{x} {y}")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn name(axis: MsAxis) -> &'static str {
+    match axis {
+        MsAxis::Amplitude => "Amp",
+        MsAxis::Phase => "Phase",
+        MsAxis::Real => "Real",
+        MsAxis::Imaginary => "Imag",
+        MsAxis::Time => "Time",
+        MsAxis::Channel => "Channel",
+        MsAxis::Frequency => "Frequency",
+        MsAxis::Velocity => "Velocity",
+        MsAxis::Scan => "Scan",
+        MsAxis::Field => "Field",
+        MsAxis::SpectralWindow => "Spw",
+        MsAxis::Correlation => "Corr",
+        MsAxis::Baseline => "Baseline",
+        MsAxis::Antenna => "Antenna",
+        MsAxis::UvDistance => "UVdist",
+        MsAxis::U => "U",
+        MsAxis::V => "V",
+        MsAxis::W => "W",
+        MsAxis::Azimuth => "Azimuth",
+        MsAxis::Elevation => "Elevation",
+        MsAxis::HourAngle => "HourAngle",
+        MsAxis::ParallacticAngle => "ParAngle",
+        MsAxis::Weight => "Wt",
+        MsAxis::Sigma => "Sigma",
+        MsAxis::WeightSpectrum => "WtSp",
+        MsAxis::SigmaSpectrum => "SigmaSp",
+        MsAxis::Flag => "Flag",
+        MsAxis::FlagRow => "FlagRow",
+        MsAxis::AntRa => "Ant-RA",
+        MsAxis::AntDec => "Ant-DEC",
+    }
+}
+
+fn coordinate(axis: MsAxis, value: f64) -> String {
+    match axis {
+        MsAxis::Time => format!("{value:.3}"),
+        MsAxis::Frequency => format!("{:.9}", value / 1e9),
+        _ => significant(value),
+    }
+}
+
+struct Metadata<'a> {
+    ms: &'a MeasurementSet,
+    time: TimeColumn<'a>,
+    antennas: Vec<String>,
+    last_row: Option<(usize, Row)>,
+    frequencies: HashMap<i32, Arc<[f64]>>,
+    correlations: HashMap<i32, Arc<[i32]>>,
+}
+
+struct Row {
+    ant1: i32,
+    ant2: i32,
+    ant1name: String,
+    ant2name: String,
+    field: i32,
+    scan: i32,
+    spw: i32,
+    observation: i32,
+    time: f64,
+    frequencies: Arc<[f64]>,
+    correlations: Arc<[i32]>,
+}
+
+impl<'a> Metadata<'a> {
+    fn new(ms: &'a MeasurementSet) -> std::io::Result<Self> {
+        let antenna = ms.antenna().map_err(std::io::Error::other)?;
+        let antennas = (0..antenna.row_count())
+            .map(|row| Ok(format!("{}@{}", antenna.name(row)?, antenna.station(row)?)))
+            .collect::<crate::MsResult<Vec<_>>>()
+            .map_err(std::io::Error::other)?;
+        Ok(Self {
+            ms,
+            time: TimeColumn::new(ms.main_table()),
+            antennas,
+            last_row: None,
+            frequencies: HashMap::new(),
+            correlations: HashMap::new(),
+        })
+    }
+
+    fn row(&mut self, row: usize) -> std::io::Result<&Row> {
+        if self
+            .last_row
+            .as_ref()
+            .is_none_or(|(index, _)| *index != row)
+        {
+            let metadata = self.read_row(row)?;
+            self.last_row = Some((row, metadata));
+        }
+        Ok(&self.last_row.as_ref().expect("selected row loaded").1)
+    }
+
+    fn read_row(&mut self, row: usize) -> std::io::Result<Row> {
+        let ms = self.ms;
+        let table = ms.main_table();
+        let get =
+            |column: main_ids::ScalarIdColumn<'_>| column.get(row).map_err(std::io::Error::other);
+        let ddid = get(main_ids::data_desc_id(table))? as usize;
+        let dd = ms.data_description().map_err(std::io::Error::other)?;
+        let spw = dd.spectral_window_id(ddid).map_err(std::io::Error::other)?;
+        let pol = dd.polarization_id(ddid).map_err(std::io::Error::other)?;
+        let frequencies = match self.frequencies.entry(spw) {
+            Entry::Occupied(entry) => Arc::clone(entry.get()),
+            Entry::Vacant(entry) => Arc::clone(
+                entry.insert(
+                    ms.spectral_window()
+                        .and_then(|table| table.chan_freq(spw as usize))
+                        .map_err(std::io::Error::other)?
+                        .into(),
+                ),
+            ),
+        };
+        let correlations = match self.correlations.entry(pol) {
+            Entry::Occupied(entry) => Arc::clone(entry.get()),
+            Entry::Vacant(entry) => Arc::clone(
+                entry.insert(
+                    ms.polarization()
+                        .and_then(|table| table.corr_type(pol as usize))
+                        .map_err(std::io::Error::other)?
+                        .into(),
+                ),
+            ),
+        };
+        let name = |id: i32| {
+            self.antennas
+                .get(id as usize)
+                .cloned()
+                .unwrap_or_else(|| "*".into())
+        };
+        let ant1 = get(main_ids::antenna1(table))?;
+        let ant2 = get(main_ids::antenna2(table))?;
+        Ok(Row {
+            ant1,
+            ant2,
+            ant1name: name(ant1),
+            ant2name: name(ant2),
+            field: get(main_ids::field_id(table))?,
+            scan: get(main_ids::scan_number(table))?,
+            spw,
+            observation: get(main_ids::observation_id(table))?,
+            time: self
+                .time
+                .get_mjd_seconds(row)
+                .map_err(std::io::Error::other)?,
+            frequencies,
+            correlations,
+        })
+    }
+}

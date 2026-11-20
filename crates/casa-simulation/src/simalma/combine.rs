@@ -64,6 +64,8 @@ pub(super) fn execute(
         highres: high.to_path_buf(),
         lowres: scaled.clone(),
         sdfactor: 1.,
+        effdishdiam: -1.0,
+        lowpassfiltersd: false,
         overwrite: false,
     })
     .map_err(failure)?;
@@ -77,7 +79,7 @@ pub(super) fn execute(
 fn pbcor(image: &Path, pb: &Path, output: &Path, mode: &str) -> Result<(), SimobserveError> {
     impbcor(&ImpbcorRequest {
         imagename: image.to_path_buf(),
-        pbimage: pb.to_path_buf(),
+        pbimage: pb.to_path_buf().into(),
         outfile: output.to_path_buf(),
         mode: mode.to_owned(),
         cutoff: -1.,

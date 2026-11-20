@@ -522,6 +522,7 @@ fn finalize_series(
                 color_group: label,
                 y_axis,
                 points: scatter_points,
+                plotms_metadata: Vec::new(),
                 provenance,
             }
         })

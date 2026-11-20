@@ -28,11 +28,84 @@ ia.setbrightnessunit("Jy/pixel")
 ia.done()
 ```
 
+A coordinate tool returned by `ia.coordsys()` has its own state. Inspect the
+direction axes with `cs.findcoordinate("direction")["pixel"]` or identify the
+coordinate for a particular axis with `cs.findaxis(world=False, axis=0)`.
+`cs.names()` and `cs.units()` follow world-axis order. Use `cs.copy()` to edit
+a separate coordinate system, then pass its record to `ia.setcoordsys()` to
+persist the edits to the image.
+
+Use `cs.projection()` to inspect the direction projection and
+`cs.referencecode()` to list stored frames in coordinate order.
+`cs.getconversiontype("direction")` reports the current conversion frame.
+Use `cs.setnames(values)` to replace the world-axis labels in order, or
+pass `type` to replace one coordinate's labels. `cs.setstokes(values)`
+sets the polarization labels in pixel order.
+
+Use `cs.referencevalue()` and `cs.increment()` to read the world-axis
+reference values and spacing. Pass `type` to select a coordinate, or combine
+`n`, `q`, `s`, and `m` in `format` to request numbers, quantities, display
+strings, and CASA measures.
+
+To build a coordinate system without an image, call
+`tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])`.
+Use `addcoordinate` to append axes and `fromrecord` to restore a coordinate
+record. Pass `cs.torecord()` as the `csys` argument to `ia.fromshape` or
+`ia.fromarray`. The coordinate record must describe each image axis.
+
+Use `cs.setepoch(epoch)` to store an epoch measure record. `cs.epoch()`
+returns the epoch in days with its reference code and any reference offset.
+
+Use `cs.setobserver(name)` and `cs.settelescope(name)` to update observation
+metadata. An unknown telescope name is stored and the setter returns
+`False`. The record retains the last known telescope position.
+
+Use `cs.toworldmany(pixels)["numeric"]` and
+`cs.topixelmany(world)["numeric"]` to convert a floating-point matrix with
+one point per column. The rows follow the coordinate system's axis order.
+World values use the units reported by `cs.units()`.
+NumPy `float32`, `float64`, `longdouble`, `longlong`, and `ulonglong`
+matrices are converted to double precision, as in CASA.
+
 Use `ia.open("example.im")` to reopen the product. Use
 `outfile=""` with `fromshape` or `fromarray` for a temporary image. Use `ia.setmiscinfo(record)` to replace an image’s miscellaneous metadata, and
 `ia.sethistory(origin, messages)` to append provenance. For an image with stored
 restoring beams, `ia.restoringbeam()` reads the beam quantities and
 `ia.restoringbeam(mbret="matrix")` reads a per-plane beam grid.
+Use `ia.rotatebeam("15deg")` to rotate all stored restoring beams. On a
+directly opened FITS image, the rotation applies only to the open tool.
+Each open tool keeps its own view of the restoring beams. Reopen a native
+image to read beam changes made through another tool.
+Use `ia.summary(list=False)` to read the shape, coordinate axes, mask names
+and restoring beams and return the two report messages. The default
+`list=True` sends the report to the logger.
+Use `ia.makecomplex("output.im", "imaginary.im")` to combine the attached
+real image with a conformant real image of matching precision. A supplied
+region selects the same section from both inputs. The output copies the real
+image's metadata and uses the intersection of the input masks.
+Use `ia.isconform("other.im")` to check whether a float image has the same
+shape and compatible coordinates as a native float or complex image.
+Use `ia.convertflux(value, major, minor)` to convert a Gaussian's integrated
+flux to peak brightness. Pass `topeak=False` for the reverse conversion and
+select the channel and polarization for an image with per-plane beams.
+Use `ia.deconvolvecomponentlist(cl.torecord())` to remove the restoring beam
+from Gaussian components on an attached float or complex image. Point
+components are returned intact. For a per-plane beam grid, select the
+channel and polarization on each nondegenerate axis.
+Use `ia.modify(cl.torecord(), subtract=False)` to add a component model to a
+float image. The default subtracts the model. A region limits the pixel
+section. CASA validates an explicit mask and applies the edit to the stored
+pixels in that section.
+Use `ia.imageconcat(infiles=["a.im", "b.im"], axis=0)` for a temporary
+concatenation, or give `outfile` for a native image. The default
+concatenation axis is spectral. `reorder=True` sorts inputs along the
+selected coordinate. Virtual modes are tracked in #1749.
+Use `ia.replacemaskedpixels(pixels=0)` to replace invalid pixels in an attached
+float or complex image. Use `update=True` to validate the selected native
+pixel mask after replacement.
+Use `ia.fitsheader()` to inspect the FITS header for a float image without
+exporting the pixels. Pass `exclude="HISTORY"` to omit the log from the returned
+dictionary. Use `retstr=True` to return the complete string of 80-byte cards.
 
 For a native image, `ia.haslock()` reports its read and write locks in that
 order. Use `ia.lock(writelock=True, nattempts=1)` to try for a write lock
@@ -41,10 +114,13 @@ lock. `putchunk` normally releases the lock after writing. Pass
 `locking=False` to keep it while making several updates.
 
 Use `ia.open("example.fits")` to read pixels and their validity mask directly
-from a FITS file. Metadata edits on this attachment last until `ia.done()`.
+from a FITS file. Metadata edits apply for the life of the attachment.
+Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
+reopens the moved file and reads its stored metadata again.
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
-writable native CASA image. `whichhdu` selects the image HDU and `whichrep` selects the
-coordinate representation. `zeroblanks=True` writes zero at blank pixels
+writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
+selects the image HDU and `whichrep` selects the coordinate representation.
+`zeroblanks=True` writes zero at blank pixels
 while preserving their invalid mask values. `ia.newimagefromfits(...)` returns
 a separate image tool.
 
@@ -56,7 +132,10 @@ single-precision pixels and starts a new history.
 Use `ia.fromimage(outfile="copy.im", infile="example.im")` to copy an image
 with its coordinates, active pixel mask, metadata and history. Use
 `newimagefromimage` to keep the current attachment and receive a separate tool.
-An absolute CASA `LCSlicer` region selects a pixel box and its stride.
+An absolute CASA `LCSlicer` region selects a pixel box and its stride. The
+copy retains the selected frequencies and restoring beams. Additional region
+forms are tracked in #1625.
+
 Use `ia.getregion(region=...)` to read that same selection. Pass
 `getmask=True` to read validity, `mask` to apply a lattice expression,
 or `axes` to average the valid pixels along selected axes.
@@ -71,6 +150,26 @@ and flux for per-plane beams are tracked in
 
 The remaining CASA image and coordinate operations are tracked in
 [#1027](https://github.com/bglenden/casa-rs/issues/1027).
+
+Use `ia.maketestimage()` to load `demo/Images/imagetestimage.fits` as a
+temporary image. Pass `outfile` to write a native image. The tool searches
+the working directory, `CASA_RS_MEASURESPATH`, and the CASA installation's
+`data` directory when `CASAPATH` or `AIPSPATH` identifies it.
+
+### Extract a subimage
+
+Use `ia.subimage(outfile="cutout.im", region=region)` to copy a selection
+to a native CASA image. The method returns a separate image tool. Leave
+`outfile` empty for a temporary image, or set `wantreturn=False` to write the
+file and return `None`. The copy shifts its reference pixels, keeps the
+applicable restoring beams and input history, and combines the region with
+the input's validity mask and any supplied `mask` expression.
+
+Use `dropdeg=True` to drop singleton axes. List the singleton axes you want
+to keep in `keepaxes`. Region inputs include CRTF text and files, saved region
+references, and unit-stride boxes and polygon records.
+An existing entry inside the input image cannot be replaced, protecting
+the source's history and mask tables.
 
 ### Migrate an existing image reader or writer
 

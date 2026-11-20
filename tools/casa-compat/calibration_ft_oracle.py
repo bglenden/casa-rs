@@ -7,9 +7,11 @@ from datetime import UTC, datetime, timedelta
 import json
 import os
 from pathlib import Path
+import shutil
+import tarfile
 
 import casatasks as casa
-from casatools import componentlist, image, table
+from casatools import componentlist, image, imager, table
 import numpy as np
 
 from applycal_mms_oracle import referenced_tables
@@ -97,6 +99,64 @@ def validation_paths(root, source, native, point):
         outcomes[f'refused-{label}'] = {'scratch_initialized': added}
     return outcomes
 
+
+
+def scratch_attachment(root, source, native, point):
+    """Scratch attachment side effects precede model validation and retry."""
+    missing = str(root / "missing-attachment.image")
+    for name in ("open", "selectvis"):
+        path = root / f"scratch-attachment-{name}.ms"
+        prepare(source, path, model=True, virtual=True)
+        before, (_, source_keywords, _) = state(path)
+        assert len(source_keywords) == 4
+        tool = imager()
+        try:
+            if name == "open":
+                assert tool.open(str(path), usescratch=True) is True
+            else:
+                assert tool.selectvis(vis=str(path), usescratch=True) is True
+            attached, virtual = state(path)
+            assert virtual[:2] == ({}, {})
+            np.testing.assert_equal(attached, before)
+            assert tool.ft(model=[missing]) is False
+            compare_outputs(state(path), (attached, virtual))
+            assert tool.ft(complist=str(point)) is True
+            assert np.any(state(path)[0]["MODEL_DATA"] != before["MODEL_DATA"])
+        finally:
+            tool.done()
+        print(f"scratch-attachment-{name}: cleared at attachment and retried on the same object",
+              flush=True)
+
+    for existing in (False, True):
+        outputs = []
+        for engine, api in (("casa", casa), ("native", native)):
+            path = root / f"scratch-attachment-{existing}-{engine}.ms"
+            prepare(source, path, model=existing, virtual=True)
+            before, (_, source_keywords, _) = state(path)
+            assert len(source_keywords) == 4
+            try:
+                api.ft(str(path), usescratch=True, model=missing)
+            except ValueError as error:
+                message = getattr(getattr(error, "completion", None), "message", str(error))
+                assert message == f"Model image {missing} cannot be found", message
+            else:
+                raise AssertionError("ft accepted a missing image")
+            attached, virtual = state(path)
+            assert virtual[:2] == ({}, {}), (engine, existing, "virtual recipes survived attachment")
+            if existing:
+                np.testing.assert_equal(attached, before)
+            else:
+                np.testing.assert_equal({key: value for key, value in attached.items()
+                                         if key != "MODEL_DATA"}, before)
+                assert "MODEL_DATA" in attached
+            assert api.ft(str(path), usescratch=True, complist=str(point)) is None
+            output = state(path)
+            assert np.any(output[0]["MODEL_DATA"] != attached["MODEL_DATA"])
+            outputs.append(((attached, virtual), output))
+        for expected, actual in zip(*outputs, strict=True):
+            compare_outputs(actual, expected)
+        print(f"scratch-attachment-existing-{existing}: paired failure, storage and retry", flush=True)
+    return {"scratch-attachment": {"public_tool_sequences": 2, "paired_task_sequences": 2}}
 
 def make_images(root, source):
     phase = coordinates(source)
@@ -269,16 +329,21 @@ def independent_image_lifetimes(root, source, native, images):
                    disableparallel=True, flagbackup=False, datacolumn='all')
     first, second = referenced_tables(path)
     assert native.ft(str(path), field='0', model=images['point']) is None
-    originals = []
-    for part in (first, second):
+    def stored_grid(part):
         records = state(part)[1][2]
         grid = Path(next(record['ft_0']['container']['diskimage'] for record in records if record))
         assert grid.resolve().parent == (part/'SOURCE').resolve()
-        originals.append(grid)
-    assert originals[0].resolve() != originals[1].resolve()
+        return grid.resolve()
+
+    original_first, original_second = [stored_grid(part) for part in (first, second)]
+    assert original_first != original_second
     assert native.ft(str(first), field='0', model=images['cube']) is None
-    assert not originals[0].exists()
-    assert originals[1].exists()
+    assert stored_grid(first) != original_first
+    assert stored_grid(second) == original_second
+    assert original_second.exists()
+    # A SOURCE table supplies no complete list of MAIN tables that can
+    # retain the retired recipe. Replacement leaves its grid available.
+    assert original_first.exists()
     expected = root/'lifetime-reference.ms'
     copy_ms(second, expected)
     assert casa.uvsub(str(expected)) is None
@@ -351,6 +416,91 @@ def initial_time_range(source):
     return f'{(start-timedelta(seconds=1)).strftime(fmt)}~{(start+timedelta(seconds=1)).strftime(fmt)}'
 
 
+
+def publication_after_cleanup_error(root, failed, native):
+    """Read the exact record and grids left by the native MAIN-cleanup test."""
+    source = failed / "mssel_test_small.ms"
+    archive = (Path(__file__).resolve().parents[2]
+               / "crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz")
+    with tarfile.open(archive) as fixture:
+        fixture.extractall(root, filter="data")
+    reference = root / source.name
+    tb = table()
+    assert tb.open(str(reference / "SPECTRAL_WINDOW"))
+    try:
+        reference_hz = tb.getcell("CHAN_FREQ", 1)[0] * 0.99
+    finally:
+        tb.close()
+
+    terms = []
+    for term in range(2):
+        assert tb.open(str(failed / f"term-{term}.im"))
+        try:
+            pixels = tb.getcell("map", 0)
+            coords = tb.getkeyword("coords")
+        finally:
+            tb.close()
+        path = root / f"casa-term-{term}.im"
+        tool = image()
+        assert tool.fromarray(outfile=str(path), pixels=np.asarray(pixels, np.float32))
+        assert tool.setcoordsys(coords)
+        assert tool.setbrightnessunit("Jy/pixel")
+        tool.done()
+        terms.append(str(path))
+    assert casa.ft(str(reference), field="0", model=terms, nterms=2,
+                   reffreq=f"{reference_hz}Hz") is None
+    assert tb.open(str(reference / "SOURCE"))
+    try:
+        assert tb.getkeyword("definedmodel_field_0") == "model_0"
+    finally:
+        tb.close()
+
+    def sample_rows():
+        selected = ((tb.getcol("FIELD_ID") == 0)
+                    & (tb.getcol("DATA_DESC_ID") == 1))
+        rows = np.flatnonzero(selected)[:12]
+        assert len(rows) == 12
+        return [int(row) for row in rows]
+
+    def unflag_samples(path):
+        # All rows of this fixture's field 0 are originally flagged.
+        assert tb.open(str(path), nomodify=False)
+        try:
+            for row in sample_rows():
+                tb.putcell("FLAG_ROW", row, False)
+                tb.putcell("FLAG", row, np.zeros_like(tb.getcell("FLAG", row)))
+        finally:
+            tb.close()
+
+    def sampled(path):
+        assert tb.open(str(path))
+        try:
+            return np.stack([
+                tb.getcell("DATA", row) - tb.getcell("CORRECTED_DATA", row)
+                for row in sample_rows()
+            ])
+        finally:
+            tb.close()
+
+    unflag_samples(reference)
+    assert casa.uvsub(str(reference)) is None
+    expected = sampled(reference)
+    assert np.max(np.abs(expected.real)) > 1.5
+    evidence = {}
+    for name, reader in [("CASA", casa), ("Rust", native)]:
+        destination = root / f"after-error-{name}.ms"
+        shutil.copytree(source, destination)
+        unflag_samples(destination)
+        assert reader.uvsub(str(destination)) is None
+        actual = sampled(destination)
+        np.testing.assert_allclose(actual, expected, atol=3e-5, rtol=0)
+        max_error = float(np.max(np.abs(actual - expected)))
+        evidence[name] = {"complex_samples": actual.size, "max_abs_error": max_error}
+        print(f"{name}: {actual.size} complex samples after MAIN cleanup error, "
+              f"max abs error {max_error:g}", flush=True)
+    return {"virtual-publication": evidence}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
@@ -359,6 +509,8 @@ def main():
     parser.add_argument('--chain', action='store_true')
     parser.add_argument('--mms', action='store_true')
     parser.add_argument('--case', help='Run cases containing this text')
+    parser.add_argument('--fault-work', type=Path,
+                        help='Read the output of the native FT publication fault test')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -366,6 +518,10 @@ def main():
     from casars import tasks
     root = args.work.resolve()
     root.mkdir(parents=True)
+    if args.fault_work is not None:
+        evidence = publication_after_cleanup_error(root, args.fault_work.resolve(), tasks)
+        (root / "results.json").write_text(json.dumps(evidence, indent=2) + "\n")
+        return
     source = root/'source.ms'
     source_data(source, stokes='XX XY YX YY')
     ra, dec = coordinates(source)
@@ -420,6 +576,8 @@ def main():
         evidence.update(mms_workflows(root, source, tasks, point))
     if args.case is None:
         evidence.update(validation_paths(root, source, tasks, point))
+    if args.case is None or args.case in "scratch-attachment":
+        evidence.update(scratch_attachment(root, source, tasks, point))
     if args.chain:
         spectral = root/'spectral-point.cl'
         cl = componentlist()

@@ -1,0 +1,955 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "accumulate": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tablein"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "incrtable"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tableout"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "calfield"
+      },
+      {
+        "default": "'linear'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interp"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "t"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwmap"
+      }
+    ],
+    "activityrec": [],
+    "close": [],
+    "correct": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "applymode"
+      }
+    ],
+    "corrupt": [],
+    "createcaltable": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "caltable"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "partype"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "caltype"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "singlechan"
+      }
+    ],
+    "delmod": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "otf"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scr"
+      }
+    ],
+    "done": [],
+    "fluxscale": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tablein"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "reference"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tableout"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "transfer"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "listfile"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "append"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refspwmap"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gainthreshold"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timerange"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "incremental"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitorder"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "display"
+      }
+    ],
+    "initcalset": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "calset"
+      }
+    ],
+    "initweights": [
+      {
+        "default": "'nyq'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wtmode"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dowtsp"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tsystable"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "gainfield"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interp"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwmap"
+      }
+    ],
+    "linpolcor": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tablein"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tableout"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fields"
+      }
+    ],
+    "listcal": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "caltable"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "listfile"
+      },
+      {
+        "default": "50",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pagerows"
+      }
+    ],
+    "modelfit": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "vary"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "niter"
+      },
+      {
+        "default": "'P'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "compshape"
+      },
+      {
+        "default": "[1.0, 0.0, 0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "par"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "file"
+      }
+    ],
+    "open": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filename"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "compress"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "addcorr"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "addmodel"
+      }
+    ],
+    "parsecallibfile": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "filein"
+      }
+    ],
+    "plotcal": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antennas"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fields"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwids"
+      },
+      {
+        "default": "'AMP'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "plottype"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tablename"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "polarization"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "multiplot"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nx"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ny"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "psfile"
+      }
+    ],
+    "posangcal": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "posangcor"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tablein"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tableout"
+      }
+    ],
+    "rerefant": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tablein"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tableout"
+      },
+      {
+        "default": "'flexible'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refantmode"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refant"
+      }
+    ],
+    "reset": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "apply"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "solve"
+      }
+    ],
+    "returndict": [],
+    "selectvis": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "scan"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "intent"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "observation"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "baseline"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uvrange"
+      },
+      {
+        "default": "'none'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chanmode"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nchan"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "start"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "step"
+      },
+      {
+        "default": "{'value': 0.0, 'unit': 'km/s'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mstart"
+      },
+      {
+        "default": "{'value': 0.0, 'unit': 'km/s'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mstep"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "msselect"
+      }
+    ],
+    "setapply": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "t"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "table"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "'linear'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "interp"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "select"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "calwt"
+      },
+      {
+        "default": "[-1]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwmap"
+      },
+      {
+        "default": "[0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "opacity"
+      }
+    ],
+    "setcallib": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "callib"
+      }
+    ],
+    "setcorrdepflags": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "corrdepflags"
+      }
+    ],
+    "setmodel": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "modelimage"
+      }
+    ],
+    "setptmodel": [
+      {
+        "default": "[0.0, 0.0, 0.0, 0.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "stokes"
+      }
+    ],
+    "setsolve": [
+      {
+        "default": "'MF'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "t"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "table"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "append"
+      },
+      {
+        "default": "-1.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "preavg"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "phaseonly"
+      },
+      {
+        "default": "'AP'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "apmode"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refant"
+      },
+      {
+        "default": "'flex'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refantmode"
+      },
+      {
+        "default": "4",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minblperant"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "solnorm"
+      },
+      {
+        "default": "'mean'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "normtype"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "minsnr"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "combine"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fillgaps"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "cfcache"
+      },
+      {
+        "default": "360.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "painc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fitorder"
+      },
+      {
+        "default": "0.1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fraction"
+      },
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "numedge"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "radius"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "smooth"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "zerorates"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "globalsolve"
+      },
+      {
+        "default": "100",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "niter"
+      },
+      {
+        "default": "'none'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "corrcomb"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "delaywindow"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ratewindow"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "paramactive"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "concatspws"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "solmode"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "rmsthresh"
+      }
+    ],
+    "setsolvebandpoly": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "table"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "append"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "t"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "combine"
+      },
+      {
+        "default": "3",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "degamp"
+      },
+      {
+        "default": "3",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "degphase"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "visnorm"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "solnorm"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maskcenter"
+      },
+      {
+        "default": "5.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maskedge"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refant"
+      }
+    ],
+    "setsolvegainspline": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "table"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "append"
+      },
+      {
+        "default": "'PHAS'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "mode"
+      },
+      {
+        "default": "10800.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "splinetime"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "preavg"
+      },
+      {
+        "default": "10",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "npointaver"
+      },
+      {
+        "default": "250.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "phasewrap"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "refant"
+      }
+    ],
+    "setvi": [
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "old"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "quiet"
+      }
+    ],
+    "smooth": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tablein"
+      },
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tableout"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "'median'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "smoothtype"
+      },
+      {
+        "default": "60.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "smoothtime"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ratesmooth"
+      }
+    ],
+    "solve": [],
+    "specifycal": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "caltable"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "time"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pol"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "caltype"
+      },
+      {
+        "default": "[1.0]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "parameter"
+      },
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "infile"
+      },
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "uniform"
+      }
+    ],
+    "state": [],
+    "updatecaltable": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "caltable"
+      }
+    ],
+    "validatecallib": [
+      {
+        "default": "{}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "callib"
+      }
+    ]
+  },
+  "tool": "calibrater"
+}

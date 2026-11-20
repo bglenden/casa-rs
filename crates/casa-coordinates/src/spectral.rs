@@ -8,6 +8,7 @@
 use std::str::FromStr;
 
 use casa_types::measures::direction_to_record;
+use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::epoch_to_record;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::position_to_record;
@@ -90,6 +91,8 @@ pub struct SpectralCoordinate {
     /// Every rest frequency the coordinate lists, the active one among them
     /// (C++ `restFrequencies()`).
     rest_frequencies: Vec<f64>,
+    /// Doppler convention used by this coordinate when expressing velocities.
+    velocity_convention: DopplerRef,
     /// Pixel-to-world mapping state.
     mapping: SpectralMapping,
     /// The world axis name.
@@ -121,6 +124,7 @@ impl SpectralCoordinate {
             conversion: None,
             rest_frequency,
             rest_frequencies: vec![rest_frequency],
+            velocity_convention: DopplerRef::RADIO,
             mapping: SpectralMapping::Linear {
                 crval,
                 cdelt,
@@ -158,6 +162,7 @@ impl SpectralCoordinate {
             conversion: None,
             rest_frequency,
             rest_frequencies: vec![rest_frequency],
+            velocity_convention: DopplerRef::RADIO,
             mapping: SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
@@ -237,9 +242,27 @@ impl SpectralCoordinate {
         start: usize,
         length: usize,
     ) -> Result<bool, CoordinateError> {
+        Self::subimage_tabular_record_with_stride(record, start, length, 1)
+    }
+
+    /// Rebuild a tabular spectral record for a strided image section.
+    ///
+    /// # Errors
+    /// Returns an error if the lookup table or section is invalid.
+    pub fn subimage_tabular_record_with_stride(
+        record: &mut RecordValue,
+        start: usize,
+        length: usize,
+        stride: usize,
+    ) -> Result<bool, CoordinateError> {
         let Some(Value::Record(table)) = record.get("tabular") else {
             return Ok(false);
         };
+        if length == 0 || stride == 0 {
+            return Err(CoordinateError::InvalidRecord(
+                "tabular spectral image section needs a positive length and stride".into(),
+            ));
+        }
         let table_unit = get_optional_vec_string(table, "units")
             .and_then(|units| units.into_iter().next())
             .unwrap_or_else(|| "Hz".into());
@@ -258,15 +281,16 @@ impl SpectralCoordinate {
             / frequency_unit_scale(&table_unit).ok_or_else(|| {
                 CoordinateError::InvalidRecord("invalid tabular spectral unit".into())
             })?;
-        let count = if world_values.len() == 1 {
-            1
-        } else {
-            length.max(2)
-        };
+        let count = if world_values.len() == 1 { 1 } else { length };
         let values = (0..count)
             .map(|pixel| {
-                interpolate(pixel_values, world_values, (start + pixel) as f64)
-                    .map(|world| world * factor)
+                let source = pixel
+                    .checked_mul(stride)
+                    .and_then(|offset| start.checked_add(offset))
+                    .ok_or_else(|| {
+                        CoordinateError::InvalidRecord("spectral image section overflows".into())
+                    })?;
+                interpolate(pixel_values, world_values, source as f64).map(|world| world * factor)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let increment = (values[count - 1] - values[0]) / (count - 1).max(1) as f64;
@@ -315,7 +339,10 @@ impl SpectralCoordinate {
     pub fn fits_linearized_axis_hz(&self) -> Result<(f64, f64, f64), CoordinateError> {
         if let SpectralMapping::Tabular { pixel_values, .. } = &self.mapping {
             let first = self.world_frequency_hz(pixel_values[0])?;
-            let second = self.world_frequency_hz(pixel_values[1])?;
+            let second = match pixel_values.get(1) {
+                Some(&pixel) => self.world_frequency_hz(pixel)?,
+                None => first,
+            };
             Ok((pixel_values[0], first, second - first))
         } else {
             let pixel = self.reference_pixel()[0];
@@ -365,6 +392,12 @@ impl SpectralCoordinate {
             frequency_ref,
             frame,
         });
+        self
+    }
+
+    /// Use the stored intrinsic frequency mapping without frame conversion.
+    pub fn without_conversion(mut self) -> Self {
+        self.conversion = None;
         self
     }
 
@@ -444,6 +477,17 @@ impl SpectralCoordinate {
     /// [`Self::rest_frequency`] (C++ `restFrequencies()`).
     pub fn rest_frequencies(&self) -> &[f64] {
         &self.rest_frequencies
+    }
+
+    /// The Doppler convention used when expressing the spectral grid as velocity.
+    pub fn velocity_convention(&self) -> DopplerRef {
+        self.velocity_convention
+    }
+
+    /// Set the Doppler convention without changing the frequency grid or rest frequency.
+    pub fn with_velocity_convention(mut self, convention: DopplerRef) -> Self {
+        self.velocity_convention = convention;
+        self
     }
 
     /// Reconstructs a spectral coordinate from a serialized record.
@@ -552,6 +596,11 @@ impl SpectralCoordinate {
         } else {
             Self::new(frequency_ref, crval[0], cdelt[0], crpix[0], rest_frequency)
         };
+        if let Some(convention) =
+            get_optional_i32(rec, "velType").and_then(DopplerRef::from_casacore_code)
+        {
+            coord = coord.with_velocity_convention(convention);
+        }
         if let Some(name) = get_optional_string(rec, "name").or_else(|| {
             get_optional_vec_string(parameter_record, "axes")
                 .and_then(|names| names.into_iter().next())
@@ -724,7 +773,10 @@ impl SpectralCoordinate {
             "restfreqs",
             Value::Array(ArrayValue::from_f64_vec(self.rest_frequencies.clone())),
         );
-        rec.upsert("velType", Value::Scalar(ScalarValue::Int32(0)));
+        rec.upsert(
+            "velType",
+            Value::Scalar(ScalarValue::Int32(self.velocity_convention.casacore_code())),
+        );
         rec.upsert("nativeType", Value::Scalar(ScalarValue::Int32(0)));
         rec.upsert("velUnit", Value::Scalar(ScalarValue::String("km/s".into())));
         rec.upsert("waveUnit", Value::Scalar(ScalarValue::String("mm".into())));
@@ -960,6 +1012,27 @@ mod tests {
         // 10 channels above reference
         let world = coord.to_world(&[110.0]).unwrap();
         assert!((world[0] - 1.01e9).abs() < 1.0);
+    }
+
+    #[test]
+    fn singleton_tabular_subimage_writes_the_casa_fits_frequency() {
+        let coordinate = SpectralCoordinate::from_tabular(
+            FrequencyRef::LSRK,
+            vec![0.0, 1.0, 2.0, 3.0],
+            vec![1.4e9, 1.401e9, 1.4025e9, 1.4043e9],
+            1.4e9,
+            1e6,
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let mut record = coordinate.to_record();
+        assert!(SpectralCoordinate::subimage_tabular_record(&mut record, 2, 1).unwrap());
+        let cropped = SpectralCoordinate::from_record(&record).unwrap();
+        assert_eq!(
+            cropped.fits_linearized_axis_hz().unwrap(),
+            (0.0, 1.4025e9, 0.0)
+        );
     }
 
     #[test]

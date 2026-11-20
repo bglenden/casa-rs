@@ -167,6 +167,20 @@ pub(crate) fn write_bool_bits(dst: &mut [u8], bit_offset: usize, values: &[bool]
 ///
 /// Non-zero input bytes are treated as `true`.
 pub(crate) fn write_bool_bits_from_bytes(dst: &mut [u8], bit_offset: usize, values: &[u8]) {
+    // A complete tile starts at a byte boundary. Assemble each whole output
+    // byte once, then preserve the existing bits in any partial byte.
+    let (bit_offset, values) = if bit_offset.is_multiple_of(8) && values.len() >= 8 {
+        let (bytes, tail) = values.as_chunks::<8>();
+        let start = bit_offset / 8;
+        for (byte, bits) in dst[start..start + bytes.len()].iter_mut().zip(bytes) {
+            *byte = bits.iter().enumerate().fold(0, |packed, (bit, &value)| {
+                packed | (u8::from(value != 0) << bit)
+            });
+        }
+        (bit_offset + 8 * bytes.len(), tail)
+    } else {
+        (bit_offset, values)
+    };
     for (i, &value) in values.iter().enumerate() {
         let bit = bit_offset + i;
         let byte_idx = bit / 8;
@@ -348,6 +362,14 @@ mod tests {
             read_back,
             values.iter().map(|value| *value != 0).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn aligned_bool_packing_preserves_untouched_bytes_and_bits() {
+        let values = [0, 7, 0, 0, 0, 0, 0, 2, 0, 3];
+        let mut buf = [0xff; 4];
+        write_bool_bits_from_bytes(&mut buf, 8, &values);
+        assert_eq!(buf, [0xff, 0x82, 0xfe, 0xff]);
     }
 
     #[test]

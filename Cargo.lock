@@ -240,13 +240,17 @@ dependencies = [
 name = "casa-calibration"
 version = "0.27.0"
 dependencies = [
+ "casa-atmosphere",
  "casa-components",
  "casa-coordinates",
  "casa-fft",
  "casa-images",
  "casa-imaging-model",
  "casa-imaging-operator",
+ "casa-imaging-runtime",
+ "casa-imaging-singledish",
  "casa-lattices",
+ "casa-measures-data",
  "casa-ms",
  "casa-numerics",
  "casa-observation",
@@ -484,6 +488,7 @@ dependencies = [
  "flate2",
  "libm",
  "ndarray",
+ "num-complex",
  "serde_json",
  "thiserror",
 ]
@@ -548,6 +553,7 @@ name = "casa-ms"
 version = "0.27.0"
 dependencies = [
  "bytemuck",
+ "casa-atmosphere",
  "casa-coordinates",
  "casa-logging",
  "casa-measures-data",

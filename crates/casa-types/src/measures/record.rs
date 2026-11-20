@@ -31,7 +31,7 @@
 //! Note: C++ always serializes MPosition in spherical form (lon, lat, radius)
 //! regardless of reference type.
 
-use crate::{RecordField, RecordValue, ScalarValue, Value};
+use crate::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use super::direction::{DirectionRef, MDirection};
 use super::doppler::{DopplerRef, MDoppler};
@@ -90,38 +90,104 @@ fn extract_sub_record<'a>(
 
 /// Serializes an [`MEpoch`] to a [`RecordValue`] compatible with C++ `MeasureHolder`.
 pub fn epoch_to_record(epoch: &MEpoch) -> RecordValue {
-    RecordValue::new(vec![
+    let code = epoch.refer().casacore_name();
+    let refer = if epoch.is_razing() {
+        format!("R_{code}")
+    } else {
+        code.into()
+    };
+    let mut record = RecordValue::new(vec![
         RecordField::new(
             "type",
             Value::Scalar(ScalarValue::String("epoch".to_owned())),
         ),
-        RecordField::new(
-            "refer",
-            Value::Scalar(ScalarValue::String(epoch.refer().as_str().to_owned())),
-        ),
+        RecordField::new("refer", Value::Scalar(ScalarValue::String(refer))),
         RecordField::new(
             "m0",
             Value::Record(quantity_record(epoch.value().as_mjd(), "d")),
         ),
-    ])
+    ]);
+    if let Some(offset) = epoch.offset() {
+        record.push(RecordField::new(
+            "offset",
+            Value::Record(epoch_to_record(offset)),
+        ));
+    }
+    record
 }
 
 /// Deserializes an [`MEpoch`] from a [`RecordValue`] in C++ `MeasureHolder` format.
 pub fn epoch_from_record(rec: &RecordValue) -> Result<MEpoch, MeasureError> {
+    read_epoch_record(rec, 0)
+}
+
+fn read_epoch_record(rec: &RecordValue, depth: usize) -> Result<MEpoch, MeasureError> {
+    if depth > 128 {
+        return Err(MeasureError::InvalidRecord {
+            reason: "epoch offsets are too deeply nested".into(),
+        });
+    }
     let type_str = extract_string(rec, "type")?;
-    if type_str != "epoch" {
+    if !type_str.eq_ignore_ascii_case("epoch") {
         return Err(MeasureError::InvalidRecord {
             reason: format!("expected type 'epoch', got '{type_str}'"),
         });
     }
 
     let refer_str = extract_string(rec, "refer")?;
-    let refer: EpochRef = refer_str.parse()?;
+    let base = refer_str
+        .strip_prefix("R_")
+        .or_else(|| refer_str.strip_prefix("r_"));
+    let refer: EpochRef = base.unwrap_or(&refer_str).parse()?;
 
-    let m0 = extract_sub_record(rec, "m0")?;
-    let mjd = extract_quantity_value(m0)?;
+    let epoch = MEpoch::new(epoch_record_value(rec)?, refer).with_razing(base.is_some());
+    match rec.get("offset") {
+        Some(Value::Record(offset)) => Ok(epoch.with_offset(read_epoch_record(offset, depth + 1)?)),
+        Some(_) => Err(MeasureError::InvalidRecord {
+            reason: "epoch offset must be a measure record".into(),
+        }),
+        None => Ok(epoch),
+    }
+}
 
-    Ok(MEpoch::new(MjdHighPrec::from_mjd(mjd), refer))
+fn epoch_record_value(rec: &RecordValue) -> Result<MjdHighPrec, MeasureError> {
+    let mut length = None;
+    let mut day = 0.0;
+    let mut fraction = 0.0;
+    for key in ["m0", "m1", "m2"] {
+        let Some(Value::Record(component)) = rec.get(key) else {
+            break;
+        };
+        let (value, count) = match component.get("value") {
+            Some(Value::Array(ArrayValue::Float64(array))) => (array.first().copied(), array.len()),
+            Some(Value::Array(ArrayValue::Float32(array))) => {
+                (array.first().copied().map(f64::from), array.len())
+            }
+            _ => (Some(extract_quantity_value(component)?), 1),
+        };
+        if length.is_some_and(|previous| previous != count) {
+            return Err(MeasureError::InvalidRecord {
+                reason: format!("Illegal number of values in MeasureHolder {key}"),
+            });
+        }
+        length = Some(count);
+        let value = value.ok_or_else(|| MeasureError::InvalidRecord {
+            reason: format!("empty epoch quantity {key}"),
+        })?;
+        let unit = match component.get("unit") {
+            Some(_) => extract_string(component, "unit")?,
+            None => "d".into(),
+        };
+        let quantity = crate::quanta::Quantity::new(value, &unit).map_err(|error| {
+            MeasureError::InvalidRecord {
+                reason: error.to_string(),
+            }
+        })?;
+        let days = MEpoch::from_quantity(&quantity, EpochRef::UTC)?.value();
+        day += days.day();
+        fraction += days.frac();
+    }
+    Ok(MjdHighPrec::new(day, fraction))
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +533,26 @@ mod tests {
             Some(&Value::Scalar(ScalarValue::String("TAI".to_owned())))
         );
         assert!(rec.get("m0").is_some());
+    }
+
+    #[test]
+    fn epoch_record_keeps_the_reference_and_offset() {
+        let offset = MEpoch::from_mjd(60_000.25, EpochRef::TT);
+        let epoch = MEpoch::from_mjd(0.125, EpochRef::TT).with_offset(offset);
+        let record = epoch_to_record(&epoch);
+        let restored = epoch_from_record(&record).unwrap();
+        let absolute = restored
+            .convert_to(EpochRef::TT, &crate::measures::MeasFrame::new())
+            .unwrap();
+        assert_eq!(absolute.value(), MjdHighPrec::new(60_000.0, 0.375));
+        assert_eq!(
+            record.get("refer"),
+            Some(&Value::Scalar(ScalarValue::String("TDT".into())))
+        );
+        let razed = epoch_to_record(&epoch.with_razing(true));
+        let restored = epoch_from_record(&razed).unwrap();
+        assert!(restored.is_razing());
+        assert!(restored.offset().is_some());
     }
 
     #[test]

@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Calibration-facing methods exposed by the legacy imager.
+
+use crate::tools::surface::{
+    CasaDefault as D, Kind as K, Method, Returns as R, Status as S, ToolSurface, method, param,
+};
+
+const METHODS: &[Method] = &[
+    method("close", &[], R::Bool, S::Implemented),
+    method(
+        "defineimage",
+        &[
+            param("nx", K::Int, D::Int(128)),
+            param("ny", K::Int, D::Int(-1)),
+            param("cellx", K::Quantity, D::Empty),
+            param("celly", K::Quantity, D::Empty),
+            param("stokes", K::Text, D::Text("I")),
+            param("phasecenter", K::Any, D::Empty),
+            param("mode", K::Text, D::Text("mfs")),
+            param("nchan", K::Int, D::Int(-1)),
+            param("start", K::Any, D::Empty),
+            param("step", K::Any, D::Empty),
+            param("spw", K::Ints, D::Ints(&[0])),
+            param("restfreq", K::Quantity, D::Empty),
+            param("outframe", K::Text, D::Text("LSRK")),
+            param("veltype", K::Text, D::Text("radio")),
+            param("facets", K::Int, D::Int(1)),
+            param("movingsource", K::Measure, D::Empty),
+            param("distance", K::Quantity, D::Empty),
+            param("projection", K::Text, D::Text("SIN")),
+        ],
+        R::Bool,
+        S::Partial,
+    ),
+    method("done", &[], R::Bool, S::Implemented),
+    Method {
+        mutating: true,
+        ..method(
+            "ft",
+            &[
+                param("model", K::Texts, D::Texts(&[])),
+                param("complist", K::Text, D::Text("")),
+                param("incremental", K::Bool, D::Bool(false)),
+                param("phasecentertime", K::Float, D::Float(-1.0)),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
+    Method {
+        mutating: true,
+        ..method(
+            "open",
+            &[
+                param("thems", K::Text, D::Text("")),
+                param("compress", K::Bool, D::Bool(false)),
+                param("usescratch", K::Bool, D::Bool(false)),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
+    Method {
+        mutating: true,
+        ..method(
+            "selectvis",
+            &[
+                param("vis", K::Text, D::Text("")),
+                param("nchan", K::Ints, D::Ints(&[-1])),
+                param("start", K::Ints, D::Ints(&[0])),
+                param("step", K::Ints, D::Ints(&[1])),
+                param("spw", K::Any, D::Empty),
+                param("field", K::Any, D::Empty),
+                param("baseline", K::Any, D::Empty),
+                param("time", K::Any, D::Empty),
+                param("scan", K::Any, D::Empty),
+                param("intent", K::Text, D::Text("")),
+                param("observation", K::Any, D::Empty),
+                param("uvrange", K::Any, D::Empty),
+                param("taql", K::Text, D::Text("")),
+                param("usescratch", K::Bool, D::Bool(false)),
+                param("datainmemory", K::Bool, D::Bool(false)),
+                param("writeaccess", K::Bool, D::Bool(true)),
+            ],
+            R::Bool,
+            S::Implemented,
+        )
+    },
+    method(
+        "setoptions",
+        &[
+            param("ftmachine", K::Text, D::Text("ft")),
+            param("cache", K::Int, D::Int(-1)),
+            param("tile", K::Int, D::Int(16)),
+            param("gridfunction", K::Text, D::Text("SF")),
+            param("location", K::Measure, D::Empty),
+            param("padding", K::Float, D::Float(1.0)),
+            param("freqinterp", K::Text, D::Text("nearest")),
+            param("wprojplanes", K::Int, D::Int(-1)),
+            param("epjtablename", K::Text, D::Text("")),
+            param("applypointingoffsets", K::Bool, D::Bool(false)),
+            param("dopbgriddingcorrections", K::Bool, D::Bool(true)),
+            param("cfcachedirname", K::Text, D::Text("")),
+            param("rotpastep", K::Float, D::Float(5.0)),
+            param("pastep", K::Float, D::Float(360.0)),
+            param("pblimit", K::Float, D::Float(0.05)),
+            param("imagetilevol", K::Int, D::Int(0)),
+            param("singleprecisiononly", K::Bool, D::Bool(false)),
+            param("numthreads", K::Int, D::Int(-1)),
+            param("psterm", K::Bool, D::Bool(true)),
+            param("aterm", K::Bool, D::Bool(true)),
+            param("mterm", K::Bool, D::Bool(true)),
+            param("wbawp", K::Bool, D::Bool(false)),
+            param("conjbeams", K::Bool, D::Bool(true)),
+        ],
+        R::Bool,
+        S::Partial,
+    ),
+    method(
+        "setsdoptions",
+        &[
+            param("scale", K::Float, D::Float(1.0)),
+            param("weight", K::Float, D::Float(1.0)),
+            param("convsupport", K::Int, D::Int(-1)),
+            param("pointingcolumntouse", K::Text, D::Text("DIRECTION")),
+            param("truncate", K::Quantity, D::Empty),
+            param("gwidth", K::Quantity, D::Empty),
+            param("jwidth", K::Quantity, D::Empty),
+            param("minweight", K::Float, D::Float(0.0)),
+            param("clipminmax", K::Bool, D::Bool(false)),
+            param("enablecache", K::Bool, D::Bool(false)),
+            param("convertfirst", K::Text, D::Text("NEVER")),
+        ],
+        R::Bool,
+        S::Partial,
+    ),
+    method(
+        "settaylorterms",
+        &[
+            param("ntaylorterms", K::Int, D::Int(2)),
+            param("reffreq", K::Float, D::Float(0.0)),
+        ],
+        R::Bool,
+        S::Implemented,
+    ),
+    method(
+        "setvp",
+        &[
+            param("dovp", K::Bool, D::Bool(false)),
+            param("usedefaultvp", K::Bool, D::Bool(true)),
+            param("vptable", K::Text, D::Text("")),
+            param("dosquint", K::Bool, D::Bool(false)),
+            param("parangleinc", K::Quantity, D::Empty),
+            param("skyposthreshold", K::Quantity, D::Empty),
+            param("telescope", K::Text, D::Text("")),
+            param("verbose", K::Bool, D::Bool(true)),
+        ],
+        R::Bool,
+        S::Partial,
+    ),
+    method(
+        "uvrange",
+        &[
+            param("uvmin", K::Float, D::Float(0.0)),
+            param("uvmax", K::Float, D::Float(0.0)),
+        ],
+        R::Bool,
+        S::Implemented,
+    ),
+];
+
+pub(crate) const SURFACE: ToolSurface = ToolSurface {
+    name: "imager",
+    module: "casars.tools",
+    constructor: &[],
+    methods: METHODS,
+    lifecycle: &["open", "close", "done"],
+};

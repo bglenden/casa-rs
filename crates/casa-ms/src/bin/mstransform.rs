@@ -7,14 +7,17 @@ use std::process::ExitCode;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    MsTransformError, MsTransformRequest, TransformDataColumn, ms_task_success, mstransform,
-    mstransform_task_schema_bundle, parse_numeric_id_selector, parse_spw_selector,
-    task_selection_text,
+    MsTransformError, MsTransformRequest, MsTransformTaskOptions, TimeAverageOptions,
+    TransformDataColumn, TransformTaskHistory, ms_task_success, mstransform_task,
+    mstransform_task_schema_bundle, task_selection_text,
 };
-use casa_provider_contracts::CasaValue;
+use casa_provider_contracts::{
+    CasaValue, DefaultSpec, NumpyScalarType, ParameterValue, python_repr,
+};
 use casa_task_runtime::{
     CasaLoggingConfig, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess,
 };
+use casa_types::quanta::{Quantity, Unit};
 
 fn main() -> ExitCode {
     TaskFrontEnd::new_with_deferred_schema(
@@ -35,122 +38,424 @@ fn main() -> ExitCode {
 
 /// Both surfaces run the one transform; CASA's tasks return None.
 fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    let request = transform_request(task)?;
+    let (request, options) = transform_request(task)?;
     // The output the transform refuses before it starts is the argument's
     // fault; anything else failed the transform.
-    let report = mstransform(&request).map_err(|error| match error {
+    let report = mstransform_task(&request, &options).map_err(|error| match error {
         MsTransformError::OutputExists { .. } | MsTransformError::SameInputOutput { .. } => {
             TaskFailure::validation(error.to_string()).at("outputvis")
+        }
+        MsTransformError::InvalidSpw { .. } => TaskFailure::validation(error.to_string()).at("spw"),
+        MsTransformError::MissingDataColumn { path, column } => TaskFailure::execution(format!(
+            "Desired column ({column}) not found in the input MS ({path})."
+        )),
+        MsTransformError::ChannelWidthCount => {
+            let parameter = channel_parameter(task);
+            TaskFailure::validation(format!(
+                "Number of {parameter} is different from the number of spw"
+            ))
+            .at(parameter)
         }
         other => TaskFailure::execution(other.to_string()),
     })?;
     ms_task_success(CasaValue::None, &report)
 }
 
-fn transform_request(task: &TaskInvocation<'_>) -> Result<MsTransformRequest, TaskFailure> {
-    let width = channel_width(task)?;
-    // The selector's syntax is checked here, before the transform prepares
-    // its output; the windows it names are checked against the input there.
-    let spw = task_selection_text(task, "spw")?;
-    if !spw.trim().is_empty() {
-        parse_spw_selector(&spw).map_err(|error| {
-            TaskFailure::validation(format!("invalid spw {spw:?}: {error}")).at("spw")
-        })?;
-    }
-    Ok(MsTransformRequest {
+fn transform_request(
+    task: &TaskInvocation<'_>,
+) -> Result<(MsTransformRequest, MsTransformTaskOptions), TaskFailure> {
+    let (width, channel_widths) = channel_width(task)?;
+    let request = MsTransformRequest {
         input_ms: task.path("vis")?,
         output_ms: task.path("outputvis")?,
-        spw,
+        spw: variant_selector(task, "spw")?.unwrap_or_default(),
         width,
         data_column: data_column(&task.required_text("datacolumn")?)?,
         selection: selection(task)?,
         keep_flags: task.flag("keepflags")?,
-    })
+    };
+    let (keep_mms, retained_scan_span) = if task.surface() == "split" {
+        let keep_mms = task.flag("keepmms")?;
+        let combine_scan =
+            matches!(task.value("combine"), Some(ParameterValue::String(span)) if span == "scan");
+        let span = if keep_mms && combine_scan {
+            Quantity::read(&task.required_text("timebin")?)
+                .ok()
+                .map(|quantity| quantity.value())
+        } else {
+            None
+        };
+        (Some(keep_mms), span)
+    } else {
+        (None, None)
+    };
+    let options = MsTransformTaskOptions {
+        use_weight_spectrum: task.surface() == "mstransform" && task.flag("usewtspectrum")?,
+        channel_widths,
+        time_averaging: time_average_options(task)?,
+        history: Some(task_history(task)),
+        flag_command_widths: flag_command_widths(task),
+        keep_mms,
+        retained_scan_span,
+    };
+    Ok((request, options))
 }
 
-/// The channels averaged into each output channel: split's `width`, or
-/// mstransform's `chanbin` when its `chanaverage` is set and 1 otherwise,
-/// as CASA's tasks take them. CASA's mstransform refuses to average by one
-/// channel; split's `width=1` averages nothing.
-fn channel_width(task: &TaskInvocation<'_>) -> Result<usize, TaskFailure> {
-    let (name, least) = if task.surface() == "split" {
-        ("width", 1)
-    } else if task.flag("chanaverage")? {
-        ("chanbin", 2)
-    } else {
-        return Ok(1);
-    };
-    let width = task.integer(name)?;
-    usize::try_from(width)
-        .ok()
-        .filter(|width| *width >= least)
-        .ok_or_else(|| {
-            let message = if least > 1 {
-                format!("Parameter {name} must be > 1 to do channel averaging, found {width}")
-            } else {
-                format!("{name} must be at least 1, found {width}")
-            };
-            TaskFailure::validation(message).at(name)
+fn task_history(task: &TaskInvocation<'_>) -> TransformTaskHistory {
+    let mut bindings = task
+        .session()
+        .bundle()
+        .surface
+        .bindings()
+        .iter()
+        .filter(|binding| {
+            binding
+                .projections
+                .python
+                .as_ref()
+                .is_some_and(|python| !python.keyword_only)
         })
+        .collect::<Vec<_>>();
+    bindings.sort_by_key(|binding| binding.order);
+    let parameters = bindings
+        .into_iter()
+        .filter_map(|binding| {
+            let value = task
+                .session()
+                .states()
+                .get(&binding.name)
+                .and_then(|state| state.value.as_ref())
+                .or(match &binding.default {
+                    DefaultSpec::Literal { value } => Some(value),
+                    DefaultSpec::Conditional { fallback, .. } => Some(fallback),
+                    DefaultSpec::Required => None,
+                })?;
+            let value = if matches!(binding.name.as_str(), "vis" | "outputvis")
+                && let ParameterValue::Array(paths) = value
+                && let [path] = paths.as_slice()
+            {
+                path
+            } else {
+                value
+            };
+            let printable = match value {
+                ParameterValue::String(value)
+                    if value == "none"
+                        && matches!(
+                            binding.name.as_str(),
+                            "field" | "spw" | "scan" | "antenna" | "timerange"
+                        ) =>
+                {
+                    r#""""#.into()
+                }
+                ParameterValue::String(value) => format!("\"{value}\""),
+                ParameterValue::Array(values)
+                    if task.surface() == "split" && binding.name == "correlation" =>
+                {
+                    let labels = values
+                        .iter()
+                        .filter_map(|label| match label {
+                            ParameterValue::String(text) => Some(text.to_uppercase()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    format!("\"{}\"", labels.join(", "))
+                }
+                ParameterValue::ScalarArray(value)
+                    if matches!(
+                        binding.name.as_str(),
+                        "field" | "spw" | "scan" | "antenna" | "timerange"
+                    ) =>
+                {
+                    match value.as_ref() {
+                        ParameterValue::String(text) => text.clone(),
+                        value => python_repr(value),
+                    }
+                }
+                ParameterValue::NumpyScalar { value, .. } => python_repr(value),
+                ParameterValue::EmptyArray { .. } => "[]".into(),
+                value => python_repr(value),
+            };
+            Some((binding.name.clone(), printable))
+        })
+        .collect();
+    TransformTaskHistory {
+        task: task.surface().to_string(),
+        parameters,
+    }
+}
+
+fn time_average_options(
+    task: &TaskInvocation<'_>,
+) -> Result<Option<TimeAverageOptions>, TaskFailure> {
+    let split = task.surface() == "split";
+    if !split && !task.flag("timeaverage")? {
+        return Ok(None);
+    }
+    let interval = task.required_text("timebin")?;
+    let quantity = Quantity::read(&interval).map_err(|_| {
+        TaskFailure::execution(format!(
+            "Error in QuantumHolder::fromString with input string {interval:?}: Illegal input units or format"
+        )).at("timebin")
+    })?;
+    let seconds = Unit::new("s").expect("seconds are a defined unit");
+    let radians = Unit::new("rad").expect("radians are a defined unit");
+    let interval_seconds = quantity
+        .get_value_in(&seconds)
+        .or_else(|_| {
+            quantity
+                .get_value_in(&radians)
+                .map(|angle| angle * 43_200.0 / std::f64::consts::PI)
+        })
+        .unwrap_or_else(|_| quantity.get_si_value());
+    if interval_seconds <= 0.0 || !interval_seconds.is_finite() {
+        return if split {
+            Ok(None)
+        } else {
+            Err(
+                TaskFailure::validation("Parameter timebin must be > '0s' to do time averaging")
+                    .at("timebin"),
+            )
+        };
+    }
+    let parameter = if split { "combine" } else { "timespan" };
+    let span = match task.value(parameter) {
+        None => "",
+        Some(ParameterValue::String(span)) => span,
+        Some(_) => return Err(TaskFailure::execution(
+            "RecordRep::get_pointer - incorrect data type String   used for field timespan with type unknown",
+        ).at(parameter)),
+    };
+    Ok(Some(TimeAverageOptions {
+        interval_seconds,
+        span_scans: span.contains("scan"),
+        span_states: span.contains("state"),
+        span_fields: span.contains("field"),
+        max_uvw_distance: if split {
+            0.0
+        } else {
+            task.number("maxuvwdistance")?
+        },
+    }))
+}
+
+fn channel_parameter(task: &TaskInvocation<'_>) -> &'static str {
+    if task.surface() == "split" {
+        "width"
+    } else {
+        "chanbin"
+    }
+}
+
+fn channel_width(task: &TaskInvocation<'_>) -> Result<(usize, Option<Vec<usize>>), TaskFailure> {
+    let name = channel_parameter(task);
+    let split = name == "width";
+    if !split && !task.flag("chanaverage")? {
+        return Ok((1, None));
+    }
+    let invalid_type = || TaskFailure::validation(format!("invalid {name} type")).at(name);
+    let empty = || {
+        let message = if split {
+            "list index out of range"
+        } else {
+            "chanbin must contain at least one width"
+        };
+        TaskFailure::validation(message).at(name)
+    };
+    let value = task.value(name).ok_or_else(invalid_type)?;
+    match value {
+        ParameterValue::Array(values) if values.is_empty() => Err(empty()),
+        ParameterValue::Array(values) => {
+            let widths = values
+                .iter()
+                .map(|value| channel_integer(value).ok_or_else(invalid_type))
+                .collect::<Result<Vec<_>, _>>()?;
+            if split && !widths.iter().any(|&width| width > 1) {
+                return Ok((1, None));
+            }
+            let widths = widths
+                .into_iter()
+                .map(|width| {
+                    usize::try_from(width)
+                        .ok()
+                        .filter(|&width| width > 0)
+                        .ok_or_else(|| {
+                            TaskFailure::validation(format!(
+                                "{name} must contain positive integers"
+                            ))
+                            .at(name)
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((widths[0], Some(widths)))
+        }
+        ParameterValue::EmptyArray { .. } => Err(empty()),
+        ParameterValue::String(text) if split => {
+            let width = if text.bytes().all(|digit| digit.is_ascii_digit()) {
+                text.parse::<usize>().unwrap_or(1)
+            } else {
+                1
+            };
+            Ok((width.max(1), None))
+        }
+        value => {
+            // CLI flags for variant parameters are passed as text. The
+            // Python task validates the accepted argument types separately.
+            let width = match value {
+                ParameterValue::String(text) => text.parse().ok(),
+                value => channel_integer(value),
+            }
+            .ok_or_else(invalid_type)?;
+            if !split && width <= 1 && !matches!(value, ParameterValue::NumpyScalar { .. }) {
+                return Err(TaskFailure::validation(
+                    "Parameter chanbin must be > 1 to do channel averaging",
+                )
+                .at(name));
+            }
+            Ok((usize::try_from(width).unwrap_or(1).max(1), None))
+        }
+    }
+}
+
+fn flag_command_widths(task: &TaskInvocation<'_>) -> Option<Vec<i64>> {
+    let value = task.value(channel_parameter(task))?;
+    match value {
+        ParameterValue::Array(widths) => widths.iter().map(channel_integer).collect(),
+        value if task.surface() == "mstransform" => channel_integer(value).map(|width| vec![width]),
+        _ => None,
+    }
+}
+
+fn channel_integer(value: &ParameterValue) -> Option<i64> {
+    match value {
+        ParameterValue::Integer(value) => Some(*value),
+        ParameterValue::Bool(value) => Some(i64::from(*value)),
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            value,
+        }
+        | ParameterValue::ScalarArray(value) => channel_integer(value),
+        _ => None,
+    }
 }
 
 /// The row selection; the TaQL expression is split's `msselect`, a
 /// casa-rs control, and mstransform's `taql`.
 fn selection(task: &TaskInvocation<'_>) -> Result<MsSelection, TaskFailure> {
-    let ids = |name: &str| -> Result<Option<Vec<i32>>, TaskFailure> {
+    let selector = |name: &str| -> Result<Option<String>, TaskFailure> {
         let text = task_selection_text(task, name)?;
-        if text.is_empty() {
-            return Ok(None);
-        }
-        parse_numeric_id_selector(&text, name)
-            .map(Some)
-            .map_err(|error| TaskFailure::validation(error.to_string()).at(name))
+        Ok((!text.trim().is_empty()).then_some(text))
     };
-    let mut selection = MsSelection::default();
-    if let Some(field) = ids("field")? {
-        selection = selection.field(&field);
-    }
-    if let Some(scan) = ids("scan")? {
-        selection = selection.scan(&scan);
-    }
-    if let Some(antenna) = ids("antenna")? {
-        selection = selection.antenna(&antenna);
-    }
-    let timerange = task_selection_text(task, "timerange")?;
-    if !timerange.is_empty() {
-        let (start, end) = time_range(&timerange)
-            .map_err(|message| TaskFailure::validation(message).at("timerange"))?;
-        selection = selection.time_range(start, end);
-    }
     let taql_name = if task.surface() == "split" {
         "msselect"
     } else {
         "taql"
     };
-    let taql = task_selection_text(task, taql_name)?;
-    if !taql.is_empty() {
-        selection = selection.taql(&taql);
+    let mut selection = MsSelection {
+        field: variant_selector(task, "field")?,
+        scan: variant_selector(task, "scan")?,
+        antenna: variant_selector(task, "antenna")?,
+        timerange: variant_selector(task, "timerange")?,
+        observation: task.value("observation").and_then(variant_selector_text),
+        intent: task.text("intent")?.filter(|text| !text.is_empty()),
+        correlation: variant_selector(task, "correlation")?,
+        array: variant_selector(task, "array")?,
+        uvrange: variant_selector(task, "uvrange")?,
+        feed: variant_selector(task, "feed")?,
+        msselect: selector(taql_name)?,
+        ..MsSelection::default()
+    };
+    // Earlier releases accepted absolute MJD seconds as a numeric pair.
+    // CASA reads bare numbers in its clock grammar as seconds within the minute.
+    if let Some((start, end)) = selection.timerange.as_deref().and_then(absolute_time_range) {
+        selection.timerange = None;
+        selection = selection.time_range(start, end);
     }
     Ok(selection)
 }
 
-/// CASA's `datacolumn`, in any case: casa-rs copies `data` and `corrected`
-/// (also spelled `corrected_data`); CASA's other choices are #978.
+fn variant_selector(task: &TaskInvocation<'_>, name: &str) -> Result<Option<String>, TaskFailure> {
+    let Some(value) = task.value(name) else {
+        return Ok(None);
+    };
+    if let ParameterValue::String(raw) = value {
+        if matches!(name, "field" | "spw" | "scan" | "antenna" | "timerange") {
+            let text = task_selection_text(task, name)?;
+            let present = if name == "spw" {
+                !text.is_empty()
+            } else {
+                !text.trim().is_empty()
+            };
+            return Ok(present.then_some(text));
+        }
+        return Ok((!raw.is_empty()).then(|| raw.clone()));
+    }
+    if task.surface() == "split"
+        && matches!(
+            name,
+            "array" | "feed" | "field" | "spw" | "scan" | "antenna"
+        )
+    {
+        return Ok(variant_selector_text(value));
+    }
+    if task.surface() == "split" && name == "correlation" {
+        match value {
+            ParameterValue::EmptyArray { .. } => return Ok(None),
+            ParameterValue::Array(values) => {
+                let labels = values
+                    .iter()
+                    .map(|value| match value {
+                        ParameterValue::String(text) => Ok(text.as_str()),
+                        _ => Err(TaskFailure::validation("correlation expects strings").at(name)),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let text = labels.join(", ").to_uppercase();
+                return Ok((!text.is_empty()).then_some(text));
+            }
+            _ => {}
+        }
+    }
+    let record_type = match value {
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            ..
+        } => {
+            return Ok(None);
+        }
+        ParameterValue::Bool(_) => "Bool",
+        ParameterValue::Integer(_) => "Int",
+        _ => "unknown",
+    };
+    Err(TaskFailure::execution(format!(
+        "RecordRep::get_pointer - incorrect data type String   used for field {name} with type {record_type:<8}"
+    )).at(name))
+}
+
+fn variant_selector_text(value: &ParameterValue) -> Option<String> {
+    match value {
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Int64,
+            value,
+        }
+        | ParameterValue::ScalarArray(value) => variant_selector_text(value),
+        ParameterValue::String(text) => (!text.is_empty()).then(|| text.clone()),
+        other => Some(python_repr(other)),
+    }
+}
+
+/// Resolve CASA's visibility layout, including the existing corrected_data alias.
 fn data_column(value: &str) -> Result<TransformDataColumn, TaskFailure> {
     let text = value.trim().to_ascii_lowercase();
     match text.as_str() {
         "data" => Ok(TransformDataColumn::Data),
         "corrected" | "corrected_data" => Ok(TransformDataColumn::CorrectedData),
-        "model"
-        | "data,model,corrected"
-        | "float_data"
-        | "lag_data"
-        | "float_data,data"
-        | "lag_data,data"
-        | "all" => Err(TaskFailure::validation(format!(
-            "datacolumn={value:?} is not implemented by casa-rs yet (#978)"
-        ))
-        .at("datacolumn")),
+        "model" => Ok(TransformDataColumn::ModelData),
+        "data,model,corrected" => Ok(TransformDataColumn::DataModelCorrected),
+        "float_data" => Ok(TransformDataColumn::FloatData),
+        "lag_data" => Ok(TransformDataColumn::LagData),
+        "float_data,data" => Ok(TransformDataColumn::FloatDataAndData),
+        "lag_data,data" => Ok(TransformDataColumn::LagDataAndData),
+        "all" => Ok(TransformDataColumn::All),
         _ => Err(TaskFailure::validation(format!(
             "unsupported datacolumn {value:?}; CASA takes 'corrected', 'data', 'model', \
              'data,model,corrected', 'float_data', 'lag_data', 'float_data,data', \
@@ -160,19 +465,14 @@ fn data_column(value: &str) -> Result<TransformDataColumn, TaskFailure> {
     }
 }
 
-fn time_range(value: &str) -> Result<(f64, f64), String> {
-    let (start, end) = value
-        .split_once('~')
-        .ok_or_else(|| format!("timerange must be start~end MJD seconds, got {value:?}"))?;
-    let start = start
-        .trim()
-        .parse::<f64>()
-        .map_err(|error| format!("invalid timerange start {start:?}: {error}"))?;
-    let end = end
-        .trim()
-        .parse::<f64>()
-        .map_err(|error| format!("invalid timerange end {end:?}: {error}"))?;
-    Ok((start, end))
+fn absolute_time_range(value: &str) -> Option<(f64, f64)> {
+    let (start, end) = value.split_once('~')?;
+    let start = start.trim().parse::<f64>().ok()?;
+    let end = end.trim().parse::<f64>().ok()?;
+    (start.is_finite()
+        && end.is_finite()
+        && (start > f64::from(i32::MAX) || end > f64::from(i32::MAX)))
+    .then_some((start, end))
 }
 
 #[cfg(test)]
@@ -196,6 +496,7 @@ mod tests {
             .open_session(line.open_session_request(bundle))
             .unwrap();
         transform_request(&TaskInvocation::new(&session, std::path::Path::new(".")))
+            .map(|(request, _)| request)
     }
 
     #[test]
@@ -224,8 +525,8 @@ mod tests {
             assert_eq!(request.data_column, TransformDataColumn::CorrectedData);
             let data = request_for(surface, &["--datacolumn", "data"]).unwrap();
             assert_eq!(data.data_column, TransformDataColumn::Data);
-            let error = request_for(surface, &["--datacolumn", "model"]).unwrap_err();
-            assert!(error.message.contains("#978"), "{error:?}");
+            let model = request_for(surface, &["--datacolumn", "model"]).unwrap();
+            assert_eq!(model.data_column, TransformDataColumn::ModelData);
         }
     }
 

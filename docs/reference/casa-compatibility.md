@@ -18,12 +18,13 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | applycal | applycal | yes | 21 | 21 | 0 | 0 | 4 | 0 |
 | bandpass | bandpass | yes | 35 | 35 | 0 | 0 | 4 | 0 |
+| calstat | calstat | yes | 3 | 3 | 0 | 0 | 0 | 0 |
 | clearcal | clearcal | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
-| exportfits | exportfits | yes | 12 | 12 | 0 | 8 | 0 | 0 |
-| feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
-| flagdata | flagdata | yes | 76 | 76 | 0 | 52 | 0 | 0 |
+| exportfits | exportfits | yes | 12 | 12 | 0 | 0 | 0 | 0 |
+| feather | feather | yes | 6 | 6 | 0 | 0 | 1 | 0 |
+| flagdata | flagdata | yes | 76 | 76 | 0 | 32 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
 | ft | ft | yes | 15 | 15 | 0 | 0 | 0 | 0 |
@@ -32,21 +33,26 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | getantposalma | getantposalma | yes | 10 | 10 | 0 | 0 | 0 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 0 | 1 | 0 |
-| immoments | immoments | yes | 12 | 12 | 0 | 6 | 1 | 0 |
-| impbcor | impbcor | yes | 12 | 12 | 0 | 6 | 0 | 0 |
-| importfits | importfits | yes | 9 | 9 | 0 | 6 | 0 | 0 |
+| immoments | immoments | yes | 12 | 12 | 0 | 0 | 1 | 0 |
+| impbcor | impbcor | yes | 12 | 12 | 0 | 0 | 0 | 0 |
+| importfits | importfits | yes | 9 | 9 | 0 | 0 | 0 | 0 |
 | importvla | importvla | yes | 12 | 12 | 0 | 0 | 0 | 0 |
-| impv | impv | yes | 16 | 16 | 0 | 9 | 0 | 0 |
-| imregrid | imregrid | yes | 10 | 10 | 0 | 5 | 0 | 0 |
+| impv | impv | yes | 16 | 16 | 0 | 0 | 0 | 0 |
+| imregrid | imregrid | yes | 10 | 10 | 0 | 0 | 0 | 0 |
 | imstat | imstat | yes | 20 | 20 | 0 | 0 | 0 | 0 |
-| imsubimage | imsubimage | yes | 12 | 12 | 0 | 7 | 0 | 0 |
+| imsubimage | imsubimage | yes | 12 | 12 | 0 | 0 | 0 | 0 |
 | initweights | initweights | yes | 7 | 7 | 0 | 0 | 0 | 0 |
-| mstransform | mstransform | yes | 55 | 55 | 0 | 43 | 0 | 0 |
-| plotms | plotms | pending | 102 | pending | | | | |
+| listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
+| mstransform | mstransform | yes | 55 | 55 | 0 | 32 | 0 | 0 |
+| plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
+| plotms | plotms | yes | 102 | 102 | 0 | 13 | 0 | 0 |
+| plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
+| rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
-| split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
+| smoothcal | smoothcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
+| split | split | yes | 19 | 19 | 0 | 0 | 1 | 0 |
 | statwt | statwt | yes | 25 | 25 | 0 | 0 | 0 | 0 |
 | tclean | tclean | yes | 92 | 92 | 0 | 3 | 22 | 0 |
 | tsdimaging | tsdimaging | yes | 33 | 33 | 0 | 13 | 0 | 0 |
@@ -221,6 +227,69 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Shared parameters: 35, in CASA's order: yes
 - Defaults that differ: none
 
+### calstat
+
+- CASA source: `casatasks/calstat.py`, 3 parameters
+- Implementation: `casatasks/private/task_calstat.py`, `calstat` (line 6): 1 return statements, 0 raise statements
+  - returns at line 53: `s`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the caltable parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 3, in CASA's order: yes
+- Defaults that differ: none
+
+#### calstat parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `567b979d3f9780a690d1aa8afcdc5a7c9dedabb9`. Status counts: Default only: 0, Implemented: 3, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Existing casacore table or saved view. Supports local, home-relative and configured data paths. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `path` (calibration_table) | [paired](#calstat-evidence-paired) |
+| `axis` | `'amplitude'` | `'amplitude'`; `axis` → `axis` | Implemented | Complex amplitude, phase in radians, real or imaginary projection, or a literal scalar or array column. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `string` | [paired](#calstat-evidence-paired) |
+| `datacolumn` | `'gain'` | `'gain'`; `datacolumn` → `datacolumn` | Implemented | For complex projection axes only, the literal column name with CASA's corrected and model aliases. The default reads GAIN from legacy tables. [column-statistics](#calstat-behavior-column-statistics)<br>Catalog domain: `string` | [paired](#calstat-evidence-paired) |
+
+#### calstat interacting modes and task behavior
+
+<a id="calstat-behavior-column-statistics"></a>
+##### Descriptive calibration statistics
+
+**Implemented** — CASA scalar and array return records, complex projections, real delays, flags retained in the sample population, literal column aliases, single-precision samples and squares, vector components, saved table views, argument errors and local, home-relative and configured data paths.
+
+The documented NaN behavior difference is recorded below.
+
+Evidence: [paired](#calstat-evidence-paired).
+
+#### calstat deviations and unfinished work
+
+##### deterministic-nan-statistics: Proposed
+
+- Inputs: A table column with both numeric values and NaN samples.
+- CASA: The median, quartile range and bounds can change when the same NaN moves between rows.
+- casa-rs: Preserves deterministic bounds over non-NaN samples, counts every sample and reports undefined moments and quantiles.
+- Rationale: The moments and quantiles of the unmasked data are undefined when a sample is NaN.
+- User impact: The selected row order does not change the native NaN policy.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#calstat-evidence-paired).
+
+#### calstat evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="calstat-evidence-paired"></a>
+##### paired
+
+**Same-input public task and table tool comparisons — passed.** 25 result comparisons, 17 error cases, four table-tool comparisons and independent moment checks passed. CASA scalar and array return records, complex projections, real delays, flags retained in the sample population, literal column aliases, single-precision samples and squares, vector components, saved table views, argument errors and local, home-relative and configured data paths.
+
+- [tools/casa-compat/calstat_oracle.py](https://github.com/bglenden/casa-rs/blob/567b979d3f9780a690d1aa8afcdc5a7c9dedabb9/tools/casa-compat/calstat_oracle.py)
+- Revision: `567b979d3f9780a690d1aa8afcdc5a7c9dedabb9`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calstat_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calstat-20261119.json`.
+
 ### clearcal
 
 - CASA source: `casatasks/clearcal.py`, 5 parameters
@@ -264,7 +333,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `optical`, `bitpix`, `minpix`, `maxpix`, `dropstokes`, `stokeslast`, `history`, `dropdeg`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none
@@ -276,7 +344,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the lowres parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `effdishdiam`, `lowpassfiltersd`
 - casa-rs parameters CASA lacks: `overwrite`
 - Shared parameters: 6, in CASA's order: yes
 - Defaults that differ: none
@@ -294,7 +361,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `autocorr`, `inpfile`, `reason`, `tbuff`, `uvrange`, `timerange`, `correlation`, `intent`, `array`, `observation`, `feed`, `clipminmax`, `clipoutside`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `quackincrement`, `tolerance`, `addantenna`, `lowerlimit`, `upperlimit`, `ntime`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `growaround`, `flagneartime`, `flagnearfreq`, `minrel`, `maxrel`, `minabs`, `maxabs`, `spwchan`, `spwcorr`, `basecnt`, `fieldcnt`, `name`, `display`, `savepars`, `cmdreason`, `outfile`, `overwrite`, `writeflags`
+- Accepted only at CASA's default until #978: `inpfile`, `reason`, `tbuff`, `correlation`, `channelavg`, `chanbin`, `timeavg`, `timebin`, `tolerance`, `addantenna`, `lowerlimit`, `upperlimit`, `ntime`, `combinescans`, `timefit`, `freqfit`, `maxnpieces`, `flagdimension`, `usewindowstats`, `halfwin`, `winsize`, `antint_ref_antenna`, `minchanfrac`, `verbose`, `growaround`, `flagneartime`, `flagnearfreq`, `display`, `savepars`, `cmdreason`, `outfile`, `overwrite`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 76, in CASA's order: yes
 - Defaults that differ: none
@@ -736,7 +803,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `axis`, `region`, `box`, `stokes`, `excludepix`, `stretch`
 - casa-rs parameters CASA lacks: `overwrite`
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none
@@ -748,7 +814,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `box`, `region`, `chans`, `stokes`, `mask`, `stretch`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none
@@ -760,7 +825,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the fitsimage parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `whichrep`, `whichhdu`, `zeroblanks`, `defaultaxes`, `defaultaxesvalues`, `beam`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 9, in CASA's order: yes
 - Defaults that differ: none
@@ -783,7 +847,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `mode`, `center`, `length`, `pa`, `unit`, `region`, `stokes`, `mask`, `stretch`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 16, in CASA's order: yes
 - Defaults that differ: none
@@ -798,7 +861,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `asvelocity`, `axes`, `shape`, `decimate`, `replicate`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 10, in CASA's order: yes
 - Defaults that differ: none
@@ -822,7 +884,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `region`, `stokes`, `mask`, `dropdeg`, `verbose`, `stretch`, `keepaxes`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 12, in CASA's order: yes
 - Defaults that differ: none
@@ -920,6 +981,72 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [https://github.com/bglenden/casa-rs/issues/979](https://github.com/bglenden/casa-rs/issues/979)
 
+### listcal
+
+- CASA source: `casatasks/listcal.py`, 7 parameters
+- Implementation: `casatasks/private/task_listcal.py`, `listcal` (line 6): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
+
+#### listcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `vis` | Implemented | MeasurementSet supplying fields, antenna expressions and spectral-window/channel selection. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (measurement_set) | [paired](#listcal-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Existing CASA antenna calibration table. Complex and real solutions use their subtype's units and labels. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (calibration_table) | [paired](#listcal-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Field names, IDs and CASA field expressions. Empty lists all available fields. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Antenna names, IDs, ranges and the first antenna list of a baseline expression. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral windows and channel ranges, including stride. The first range for a repeated window is listed. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `string` | [paired](#listcal-evidence-paired) |
+| `listfile` | `''` | `''`; `listfile` → `listfile` | Implemented | A new text file or terminal output when empty. Existing files are preserved. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `path` (file) | [paired](#listcal-evidence-paired) |
+| `pagerows` | `50` | `50`; `pagerows` → `pagerows` | Implemented | Rows per page and the terminal continue, quit and list-all controls. Zero and negative values print continuously. [solution-listing](#listcal-behavior-solution-listing)<br>Catalog domain: `integer` | [paired](#listcal-evidence-paired) |
+
+#### listcal interacting modes and task behavior
+
+<a id="listcal-behavior-solution-listing"></a>
+##### Selected calibration solution listings
+
+**Implemented** — Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt.
+
+The incomplete-antenna error behavior is recorded below.
+
+Evidence: [paired](#listcal-evidence-paired).
+
+#### listcal deviations and unfinished work
+
+##### reject-incomplete-antenna-integration: Proposed
+
+- Inputs: A standard G Jones calibration solution table with the final antenna row removed.
+- CASA: Terminates after opening the output while reshaping the window into antenna blocks.
+- casa-rs: Raises a recoverable layout error before publishing the output.
+- Rationale: An incomplete block cannot be associated with the requested antenna solutions.
+- User impact: The caller can handle the error and the listing path remains available for a corrected retry.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#listcal-evidence-paired).
+
+#### listcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="listcal-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and terminal output — passed.** 20 byte-exact files, eight terminal cases and 15 refusal cases passed. Complex gain and bandpass values, real delay and fringe units, flags, field and antenna selectors, channel ranges and strides, multiple spectral windows, repeated physical integrations, terminal paging and atomic text output. Includes relative symlink paths, non-finite formatting, invalid arguments, baseline and unknown types, and a later spectral-window error after the first prompt.
+
+- [tools/casa-compat/listcal_oracle.py](https://github.com/bglenden/casa-rs/blob/d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35/tools/casa-compat/listcal_oracle.py)
+- Revision: `d3dc98cb7a2a76def5c09125cbcb2d4a7c967c35`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/listcal_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/listcal-20261119.json`.
+
 ### mstransform
 
 - CASA source: `casatasks/mstransform.py`, 55 parameters
@@ -930,17 +1057,684 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `realmodelcol`, `usewtspectrum`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `timeaverage`, `timebin`, `timespan`, `maxuvwdistance`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
+- Accepted only at CASA's default until #978: `createmms`, `separationaxis`, `numsubms`, `tileshape`, `realmodelcol`, `combinespws`, `hanning`, `regridms`, `mode`, `nchan`, `start`, `width`, `nspw`, `interpolation`, `phasecenter`, `restfreq`, `outframe`, `veltype`, `preaverage`, `docallib`, `callib`, `douvcontsub`, `fitspw`, `fitorder`, `want_cont`, `denoising_lib`, `nthreads`, `niter`, `disableparallel`, `ddistart`, `monolithic_processing`, `reindex`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 55, in CASA's order: yes
 - Defaults that differ: none
+
+### plotbandpass
+
+- CASA source: `casatasks/plotbandpass.py`, 49 parameters
+- Implementation: `casatasks/private/task_plotbandpass.py`, `plotbandpass` (line 780): 109 return statements, 0 raise statements
+  - returns at line 885: `()`
+  - returns at line 965: `None`
+  - returns at line 983: `()`
+  - returns at line 989: `()`
+  - returns at line 992: `()`
+  - returns at line 996: `()`
+  - returns at line 999: `()`
+  - returns at line 1003: `vm`
+  - returns at line 1007: `vm`
+  - returns at line 1012: `()`
+  - returns at line 1016: `()`
+  - returns at line 1023: `()`
+  - returns at line 1026: `()`
+  - returns at line 1029: `None`
+  - returns at line 1042: `()`
+  - returns at line 1049: `()`
+  - returns at line 1052: `()`
+  - returns at line 1055: `()`
+  - returns at line 1058: `()`
+  - returns at line 1062: `()`
+  - returns at line 1097: `()`
+  - returns at line 1107: `()`
+  - returns at line 1116: `()`
+  - returns at line 1126: `()`
+  - returns at line 1133: `()`
+  - returns at line 1137: `()`
+  - returns at line 1141: `()`
+  - returns at line 1160: `()`
+  - returns at line 1257: `()`
+  - returns at line 1269: `vm`
+  - returns at line 1279: `()`
+  - returns at line 1308: `()`
+  - returns at line 1316: `()`
+  - returns at line 1410: `None`
+  - returns at line 1420: `None`
+  - returns at line 1437: `None`
+  - returns at line 1523: `None`
+  - returns at line 1560: `()`
+  - returns at line 1590: `None`
+  - returns at line 1593: `None`
+  - returns at line 1597: `None`
+  - returns at line 1621: `None`
+  - returns at line 1624: `None`
+  - returns at line 1627: `None`
+  - returns at line 1652: `None`
+  - returns at line 1664: `()`
+  - returns at line 1677: `()`
+  - returns at line 1688: `()`
+  - returns at line 1697: `()`
+  - returns at line 1708: `()`
+  - returns at line 1712: `()`
+  - returns at line 1726: `()`
+  - returns at line 1729: `()`
+  - returns at line 1732: `()`
+  - returns at line 1738: `()`
+  - returns at line 1741: `()`
+  - returns at line 1750: `()`
+  - returns at line 1753: `()`
+  - returns at line 1764: `vm`
+  - returns at line 1767: `vm`
+  - returns at line 1778: `vm`
+  - returns at line 1781: `vm`
+  - returns at line 1792: `()`
+  - returns at line 1800: `()`
+  - returns at line 1861: `()`
+  - returns at line 1922: `None`
+  - returns at line 1939: `None`
+  - returns at line 1945: `None`
+  - returns at line 1955: `None`
+  - returns at line 1964: `None`
+  - returns at line 1975: `None`
+  - returns at line 2052: `()`
+  - returns at line 2056: `()`
+  - returns at line 2084: `()`
+  - returns at line 2105: `()`
+  - returns at line 2108: `()`
+  - returns at line 2115: `()`
+  - returns at line 2118: `()`
+  - returns at line 2159: `()`
+  - returns at line 2196: `()`
+  - returns at line 2203: `()`
+  - returns at line 2210: `()`
+  - returns at line 2213: `()`
+  - returns at line 2231: `()`
+  - returns at line 2249: `()`
+  - returns at line 2255: `()`
+  - returns at line 2261: `()`
+  - returns at line 2304: `()`
+  - returns at line 2307: `()`
+  - returns at line 2460: `()`
+  - returns at line 2546: `()`
+  - returns at line 2622: `()`
+  - returns at line 2732: `()`
+  - returns at line 2747: `()`
+  - returns at line 2754: `()`
+  - returns at line 2757: `()`
+  - returns at line 3082: `None`
+  - returns at line 3223: `()`
+  - returns at line 3867: `()`
+  - returns at line 3962: `()`
+  - returns at line 3992: `()`
+  - returns at line 4434: `None`
+  - returns at line 4470: `()`
+  - returns at line 4690: `()`
+  - returns at line 4791: `()`
+  - returns at line 4827: `()`
+  - returns at line 5245: `None`
+  - returns at line 5503: `madstats`
+  - returns at line 5507: `()`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the caltable parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 49, in CASA's order: yes
+- Defaults that differ: none
+
+#### plotbandpass parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `e2e135fcea72b6295a72e238e22ab914d31e6a00`. Status counts: Default only: 0, Implemented: 49, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Input table name, either a bandpass solution or a Tsys solution [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `path` (calibration_table) | [paired](#plotbandpass-evidence-paired) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | A comma-delimited string list of antennas (either names or integer indices) for which to display solutions. Default = all antennas. [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | A comma-delimited string list of fields (either names or integer indices) for which to display solutions. Default = all fields. [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | A comma-delimited string list of spws for which to display solutions. Default = all spws. [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `yaxis` | `'amp'` | `'amp'`; `yaxis` → `yaxis` | Implemented | The quantity to plot on the y-axis ("amp", "phase", "both", "tsys", append "db" for dB). [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `xaxis` | `'chan'` | `'chan'`; `xaxis` → `xaxis` | Implemented | The quantity to plot on the x-axis ("chan" or "freq"). [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `figfile` | `''` | `''`; `figfile` → `figfile` | Implemented | The name of the plot file to produce. [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `plotrange` | `[0.0, 0.0, 0.0, 0.0]` | `[0.0, 0.0, 0.0, 0.0]`; `plotrange` → `plotrange` | Implemented | The axes limits to use [x0,x1,y0,y1]. [axes](#plotbandpass-behavior-axes)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [paired](#plotbandpass-evidence-paired) |
+| `caltable2` | `''` | `''`; `caltable2` → `caltable2` | Implemented | A second cal table, of type BPOLY or B, to overlay on a B table [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `overlay` | `''` | `''`; `overlay` → `overlay` | Implemented | Show multiple solutions in same frame in different colors (time, antenna, spw, baseband, or time,antenna) [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `showflagged` | `False` | `False`; `showflagged` → `showflagged` | Implemented | Show the values of the solution, even if flagged [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `timeranges` | `''` | `''`; `timeranges` → `timeranges` | Implemented | Show only these timeranges, the first timerange being 0 [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `buildpdf` | `False` | `False`; `buildpdf` → `buildpdf` | Implemented | If True, assemble all the pngs into a pdf [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `caltable3` | `''` | `''`; `caltable3` → `caltable3` | Implemented | A third cal table, of type BPOLY, to overlay on the first two tables [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `markersize` | `3` | `3`; `markersize` → `markersize` | Implemented | Size of points [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotbandpass-evidence-paired) |
+| `density` | `108` | `108`; `density` → `density` | Implemented | dpi to use in creating PNGs and PDFs (default=108) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotbandpass-evidence-paired) |
+| `interactive` | `True` | `True`; `interactive` → `interactive` | Implemented | if False, then run to completion automatically without pause [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `showpoints` | `'auto'` | `'auto'`; `showpoints` → `showpoints` | Implemented | Draw points for the data (default=F for amp, T for phase) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `showlines` | `'auto'` | `'auto'`; `showlines` → `showlines` | Implemented | Draw lines connecting the data (default=T for amp, F for phase) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `subplot` | `'22'` | `'22'`; `subplot` → `subplot` | Implemented | 11..81,22,32 or 42 for RowsxColumns (default=22), any 3rd digit is ignored [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `zoom` | `''` | `''`; `zoom` → `zoom` | Implemented | intersect displays the narrower B solution frequency range. Equal widths prefer the second table. [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `poln` | `''` | `''`; `poln` → `poln` | Implemented | Polarizations to plot: "" = all, or "RR","RL","LR","LL","XX","XY","YX","YY","RR,LL","XX,YY" [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `showatm` | `False` | `False`; `showatm` → `showatm` | Implemented | Compute and overlay the atmospheric transmission curve [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `pwv` | `'auto'` | `'auto'`; `pwv` → `pwv` | Implemented | Define the pwv to use for the showatm option: "auto" or value in mm [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `gs` | `'gs'` | `'gs'`; `gs` → `gs` | Implemented | For buildpdf=T, full path for ghostscript command (in case it is not found) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `convert` | `'convert'` | `'convert'`; `convert` → `convert` | Implemented | For buildpdf=T, full path for the ImageMagick convert command (in case it is not found) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `chanrange` | `''` | `''`; `chanrange` → `chanrange` | Implemented | Set xrange ("5~100") over which to autoscale y-axis for xaxis="freq" [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `solutionTimeThresholdSeconds` | `30.0` | `30.0`; `solutionTimeThresholdSeconds` → `solutionTimeThresholdSeconds` | Implemented | Consider 2 solutions simultaneous if within this interval in seconds [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `debug` | `False` | `False`; `debug` → `debug` | Implemented | Emit verbose information about the calibration table, associated MS, selected axes and planned panels. [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `phase` | `''` | `''`; `phase` → `phase` | Implemented | The y-axis limits to use for phase plots when yaxis="both" [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `vis` | `''` | `''`; `vis` → `vis` | Implemented | name of the ms for this table, in case it does not match the string in the caltable [spectra](#plotbandpass-behavior-spectra)<br>Catalog domain: `path` (measurement_set) | [paired](#plotbandpass-evidence-paired) |
+| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Implemented | Compute and overlay the sky temperature curve instead of transmission [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `showfdm` | `False` | `False`; `showfdm` → `showfdm` | Implemented | when showing TDM spws, draw the locations of the corresponding FDM spws [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `showatmfield` | `''` | `''`; `showatmfield` → `showatmfield` | Implemented | Select a field by name or ID for a time overlay and use its first observation. [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `lo1` | `''` | `''`; `lo1` → `lo1` | Implemented | specify the LO1 setting (in GHz) for the observation ('' = automatic) [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `showimage` | `False` | `False`; `showimage` → `showimage` | Implemented | also show the atmospheric curve for the image sideband (in black) [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `showatmpoints` | `False` | `False`; `showatmpoints` → `showatmpoints` | Implemented | Draw atmospheric curve with points instead of a line [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `parentms` | `''` | `''`; `parentms` → `parentms` | Implemented | Identify the parent spectral window by name when the receiver table retains original window IDs. [atmosphere](#plotbandpass-behavior-atmosphere)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `pdftk` | `'pdftk'` | `'pdftk'`; `pdftk` → `pdftk` | Implemented | For buildpdf=T, full path for pdftk command (in case it is not found) [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotbandpass-evidence-paired) |
+| `channeldiff` | `False` | `False`; `channeldiff` → `channeldiff` | Implemented | Set to a value > 0 (sigma) to plot derivatives of the solutions [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `edge` | `8` | `8`; `edge` → `edge` | Implemented | The number of edge channels to ignore in finding outliers (for channeldiff>0) [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `integer` | [paired](#plotbandpass-evidence-paired) |
+| `resample` | `1` | `1`; `resample` → `resample` | Implemented | Positive integers set the resampling name suffix. In derivative mode, factors above one reproduce the pinned CASA resampleSolution NameError. [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `integer` | [paired](#plotbandpass-evidence-paired) |
+| `platformingThreshold` | `10.0` | `10.0`; `platformingThreshold` → `platformingThreshold` | Implemented | Absolute percentage threshold when platformingSigma is zero. [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `platformingSigma` | `10.0` | `10.0`; `platformingSigma` → `platformingSigma` | Implemented | MAD multiple when positive. A zero value uses platformingThreshold. [derivative](#plotbandpass-behavior-derivative)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `basebands` | `''` | `''`; `basebands` → `basebands` | Implemented | A baseband number or list of baseband numbers for which to display solutions. Default = all. [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `showBasebandNumber` | `False` | `False`; `showBasebandNumber` → `showBasebandNumber` | Implemented | Put the baseband converter number (BBC_NO) in the title of each plot [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `scans` | `''` | `''`; `scans` → `scans` | Implemented | A scan or list of scans for which to display solutions. Default = all. Does not work with overlay="time". [selection](#plotbandpass-behavior-selection)<br>Catalog domain: `variant` | [paired](#plotbandpass-evidence-paired) |
+| `figfileSequential` | `False` | `False`; `figfileSequential` → `figfileSequential` | Implemented | naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc. [presentation](#plotbandpass-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+| `chanrangeSetXrange` | `False` | `False`; `chanrangeSetXrange` → `chanrangeSetXrange` | Implemented | If True, then chanrange also sets the xrange to display [axes](#plotbandpass-behavior-axes)<br>Catalog domain: `bool` | [paired](#plotbandpass-evidence-paired) |
+
+#### plotbandpass interacting modes and task behavior
+
+<a id="plotbandpass-behavior-selection"></a>
+##### Antenna, field, window, scan and solution time
+
+**Implemented** — Select current calibration rows by antenna and field names or IDs, spectral-window and baseband numbers, scan numbers and solution times. Apply the pinned CASA type and domain validation and retain the recorded return type for empty selections.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-spectra"></a>
+##### Bandpass and Tsys plots
+
+**Implemented** — Plot current complex B and real Tsys solutions and legacy BPOLY curves. Read the associated MS metadata, honor flags and receptor choices, and overlay one B or up to two BPOLY companions through the shared plot document.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-axes"></a>
+##### Plot axes and spectral windows
+
+**Implemented** — Use channel or frequency coordinates with amplitude, phase, dB, delay or temperature units. Apply explicit limits, channel windows and the CASA narrower-solution rule for comparison zoom. Draw FDM windows and label mapped baseband numbers.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-presentation"></a>
+##### Page layout, display, PNG and PDF products
+
+**Implemented** — Draw and page through the selected panels, including backward movement, early exit and EOF. Apply marker and line settings, density and calibrated filenames. Assemble PDFs with the selected local converter and document tools.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-atmosphere"></a>
+##### Atmospheric transmission, sky and image-sideband curves
+
+**Implemented** — Evaluate the native ATM profile using the calibration frequency grid, station conditions, pointing and field metadata, and requested or measured PWV. Recover the image oscillator from receiver metadata and parent window names when supplied.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+<a id="plotbandpass-behavior-derivative"></a>
+##### Channel derivatives and platforming
+
+**Implemented** — Plot channel differences, report MAD and standard deviation, and include medians and platforming events in the typed result. Use the configured edge exclusion and thresholds. Reproduce the installed CASA error for derivative resampling greater than one.
+
+
+
+Evidence: [paired](#plotbandpass-evidence-paired).
+
+#### plotbandpass deviations and unfinished work
+
+##### integer-platforming-channel-bounds: Proposed
+
+- Inputs: Channel derivatives with enough interior points to enter the platforming check.
+- CASA: Passes floating-point channel offsets to Python range and raises TypeError.
+- casa-rs: Uses integer channel indices and tests the interior derivative against the requested MAD or percentage threshold.
+- Rationale: Keep the documented platforming check functional for wide calibration spectral windows.
+- User impact: An interior amplitude step is reported at a threshold it exceeds and omitted at a larger threshold.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#plotbandpass-evidence-paired).
+
+##### default-atmosphere-without-weather: Proposed
+
+- Inputs: An atmospheric overlay on a bandpass whose associated MS has no WEATHER table.
+- CASA: Raises NameError while referencing needToClose_mymsmd.
+- casa-rs: Evaluates the ATM profile using the station defaults available in the absence of measured weather.
+- Rationale: Allow a transmission or sky-temperature overlay for supported data with missing weather measurements.
+- User impact: The plot includes a finite atmospheric curve and the original calibration spectra.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#plotbandpass-evidence-paired).
+
+#### plotbandpass evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="plotbandpass-evidence-paired"></a>
+##### paired
+
+**Same-input public Python tasks and Matplotlib artist arrays — passed.** 41 plot cases, seven terminal cases, 24 argument and domain cases, 76 rendered panels, paired two-page PDFs and two analytic platforming thresholds passed. Default atmospheric conditions were verified when WEATHER was absent. CASA 6.7.6.14 plots and return values, including selected arrays, axes, titles, companion time grids, physical receptor labels, masking, overlay colors and legends, paging, PNG filenames, PDFs, measured water, wide atmospheric grids and split receivers.
+
+- [tools/casa-compat/plotbandpass_oracle.py](https://github.com/bglenden/casa-rs/blob/e2e135fcea72b6295a72e238e22ab914d31e6a00/tools/casa-compat/plotbandpass_oracle.py)
+- Revision: `e2e135fcea72b6295a72e238e22ab914d31e6a00`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotbandpass_oracle.py`.
+- Receipt: `resources/casa-compat/evidence/plotbandpass-20261119.json`.
 
 ### plotms
 
 - CASA source: `casaplotms/plotms.py`, 102 parameters
 - Implementation: `casaplotms/private/task_plotms.py`, `plotms` (line 36): 0 return statements, 27 raise statements
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: ERROR: DISPLAY environment variable is not set! Cannot run plotms.
-- casa-rs: plotms waits for its own decision (#931): CASA's is the casaplotms GUI
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #1032: `rowindex`, `colindex`, `plotindex`, `xframe`, `xinterp`, `yframe`, `yinterp`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
+- Accepted only at CASA's default until #1526: `colorizeoverlay`
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 102, in CASA's order: yes
+- Defaults that differ: none
+
+#### plotms parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 13, Implemented: 24, Not implemented: 2, Partial: 63, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `vis` | Partial | Input MS or CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (table) | [paired](#plotms-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Partial | Input CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (calibration_table) | [paired](#plotms-evidence-paired) |
+| `gridrows` | `1` | `1`; `gridrows` → `gridrows` | Implemented | Number of subplot rows [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `gridcols` | `1` | `1`; `gridcols` → `gridcols` | Implemented | Number of subplot columns [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `rowindex` | `0` | `0`; `rowindex` → `rowindex` | Default only | Row location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `colindex` | `0` | `0`; `colindex` → `colindex` | Default only | Column location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `plotindex` | `0` | `0`; `plotindex` → `plotindex` | Default only | Index to address a subplot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `xaxis` | `''` | `''`; `xaxis` → `xaxis` | Partial | Plot x-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `parangle`, `baseline`, `delay`, `antenna position`, `swp`, `u`, `tec`, `ant-parang`, `gamp`, `Antenna1`, `UVdist`, `WeightSpectrum`, `Baseline`, `flag`, `Real`, `switchedpower`, `timeint`, `WtSp`, `Ant-Elevation`, `GainReal`, `time_interval`, `uvdist_l`, `GainAmp`, `ant1`, `flagrow`, `Wt`, `Velocity`, `opac`, `Feed2`, `corr`, `imaginary`, `gainamp`, `Vwave`, `wwave`, `Frequency`, `observation`, `feed1`, `ant-azimuth`, `rate`, `Elevation`, `Intent`, `Row`, `swpower`, `antpos`, `ant-elevation`, `antenna`, `v`, `V`, `interval`, `sigmaspectrum`, `DelayRate`, `tsys`, `gainphase`, `Ant-Parangle`, `imag`, `Radial Velocity`, `UVwave`, `Observation`, `Poln`, `W`, `timeinterval`, `Channel`, `snr`, `SNR`, `frequency`, `Interval`, `uvdistl`, `disp`, `Imag`, `dispdelay`, `Feed1`, `rho`, `Ant-RA`, `delayrate`, `spgain`, `Antenna`, `Uwave`, `SigmaSpectrum`, `Azimuth`, `Scan`, `Tsys`, `polarization`, `intent`, `phase`, `amp`, `ant-parangle`, `SigmaSp`, `freq`, `wt*amp`, `channel`, `uwave`, `Flag`, `correlation`, `FlagRow`, `TEC`, `SwPower`, `GainPhase`, `GainImag`, `ant-parallacticangle`, `real`, `Time`, `weight`, `antenna2`, `gainimag`, `gimag`, `Antenna2`, `spw`, `gphase`, `Opac`, `parang`, `Amp`, `ant-ra`, `Sigma`, `amplitude`, `Ant-DEC`, `HourAngle`, `U`, `row`, `Wt*Amp`, `gainreal`, `chan`, `Field`, `DispDelay`, `hourang`, `vwave`, `radialvelocity`, `sigma`, `Antenna Position`, `Delay`, `uvwave`, `vel`, `uvdist`, `velocity`, `hourangle`, `poln`, `ant2`, `Phase`, `azimuth`, `Corr`, `parallacticangle`, `weightspectrum`, `Ant-Azimuth`, `wtsp`, ``, `Distance`, `opacity`, `antenna1`, `feed2`, `sigmasp`, `time`, `w`, `wt`, `field`, `greal`, `elevation`, `del`, `ant`, `ant-dec`, `Spw`, `scan`, `Wwave`, `ParAngle` | [paired](#plotms-evidence-paired) |
+| `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary) |
+| `xframe` | `''` | `''`; `xframe` → `xframe` | Default only | Coordinate frame to use for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `icrs`, `azelgeo`, `b1950`, `galactic`, ``, `j2000`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `xinterp` | `''` | `''`; `xinterp` → `xinterp` | Default only | Interpolation method for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: ``, `nearest`, `cubic spline`, `spline`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `yaxis` | `''` | `''`; `yaxis` → `yaxis` | Partial | Plot y-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary) |
+| `yframe` | `''` | `''`; `yframe` → `yframe` | Default only | Coordinate frame to use for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `yinterp` | `''` | `''`; `yinterp` → `yinterp` | Default only | Interpolation method for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `yaxislocation` | `''` | `''`; `yaxislocation` → `yaxislocation` | Partial | Location of the y-axis (blank for default: left) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `selectdata` | `True` | `True`; `selectdata` → `selectdata` | Partial | Enable data selection parameters [selection](#plotms-behavior-selection)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Field names or ids (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral windows:channels (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Time range (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `uvrange` | `''` | `''`; `uvrange` → `uvrange` | Partial | UV range (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Baseline/antenna names or ids (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Scan numbers (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `correlation` | `''` | `''`; `correlation` → `correlation` | Implemented | Correlations/polarizations (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `polarization` | `''` | `''`; `polarization` → `polarization` | Implemented | Polarizations (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `antpos` | `''` | `''`; `antpos` → `antpos` | Implemented | Display XYZ components of an antenna-position calibration, or select an ordered component subset. Preserve the requested selector in text metadata for other calibration types. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors) |
+| `array` | `''` | `''`; `array` → `array` | Partial | (Sub)array numbers (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `observation` | `''` | `''`; `observation` → `observation` | Implemented | Observation IDs (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Partial | Observing intent (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `feed` | `''` | `''`; `feed` → `feed` | Partial | Feed numbers (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `msselect` | `''` | `''`; `msselect` → `msselect` | Partial | Apply a TaQL row expression to a modern calibration table. Refuse a selection with no solutions. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors) |
+| `averagedata` | `True` | `True`; `averagedata` → `averagedata` | Implemented | Enable data averaging parameters [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgchannel` | `''` | `''`; `avgchannel` → `avgchannel` | Implemented | Average over channel (blank = False, otherwise value in channels) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `avgtime` | `''` | `''`; `avgtime` → `avgtime` | Implemented | Average over time (blank = False, otherwise value in seconds) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `avgscan` | `False` | `False`; `avgscan` → `avgscan` | Implemented | Average over scans. Only valid with time averaging [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgfield` | `False` | `False`; `avgfield` → `avgfield` | Implemented | Average over fields. Only valid with time averaging [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgbaseline` | `False` | `False`; `avgbaseline` → `avgbaseline` | Implemented | Average over all baselines (mutually exclusive with avgantenna) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgantenna` | `False` | `False`; `avgantenna` → `avgantenna` | Implemented | Average per antenna (mutually exclusive with avgbaseline) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgspw` | `False` | `False`; `avgspw` → `avgspw` | Implemented | Average over all spectral windows [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `scalar` | `False` | `False`; `scalar` → `scalar` | Implemented | Scalar averaging (False=vector averaging) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `transform` | `True` | `True`; `transform` → `transform` | Partial | Disable the frequency controls when false. Additional active calibration transforms remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `freqframe` | `''` | `''`; `freqframe` → `freqframe` | Partial | Ignore the requested frequency frame when transform is false. Active frequency conversion remains open for calibration tables. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `LSRK`, `CMB`, `GALACTO`, `GEO`, `TOPO`, `LSRD`, `LGROUP`, `BARY`, `` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `restfreq` | `''` | `''`; `restfreq` → `restfreq` | Partial | CASA leaves modern calibration-table coordinates unchanged for supplied rest-frequency values. Frequency and velocity transforms for other inputs remain separately tracked. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `veldef` | `'RADIO'` | `'RADIO'`; `veldef` → `veldef` | Not implemented | The definition in which to render velocity [advanced](#plotms-behavior-advanced)<br>Catalog domain: `RADIO`, `OPTICAL`, `TRUE` | [remaining](#plotms-evidence-remaining) |
+| `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter` | Default only | The direction coordinates of the desired center [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `extendflag` | `False` | `False`; `extendflag` → `extendflag` | Default only | Extend flagging to other data points not plotted [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `extcorr` | `False` | `False`; `extcorr` → `extcorr` | Default only | Extend flags based on correlation [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `extchannel` | `False` | `False`; `extchannel` → `extchannel` | Default only | Extend flags based on channel [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `iteraxis` | `''` | `''`; `iteraxis` → `iteraxis` | Implemented | The axis over which to iterate [pages](#plotms-behavior-pages)<br>Catalog domain: `baseline`, `Baseline`, `corr`, `antpos`, `antenna`, `Poln`, `AntPos`, `Antenna`, `Scan`, `polarization`, `correlation`, `Time`, `spw`, `Field`, `poln`, `Corr`, ``, `time`, `field`, `Spw`, `scan` | [paired](#plotms-evidence-paired) |
+| `xselfscale` | `False` | `False`; `xselfscale` → `xselfscale` | Partial | When True, iterated plots have a common x-axis range (scale). [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `yselfscale` | `False` | `False`; `yselfscale` → `yselfscale` | Partial | When True, iterated plots have a common y-axis range (scale). [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `xsharedaxis` | `False` | `False`; `xsharedaxis` → `xsharedaxis` | Partial | Iterated plots on a grid share a common external x-axis per column. Must also set xselfscale=True and gridrows>1. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `ysharedaxis` | `False` | `False`; `ysharedaxis` → `ysharedaxis` | Partial | Iterated plots on a grid share a common external y-axis per row. Must also set yselfscale=True and gridcols>1. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `customsymbol` | `[]` | `[]`; `customsymbol` → `customsymbol` | Partial | Enable custom symbol(s) for unflagged points [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolshape` | `'autoscaling'` | `'autoscaling'`; `symbolshape` → `symbolshape` | Partial | Shape of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolsize` | `2` | `2`; `symbolsize` → `symbolsize` | Partial | Size of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolcolor` | `'0000ff'` | `'0000ff'`; `symbolcolor` → `symbolcolor` | Partial | Color (name or hex code) of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolfill` | `'fill'` | `'fill'`; `symbolfill` → `symbolfill` | Partial | Fill type of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symboloutline` | `False` | `False`; `symboloutline` → `symboloutline` | Partial | Outline plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `coloraxis` | `''` | `''`; `coloraxis` → `coloraxis` | Partial | Selects data axis for colorizing [presentation](#plotms-behavior-presentation)<br>Catalog domain: `baseline`, `Antenna1`, `Baseline`, `ant1`, `corr`, `observation`, `Intent`, `antpos`, `Observation`, `Poln`, `Channel`, `AntPos`, `Scan`, `polarization`, `intent`, `channel`, `correlation`, `Time`, `antenna2`, `Antenna2`, `spw`, `chan`, `Field`, `poln`, `ant2`, `Corr`, ``, `antenna1`, `time`, `field`, `Spw`, `scan` | [paired](#plotms-evidence-paired) |
+| `customflaggedsymbol` | `False` | `False`; `customflaggedsymbol` → `customflaggedsymbol` | Partial | Enable custom symbol(s) for flagged points [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymbolshape` | `'circle'` | `'circle'`; `flaggedsymbolshape` → `flaggedsymbolshape` | Partial | Shape of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymbolsize` | `2` | `2`; `flaggedsymbolsize` → `flaggedsymbolsize` | Partial | Size of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymbolcolor` | `'ff0000'` | `'ff0000'`; `flaggedsymbolcolor` → `flaggedsymbolcolor` | Partial | Color (name or hex code) of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymbolfill` | `'fill'` | `'fill'`; `flaggedsymbolfill` → `flaggedsymbolfill` | Partial | Fill type of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymboloutline` | `False` | `False`; `flaggedsymboloutline` → `flaggedsymboloutline` | Partial | Outline plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `xconnector` | `''` | `''`; `xconnector` → `xconnector` | Partial | Set connector for data points (blank="none"; "line","step") [presentation](#plotms-behavior-presentation)<br>Catalog domain: ``, `none`, `line`, `step` | [paired](#plotms-evidence-paired) |
+| `timeconnector` | `False` | `False`; `timeconnector` → `timeconnector` | Partial | Connect points by time rather than x-axis [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `plotrange` | `[]` | `[]`; `plotrange` → `plotrange` | Partial | Plot limits in `xmin`, `xmax`, `ymin`, `ymax` order. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [paired](#plotms-evidence-paired) |
+| `title` | `''` | `''`; `title` → `title` | Partial | Title at top of plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `titlefont` | `0` | `0`; `titlefont` → `titlefont` | Partial | Font size for plot title [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `xlabel` | `''` | `''`; `xlabel` → `xlabel` | Partial | Text for horizontal x-axis. Blank for default. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `xaxisfont` | `0` | `0`; `xaxisfont` → `xaxisfont` | Partial | Font size for x-axis label [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `ylabel` | `''` | `''`; `ylabel` → `ylabel` | Partial | Text for vertical y-axis. Blank for default. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `yaxisfont` | `0` | `0`; `yaxisfont` → `yaxisfont` | Partial | Font size for y-axis label [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `showmajorgrid` | `False` | `False`; `showmajorgrid` → `showmajorgrid` | Partial | Show major grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `majorwidth` | `1` | `1`; `majorwidth` → `majorwidth` | Partial | Line width in pixels of major grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `majorstyle` | `''` | `''`; `majorstyle` → `majorstyle` | Partial | Major grid line style [presentation](#plotms-behavior-presentation)<br>Catalog domain: `none`, `dot`, `solid`, `dash`, `` | [paired](#plotms-evidence-paired) |
+| `majorcolor` | `'B0B0B0'` | `'B0B0B0'`; `majorcolor` → `majorcolor` | Partial | Color (name or hex code) of major grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `showminorgrid` | `False` | `False`; `showminorgrid` → `showminorgrid` | Partial | Show minor grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `minorwidth` | `1` | `1`; `minorwidth` → `minorwidth` | Partial | Line width in pixels of minor grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `minorstyle` | `''` | `''`; `minorstyle` → `minorstyle` | Partial | Minor grid line style [presentation](#plotms-behavior-presentation)<br>Catalog domain: `none`, `dot`, `solid`, `dash`, `` | [paired](#plotms-evidence-paired) |
+| `minorcolor` | `'D0D0D0'` | `'D0D0D0'`; `minorcolor` → `minorcolor` | Partial | Color (name or hex code) of minor grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `showlegend` | `False` | `False`; `showlegend` → `showlegend` | Partial | Show a legend on the plot. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `legendposition` | `''` | `''`; `legendposition` → `legendposition` | Partial | Legend position, default upperRight. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `exteriorRight`, `lowerRight`, `exteriorTop`, `exteriorLeft`, `lowerLeft`, `upperRight`, `upperLeft`, `exteriorBottom`, `` | [paired](#plotms-evidence-paired) |
+| `plotfile` | `''` | `''`; `plotfile` → `plotfile` | Partial | Name of plot file to save automatically [export](#plotms-behavior-export)<br>Catalog domain: `path` (file) | [paired](#plotms-evidence-paired) |
+| `expformat` | `''` | `''`; `expformat` → `expformat` | Partial | Export format type. If not provided, plotfile extension will be used to determine type. [export](#plotms-behavior-export)<br>Catalog domain: `pdf`, `jpg`, `png`, `txt`, `ps`, `` | [paired](#plotms-evidence-paired) |
+| `verbose` | `True` | `True`; `verbose` → `verbose` | Implemented | Include metadata in text export [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `exprange` | `''` | `''`; `exprange` → `exprange` | Implemented | Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. [pages](#plotms-behavior-pages)<br>Catalog domain: ``, `current`, `all` | [paired](#plotms-evidence-paired) |
+| `highres` | `False` | `False`; `highres` → `highres` | Partial | Use high resolution [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `dpi` | `-1` | `-1`; `dpi` → `dpi` | Partial | DPI of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `width` | `-1` | `-1`; `width` → `width` | Partial | Width in pixels of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `height` | `-1` | `-1`; `height` → `height` | Partial | Height in pixels of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Overwrite plot file if it already exists [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `showgui` | `True` | `True`; `showgui` → `showgui` | Partial | Show GUI [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `clearplots` | `True` | `True`; `clearplots` → `clearplots` | Default only | Remove any existing plots so new ones can replace them. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `callib` | `[]` | `[]`; `callib` → `callib` | Partial | Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated scalar or spectral weights. Iterated figures and additional calibration plotting controls remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [callibrary](#plotms-evidence-callibrary), [remaining](#plotms-evidence-remaining) |
+| `headeritems` | `''` | `''`; `headeritems` → `headeritems` | Not implemented | Comma-separated list of pre-defined page header items. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `showatm` | `False` | `False`; `showatm` → `showatm` | Partial | Overlay atmospheric transmission on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
+| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Partial | Overlay sky temperature on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
+| `showimage` | `False` | `False`; `showimage` → `showimage` | Partial | Overlay a receiver image sideband on current calibration tables. MeasurementSet overlays remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [atmosphere](#plotms-evidence-atmosphere), [remaining](#plotms-evidence-remaining) |
+| `colorizeoverlay` | `False` | `False`; `colorizeoverlay` → `colorizeoverlay` | Default only | Colorize the curve overlay using coloraxis [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+
+#### plotms interacting modes and task behavior
+
+<a id="plotms-behavior-table"></a>
+##### Read current-format calibrations
+
+**Partial** — Open a current casacore calibration table through vis or caltable, preserving the public None return and input-path checks.
+
+Legacy BPOLY and GSPLINE table loading and the remaining MS plotting paths are open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-selection"></a>
+##### Select solution samples
+
+**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors.
+
+Further legacy formats and MS plotting paths remain open.
+
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors).
+
+<a id="plotms-behavior-coordinates"></a>
+##### Project axes and flags
+
+**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products.
+
+Pointing-coordinate axes and advanced per-axis MS data columns are open.
+
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [callibrary](#plotms-evidence-callibrary).
+
+<a id="plotms-behavior-averaging"></a>
+##### Average solution points
+
+**Implemented** — Apply weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache.
+
+
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-pages"></a>
+##### Lay out and export calibration pages
+
+**Partial** — Partition selected series across a grid. Text reports the current page. Image export provides current and all-page ranges and names the physical outputs in successful completions.
+
+Explicit plot placement, persistent pages and additional presentation modes are open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-presentation"></a>
+##### Render the shared plot document
+
+**Partial** — Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend and export sizing.
+
+Renderer-specific marker fill patterns, page headers and interactive editing remain open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-export"></a>
+##### Save and publish selected plot products
+
+**Partial** — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and single-panel figures.
+
+More export, multi-plot state and interactive display forms remain open.
+
+Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary).
+
+<a id="plotms-behavior-advanced"></a>
+##### Advanced calibration plotting controls
+
+**Partial** — Apply calibration libraries to MeasurementSet plots in memory and compute calibration-table atmospheric transmission, sky temperature and receiver sidebands. Track MeasurementSet overlays, transforms and interactive flag controls.
+
+The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.
+
+Evidence: [atmosphere](#plotms-evidence-atmosphere), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining), [callibrary](#plotms-evidence-callibrary).
+
+#### plotms deviations and unfinished work
+
+##### disable-selection: Proposed
+
+- Record: [PlotMS disabling selection calls the selection setter with a missing argument](https://github.com/bglenden/casa-rs/blob/e775bd07a6e5b9ebfbb4b812844564b063dc78e9/docs/CASA%20%28C%2B%2B%29%20bugs.md#plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument)
+- Inputs: A PlotMS request with selectdata=False and supplied selection text.
+- CASA: Raises Exception with message updateImmediately must be a boolean.
+- casa-rs: Displays and exports all available solution points without applying the selector text.
+- Rationale: Make the documented selection switch work when it is false.
+- User impact: The native request produces all 160 available points in the paired fixture. The same fallback preserves all 1,920 points in the unfiltered callibrary case.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary).
+
+##### calibration-selection-diagnostics: Proposed
+
+- Inputs: Modern calibration input with an unsupported selector, invalid antenna-position selector or empty TaQL selection.
+- CASA: Refuses the plot with an RPC failure whose details say plot parameters failed.
+- casa-rs: Refuses the plot with a task parameter error describing the selector or empty row set.
+- Rationale: Give the caller the cause using the native task error contract.
+- User impact: Both workflows preserve an absent export on selection failure.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [selectors](#plotms-evidence-selectors).
+
+#### plotms evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="plotms-evidence-paired"></a>
+##### paired
+
+**Same-input public PlotMS comparison — passed.** 38 text exports, 1,200 points, 14 exact errors, 32 rendered coordinates and scan, baseline and time page filenames matched. CASA 6.7.6.14 and casaplotms 2.9.1 public calls on identical current-format calibration tables.
+
+- [tools/casa-compat/plotms_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/e775bd07a6e5b9ebfbb4b812844564b063dc78e9/tools/casa-compat/plotms_calibration_oracle.py)
+- Revision: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-calibration-20261119.json`.
+
+<a id="plotms-evidence-remaining"></a>
+##### remaining
+
+**Remaining calibration PlotMS workflow comparisons — planned.** Requires additional native behavior and paired evidence. Advanced calibration table and MS plotting under #1526, #1032 and #215.
+
+
+<a id="plotms-evidence-atmosphere"></a>
+##### atmosphere
+
+**Same-input atmospheric overlays — passed.** 21 exports, 985 selected coordinates, one Python axis error and 19 rendered coordinates matched. Seven wide-band, weather and receiver overlay cases had a maximum normalized RMS of 0.00012. CASA 6.7.6.14 and casaplotms 2.9.1 on the same current-format bandpass and gain tables, with optional associated weather, water-vapour and receiver tables.
+
+- [tools/casa-compat/plotms_atmosphere_oracle.py](https://github.com/bglenden/casa-rs/blob/12d08ef332634591a6ad4611408f4cc178f601c5/tools/casa-compat/plotms_atmosphere_oracle.py)
+- Revision: `12d08ef332634591a6ad4611408f4cc178f601c5`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_atmosphere_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-atmosphere-20261119.json`.
+
+<a id="plotms-evidence-selectors"></a>
+##### selectors
+
+**Same-input PlotMS calibration types and selectors — passed.** 56 text exports, 1,688 points, 14 exact errors, six paired refusals and 32 rendered coordinates matched. Scan, baseline, time and antenna-position page exports used the same filenames. CASA 6.7.6.14 with casaplotms 2.9.1 on identical modern calibration tables, including Tsys and antenna position.
+
+- [https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/d3571932be189f719e83e2626ba7fab982d23d33/tools/casa-compat/plotms_calibration_oracle.py)
+- Revision: `d3571932be189f719e83e2626ba7fab982d23d33`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-calibration-selectors-20261119.json`.
+
+<a id="plotms-evidence-callibrary"></a>
+##### callibrary
+
+**Same-input callibrary plots — passed.** 43 public text exports, 874 points, one missing-library error and 12 rendered coordinates matched. The paired averages cover selected and strided channels and calibrated per-channel weights. Source visibilities, stored corrections, flags and weights were preserved. The disabled selector fallback matched 1,920 CASA points. CASA 6.7.6.14 and casaplotms 2.9.1 on identical MeasurementSets with file and inline callibraries, independent data columns and averaged channel and time coordinates.
+
+- [https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py](https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py)
+- Revision: `f9215c62670dfc19138bd9d65a949d22065f1c59`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_callibrary_oracle.py --work <new-dir> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-callibrary-20261119.json`.
+
+### plotweather
+
+- CASA source: `casatasks/plotweather.py`, 4 parameters
+- Implementation: `casatasks/private/task_plotweather.py`, `plotweather` (line 93): 2 return statements, 0 raise statements
+  - returns at line 282: `meanTau`
+  - returns at line 383: `meanTau`
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 4, in CASA's order: yes
+- Defaults that differ: none
+
+#### plotweather parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `3b459173040b1758f761ba68e95d59e2d5d60214`. Status counts: Default only: 0, Implemented: 4, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | Existing MeasurementSet path. The literal SPECTRAL_WINDOW and WEATHER tables supply the frequency and station samples. The earliest main TIME supplies the season when WEATHER cannot be used. [opacity](#plotweather-behavior-opacity)<br>Catalog domain: `path` (measurement_set) | [paired](#plotweather-evidence-paired) |
+| `seasonal_weight` | `0.5` | `0.5`; `seasonal_weight` → `seasonal_weight` | Implemented | Linear seasonal weighting, including extrapolation. Unavailable station data use the seasonal model alone. Nonfinite weights return nonfinite opacity when plotting is off. [opacity](#plotweather-behavior-opacity)<br>Catalog domain: `variant` | [paired](#plotweather-evidence-paired) |
+| `doPlot` | `True` | `True`; `doPlot` → `doPlot` | Implemented | Prepare the five-panel weather summary when station data are available. False returns just the spectral-window opacity. [weather-summary](#plotweather-behavior-weather-summary)<br>Catalog domain: `bool` | [paired](#plotweather-evidence-paired) |
+| `plotName` | `''` | `''`; `plotName` → `plotName` | Implemented | Optional Matplotlib output name. The default appends .plotweather.png to the MeasurementSet name. [weather-summary](#plotweather-behavior-weather-summary)<br>Catalog domain: `string` | [paired](#plotweather-evidence-paired) |
+
+#### plotweather interacting modes and task behavior
+
+<a id="plotweather-behavior-opacity"></a>
+##### VLA zenith opacity
+
+**Implemented** — Apply the station temperature and dew point and the seasonal EVLA Memo 143 model to the installed CASA VLA reference fit. This yields one NumPy float64 in a list for each spectral window in table order.
+
+
+
+Evidence: [paired](#plotweather-evidence-paired).
+
+<a id="plotweather-behavior-weather-summary"></a>
+##### Weather summary figure
+
+**Implemented** — Plot solar elevation at the VLA, wind, temperature and dew point, precipitable water and opacity. The Python host renders and saves the 150 dpi figure through the shared plot document.
+
+
+
+Evidence: [paired](#plotweather-evidence-paired).
+
+#### plotweather deviations and unfinished work
+
+#### plotweather evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="plotweather-evidence-paired"></a>
+##### paired
+
+**Same-input CASA Python results and Matplotlib artists — passed.** 10 paired opacity cases, 15 panels, 13 exact errors and five numerical laws passed. Zenith opacity per spectral window and the five-panel weather figure. Includes weather and seasonal weighting, fallback for absent, empty or unreadable WEATHER tables, fractional UTC times, named and default PNGs, and typed validation.
+
+- [tools/casa-compat/plotweather_oracle.py](https://github.com/bglenden/casa-rs/blob/3b459173040b1758f761ba68e95d59e2d5d60214/tools/casa-compat/plotweather_oracle.py)
+- [tools/casa-compat/generate_plotweather_opacity.py](https://github.com/bglenden/casa-rs/blob/3b459173040b1758f761ba68e95d59e2d5d60214/tools/casa-compat/generate_plotweather_opacity.py)
+- Revision: `3b459173040b1758f761ba68e95d59e2d5d60214`; CASA: `6.7.6.14`.
+- Command: `MPLBACKEND=Agg PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/plotweather_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotweather-20261119.json`.
+
+### rerefant
+
+- CASA source: `casatasks/rerefant.py`, 5 parameters
+- Implementation: `casatasks/private/task_rerefant.py`, `rerefant` (line 7): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 5, in CASA's order: yes
+- Defaults that differ: none
+
+#### rerefant parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `16e213dafe7d3b43d85e6c1392052289bfe487ca`. Status counts: Default only: 0, Implemented: 5, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying antenna identifiers and positions. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (measurement_set) | [paired](#rerefant-evidence-paired) |
+| `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing gain, bandpass, scalar gain, leakage or fringe table. Unsupported delay input raises a task error. Saved CASA table selections are materialized before editing. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#rerefant-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Separate result or an in-place update when empty. An actively locked product is preserved. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#rerefant-evidence-paired) |
+| `refantmode` | `'flex'` | `'flex'`; `refantmode` → `refantmode` | Implemented | Flexible selection maintains the prior reference when the primary loses coverage. Strict accepts only the primary. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `flex`, `strict` | [paired](#rerefant-evidence-paired) |
+| `refant` | `''` | `''`; `refant` → `refant` | Implemented | An ordered antenna selection. Numeric IDs and names are paired. A missing or empty selection fails. [table-operation](#rerefant-behavior-table-operation)<br>Catalog domain: `string` | [paired](#rerefant-evidence-paired) |
+
+#### rerefant interacting modes and task behavior
+
+<a id="rerefant-behavior-table-operation"></a>
+##### Calibration table operation
+
+**Implemented** — Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.
+
+The documented CASA behavior differences are recorded below.
+
+Evidence: [paired](#rerefant-evidence-paired).
+
+#### rerefant deviations and unfinished work
+
+##### return-error-on-unsupported-delay: Proposed
+
+- Inputs: K Jones delay table with a valid strict reference.
+- CASA: Terminates the process while reading a complex parameter column.
+- casa-rs: Raises a task error and leaves the output path untouched.
+- Rationale: The generic CASA reference method expects CPARAM and K Jones delay tables carry FPARAM.
+- User impact: Callers can handle an unsupported table type without losing the Python process.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#rerefant-evidence-paired).
+
+#### rerefant evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="rerefant-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and casacore interchange — passed.** 24 paired case groups and four downstream applications passed. Ranked and strict references, previous-good continuity, nearest fallback, flags, multiple channels, single-polarization coverage, in-place updates and refusal of unsupported delays. Includes saved table views, unavailable or duplicate reference rows, and frequency-dependent and LLS leakage tables. Linked control files are copied into an independent output snapshot.
+
+- [tools/casa-compat/calibration_rerefant_oracle.py](https://github.com/bglenden/casa-rs/blob/16e213dafe7d3b43d85e6c1392052289bfe487ca/tools/casa-compat/calibration_rerefant_oracle.py)
+- Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_rerefant_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
 
 ### simalma
 
@@ -1478,6 +2272,72 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Command: `CASA_RS_SIMUTIL_GRAPHICS_RECEIPT=OUT/helper-artists.jsonl pytest -q crates/casars-python/python/tests/test_simutil_graphics.py crates/casars-python/python/tests/test_plot_document.py crates/casars-python/python/tests/test_simobserve_graphics.py crates/casars-python/python/tests/test_simutil.py crates/casars-python/python/tests/test_simutil_diagnostics.py ; CASA_RS_GRAPHICS_DEBUG_DIR=OUT/native cargo test -p casa-simulation --test simobserve_quick_psf -- --nocapture ; python tools/simulation/check_simobserve_rendering.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/rendered ; CASAPY tools/simulation/check_quick_psf_casa.py --native OUT/native --reference crates/casa-simulation/tests/data/simobserve_graphics_casa.json.gz --out OUT/psf-cpp.json`.
 - Receipt: `resources/casa-compat/evidence/simulation-figures-20261114.json`.
 
+### smoothcal
+
+- CASA source: `casatasks/smoothcal.py`, 7 parameters
+- Implementation: `casatasks/private/task_smoothcal.py`, `smoothcal` (line 8): 0 return statements, 1 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
+- Defaults that differ: none
+
+#### smoothcal parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `16e213dafe7d3b43d85e6c1392052289bfe487ca`. Status counts: Default only: 0, Implemented: 7, Not implemented: 0, Partial: 0, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `measurement_set` | Implemented | MeasurementSet supplying field names and IDs. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (measurement_set) | [paired](#smoothcal-evidence-paired) |
+| `tablein` | `''` | `''`; `tablein` → `tablein` | Implemented | Existing calibration table. G, T, B, K and Fringe tables have paired coverage. Saved CASA table selections are materialized before editing. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#smoothcal-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Implemented | Separate result or an in-place update when empty. An actively locked product is preserved. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `path` (calibration_table) | [paired](#smoothcal-evidence-paired) |
+| `field` | `[]` | `[]`; `field` → `field` | Implemented | Field selection expression or a list. Empty selects all fields. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [paired](#smoothcal-evidence-paired) |
+| `smoothtype` | `'median'` | `'median'`; `smoothtype` → `smoothtype` | Implemented | Mean or median over valid solutions. Complex smoothing operates on amplitude and tracked phase. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `string` | [paired](#smoothcal-evidence-paired) |
+| `smoothtime` | `60.0` | `60.0`; `smoothtime` → `smoothtime` | Implemented | Strictly positive full duration in seconds. Paired cases include integer inputs and samples on window boundaries. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `float` | [paired](#smoothcal-evidence-paired) |
+| `ratesmooth` | `False` | `False`; `ratesmooth` → `ratesmooth` | Implemented | Include fringe rate predictions when tracking phase. Ordinary gain solutions are unaffected. [table-operation](#smoothcal-behavior-table-operation)<br>Catalog domain: `bool` | [paired](#smoothcal-evidence-paired) |
+
+#### smoothcal interacting modes and task behavior
+
+<a id="smoothcal-behavior-table-operation"></a>
+##### Calibration table operation
+
+**Implemented** — Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot.
+
+The documented CASA behavior differences are recorded below.
+
+Evidence: [paired](#smoothcal-evidence-paired).
+
+#### smoothcal deviations and unfinished work
+
+##### preserve-fringe-delay-units: Proposed
+
+- Inputs: Fringe Jones smoothing with smoothtype set to median.
+- CASA: Wraps delay and other non-phase values as radians and bypasses their median.
+- casa-rs: Preserves their units and applies the numerical median to each non-phase series.
+- Rationale: The source condition applies phase handling to every parameter. An 8 ns delay became about 1.717 ns.
+- User impact: The fringe phase comparisons pass and the non-phase outputs follow independently calculated medians.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#smoothcal-evidence-paired).
+
+#### smoothcal evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="smoothcal-evidence-paired"></a>
+##### paired
+
+**Same-input Python task and casacore interchange — passed.** 29 paired case groups and four downstream applications passed. Time windows, selected fields, mean and median, complex phase tracking, real delays, flags, uncertainties, in-place updates and rate-aware fringe solutions. Includes saved table views, required scalar paths, blank selectors, boolean duration, staged spectral-window flags, and actively locked destination rejection. Linked control files are copied into an independent output snapshot.
+
+- [tools/casa-compat/calibration_smoothcal_oracle.py](https://github.com/bglenden/casa-rs/blob/16e213dafe7d3b43d85e6c1392052289bfe487ca/tools/casa-compat/calibration_smoothcal_oracle.py)
+- Revision: `16e213dafe7d3b43d85e6c1392052289bfe487ca`; CASA: `6.7.6.14`.
+- Command: `PYTHONPATH=crates/casars-python/python casa-python tools/casa-compat/calibration_smoothcal_oracle.py --work <empty-directory> --native-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/calibration-table-maintenance-20261119.json`.
+
 ### split
 
 - CASA source: `casatasks/split.py`, 19 parameters
@@ -1486,7 +2346,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the vis parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #978: `keepmms`, `correlation`, `intent`, `array`, `uvrange`, `observation`, `feed`, `timebin`, `combine`
 - casa-rs parameters CASA lacks: `msselect`
 - Shared parameters: 19, in CASA's order: yes
 - Defaults that differ: none
@@ -2642,9 +3501,11 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
+| calibrater | `casars.tools` | 37 | no | | | | | | |
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 61 | 0 | 0 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
+| imager | `casars.tools` | 59 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 48 | 0 | 0 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |

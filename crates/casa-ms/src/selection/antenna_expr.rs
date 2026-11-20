@@ -203,27 +203,68 @@ pub fn resolve_antenna_selector(
     antennas: &[AntennaRow<'_>],
     text: &str,
 ) -> MsResult<BaselineSelection> {
+    resolve_antenna_expression(antennas, text, true)
+}
+
+fn resolve_antenna_expression(
+    antennas: &[AntennaRow<'_>],
+    text: &str,
+    reject_unmatched: bool,
+) -> MsResult<BaselineSelection> {
     if text.is_empty() {
         return Ok(BaselineSelection::unconstrained(antennas.len()));
     }
-    let clauses = antenna_clauses(antennas, text)?;
+    let clauses = antenna_clauses(antennas, text, reject_unmatched)?;
     Ok(BaselineSelection {
         antenna_count: antennas.len(),
         pairs: Some(evaluate(&clauses, antennas.len())),
     })
 }
 
-fn antenna_clauses(antennas: &[AntennaRow<'_>], text: &str) -> MsResult<Vec<Clause>> {
+fn antenna_clauses(
+    antennas: &[AntennaRow<'_>],
+    text: &str,
+    reject_unmatched: bool,
+) -> MsResult<Vec<Clause>> {
     let index = AntennaIndex::new(antennas);
     let parsed = grammar::parse(&index, text)
         .map_err(|(abort, reports)| failure(text, &reports, Some(abort)))?;
     if !parsed.reports.is_empty() {
-        return Err(failure(text, &parsed.reports, None));
+        let report = failure(text, &parsed.reports, None);
+        if reject_unmatched {
+            return Err(report);
+        }
+        tracing::warn!("{report}");
     }
     Ok(parsed.clauses)
 }
 
 impl MeasurementSet {
+    /// Antennas listed by `MSSelection` for reindexing a transformed MS.
+    pub(crate) fn transform_antenna_ids(&self, text: &str) -> MsResult<Vec<i32>> {
+        self.with_antenna_rows(|rows| {
+            let mut ids = std::collections::BTreeSet::new();
+            for clause in antenna_clauses(rows, text, true)? {
+                match clause.term {
+                    // Single-list terms put the whole ANTENNA table in the
+                    // second list (MSAntennaParse::selectAntennaIds).
+                    Term::Cross(_) | Term::AutoOnly(_) => {
+                        return Ok((0..rows.len() as i32).collect());
+                    }
+                    Term::Pair { first, second, .. } => ids.extend(
+                        first
+                            .into_iter()
+                            .chain(second)
+                            .filter(|&id| !clause.negate || id == 0)
+                            .map(|id| id as i32),
+                    ),
+                    Term::Ordered(_) => (),
+                }
+            }
+            Ok(ids.into_iter().collect())
+        })
+    }
+
     /// Resolve CASA antenna selection `text` against this MeasurementSet's
     /// ANTENNA table (NAME, STATION and POSITION), as
     /// [`resolve_antenna_selector`] does over rows a caller supplies.
@@ -241,6 +282,15 @@ impl MeasurementSet {
             ));
         }
         self.with_antenna_rows(|rows| resolve_antenna_selector(rows, text))
+    }
+
+    // CASA's agentflagger retains valid clauses when an antenna token
+    // does not match. The other MS consumers use the strict resolver.
+    pub(crate) fn resolve_flagdata_antenna_selector(
+        &self,
+        text: &str,
+    ) -> MsResult<BaselineSelection> {
+        self.with_antenna_rows(|rows| resolve_antenna_expression(rows, text, false))
     }
 
     /// Resolve the ordered ANTENNA1 IDs of a CASA reference-antenna expression.
@@ -270,7 +320,7 @@ impl MeasurementSet {
         self.with_antenna_rows(|rows| {
             let mut seen = vec![false; rows.len()];
             let mut antennas = Vec::new();
-            for clause in antenna_clauses(rows, text)? {
+            for clause in antenna_clauses(rows, text, true)? {
                 let ids = match clause.term {
                     Term::Cross(ids) | Term::AutoOnly(ids) | Term::Pair { first: ids, .. } => ids,
                     Term::Ordered(_) => continue,

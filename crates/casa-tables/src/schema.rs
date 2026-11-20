@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::collections::{HashMap, HashSet};
 
-use casa_types::PrimitiveType;
+use crate::storage::{data_type::CasacoreDataType, stman_array_file::make_empty_array};
+use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use thiserror::Error;
 
 /// Errors produced during schema construction or column option validation.
@@ -351,6 +352,27 @@ pub struct TableDescHeader {
 }
 
 impl TableSchema {
+    /// A new table row with scalar and fixed-array defaults. Variable-shape
+    /// array cells are absent until their shapes are supplied by a write.
+    ///
+    /// Mirrors the default scalar and fixed-shape initialization performed
+    /// by casacore when new rows are added to a table.
+    pub fn default_row(&self) -> RecordValue {
+        let value = |column: &ColumnSchema| match (column.column_type(), column.data_type()) {
+            (ColumnType::Scalar, Some(ty)) => Some(Value::Scalar(zero(ty))),
+            (ColumnType::Array(ArrayShapeContract::Fixed { shape }), Some(ty)) => Some(
+                make_empty_array(CasacoreDataType::from_primitive_type(ty, false), shape),
+            ),
+            _ => None,
+        };
+        RecordValue::new(
+            self.columns()
+                .iter()
+                .filter_map(|col| value(col).map(|value| RecordField::new(col.name(), value)))
+                .collect(),
+        )
+    }
+
     /// Return this schema with its table-description header replaced.
     ///
     /// Cf. the C++ `TableDesc(name, version, option)` constructor and
@@ -415,6 +437,24 @@ impl TableSchema {
     /// Cf. C++ `TableDesc::isColumn(name)`.
     pub fn contains_column(&self, name: &str) -> bool {
         self.column_lookup.contains_key(name)
+    }
+
+    pub(crate) fn widen_fixed_arrays(&mut self, names: &[&str]) -> Vec<String> {
+        let mut changed = Vec::new();
+        for &name in names {
+            let Some(&index) = self.column_lookup.get(name) else {
+                continue;
+            };
+            let column = &mut self.columns[index];
+            if let ColumnType::Array(ArrayShapeContract::Fixed { shape }) = &column.column_type {
+                column.column_type = ColumnType::Array(ArrayShapeContract::Variable {
+                    ndim: Some(shape.len()),
+                });
+                column.options.direct = false;
+                changed.push(name.to_string());
+            }
+        }
+        changed
     }
 
     pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
@@ -497,6 +537,24 @@ impl TableSchema {
                 .enumerate()
                 .map(|(index, column)| (column.name.clone(), index)),
         );
+    }
+}
+
+fn zero(ty: PrimitiveType) -> ScalarValue {
+    use PrimitiveType::*;
+    match ty {
+        Bool => ScalarValue::Bool(false),
+        UInt8 => ScalarValue::UInt8(0),
+        UInt16 => ScalarValue::UInt16(0),
+        UInt32 => ScalarValue::UInt32(0),
+        Int16 => ScalarValue::Int16(0),
+        Int32 => ScalarValue::Int32(0),
+        Int64 => ScalarValue::Int64(0),
+        Float32 => ScalarValue::Float32(0.0),
+        Float64 => ScalarValue::Float64(0.0),
+        Complex32 => ScalarValue::Complex32(Default::default()),
+        Complex64 => ScalarValue::Complex64(Default::default()),
+        String => ScalarValue::String(Default::default()),
     }
 }
 

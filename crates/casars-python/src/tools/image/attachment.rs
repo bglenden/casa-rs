@@ -11,6 +11,7 @@ use casa_tables::publication::{exchange_directories, rename_without_replacing};
 use casa_tables::{Table, TableError, TableOptions, TableUseLock, TableWriteLock};
 use pyo3::prelude::*;
 
+use super::beam_view::BeamView;
 use super::handle::{ImageHandle, raised};
 use super::stub;
 
@@ -31,10 +32,12 @@ pub(super) fn registry() -> MutexGuard<'static, OpenImages> {
 pub(super) struct AttachedImage {
     image: Arc<SharedImage>,
     key: Option<PathBuf>,
+    beam_view: Mutex<BeamView>,
 }
 
 impl AttachedImage {
     pub(super) fn temporary(image: ImageHandle) -> Self {
+        let beam_view = BeamView::from_image(&image);
         Self {
             image: Arc::new(SharedImage {
                 handle: Mutex::new(image),
@@ -42,6 +45,7 @@ impl AttachedImage {
                 shareable: false,
             }),
             key: None,
+            beam_view: Mutex::new(beam_view),
         }
     }
 
@@ -52,7 +56,7 @@ impl AttachedImage {
         let key = key(path)?;
         let shared = Self::shared(&registry(), &key);
         if let Some(shared) = shared {
-            shared.require_lock(&mut shared.lock(), casa_tables::LockType::Read)?;
+            shared.read_current_beams()?;
             return Ok(shared);
         }
 
@@ -69,8 +73,15 @@ impl AttachedImage {
             }
         };
         drop(opened);
-        shared.require_lock(&mut shared.lock(), casa_tables::LockType::Read)?;
+        shared.read_current_beams()?;
         Ok(shared)
+    }
+
+    fn read_current_beams(&self) -> PyResult<()> {
+        let mut handle = self.lock();
+        self.require_lock(&mut handle, casa_tables::LockType::Read)?;
+        *self.beam_view() = BeamView::from_image(&handle);
+        Ok(())
     }
 
     pub(super) fn open_created(registry: &mut OpenImages, path: &Path) -> PyResult<Self> {
@@ -102,6 +113,7 @@ impl AttachedImage {
             .map(|image| Self {
                 image,
                 key: Some(key.to_path_buf()),
+                beam_view: Mutex::default(),
             })
     }
 
@@ -135,14 +147,17 @@ impl AttachedImage {
             .then(|| acquire(key).map(Arc::new))
             .transpose()
             .map_err(raised)?;
+        let handle = ImageHandle::open_native(path, lock_attempts).map_err(raised)?;
+        let beam_view = BeamView::from_image(&handle);
         let image = Arc::new(SharedImage {
-            handle: Mutex::new(ImageHandle::open_native(path, lock_attempts).map_err(raised)?),
+            handle: Mutex::new(handle),
             use_lock,
             shareable: lock_attempts.is_some(),
         });
         let opened = Self {
             image,
             key: Some(key.to_path_buf()),
+            beam_view: Mutex::new(beam_view),
         };
         opened.check_bound_name(&opened.lock())?;
         Ok(opened)
@@ -160,6 +175,12 @@ impl AttachedImage {
     pub(super) fn lock(&self) -> MutexGuard<'_, ImageHandle> {
         self.image
             .handle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn beam_view(&self) -> MutexGuard<'_, BeamView> {
+        self.beam_view
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
@@ -199,8 +220,15 @@ impl AttachedImage {
             return Err(raised("Exception: new file name must be specified."));
         }
         let Some(source) = &self.key else {
-            if self.lock().fits().is_some() {
-                return Err(stub("rename").unwrap_err());
+            let fits_path = {
+                let image = self.lock();
+                image
+                    .fits()
+                    .and_then(|_| image.path())
+                    .map(Path::to_path_buf)
+            };
+            if let Some(old_name) = fits_path {
+                return super::fits_rename::rename(&old_name, name, overwrite, history);
             }
             return Err(raised(
                 "Exception: This image tool is not associated with a persistent disk file. It cannot be renamed.",
@@ -277,6 +305,7 @@ impl AttachedImage {
             return Ok(Self {
                 image: Arc::clone(&self.image),
                 key: Some(source.clone()),
+                beam_view: Mutex::new(self.beam_view().clone()),
             });
         }
         if old_name
@@ -336,19 +365,22 @@ impl AttachedImage {
             log_rename(&mut image)?;
             Ok::<_, PyErr>(image)
         };
-        let image = match reopen() {
-            Ok(image) => Arc::new(SharedImage {
-                handle: Mutex::new(image),
-                use_lock: self.image.use_lock.clone(),
-                shareable: self.image.shareable,
-            }),
+        let handle = match reopen() {
+            Ok(image) => image,
             Err(error) => return restore_native_move(source, &target, backup, error),
         };
+        let beam_view = BeamView::from_image(&handle);
+        let image = Arc::new(SharedImage {
+            handle: Mutex::new(handle),
+            use_lock: self.image.use_lock.clone(),
+            shareable: self.image.shareable,
+        });
         registry.remove(source);
         registry.insert(target.clone(), vec![Arc::downgrade(&image)]);
         Ok(Self {
             image,
             key: Some(target),
+            beam_view: Mutex::new(beam_view),
         })
     }
 

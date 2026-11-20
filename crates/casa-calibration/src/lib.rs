@@ -20,8 +20,11 @@
 //! storage stack, so every on-disk assumption made here is exercised against
 //! the same table reader/writer substrate used elsewhere in the repo.
 
+mod accumulate;
 mod antpos_vla;
+mod attachment;
 mod bandpass;
+mod calibrater_lifecycle;
 mod calibration_service;
 mod callib;
 mod casa_return;
@@ -32,8 +35,11 @@ mod execute;
 mod fluxscale;
 mod ft;
 mod gencal;
+#[cfg(test)]
+mod imaging_memory_test;
 mod initweights;
 mod interpolation;
+mod listing;
 mod lookup;
 mod lookup_frequency;
 mod managed_output;
@@ -43,22 +49,38 @@ mod output;
 mod output_merge;
 mod paths;
 mod plan;
+mod plotbandpass;
+#[doc(hidden)]
+pub mod plotms;
 mod plots;
+mod rerefant;
 mod selected_data;
 mod session;
 mod simulated;
+mod smooth;
+mod solution_edit;
 mod solve;
 mod solve_stats;
 mod stats;
 mod statwt;
 mod summary;
+mod table_maintenance;
 mod task_contract;
 mod timing;
 mod uvmodelfit;
 mod uvsub;
+mod weather;
 mod weight_spectra;
 mod writer;
 
+pub use ft::settings::{
+    ImagerGridder, ImagerSingleDish, ImagerSingleDishKernel, ImagerSingleDishSetup,
+    ImagerTransformOptions,
+};
+pub use ft::{
+    ImagerDefinitionRequest, ImagerImageDefinition, ImagerPhaseCentre, ImagerPrediction,
+    ImagerPredictionModel, ImagerSpectralAxis, ImagerVoltagePattern,
+};
 pub use statwt::{
     StatWtAlgorithm, StatWtChannelBin, StatWtCombine, StatWtDataColumn, StatWtMs, StatWtOptions,
     StatWtSummary, StatWtTimeBin, estimate_statwt, statwt_weight_range,
@@ -69,7 +91,14 @@ pub use uvsub::{
     subtract_visibility_model_selected, visibility_model_source_paths,
 };
 
+pub use accumulate::{CalibrationAccumulationRequest, accumulate_calibration};
+pub use attachment::{
+    AttachmentError, AttachmentMode, AttachmentOptions, CalibrationAttachment, ImagerAttachments,
+    ImagerChannelSelection,
+};
+pub use calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
 pub use output::CalibrationOutputMode;
+pub use table_maintenance::{create_calibration_table, update_calibration_table};
 
 pub use bandpass::{
     BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveError,

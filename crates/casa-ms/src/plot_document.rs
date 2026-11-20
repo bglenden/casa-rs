@@ -18,8 +18,10 @@
 //! in its reply, and they depend on no binding crate.
 
 mod convert;
+mod payload;
 mod rich;
 
+pub use payload::{PlotPayloadWriter, plot_array_view};
 pub use rich::*;
 
 use std::path::PathBuf;
@@ -33,6 +35,16 @@ use crate::{
     MeasurementSetSummaryOutputFormat, MsColorAxis, MsDataColumn, MsExploreSpec, MsIterationAxis,
     MsPageExportRange, MsPlotPreset, MsPlotSpec, MsSelection, build_msexplore_payload_from_spec,
 };
+
+/// Convert an already prepared visibility payload for the PlotMS renderer.
+pub(crate) fn plotms_visibility_document(payload: &crate::MsPlotPayload) -> PlotDocument {
+    let preset = MsPlotPreset::AmplitudeVsTime;
+    let metadata = plot_payload_metadata(payload, preset, u64::MAX);
+    let mut document = plot_document(payload, &metadata, preset);
+    document.id = "plotms-visibility".into();
+    document.subtitle.clear();
+    document
+}
 
 /// Point budget used when a [`MeasurementSetPlotRequest`] asks for zero points.
 pub const PLOT_DOCUMENT_DEFAULT_MAX_POINTS: usize = 250_000;

@@ -52,8 +52,18 @@ def _render_document(document, payload, figure, use_native_limits, axes, preserv
     if axes is None:
         axes = [figure.add_subplot(rows, columns, index + 1) for index in range(len(panels))]
     for panel, axis in zip(panels, axes, strict=True):
+        ordinates = panel.get("axes", ())[1:]
+        targets, ordinate_axes = {}, []
+        for index, ordinate in enumerate(ordinates):
+            target = axis if index == 0 else axis.twinx()
+            if ordinate.get("draws_on_trailing_edge"):
+                target.yaxis.tick_right()
+                target.yaxis.set_label_position("right")
+            ordinate_axes.append(target)
+            if "id" in ordinate:
+                targets[ordinate["id"]] = target
         for layer in panel["layers"]:
-            _draw_layer(figure, axis, layer, payload)
+            _draw_layer(figure, targets.get(layer.get("y_axis_id"), axis), layer, payload)
         for annotation in panel.get("annotations", ()):
             style = annotation.get("style") or {}
             kwargs = {}
@@ -79,12 +89,11 @@ def _render_document(document, payload, figure, use_native_limits, axes, preserv
             if use_native_limits:
                 axis.set_xlim(x["lower"], x["upper"])
             axis.set_xscale(x.get("scale", "linear"))
-        if len(panel.get("axes", ())) > 1:
-            y = panel["axes"][1]
-            axis.set_ylabel(y["label"], **font)
+        for y, target in zip(ordinates, ordinate_axes, strict=True):
+            target.set_ylabel(y["label"], **font)
             if use_native_limits:
-                axis.set_ylim(y["lower"], y["upper"])
-            axis.set_yscale(y.get("scale", "linear"))
+                target.set_ylim(y["lower"], y["upper"])
+            target.set_yscale(y.get("scale", "linear"))
         aspect = panel.get("aspect") or layout.get("aspect")
         if aspect == "equal_data_limits":
             if panel.get("axes"):
@@ -161,7 +170,7 @@ def _draw_layer(figure, axis, layer, payload):
             axis.plot([start, end], [lane, lane], color=color, linewidth=layer["line_width"])
     elif data or layer["kind"] == "line":
         axis.plot(
-            x, y, label=layer["title"], color=color,
+            x, y, label=layer["title"], color=color, gid=layer.get("id"),
             marker=style.get("marker") or "None",
             linestyle=style.get("line_style") or ("-" if layer["kind"] == "line" else "None"),
             linewidth=layer["line_width"], alpha=layer["opacity"],

@@ -32,6 +32,7 @@ mod geometry;
 mod inspect;
 mod offset;
 mod record;
+pub(super) use record::observation_epoch;
 mod rise_set;
 mod shift;
 mod showframe;

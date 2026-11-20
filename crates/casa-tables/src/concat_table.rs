@@ -238,6 +238,16 @@ impl ConcatTable {
     ///
     /// `ConcatTable::writeConcatTable`.
     pub fn save(&self, opts: TableOptions) -> Result<(), TableError> {
+        self.save_with_info(opts, &crate::storage::TableInfo::default())
+    }
+
+    /// Save the concatenation with caller-supplied table type and descriptive
+    /// metadata. CASA Multi-MS containers use the `CONCATENATED` subtype.
+    pub fn save_with_info(
+        &self,
+        opts: TableOptions,
+        info: &crate::storage::TableInfo,
+    ) -> Result<(), TableError> {
         let concat_path = opts.path();
 
         // Compute relative paths for each constituent table.
@@ -258,11 +268,7 @@ impl ConcatTable {
 
         let storage = CompositeStorage;
         storage
-            .save_concat_table(
-                concat_path,
-                &contents,
-                &crate::storage::TableInfo::default(),
-            )
+            .save_concat_table(concat_path, &contents, info)
             .map_err(|e| TableError::Storage(e.to_string()))?;
         Ok(())
     }
@@ -482,6 +488,71 @@ mod tests {
                 "row {i} id mismatch"
             );
         }
+    }
+
+    #[test]
+    fn selected_concat_columns_preserve_row_order_duplicates_and_missing_arrays() {
+        use casa_types::ArrayValue;
+        use ndarray::Array1;
+
+        let directory = tempfile::tempdir().unwrap();
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            ColumnSchema::array_variable("samples", PrimitiveType::Float32, Some(1)),
+        ])
+        .unwrap();
+        let parts = [0, 2]
+            .into_iter()
+            .map(|start| {
+                let path = directory.path().join(format!("part-{start}"));
+                let mut part = Table::with_schema(schema.clone());
+                for id in start..start + 2 {
+                    let mut row = RecordValue::new(vec![RecordField::new(
+                        "id",
+                        Value::Scalar(ScalarValue::Int32(id)),
+                    )]);
+                    if id == start {
+                        row.upsert(
+                            "samples",
+                            Value::Array(ArrayValue::Float32(
+                                Array1::from_elem(id as usize + 1, id as f32).into_dyn(),
+                            )),
+                        );
+                    }
+                    part.add_row(row).unwrap();
+                }
+                part.save(
+                    TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan),
+                )
+                .unwrap();
+                Table::open(TableOptions::new(path)).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let path = directory.path().join("output");
+        Table::concat(parts)
+            .unwrap()
+            .save(TableOptions::new(&path))
+            .unwrap();
+        let result = Table::open(TableOptions::new(path)).unwrap();
+        let rows = [2, 1, 2, 0];
+        let ids = result
+            .column_accessor("id")
+            .unwrap()
+            .scalar_cells_owned_for_rows(&rows)
+            .unwrap();
+        assert_eq!(ids, rows.map(|id| Some(ScalarValue::Int32(id as i32))));
+        let samples = result.column_accessor("samples").unwrap();
+        assert_eq!(
+            samples.array_shapes_uncached(&rows).unwrap(),
+            [Some(vec![3]), None, Some(vec![3]), Some(vec![1])]
+        );
+        let arrays = samples.array_cells_owned_uncached(&rows).unwrap();
+        assert_eq!(arrays[0], arrays[2]);
+        assert!(arrays[1].is_none());
+        assert_eq!(
+            arrays[3],
+            Some(ArrayValue::Float32(Array1::from_vec(vec![0.0]).into_dyn()))
+        );
     }
 
     #[test]

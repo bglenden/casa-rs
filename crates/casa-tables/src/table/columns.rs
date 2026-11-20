@@ -683,16 +683,7 @@ impl Table {
     ) -> Result<Option<Vec<usize>>, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
-        if matches!(
-            self.schema()
-                .and_then(|schema| schema.column(column))
-                .map(ColumnSchema::column_type),
-            Some(ColumnType::Array(_))
-        ) && self.dm_info.iter().any(|manager| {
-            manager.dm_type == "TiledShapeStMan"
-                && manager.columns.iter().any(|name| name == column)
-        }) && let Some(shape) = self.inner.try_stored_tiled_shape(row_index, column)?
-        {
+        if let Some(shape) = self.stored_tiled_array_shape(row_index, column)? {
             return Ok(shape);
         }
         // Ask the lazy store first: `cell` loads every row of the table.
@@ -713,6 +704,42 @@ impl Table {
                 found: value.kind(),
             }),
         }
+    }
+
+    /// Read one cell's dimensions without retaining an indirect array payload.
+    pub fn array_shape_uncached(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<Option<Vec<usize>>, TableError> {
+        self.require_row(row_index)?;
+        self.require_column(column)?;
+        if let Some(shape) = self.stored_tiled_array_shape(row_index, column)? {
+            return Ok(shape);
+        }
+        let mut cells = self
+            .column_accessor(column)?
+            .array_cells_owned_uncached(&[row_index])?;
+        Ok(cells.pop().flatten().map(|cell| cell.shape().to_vec()))
+    }
+
+    fn stored_tiled_array_shape(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<Option<Option<Vec<usize>>>, TableError> {
+        if matches!(
+            self.schema()
+                .and_then(|schema| schema.column(column))
+                .map(ColumnSchema::column_type),
+            Some(ColumnType::Array(_))
+        ) && self.dm_info.iter().any(|manager| {
+            manager.dm_type == "TiledShapeStMan"
+                && manager.columns.iter().any(|name| name == column)
+        }) {
+            return self.inner.try_stored_tiled_shape(row_index, column);
+        }
+        Ok(None)
     }
 
     /// Writes `value` to the cell at `(row_index, column)`.
