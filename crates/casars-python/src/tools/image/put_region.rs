@@ -10,7 +10,7 @@ use pyo3::types::{PyInt, PyList, PyTuple};
 use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
-use super::handle::{ImageHandle, raised, with_storage};
+use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::masks::has_region;
 use super::pixels::{Pixels, snapshot_array};
 use super::subimage::Region;
