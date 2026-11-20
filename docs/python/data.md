@@ -237,8 +237,10 @@ group and drops the trailing partial group.
 attached FITS image, or a temporary image. Pass `axes` for per-plane results,
 `region` or `mask` to select pixels, and `robust=True` for the median,
 quartiles, and median absolute deviation. The tool supports classical,
-biweight, Chauvenet, fit-to-half and hinges-and-fences statistics. Disk
-storage, logfile output, and flux for per-plane beams are tracked in
+biweight, Chauvenet, fit-to-half and hinges-and-fences statistics. Supply
+`logfile` for a report with labeled planes. `append=False` replaces that
+file. `list=True` adds a summary, and `verbose=True` sends the table to the
+logger. Disk storage and flux for per-plane beams are tracked in
 [#1627](https://github.com/bglenden/casa-rs/issues/1627).
 
 The remaining CASA image and coordinate operations are tracked in

@@ -321,7 +321,7 @@ fn apply_time_bin_flags(
         for (updates, set_row_flag) in [(partial, false), (complete, true)] {
             if !updates.is_empty() {
                 let touched: BTreeSet<_> = updates.keys().copied().collect();
-                write_touched_flag_updates(ms, updates, touched, set_row_flag, changes)?;
+                write_touched_flag_updates(ms, updates, touched, |_| set_row_flag, changes)?;
             }
         }
     }

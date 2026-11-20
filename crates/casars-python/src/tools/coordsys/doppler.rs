@@ -3,8 +3,8 @@
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateType, SpectralCoordinate};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
-use casa_types::quanta::{Dimension, Quantity, UnitDim, casacore};
-use casa_types::{ScalarValue, Value};
+use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore};
+use casa_types::{RecordValue, ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyReadonlyArrayDyn, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PySystemError};
 use pyo3::prelude::*;
@@ -119,8 +119,25 @@ fn velocity_settings(
     if unit.val().dim == speed {
         return Ok((unit.val().factor / C_MPS, requested));
     }
-    let mut stored_convention = spectral.velocity_convention();
-    let stored_unit = if let Some(Value::Record(record)) = state.record.get(field) {
+    let record = match state.record.get(field) {
+        Some(Value::Record(record)) => Some(record),
+        _ => None,
+    };
+    let (stored, stored_convention) = stored_velocity_settings(record, spectral)?;
+    let convention = if vel_unit.is_empty() {
+        requested
+    } else {
+        stored_convention
+    };
+    Ok((stored.val().factor / C_MPS, convention))
+}
+
+pub(in crate::tools) fn stored_velocity_settings(
+    record: Option<&RecordValue>,
+    spectral: &SpectralCoordinate,
+) -> PyResult<(Unit, DopplerRef)> {
+    let mut convention = spectral.velocity_convention();
+    let stored_unit = if let Some(record) = record {
         if record.get("velType").is_none() {
             let legacy_code = match record.get("prefVelType") {
                 Some(Value::Scalar(ScalarValue::Int32(code))) => Some(*code),
@@ -128,7 +145,7 @@ fn velocity_settings(
                 _ => None,
             };
             if let Some(legacy) = legacy_code.and_then(DopplerRef::from_casacore_code) {
-                stored_convention = legacy;
+                convention = legacy;
             }
         }
         match record.get("velUnit").or_else(|| record.get("prefVelUnit")) {
@@ -139,19 +156,16 @@ fn velocity_settings(
         "km/s"
     };
     let stored = casacore::casacore_unit(stored_unit).map_err(raised)?;
-    let factor = if stored.val().dim == speed {
-        stored.val().factor
+    let speed = UnitDim::basis(Dimension::Length) / UnitDim::basis(Dimension::Time);
+    if stored.val().dim == speed {
+        Ok((stored, convention))
     } else {
         // Restoring an incompatible unit leaves both defaults.
-        stored_convention = DopplerRef::RADIO;
-        1e3
-    };
-    let convention = if vel_unit.is_empty() {
-        requested
-    } else {
-        stored_convention
-    };
-    Ok((factor / C_MPS, convention))
+        Ok((
+            Unit::new("km/s").expect("standard speed unit"),
+            DopplerRef::RADIO,
+        ))
+    }
 }
 
 impl VelocityConversion {

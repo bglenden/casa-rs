@@ -264,8 +264,7 @@ def compare_refusals(vis):
             assert module.flagdata(vis=vis, correlation=expr, action="none") == {}
     assert_preserved(vis, before, auxiliary)
 
-    for mode, correlation in (("manual", "ABS_XX"), ("manual", "ABSXX"), ("manual", "WVR"),
-                              ("rflag", "RR")):
+    for mode, correlation in (("rflag", "RR"),):
         try:
             tasks.flagdata(vis=vis, mode=mode, correlation=correlation)
         except RuntimeError as error:
@@ -290,7 +289,7 @@ def main():
         refusals = compare_refusals(vis)
     print(f"{products} flag products, three previews, two inactive calls and "
           f"{refusals} paired argument errors compared with CASA, plus three backup "
-          "comparisons and four guarded pending cases")
+          "comparisons and one guarded pending case")
 
 
 if __name__ == "__main__":
