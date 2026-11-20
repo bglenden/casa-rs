@@ -949,7 +949,10 @@ matrices are converted to double precision, as in CASA.</p>
 <code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. Use <code>ia.setmiscinfo(record)</code> to replace an image’s miscellaneous metadata, and
 <code>ia.sethistory(origin, messages)</code> to append provenance. For an image with stored
 restoring beams, <code>ia.restoringbeam()</code> reads the beam quantities and
-<code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid.</p>
+<code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid.
+Use <code>ia.fitsheader()</code> to inspect the FITS header for a float image without
+exporting the pixels. Pass <code>exclude="HISTORY"</code> to omit the log from the returned
+dictionary. Use <code>retstr=True</code> to return the complete string of 80-byte cards.</p>
 <p>Use <code>ia.fromfits("example.im", "example.fits")</code> to import a FITS image as a
 native CASA image. <code>whichhdu</code> selects the image HDU and <code>whichrep</code> selects the
 coordinate representation. <code>zeroblanks=True</code> writes zero at blank pixels
