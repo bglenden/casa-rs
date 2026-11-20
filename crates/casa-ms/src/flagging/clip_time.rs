@@ -7,7 +7,7 @@ use std::ops::{AddAssign, DivAssign, Mul};
 
 use casa_tables::Table;
 use casa_types::{ArrayValue, ScalarValue, quanta::Quantity};
-use ndarray::{ArrayD, Zip};
+use ndarray::{Array2, ArrayD, Ix2, Zip};
 
 use super::clip::{ClipOptions, apply_clip_array};
 use super::clip_average::{ChannelBins, ChannelReduction};
@@ -397,36 +397,45 @@ impl ClipTimeAccumulator {
         if self.flags.shape() != flags.shape() || self.model.is_some() != model.is_some() {
             return false;
         }
-        let contributions = ArrayD::from_shape_fn(flags.raw_dim(), |index| {
-            let flagged = flags[index.clone()];
-            let averaged = &mut self.flags[index.clone()];
+        let Ok(flags) = flags.view().into_dimensionality::<Ix2>() else {
+            return false;
+        };
+        let mut accumulated_flags = self
+            .flags
+            .view_mut()
+            .into_dimensionality::<Ix2>()
+            .expect("the time bin has the FLAG matrix shape");
+        let mut mass = self
+            .mass
+            .view_mut()
+            .into_dimensionality::<Ix2>()
+            .expect("the time bin has the FLAG matrix shape");
+        let weights = weights.and_then(|spectrum| {
+            ChannelReduction::Weighted {
+                spectrum,
+                inverse_sigma,
+            }
+            .weights()
+        });
+        let contributions = Array2::from_shape_fn(flags.dim(), |index| {
+            let flagged = flags[index];
+            let averaged = &mut accumulated_flags[index];
             if flagged && !*averaged {
                 return None;
             }
-            let factor = match weights {
-                Some(ArrayValue::Float32(values)) => values[index.clone()],
-                Some(ArrayValue::Float64(values)) => values[index.clone()] as f32,
-                None => 1.0,
-                _ => unreachable!("time averaging weights are floating-point arrays"),
-            };
-            let factor = if inverse_sigma {
-                if factor > f32::MIN_POSITIVE {
-                    1.0 / (factor * factor)
-                } else {
-                    0.0
-                }
-            } else {
-                factor
-            };
+            let factor = weights
+                .as_ref()
+                .map_or(1.0, |weights| weights.get(index) as f32);
             let reset = *averaged && !flagged;
             *averaged = flagged;
-            let normalization = &mut self.mass[index];
+            let normalization = &mut mass[index];
             if reset {
                 *normalization = 0.0;
             }
             *normalization += factor;
             Some((factor, reset))
-        });
+        })
+        .into_dyn();
         add_samples(&mut self.data, data, &contributions)
             && self
                 .model

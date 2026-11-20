@@ -55,12 +55,15 @@ def make_cases():
         ms.removecols("DATA")
 
 
-def check_flags(source, vis, times, channels=(0, 1, 2, 3)):
+def check_flags(source, vis, times, channels=(0, 1, 2, 3), *, baseline=None, planes=(0,)):
     with table(source, ack=False) as before, table(vis, ack=False) as after, casa_table(vis) as casa:
         timestamps = before.getcol("TIME")
         offsets = (timestamps - timestamps.min()).round().astype("i4")
         expected = before.getcol("FLAG")
-        expected[np.ix_(np.isin(offsets, times), channels, [0])] = True
+        selected = np.isin(offsets, times)
+        if baseline is not None:
+            selected &= (before.getcol("ANTENNA1") == baseline[0]) & (before.getcol("ANTENNA2") == baseline[1])
+        expected[np.ix_(selected, channels, planes)] = True
         np.testing.assert_array_equal(after.getcol("FLAG"), expected)
         for row in range(after.nrows()):
             np.testing.assert_array_equal(casa.getcell("FLAG", row).T, expected[row])
@@ -93,16 +96,18 @@ def compare_products():
         ((0, 10), (2.59, 2.61), {"channelavg": True, "chanbin": 2, "spw": "0:1~3"}),
         ((0, 10), (2.59, 2.61), {"field": "FLUX"}),
         ((), (2.59, 2.61), {"field": "PHASE"}),
+        ((0, 10), (2.59, 2.61), {"correlation": ""}),
     )
     for index, (times, bounds, options) in enumerate(cases):
         channels = (1, 2, 3) if "spw" in options else (0, 1, 2, 3)
+        planes = (0, 1) if options.get("correlation") == "" else (0,)
         for name, task in TASKS:
             path = f"time-{index}-{name}.ms"
             copytree("visibility.ms", path)
             arguments = {**COMMON, **options, "clipminmax": list(bounds)}
             assert task(vis=path, **arguments) == {}, (name, arguments)
             try:
-                check_flags("visibility.ms", path, times, channels)
+                check_flags("visibility.ms", path, times, channels, planes=planes)
             except AssertionError as error:
                 raise AssertionError((name, arguments)) from error
     return len(cases)
@@ -130,11 +135,13 @@ def check_averaged_operands():
 
 
 def compare_preflags_and_refusals():
+    with table("preflagged.ms", ack=False) as source:
+        baseline = tuple(source.getcell(name, 0) for name in ("ANTENNA1", "ANTENNA2"))
     for name, task in TASKS:
         path = f"preflags-{name}.ms"
         copytree("preflagged.ms", path)
         assert task(vis=path, **COMMON, clipminmax=[2.99, 3.01]) == {}
-        check_flags("preflagged.ms", path, (0, 10), (0,))
+        check_flags("preflagged.ms", path, (0, 10), (0,), baseline=baseline)
 
     cases = (
         ({"timeavg": [True]}, RuntimeError, "RecordInterface::asBool - invalid data type"),
@@ -162,8 +169,12 @@ def compare_preview_and_backups():
     assert casatasks.flagdata(vis=source, action="calculate", **options) == {}
     preview = tasks.run("flagdata", vis=source, action="calculate", **options)
     report = loads(preview.stdout)["result"]
-    assert preview.value == {} and report["changed_samples"] == 8
-    assert report["changed_rows"] == 2 and report["backup_version"] is None
+    with table(source, ack=False) as ms:
+        times = ms.getcol("TIME")
+        first_integration, second_integration = np.unique(times)[:2]
+        count = np.count_nonzero(np.isin(times, [first_integration, second_integration]))
+    assert preview.value == {} and report["changed_samples"] == 4 * count
+    assert report["changed_rows"] == count and report["backup_version"] is None
     assert_preserved(source, before, auxiliary)
     for name, task in TASKS:
         path = f"time-backup-{name}.ms"
