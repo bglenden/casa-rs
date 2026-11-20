@@ -196,6 +196,9 @@ def review_lifecycle(root, dataset, model, cache, offsets, expected, errors):
                                  pointing=True, ep_table=offsets)
         assert tool.ft(complist=str(point))
         assert np.abs(data(target, 'MODEL_DATA')).max() > 1.
+        assert tool.done()
+        tool = configured_imager(factory, target, cache, scratch=True,
+                                 pointing=True, ep_table=offsets)
         assert tool.ft(str(model))
         before = data(target, 'MODEL_DATA')
         moved = offsets.rename(root / 'temporarily-moved.EP')
