@@ -960,7 +960,7 @@ fn wcslib_atan2_degrees(y: f64, x: f64) -> f64 {
     }
 }
 
-fn convert_value_to_unit(
+pub(crate) fn convert_value_to_unit(
     value: f64,
     from_unit: &str,
     to_unit: &str,

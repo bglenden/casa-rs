@@ -26,7 +26,9 @@
 
 use casa_types::{RecordValue, Value};
 
-use super::{CoordinateSystem, read_coordinates};
+use super::{
+    CoordinateSystem, RecordCoordinate, coordinate_record_entries, parse_coordinate_record,
+};
 
 use crate::coordinate::CoordinateModel;
 use crate::error::CoordinateError;
@@ -64,8 +66,48 @@ impl CoordinateSystem {
         Ok(Self {
             coordinates,
             obs_info,
+            maps: None,
         })
     }
+}
+
+/// `rec`'s coordinates with where they come from, in the order of their
+/// axes.
+pub(super) fn read_coordinates(
+    rec: &RecordValue,
+) -> Result<Vec<(RecordCoordinate, CoordinateModel)>, CoordinateError> {
+    let mut parsed = read_models(rec)?;
+    let placements = coordinate_order(rec, &mut parsed)?;
+    let mut parsed = parsed.into_iter().map(Some).collect::<Vec<_>>();
+    Ok(placements
+        .into_iter()
+        .map(|placement| {
+            let (_, field, coordinate) = parsed[placement.index]
+                .take()
+                .expect("an order names each coordinate once");
+            let placed = RecordCoordinate {
+                field,
+                pixel_axes: placement.pixel_axes,
+            };
+            (placed, coordinate)
+        })
+        .collect())
+}
+
+pub(super) fn read_models(
+    rec: &RecordValue,
+) -> Result<Vec<(usize, String, CoordinateModel)>, CoordinateError> {
+    let mut parsed = Vec::new();
+    for (index, key) in coordinate_record_entries(rec) {
+        let Some(Value::Record(coord_rec)) = rec.get(&key) else {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "coordinate field '{key}' is not a record"
+            )));
+        };
+        let coordinate = parse_coordinate_record(&key, coord_rec)?;
+        parsed.push((index, key, coordinate));
+    }
+    Ok(parsed)
 }
 
 /// What casa-rs reads, and the issue for the rest, for every refusal.
@@ -264,11 +306,16 @@ fn axis_maps(
 }
 
 /// The maps number the system's `kind` axes `0..n` once each.
-fn check_numbering<'a>(
+pub(super) fn check_numbering<'a>(
     maps: impl Iterator<Item = &'a [i32]> + Clone,
     kind: &str,
 ) -> Result<(), CoordinateError> {
-    let mut axes = maps.clone().flatten().copied().collect::<Vec<_>>();
+    let mut axes = maps
+        .clone()
+        .flatten()
+        .copied()
+        .filter(|&axis| axis >= 0)
+        .collect::<Vec<_>>();
     axes.sort_unstable();
     if axes
         .iter()
