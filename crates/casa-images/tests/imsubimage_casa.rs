@@ -4,13 +4,87 @@
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::CoordinateType;
+use casa_images::analysis::{SubimageOptions, SubimagePlan, SubimageRegion};
 use casa_images::image::image_history_entries;
 use casa_images::{
-    AnyPagedImage, GaussianBeam, ImageBeamSet, ImagePixel, ImsubimageRequest, PagedImage, imhead,
-    imsubimage,
+    AnyPagedImage, GaussianBeam, ImageBeamSet, ImagePixel, ImpvRequest, ImsubimageRequest,
+    PagedImage, PvPosition, imhead, impbcor, impv, imsubimage,
 };
-use casa_types::{Complex32, Complex64};
+use casa_provider_contracts::ParameterValue;
+use casa_types::{Complex32, Complex64, ScalarValue, Value};
 use serde_json::Value as Json;
+
+#[test]
+fn compound_regions_still_require_multi_region_task_support() {
+    let scratch = tempfile::tempdir().unwrap();
+    let input = input_path("cube.im");
+    let region = input_path("saved_compound_complement.rgn");
+    let pv = scratch.path().join("pv.im");
+    let corrected = scratch.path().join("corrected.im");
+    let pv_request = ImpvRequest {
+        imagename: input.clone(),
+        outfile: pv.clone(),
+        region: Some(ParameterValue::String(region.to_str().unwrap().to_string())),
+        start: Some(PvPosition::Integral([2, 2])),
+        end: Some(PvPosition::Integral([3, 2])),
+        ..ImpvRequest::default()
+    };
+    let correction_request = serde_json::from_value(serde_json::json!({
+        "imagename": input, "pbimage": input, "outfile": corrected, "region": region
+    }))
+    .unwrap();
+    for result in [
+        impv(&pv_request).unwrap_err(),
+        impbcor(&correction_request).unwrap_err(),
+    ] {
+        let message = result.to_string();
+        assert!(
+            message.contains("Only a single n-dimensional rectangular region is supported"),
+            "{message}"
+        );
+    }
+    assert!(!pv.exists());
+    assert!(!corrected.exists());
+}
+
+#[test]
+fn wrong_region_kind_is_rejected_for_compounds_and_their_children() {
+    let input = PagedImage::<f32>::open(input_path("cube.im")).unwrap();
+    let region =
+        casa_tables::read_table_record_file(&input_path("saved_compound_union.rgn")).unwrap();
+    for change_child in [false, true] {
+        let mut invalid_region = region.clone();
+        let bad = if change_child {
+            let Some(Value::Record(children)) = invalid_region.get_mut("regions") else {
+                panic!("compound regions");
+            };
+            let Some(Value::Record(first)) = children.get_mut("*1") else {
+                panic!("first compound member");
+            };
+            first
+        } else {
+            &mut invalid_region
+        };
+        bad.upsert("isRegion", Value::Scalar(ScalarValue::Int32(1)));
+        let error = SubimagePlan::new(
+            &input,
+            None,
+            SubimageOptions {
+                region: Some(SubimageRegion::Record(&invalid_region)),
+                dropdeg: false,
+                keepaxes: &[],
+            },
+        )
+        .err()
+        .expect("world region tag required");
+        assert!(
+            error
+                .to_string()
+                .contains("LC/pixel regions are not supported"),
+            "{error}"
+        );
+    }
+}
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imsubimage")
@@ -252,6 +326,7 @@ fn subimage_matches_casa_6_7_6_14() {
                 }
                 "saved_relative_disjoint" => "does not intersect the image",
                 "saved_relative_wide" => "SIN deproject: point outside unit circle",
+                "saved_compound_nonoverlap" => "regions do not overlap",
                 "drop_all" => "cannot drop all axes",
                 "empty" => "outfile must be specified",
                 unexpected => panic!("no assertion for error case {unexpected}"),
