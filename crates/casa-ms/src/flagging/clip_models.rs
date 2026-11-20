@@ -21,7 +21,7 @@ use super::{FlagDataColumn, FlaggingError, load_i32_cells};
 pub type FlagDataModelFactory = fn(
     &MeasurementSet,
     &[ResolvedMsSelectionRow],
-) -> Result<Box<dyn FlagDataModelPredictor>, FlaggingError>;
+) -> Result<Box<dyn FlagDataModelPredictor>, String>;
 
 /// Predict the visible Fourier or component terms for an individual selected row.
 pub trait FlagDataModelPredictor {
@@ -33,7 +33,7 @@ pub trait FlagDataModelPredictor {
         row: usize,
         correlations: &[i32],
         flags: &ArrayD<bool>,
-    ) -> Result<Option<ArrayD<Complex32>>, FlaggingError>;
+    ) -> Result<Option<ArrayD<Complex32>>, String>;
 }
 
 pub(super) struct ClipModels {
@@ -140,7 +140,7 @@ impl ClipModels {
                     .collect::<Vec<_>>();
                 let rows = resolve_selected_row_facts(ms, &fourier_rows, &planned)
                     .map_err(|error| failure(path, error))?;
-                factory(ms, &rows)
+                factory(ms, &rows).map_err(|error| failure(path, error))
             })
             .transpose()?;
         Ok((!fields.is_empty()).then_some(Self {
@@ -224,7 +224,8 @@ impl ClipModels {
                     cached(&mut frequencies, spw, |id| windows.chan_freq(id as usize))
                         .map_err(|error| failure(path, error))?;
                 let model = predictor
-                    .predict(ms, row, labels, &flags[slot])?
+                    .predict(ms, row, labels, &flags[slot])
+                    .map_err(|error| failure(path, error))?
                     .unwrap_or_else(|| default_model(labels, frequencies.len()));
                 cells[slot] = Some(ArrayValue::Complex32(model));
             }
