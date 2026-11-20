@@ -62,13 +62,10 @@ fn copy<T: ImageExprValue>(
     let mask = with_storage!(&mut product, output => rebin.copy_to(input, output.as_mut()))
         .map_err(raised)?;
     if let Some(mask) = mask {
-        match &mut product {
-            Storage::Paged(image) => {
-                image.put_mask("mask0", &mask).map_err(raised)?;
-                image.set_default_mask("mask0").map_err(raised)?;
-            }
-            Storage::Temp { image, .. } => image.set_anonymous_mask(mask).map_err(raised)?,
-        }
+        with_storage!(&mut product, output => output
+            .put_mask("mask0", &mask)
+            .and_then(|()| output.set_default_mask("mask0")))
+        .map_err(raised)?;
     }
     with_storage!(&mut product, output => output.set_image_info_record(info)).map_err(raised)?;
     if let Some(record) = &section.coordinate_record {

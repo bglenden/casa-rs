@@ -201,7 +201,7 @@ impl<'a> ImageRebin<'a> {
     }
 
     /// Average selected pixels into an allocated output using bounded reads.
-    /// Returns a validity mask when the input or selection uses one.
+    /// Returns a validity mask if an output bin has no valid samples.
     ///
     /// # Errors
     /// A source read, mask calculation or output write fails.
@@ -290,7 +290,7 @@ impl<'a> ImageRebin<'a> {
                 .map(|&axis| tile.position[axis])
                 .collect();
             output.put_slice(&self.section.squeeze(pixels), &offset)?;
-            if let Some(valid) = valid {
+            if let Some(valid) = valid.filter(|mask| mask.iter().any(|valid| !valid)) {
                 let valid = self.section.squeeze(valid);
                 let mask = mask_out
                     .get_or_insert_with(|| ArrayD::from_elem(IxDyn(&self.section.shape), true));

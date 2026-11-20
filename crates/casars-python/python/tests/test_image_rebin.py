@@ -78,7 +78,7 @@ def test_rebin_preserves_native_pixels_mask_and_metadata(casa, tmp_path, complex
         assert source.sethistory("fixture", ["source history"])
         world = source.coordsys().toworld([5, 3.5])["numeric"]
         filename = str(tmp_path / f"product-{index}.im")
-        product = source.rebin(filename, (3, 2), region=region)
+        product = source.rebin(filename, [3, 2], region=region)
         assert product.done() and source.done()
         for reader in (casa, tools):
             product = reader.image()
@@ -133,7 +133,8 @@ def test_rebin_fits_blank_and_stretch(casa, tmp_path):
         product = source.rebin("", [1, 2], mask=expression, stretch=True)
         np.testing.assert_array_equal(product.getchunk(), [[0], [4]])
         np.testing.assert_array_equal(product.getchunk(getmask=True), [[False], [True]])
-        assert product.maskhandler("get") == ["T"]
+        assert product.maskhandler("get") == ["mask0"]
+        assert product.maskhandler("default") == ["mask0"]
         assert product.done() and source.done()
 
 
@@ -170,7 +171,8 @@ def test_rebin_coordinate_parameters_match_casa(casa, kind):
         product = source.rebin("", factors)
         coords = product.coordsys()
         np.testing.assert_allclose(coords.toworld(np.ones(len(shape)))["numeric"], expected)
-        outputs.append((coords.increment(), coords.referencepixel(), coords.lineartransform()))
+        coordinate = "linear" if kind == "coupled" else "spectral"
+        outputs.append((coords.increment(), coords.referencepixel(), coords.lineartransform(coordinate)))
         assert product.done() and source.done()
     for left, right in zip(*outputs):
         _assert_value(left, right)
@@ -219,7 +221,7 @@ def test_rebin_validation_and_overwrite(casa, tmp_path):
         product = source.rebin(str(target), 2)
         np.testing.assert_array_equal(product.shape(), [3, 4, 2])
         assert product.done()
-        with pytest.raises(RuntimeError, match="exists"):
+        with pytest.raises(RuntimeError, match="exists|already a file"):
             source.rebin(str(target), [3, 2])
         product = source.rebin(str(target), [3, 2], overwrite=True)
         np.testing.assert_array_equal(product.shape(), [2, 2, 2])
@@ -242,4 +244,32 @@ def test_rebin_one_bin_larger_than_the_read_tile():
     product = source.rebin("", shape)
     np.testing.assert_array_equal(product.getchunk(), expected)
     np.testing.assert_array_equal(product.getchunk(getmask=True), mask)
+    assert product.done() and source.done()
+
+
+def test_rebin_drops_an_all_valid_output_mask(casa):
+    for backend in (casa, tools):
+        source = backend.image()
+        assert source.fromshape(shape=[4, 4])
+        assert source.putregion(pixelmask=np.eye(4, dtype=bool) | np.fliplr(np.eye(4, dtype=bool)))
+        product = source.rebin("", [2, 2])
+        assert product.getchunk(getmask=True).all()
+        assert product.maskhandler("get") == ["T"]
+        assert product.maskhandler("default") == [""]
+        assert product.done() and source.done()
+
+
+def test_rebin_accepts_tuple_factors_without_a_post_write_error(casa, tmp_path):
+    source = casa.image()
+    assert source.fromshape(shape=[4, 4])
+    oracle = tmp_path / "oracle.im"
+    with pytest.raises(SystemError):
+        source.rebin(str(oracle), (2, 2))
+    assert oracle.is_dir()
+    assert source.done()
+
+    source = tools.image()
+    assert source.fromshape(shape=[4, 4])
+    product = source.rebin(str(tmp_path / "product.im"), (2, 2))
+    np.testing.assert_array_equal(product.shape(), [2, 2])
     assert product.done() and source.done()
