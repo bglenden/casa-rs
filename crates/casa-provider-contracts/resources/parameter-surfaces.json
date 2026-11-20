@@ -23181,7 +23181,7 @@
         },
         {
           "name": "correlation",
-          "concept": {"id": "ms.selection.correlation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.correlation", "semantic_revision": 3},
           "order": 11,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -23189,10 +23189,11 @@
           "projections": {
             "cli": {"flags": ["--correlation"], "metavar": "SELECTOR"},
             "provider": {"field": "correlation"},
-            "python": {"name": "correlation"},
+            "python": {"name": "correlation", "type_hint": "str"},
             "presentation": {"label": "Correlation", "group": "Selection", "advanced": true}
           },
-          "unimplemented": {"issue": 978}
+          "surface_note": "Selects stored correlation planes for manual, unflag and quack. Other modes and correlation expressions remain on #978.",
+          "reviewed_homonym": {"review_id": "#1617", "reason": "Flagdata selects stored correlation planes inside its agents using literal expressions."}
         },
         {
           "name": "intent",
