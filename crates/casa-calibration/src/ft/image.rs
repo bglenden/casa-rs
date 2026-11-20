@@ -14,8 +14,11 @@ use casa_imaging_operator::{
     Basis, Boxcar, ConvolutionFunctionSet, GridGeometry, GridPadding, GridPolarization,
     GridPrecision, ImageCorrection, ImageExtent, MOSAIC_OVERSAMPLING, MeasurementOperator,
     ModelImages, ModelPlane, ModelPrescale, MosaicPb, PaddingFactor, PolarizationRouting,
-    SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    PreparedModelGrids, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WPlaneCount,
+    WPlanes, grid_planning_bytes,
 };
+use casa_imaging_runtime::pass::{WORKER_STACK_BYTES, WorkerTeam};
+use casa_imaging_runtime::{Demand, HostResources, Reservation, ResourcePolicy, admit};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::virtual_model::ft_record::{
     FirstBuffer, GridFt, casa_spectral, legacy_common_mosaic, legacy_image_mosaic, legacy_mosaic,
@@ -730,62 +733,93 @@ impl ImageTransform {
             cache_bytes,
         )
         .map_err(invalid)?;
-        let mut nonzero = false;
-        for plane in 0..channels {
-            let values = image
-                .get_slice(&[first_x, first_y, 0, plane], &[nx, ny, npol, 1])
-                .map_err(invalid)?;
-            nonzero |= values.iter().any(|value| *value != 0.0);
-            let frequency = self.frequencies[plane];
-            let beam = beam
-                .as_ref()
-                .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
-            let images = (0..npol)
-                .map(|pol| {
-                    Array2::from_shape_fn((ny, nx), |(y, x)| {
-                        let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
-                            let radius = separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
-                            pattern.power(radius)
-                        });
-                        values[[x, y, pol, 0]] * scale
-                    })
-                })
-                .collect();
-            let model = ModelImages {
-                first_plane: plane as u32,
-                planes: vec![ModelPlane { images }],
-            };
-            let grid = match &mosaic {
-                Some(correction) => self.operator.prepare_model_with_correction(
-                    &model,
-                    ModelPrescale::Unit,
-                    correction,
-                ),
-                None => self.operator.prepare_model(&model, ModelPrescale::Unit),
+        let work_bytes = model_plane_memory([nx, ny], npol, [gx, gy], grid_pols);
+        let (workers, reservation) =
+            model_workers(self.options.native_threads, channels, work_bytes);
+        let (_reservation, team) = match WorkerTeam::new(workers) {
+            Ok(team) => (reservation, team),
+            Err(_) => {
+                drop(reservation);
+                (None, WorkerTeam::new(1).map_err(invalid)?)
             }
-            .map_err(invalid)?;
-            for pol in 0..grid_pols {
-                let shape = IxDyn(&[gx, gy, 1, 1]).f();
-                let values = match self.operator.precision() {
-                    GridPrecision::F32 => {
-                        let cells = grid.block::<f32>(0, pol, 0);
-                        ArrayD::from_shape_fn(shape, |index| cells[index[1] * gx + index[0]])
-                    }
-                    GridPrecision::F64 => {
-                        let cells = grid.block::<f64>(0, pol, 0);
-                        ArrayD::from_shape_fn(shape, |index| {
-                            let cell = cells[index[1] * gx + index[0]];
-                            Complex32::new(cell.re as f32, cell.im as f32)
+        };
+        tracing::debug!(
+            requested = self.options.native_threads,
+            workers = team.workers(),
+            channels,
+            "preparing imager Fourier model planes"
+        );
+        let nonzero = prepare_model_planes(
+            &team,
+            channels,
+            |plane| {
+                image
+                    .get_slice(&[first_x, first_y, 0, plane], &[nx, ny, npol, 1])
+                    .map_err(invalid)
+            },
+            |plane, values| {
+                let frequency = self.frequencies[plane];
+                let beam = beam
+                    .as_ref()
+                    .map(|(pattern, separation)| (pattern.at_frequency(frequency), separation));
+                let images = (0..npol)
+                    .map(|pol| {
+                        Array2::from_shape_fn((ny, nx), |(y, x)| {
+                            let scale = beam.as_ref().map_or(1., |(pattern, separation)| {
+                                let radius =
+                                    separation[[y, x]].to_degrees() * 60.0 * frequency / 1e9;
+                                pattern.power(radius)
+                            });
+                            values[[x, y, pol, 0]] * scale
                         })
-                    }
+                    })
+                    .collect();
+                let model = ModelImages {
+                    first_plane: plane as u32,
+                    planes: vec![ModelPlane { images }],
                 };
-                output
-                    .put_slice(&values, &[0, 0, pol, plane])
-                    .map_err(invalid)?;
-            }
-        }
+                match &mosaic {
+                    Some(correction) => self.operator.prepare_model_with_correction(
+                        &model,
+                        ModelPrescale::Unit,
+                        correction,
+                    ),
+                    None => self.operator.prepare_model(&model, ModelPrescale::Unit),
+                }
+            },
+            |plane, grid| self.write_plane(&mut output, grid, plane),
+        )?;
         output.save().map_err(invalid)?;
         Ok(nonzero)
+    }
+
+    fn write_plane(
+        &self,
+        output: &mut PagedImage<Complex32>,
+        grid: &PreparedModelGrids,
+        plane: usize,
+    ) -> MsResult<()> {
+        let [gx, gy] = self.operator.geometry().grid_shape();
+        for pol in 0..self.operator.polarization().grid_pols() {
+            let shape = IxDyn(&[gx, gy, 1, 1]).f();
+            let values = match self.operator.precision() {
+                GridPrecision::F32 => {
+                    let cells = grid.block::<f32>(0, pol, 0);
+                    ArrayD::from_shape_fn(shape, |index| cells[index[1] * gx + index[0]])
+                }
+                GridPrecision::F64 => {
+                    let cells = grid.block::<f64>(0, pol, 0);
+                    ArrayD::from_shape_fn(shape, |index| {
+                        let cell = cells[index[1] * gx + index[0]];
+                        Complex32::new(cell.re as f32, cell.im as f32)
+                    })
+                }
+            };
+            output
+                .put_slice(&values, &[0, 0, pol, plane])
+                .map_err(invalid)?;
+        }
+        Ok(())
     }
 
     fn record(
@@ -924,6 +958,98 @@ impl ImageTransform {
         );
         record_selection(&mut record, ms, selected, axis, self.frequencies.len())?;
         Ok(record)
+    }
+}
+
+fn prepare_model_planes(
+    team: &WorkerTeam,
+    channels: usize,
+    mut read: impl FnMut(usize) -> MsResult<ArrayD<f32>>,
+    prepare: impl Fn(
+        usize,
+        &ArrayD<f32>,
+    ) -> Result<PreparedModelGrids, casa_imaging_operator::OperatorError>
+    + Send
+    + Sync,
+    mut write: impl FnMut(usize, &PreparedModelGrids) -> MsResult<()>,
+) -> MsResult<bool> {
+    let mut nonzero = false;
+    let workers = team.workers();
+    for first_plane in (0..channels).step_by(workers) {
+        let end = (first_plane + workers).min(channels);
+        let mut planes = Vec::with_capacity(end - first_plane);
+        for plane in first_plane..end {
+            let values = read(plane)?;
+            nonzero |= values.iter().any(|value| *value != 0.0);
+            planes.push((values, None));
+        }
+        team.for_each_mut(&mut planes, |index, (values, grid)| {
+            *grid = Some(prepare(first_plane + index, values)?);
+            Ok::<_, casa_imaging_operator::OperatorError>(())
+        })
+        .map_err(invalid)?;
+        for (index, (_, grid)) in planes.into_iter().enumerate() {
+            write(
+                first_plane + index,
+                &grid.expect("the Fourier plane was prepared"),
+            )?;
+        }
+    }
+    Ok(nonzero)
+}
+
+fn model_worker_memory(workers: usize, work_bytes: u64) -> u64 {
+    // Match the runtime's other owners of a dedicated worker team.
+    let team_worker_bytes = (WORKER_STACK_BYTES + 65_536) as u64;
+    work_bytes
+        .saturating_add(team_worker_bytes)
+        .saturating_mul(workers as u64)
+}
+
+fn model_plane_memory(
+    [nx, ny]: [usize; 2],
+    image_polarizations: usize,
+    [gx, gy]: [usize; 2],
+    grid_polarizations: usize,
+) -> u64 {
+    let image_bytes = nx
+        .saturating_mul(ny)
+        .saturating_mul(image_polarizations)
+        .saturating_mul(2 * size_of::<f32>());
+    let grid_cells = gx.saturating_mul(gy);
+    let grid_bytes = grid_cells
+        .saturating_mul(grid_polarizations + 1)
+        .saturating_mul(2 * size_of::<f64>());
+    (image_bytes.saturating_add(grid_bytes) as u64).saturating_add(grid_planning_bytes(grid_cells))
+}
+
+#[cfg(test)]
+#[path = "image_worker_tests.rs"]
+mod worker_tests;
+
+fn model_workers(threads: i32, planes: usize, work_bytes: u64) -> (usize, Option<Reservation>) {
+    if threads == 1 || planes <= 1 {
+        return (1, None);
+    }
+    let Ok(host) = HostResources::detect() else {
+        return (1, None);
+    };
+    let requested = usize::try_from(threads)
+        .ok()
+        .filter(|count| *count > 0)
+        .unwrap_or(host.threads);
+    let workers = requested.min(host.threads).min(planes);
+    if workers <= 1 {
+        return (1, None);
+    }
+    let policy = ResourcePolicy::Balanced;
+    let demand = Demand {
+        phase: "legacy imager model planes",
+        memory: model_worker_memory(workers, work_bytes),
+    };
+    match admit(&host, &policy, &demand) {
+        Ok(reservation) => (workers, Some(reservation)),
+        Err(_) => (1, None),
     }
 }
 

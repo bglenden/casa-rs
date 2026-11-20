@@ -670,6 +670,7 @@ impl ImagerPrediction {
         };
         let mut geometry = PredictionGeometry {
             settings: self.options,
+            native_threads: self.options.threads,
             facets,
             tangent,
             phase_centre_time: model.phase_centre_time,

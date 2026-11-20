@@ -51,8 +51,8 @@ pub struct ImagerTransformOptions {
     pub cache_size: i64,
     /// Scratch grid tile side.
     pub tile_size: i32,
-    /// Worker limit stored for CASA readers. Native FT currently uses
-    /// one worker per prediction.
+    /// Worker limit for independent model-plane transforms, also stored for
+    /// CASA readers. Nonpositive values use the available worker count.
     pub threads: i32,
     /// Override of the observatory position in ITRF spherical coordinates.
     pub observatory: Option<[f64; 3]>,
@@ -98,6 +98,7 @@ impl ImagerTransformOptions {
 #[derive(Clone, Default)]
 pub(super) struct PredictionGeometry {
     pub(super) settings: ImagerTransformOptions,
+    pub(super) native_threads: i32,
     pub(super) facets: usize,
     pub(super) tangent: Option<MDirection>,
     pub(super) phase_centre_time: Option<f64>,
