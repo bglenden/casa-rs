@@ -371,7 +371,7 @@ impl PyImageTool {
                 (zscore, maxiter),
                 niter,
             )?;
-            if disk || !logfile.is_empty() || image.fits().is_some() {
+            if disk || !logfile.is_empty() {
                 return Err(stub("statistics").unwrap_err());
             }
             // casatools stores its public thresholds as Float even when the
@@ -423,6 +423,11 @@ impl PyImageTool {
                     single_precision,
                 };
                 match &*image {
+                    ImageHandle::Float(Storage::Temp {
+                        image,
+                        fits: Some(fits),
+                        ..
+                    }) => calculate(&fits.image_view(image), &chunk, options),
                     ImageHandle::Float(storage) => {
                         with_storage!(storage, image => calculate(image.as_ref(), &chunk, options))
                     }
