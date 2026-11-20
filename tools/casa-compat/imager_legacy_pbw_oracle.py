@@ -244,7 +244,18 @@ def mosaic_control(root, dataset, model, cache):
     print('legacy pbmosaic', expected.size, 'complex samples per product', errors, flush=True)
     assert max(errors) < 1.e-3
     assert 'name' not in recipe(pinned_saved)
+    pinned_refuses = root / 'pinned-refuses.ms'
+    make_input(pinned_saved, pinned_refuses, scratch=False)
+    for dataset in (pinned_saved, pinned_refuses):
+        reader = table()
+        assert reader.open(str(dataset))
+        assert 'CORRECTED_DATA' not in reader.colnames()
+        assert reader.done()
     reject_recipe(native_ms, pinned_saved, 'virtual model has no name string')
+    subprocess.run([sys.executable, __file__, '--casa-reject', str(pinned_refuses),
+                    'field name is unknown'], check=True)
+    np.testing.assert_array_equal(data(pinned_saved, 'CORRECTED_DATA'),
+                                  data(pinned_refuses, 'CORRECTED_DATA'))
     subprocess.run([sys.executable, __file__, '--casa-reject', str(saved), 'Unsupported FTMachine'],
                    check=True)
 

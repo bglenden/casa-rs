@@ -119,24 +119,44 @@ pub fn subtract_visibility_model_selected(
         lock,
     )?;
     let batch_rows = plan.batch_rows().max(1);
+    let mut prediction_error = None;
     MeasurementSetWriteSession::mutate_selected_rows_with_lock(ms, plan, lock, |session, ms| {
         for rows in resolved.selected_rows.chunks(batch_rows) {
-            let batch = subtract_batch(
-                ms,
-                rows,
-                input,
-                &models,
-                &correlations,
-                &destinations[0],
-                |row| selected(row).then_some(reverse),
-            )
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+            let build = |predict| {
+                subtract_batch(
+                    ms,
+                    rows,
+                    input,
+                    &models,
+                    &correlations,
+                    &destinations[0],
+                    |row| (predict && selected(row)).then_some(reverse),
+                )
+            };
+            let batch = match build(prediction_error.is_none()) {
+                Err(error) if create && prediction_error.is_none() => {
+                    // CASA initializes a new corrected column before model
+                    // prediction. After a refusal, finish its initialization
+                    // without repeating any subtraction already written.
+                    prediction_error = Some(error);
+                    build(false)
+                }
+                result => result,
+            }
+            .map_err(visibility_column_error)?;
             session.write_mutation_batch(ms, batch)?;
         }
         Ok(())
     })
     .map_err(invalid)?;
+    if let Some(error) = prediction_error {
+        return Err(invalid(visibility_column_error(error)));
+    }
     Ok(())
+}
+
+fn visibility_column_error(error: MsError) -> MeasurementSetWriteError {
+    MeasurementSetWriteError::Column(error.to_string())
 }
 
 fn subtract_batch(
