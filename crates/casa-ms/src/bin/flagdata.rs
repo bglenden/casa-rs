@@ -563,7 +563,9 @@ mod tests {
 
     /// The request a `flagdata` command line resolves to.
     fn request_for(args: &[&str]) -> Result<FlagDataRequest, TaskFailure> {
-        read(args, flagdata_request)
+        read(args, |task| {
+            flagdata_request(task, channel_bin_widths(task)?)
+        })
     }
 
     #[test]
