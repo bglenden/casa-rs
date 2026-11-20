@@ -15,6 +15,7 @@ use tempfile::tempdir;
 
 use common::{
     NUM_CHAN, NUM_CORR, create_msexplore_averaging_fixture_ms, create_msexplore_fixture_ms,
+    create_two_polarization_fixture_ms,
 };
 
 #[test]
@@ -48,6 +49,29 @@ fn clipzeros_matches_casa_float_epsilon_behavior() {
     assert_flag(&ms, 0, 0, 0);
     assert_flag(&ms, 0, 0, 1);
     assert_not_flag(&ms, 0, 0, 2);
+}
+
+#[test]
+fn typed_default_clip_leaves_stored_i_clear() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_two_polarization_fixture_ms(temp.path(), [1, 2, 3, 4], &[]);
+    seed_constant_data_with_outliers(&ms_path, &[(0, 0, 0, 0.0), (2, 0, 0, 0.0)]);
+
+    flagdata_path(
+        &ms_path,
+        &FlagDataRequest {
+            mode: FlagDataMode::Clip,
+            flagbackup: false,
+            clipzeros: true,
+            ..FlagDataRequest::default()
+        },
+    )
+    .expect("run typed default clip");
+
+    let ms = MeasurementSet::open(&ms_path).expect("reopen MS");
+    assert_flag(&ms, 0, 0, 0);
+    assert_not_flag(&ms, 2, 0, 0);
+    assert!(!flag_row(&ms, 2));
 }
 
 #[test]
