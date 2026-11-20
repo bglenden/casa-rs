@@ -27729,7 +27729,7 @@
     {
       "kind": "task",
       "id": "feather",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "Feather",
       "category": "Images",
       "summary": "Combine high-resolution and low-resolution images in the Fourier domain",
@@ -27756,8 +27756,7 @@
             "provider": {"field": "effdishdiam"},
             "python": {"name": "effdishdiam"},
             "presentation": {"label": "Effective Dish Diameter", "group": "Feather", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "lowpassfiltersd",
@@ -27771,8 +27770,7 @@
             "provider": {"field": "lowpassfiltersd"},
             "python": {"name": "lowpassfiltersd"},
             "presentation": {"label": "Low-pass Filter SD", "group": "Feather", "advanced": true}
-          },
-          "unimplemented": {"issue": 977}
+          }
         },
         {
           "name": "imagename",

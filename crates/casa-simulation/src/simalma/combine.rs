@@ -64,6 +64,8 @@ pub(super) fn execute(
         highres: high.to_path_buf(),
         lowres: scaled.clone(),
         sdfactor: 1.,
+        effdishdiam: -1.0,
+        lowpassfiltersd: false,
         overwrite: false,
     })
     .map_err(failure)?;

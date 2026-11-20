@@ -1150,8 +1150,6 @@ def feather(
     """Combine high-resolution and low-resolution images in the Fourier domain
 
     CASA's ``feather``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``effdishdiam``, ``lowpassfiltersd``.
     """
     return _call_casa(feather, locals())
 

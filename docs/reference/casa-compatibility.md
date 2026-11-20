@@ -23,7 +23,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | concat | concat | yes | 9 | 9 | 0 | 3 | 0 | 0 |
 | delmod | delmod | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | exportfits | exportfits | yes | 12 | 12 | 0 | 0 | 0 | 0 |
-| feather | feather | yes | 6 | 6 | 0 | 2 | 1 | 0 |
+| feather | feather | yes | 6 | 6 | 0 | 0 | 1 | 0 |
 | flagdata | flagdata | yes | 76 | 76 | 0 | 40 | 0 | 0 |
 | flagmanager | flagmanager | yes | 6 | 6 | 0 | 0 | 0 | 0 |
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 0 | 3 | 0 |
@@ -344,7 +344,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the lowres parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `effdishdiam`, `lowpassfiltersd`
 - casa-rs parameters CASA lacks: `overwrite`
 - Shared parameters: 6, in CASA's order: yes
 - Defaults that differ: none

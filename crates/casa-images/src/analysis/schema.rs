@@ -712,6 +712,12 @@ pub struct FeatherRequest {
     /// Single-dish scale factor.
     #[serde(default = "default_sdfactor")]
     pub sdfactor: f32,
+    /// Positive effective single-dish diameter in metres. A nonpositive value uses the input beam.
+    #[serde(default = "default_effdishdiam")]
+    pub effdishdiam: f32,
+    /// Low-pass filter the dish image at its nominal diameter when no positive diameter is given.
+    #[serde(default)]
+    pub lowpassfiltersd: bool,
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
@@ -731,6 +737,10 @@ fn default_pv_unit() -> String {
 
 fn default_regrid_interpolation() -> String {
     "linear".to_string()
+}
+
+fn default_effdishdiam() -> f32 {
+    -1.0
 }
 
 fn default_sdfactor() -> f32 {
