@@ -88,6 +88,13 @@ Use `ia.open("example.fits")` to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
 Use `ia.rename("new-name.fits")` to move an attached FITS file. The tool
 reopens the moved file and reads its stored metadata again.
+
+Use `ia.insert("source.im")` to place a source image by aligning reference
+pixels, or supply `locate` to set the lower corner. A region record may
+select a strided section. CRTF text uses the attached destination's
+coordinates before applying the selection to the source. An existing writable
+destination mask receives the source validity over the inserted section.
+
 Use `ia.fromfits("example.im", "example.fits")` to import a FITS image as a
 writable native CASA image for pixel edits and `ia.subimage(...)`. `whichhdu`
 selects the image HDU and `whichrep` selects the coordinate representation.

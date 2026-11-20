@@ -4,7 +4,10 @@
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
 pub(super) mod coords;
+mod insert;
 pub(super) mod region;
+
+pub use insert::ImageInsertion;
 
 use std::collections::BTreeSet;
 use std::fs;

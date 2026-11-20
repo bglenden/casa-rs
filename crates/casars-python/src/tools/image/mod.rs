@@ -13,6 +13,7 @@ mod fits_header;
 mod fits_import;
 mod fits_rename;
 mod handle;
+mod insert;
 mod lifecycle;
 mod makecomplex;
 mod mask_expression;

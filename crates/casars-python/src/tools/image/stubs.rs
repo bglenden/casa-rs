@@ -553,18 +553,6 @@ impl PyImageTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (infile = None, region = None, locate = None, verbose = None), text_signature = "($self, infile='', region={}, locate=[-1.0], verbose=False)")]
-    fn insert(
-        &self,
-        infile: Option<&Bound<'_, PyAny>>,
-        region: Option<&Bound<'_, PyAny>>,
-        locate: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("insert")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (writelock = None, nattempts = None), text_signature = "($self, writelock=False, nattempts=0)")]
     fn lock(
         &self,

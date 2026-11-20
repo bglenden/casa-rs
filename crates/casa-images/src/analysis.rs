@@ -31,7 +31,8 @@ mod importfits;
 mod imregrid;
 mod imsubimage;
 pub use imsubimage::{
-    SubimageOptions, SubimagePlan, SubimageRegion, ensure_outfile_does_not_alias_input,
+    ImageInsertion, SubimageOptions, SubimagePlan, SubimageRegion,
+    ensure_outfile_does_not_alias_input,
 };
 mod list_log;
 mod planes;

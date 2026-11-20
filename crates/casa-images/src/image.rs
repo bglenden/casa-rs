@@ -636,6 +636,11 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
     /// Replaces a named mask.
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError>;
 
+    /// Whether an existing named mask accepts writes.
+    fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
+        Ok(self.mask_names().iter().any(|entry| entry == name))
+    }
+
     /// Write a unit-stride section of a named mask. New masks start false.
     fn put_mask_slice(
         &mut self,
@@ -2357,32 +2362,45 @@ impl<T: ImagePixel> PagedImage<T> {
         start: &[usize],
     ) -> Result<(), ImageError> {
         validate_mask_slice_write(&self.shape, data.shape(), start)?;
-        let record = make_paged_mask_record(&subtable_reference(name), &self.shape);
-        let mut masks = match self.table.keywords().get(MASKS_KEYWORD) {
-            Some(Value::Record(rec)) => rec.clone(),
-            _ => RecordValue::default(),
+        let entry = match self.table.keywords_mut().get_mut(MASKS_KEYWORD) {
+            Some(Value::Record(masks)) => masks.get_mut(name),
+            _ => None,
         };
-        masks.upsert(name, Value::Record(record));
-        self.table
-            .keywords_mut()
-            .upsert(MASKS_KEYWORD, Value::Record(masks));
+        let relative_path = match entry {
+            Some(Value::Array(ArrayValue::Bool(mask))) => {
+                if mask.shape() != self.shape.as_slice() {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: self.shape.clone(),
+                        got: mask.shape().to_vec(),
+                    });
+                }
+                return assign_mask_slice(mask, data, start);
+            }
+            Some(Value::Record(record)) => Some(Self::persistent_mask_relative_path(record)?),
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "mask keyword is neither a bool array nor a paged-mask record".to_string(),
+                ));
+            }
+            None => None,
+        };
 
         if let Some(path) = &self.path {
-            let mask_path = path.join(name);
-            if !mask_path.exists() {
-                let mut mask = PagedArray::<bool>::create_with_cache(
-                    TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
-                    &mask_path,
-                    self.cache_bytes(),
-                )
-                .map_err(ImageError::from)?;
-                mask.put_slice(data, start)?;
-                mask.flush().map_err(ImageError::from)?;
+            let mask_path = relative_path.as_ref().map_or_else(
+                || path.join(name),
+                |reference| casa_tables::add_directory(reference, path),
+            );
+            let mut mask = if relative_path.is_some() || mask_path.exists() {
+                PagedArray::<bool>::open_with_cache(mask_path, self.cache_bytes())?
             } else {
-                let mut mask = PagedArray::<bool>::open_with_cache(&mask_path, self.cache_bytes())?;
-                mask.put_slice(data, start)?;
-                mask.flush().map_err(ImageError::from)?;
-            }
+                PagedArray::<bool>::create_with_cache(
+                    TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
+                    mask_path,
+                    self.cache_bytes(),
+                )?
+            };
+            mask.put_slice(data, start)?;
+            mask.flush()?;
         } else {
             let mask = self
                 .temp_masks
@@ -2390,7 +2408,12 @@ impl<T: ImagePixel> PagedImage<T> {
                 .or_insert_with(|| ArrayD::from_elem(IxDyn(&self.shape), false));
             assign_mask_slice(mask, data, start)?;
         }
-        self.persistent_masks.borrow_mut().remove(name);
+        if relative_path.is_none() {
+            self.register_paged_mask(name);
+        } else {
+            // Multiple region names can reference the same on-disk table.
+            self.persistent_masks.borrow_mut().clear();
+        }
         Ok(())
     }
 
@@ -2891,6 +2914,60 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
 
     fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
         PagedImage::put_mask(self, name, data)
+    }
+
+    fn named_mask_is_writable(&self, name: &str) -> Result<bool, ImageError> {
+        let Some(Value::Record(masks)) = self.table.keywords().get(MASKS_KEYWORD) else {
+            return Ok(false);
+        };
+        match masks.get(name) {
+            Some(Value::Array(ArrayValue::Bool(mask))) => {
+                if mask.shape() != self.shape() {
+                    return Err(ImageError::ShapeMismatch {
+                        expected: self.shape.clone(),
+                        got: mask.shape().to_vec(),
+                    });
+                }
+                Ok(true)
+            }
+            Some(Value::Record(_)) if self.path.is_none() => Ok(self.temp_masks.contains_key(name)),
+            Some(Value::Record(record)) => {
+                let reference = Self::persistent_mask_relative_path(record)?;
+                let path = casa_tables::add_directory(
+                    &reference,
+                    self.path.as_deref().ok_or(ImageError::NotPersistent)?,
+                );
+                match casa_tables::publication::check_write_access(&path.join("table.dat")) {
+                    Ok(()) => self.with_persistent_mask(name, record, |mask| {
+                        if mask.shape() == self.shape() {
+                            Ok(true)
+                        } else {
+                            Err(ImageError::ShapeMismatch {
+                                expected: self.shape.clone(),
+                                got: mask.shape().to_vec(),
+                            })
+                        }
+                    }),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::PermissionDenied
+                                | std::io::ErrorKind::ReadOnlyFilesystem
+                        ) =>
+                    {
+                        Ok(false)
+                    }
+                    Err(error) => Err(ImageError::Io(format!(
+                        "open mask {}: {error}",
+                        path.display()
+                    ))),
+                }
+            }
+            Some(_) => Err(ImageError::InvalidMetadata(
+                "mask keyword is neither a bool array nor a paged-mask record".into(),
+            )),
+            None => Ok(false),
+        }
     }
 
     fn put_mask_slice(
@@ -4386,6 +4463,52 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(untouched.iter().all(|value| !*value));
+    }
+
+    #[test]
+    fn paged_image_mask_slice_preserves_existing_storage_and_pixels() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing_masks.image");
+        let shape = vec![4, 3];
+        let mut image = PagedImage::<f32>::create(shape.clone(), make_coords(), &path).unwrap();
+        let initial = ArrayD::from_shape_fn(IxDyn(&shape), |index| index[0] != 0);
+        image.put_mask("backing", &initial).unwrap();
+        let mut masks = RecordValue::default();
+        masks.upsert("inline", Value::Array(ArrayValue::Bool(initial.clone())));
+        for name in ["aliased", "same_backing"] {
+            masks.upsert(
+                name,
+                Value::Record(make_paged_mask_record(
+                    &subtable_reference("backing"),
+                    &shape,
+                )),
+            );
+        }
+        image
+            .table
+            .keywords_mut()
+            .upsert(MASKS_KEYWORD, Value::Record(masks));
+        image.set_default_mask("inline").unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let mut image = PagedImage::<f32>::open(&path).unwrap();
+        let patch = ArrayD::from_elem(IxDyn(&[1, 1]), false);
+        assert!(image.get_named_mask("same_backing").unwrap()[[2, 1]]);
+        for name in ["inline", "aliased"] {
+            MutableImageInterface::put_mask_slice(&mut image, name, &patch, &[2, 1]).unwrap();
+        }
+        assert!(!image.get_named_mask("same_backing").unwrap()[[2, 1]]);
+        image.save().unwrap();
+        drop(image);
+
+        let mut expected = initial;
+        expected[[2, 1]] = false;
+        let image = PagedImage::<f32>::open(&path).unwrap();
+        assert_eq!(image.get_mask().unwrap(), Some(expected.clone()));
+        assert_eq!(image.get_named_mask("aliased").unwrap(), expected);
+        assert!(!path.join("inline").exists());
+        assert!(!path.join("aliased").exists());
     }
 
     #[test]
