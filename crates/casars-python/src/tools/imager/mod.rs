@@ -10,8 +10,8 @@ use std::sync::Mutex;
 
 use casa_calibration::{
     AttachmentError, AttachmentOptions, ImagerAttachments, ImagerChannelSelection,
-    ImagerLegacyPbWOptions, ImagerPrediction, ImagerPredictionModel, ImagerSingleDishSetup,
-    ImagerVoltagePattern,
+    ImagerLegacyAwOptions, ImagerLegacyPbWOptions, ImagerPrediction, ImagerPredictionModel,
+    ImagerSingleDishSetup, ImagerVoltagePattern,
 };
 use casa_ms::MsSelection;
 use pyo3::{
@@ -216,17 +216,7 @@ impl PyImager {
     ) -> PyResult<bool> {
         // The A/W controls are consumed by their Fourier machines. Ordinary
         // GridFT and WProjectFT do not use them.
-        let _ = (
-            epjtablename,
-            rotpastep,
-            pastep,
-            imagetilevol,
-            psterm,
-            aterm,
-            mterm,
-            wbawp,
-            conjbeams,
-        );
+        let _ = (epjtablename, imagetilevol, psterm, aterm, mterm, wbawp);
         self.attached(py, |state| {
             if !state.prediction.has_image_definition() {
                 return Ok(false);
@@ -255,6 +245,23 @@ impl PyImager {
                         apply_pointing_offsets: applypointingoffsets,
                         correct_primary_beam: dopbgriddingcorrections,
                         primary_beam_limit: pblimit,
+                    },
+                )
+            } else if matches!(
+                ftmachine.to_ascii_lowercase().as_str(),
+                "awproject" | "mawproject"
+            ) {
+                state.prediction.configure_legacy_aw(
+                    settings,
+                    ImagerLegacyAwOptions {
+                        cache_directory: PathBuf::from(cfcachedirname),
+                        w_planes: wprojplanes,
+                        apply_pointing_offsets: applypointingoffsets,
+                        correct_primary_beam: dopbgriddingcorrections,
+                        primary_beam_limit: pblimit,
+                        pa_step_deg: pastep,
+                        rotation_step_deg: rotpastep,
+                        conjugate_beams: conjbeams,
                     },
                 )
             } else {

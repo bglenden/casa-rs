@@ -3991,6 +3991,35 @@ length. A width of `4294967298` wraps into two channels, which can flag two
 samples even though the whole-window mean falls outside the clipping
 range. Native flagdata applies the same whole-window rule as other widths
 larger than the window, for both scalar and per-window forms.
+## Time-averaged clipping can substitute zeros for defined inputs
+
+In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping
+`RESIDUAL_DATA`, `FLOAT_DATA`, `WEIGHT` or `WEIGHT_SPECTRUM` on the paired
+fixture. It misses nonzero averaged values and flags the selected samples
+when clipping inside a narrow range around zero. The time clip oracle
+checks both effects against the same physical visibilities and statistics.
+
+Native flagdata averages observed visibilities with inverse variance,
+uses the same weights for the model when deriving an observed residual,
+and accumulates each weight spectrum over its actual contributing
+integrations. The test calculates the expected masks from the stored values,
+then compares flags and data using both CASA and casacore readback.
+
+## Time-averaged clipping can derive row flags from a subset of channels
+
+With `timeavg=True`, `channelavg=True` and `spw="0:1~2"` on a
+four-channel window, CASA 6.7.6.14 can set `FLAG_ROW` when the selected
+channels meet the clip range. This masks the original unselected
+channels even though their stored sample flags stay clear. CASA can
+also leave row flags clear for fully flagged original rows in an earlier
+time bin, and clear a pre-existing row flag while writing an averaged
+result.
+
+Native time-averaged clipping preserves pre-existing row flags and sets
+new row flags when all original cells in the changed row are flagged.
+The paired oracle computes both the selected sample flags and the
+original-axis row status, including a whole-scan control where CASA
+writes the same row flags.
 
 ## Weight clipping can ignore defined channel weights
 
@@ -7999,3 +8028,40 @@ On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
 type="c")` followed by `image.set(pixels=2)` terminates Python with SIGSEGV.
 casa-rs raises `RuntimeError` and preserves the complex image. See
 [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
+## Legacy AW prediction needs a usable sensitivity image for PB correction
+
+With CASA 6.7.6.14, the legacy `imager.ft` routes `awproject` and
+`mawproject` predict the same visibilities on the original VLA fixture.
+A `tclean` CFS cache works directly when `dopbgriddingcorrections=False`.
+With correction enabled, the legacy imager fails in its sensitivity-image
+lattice setup if the cache contains no `avgPB`. Supplying an `avgPB` image
+with the model's axes permits the corrected prediction. The cold legacy
+run on the same fixture fails while setting up its convolution cells.
+
+The legacy writer emits the model image and the `AWProjectWBFT` name but
+omits its convolution cache. Its own `ms.uvsub` reports `Unsupported
+FTMachine`. Casa-rs retains the kernel images with the model. CASA can
+open the backing images, and native `ms.uvsub` uses them after the source
+cache has moved. The native reader reports an error if the saved recipe
+has no retained kernel images.
+[`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py) ·
+[Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
+
+## `image.insert` aborts for a source that misses along one axis
+
+CASA 6.7.6.14 terminates with SIGABRT and `Slicer error:end<start` for a
+`[2, 2]` source inserted into a `[4, 4]` target at `locate=[10, 1]`
+or `[-10, 1]`. One axis overlaps. The other yields an empty clipped interval.
+The casa-rs tool raises a Python `RuntimeError` before writing pixels or mask
+bits.
+
+## `image.insert` can replace unread source pixels during a self-insert
+
+Create a native float image from a 1510 by 1510 ramp in NumPy row order and
+insert the source region `box([0, 0], [1508, 1508])` into the same image at
+`locate=[1, 1]`. CASA 6.7.6.14 returns success and persists 27,063 wrong
+pixels. For example, `(2, 152)` contains 150 instead of the original value
+1661 from `(1, 151)`. The cursor writes overlap pixels that a subsequent
+cursor reads. casa-rs snapshots the selected pixels and validity before
+writing, using scratch storage when the overlap exceeds its memory budget.

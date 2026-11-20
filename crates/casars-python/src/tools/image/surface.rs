@@ -644,7 +644,7 @@ const METHODS: &[Method] = &[
             param("verbose", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "isconform",
