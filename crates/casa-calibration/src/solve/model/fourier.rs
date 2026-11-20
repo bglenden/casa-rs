@@ -65,7 +65,7 @@ pub(super) struct FourierRow<'a> {
     pub(super) frame: &'a MeasFrame,
     pub(super) uvw: [f64; 3],
     pub(super) focus_rows: &'a [FocusSample],
-    pub(super) legacy_mosaic_pointing: Option<&'a MDirection>,
+    pub(super) legacy_mosaic_pointing: Option<&'a super::MosaicPointing>,
     pub(super) scratch_channels: Option<[i32; 4]>,
 }
 
@@ -202,7 +202,7 @@ impl PreparedFourierModel {
             let (kernels, layout) = MosaicLayout::load(
                 terms[0],
                 row,
-                direction,
+                (direction, coords.obs_info().telescope.contains("VLA")),
                 &geometry,
                 &polarization,
                 axis.first_hz(),
@@ -308,7 +308,7 @@ impl PreparedFourierModel {
         } else {
             row.field
         };
-        let (projection, pointing_offset_rad, antenna_types) = match &self.mosaic {
+        let (projection, pointing_offset_rad, antenna_types) = match &mut self.mosaic {
             Some(layout) => (
                 GridFtProjection::tracked_mosaic_with_frame(
                     field,

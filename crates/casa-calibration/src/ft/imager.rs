@@ -22,7 +22,7 @@ use super::imager_definition::ImagerDefinitionRequest;
 use super::settings::{ImagerGridder, ImagerTransformOptions, PredictionGeometry};
 use super::virtual_publication::VirtualFtPublication;
 use super::voltage_pattern::ImagerVoltagePattern;
-use super::{invalid, model_entry, write_model_scratch};
+use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
 
 /// Geometry installed by the imager before creating a model image.
 pub struct ImagerImageDefinition {
@@ -337,11 +337,35 @@ impl ImagerPrediction {
             };
             if scratch {
                 components.extend(images.iter().map(|image| image.entry.clone()));
+                let prepared = if !images.is_empty()
+                    && matches!(self.options.gridder, ImagerGridder::Mosaic)
+                {
+                    Some(
+                        prepare_mosaic_models(ms, selection, &components, true)
+                            .map_err(AttachmentError::PredictionPreparation)?,
+                    )
+                } else {
+                    None
+                };
                 // Virtual cleanup belongs to scratch attachment. An earlier
                 // virtual input in this iterator can still own recipes.
                 writing_scratch = !components.is_empty();
-                write_model_scratch(ms, selection, &components, model.incremental, false, lock)?;
+                write_model_scratch(
+                    ms,
+                    selection,
+                    &components,
+                    model.incremental,
+                    false,
+                    prepared,
+                    lock,
+                )?;
             } else {
+                if !images.is_empty() && matches!(self.options.gridder, ImagerGridder::Mosaic) {
+                    let mut all_entries = components.clone();
+                    all_entries.extend(images.iter().map(|image| image.entry.clone()));
+                    prepare_mosaic_models(ms, selection, &all_entries, false)
+                        .map_err(AttachmentError::PredictionPreparation)?;
+                }
                 let publication = VirtualFtPublication::new(
                     [&*ms].into_iter(),
                     components,

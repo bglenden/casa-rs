@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 
 import casatasks
-from casatools import image, imager, table
+from casatools import image, imager, measures, quanta, table
 import numpy as np
 
 from gaincal_oracle import relative_rms
@@ -150,7 +150,10 @@ def run(root):
     assert min(changes) > 0.01, changes
     return {'standard': baseline, 'tracked_pointing': shifted,
             'pointing_offset_relative_rms': changes,
-            'small_crop': small_crop(root, source, native)}
+            'small_crop': small_crop(root, source, native),
+            'metadata': metadata_cases(root / 'metadata', source, offset_path, model, native, control),
+            'rejected_replacement_preserved_samples': rejected_replacement(root, model, native),
+            'wide_cube': wide_cube(root, source, model, native)}
 
 
 def small_crop(root, source, native):
@@ -195,6 +198,231 @@ def predictions(root, source, model, beams, native):
             values = consume(path, root / f'virtual-{writer}-{reader}.ms', reader)
             results[f'virtual-{writer}-{reader}'] = compare(values, reference)
     return results, reference
+
+
+def copy_ms(source, path):
+    shutil.copytree(source, path)
+    return path
+
+
+def paired_case(root, source, model, native):
+    root.mkdir()
+    output = {}
+    original = None
+    for scratch in (True, False):
+        predictions = []
+        for name, factory in (('casa', imager), ('native', native)):
+            path = root / f'{name}-{scratch}.ms'
+            predict(source, path, factory, model, scratch, False)
+            values = (field_samples(path) if scratch else
+                      consume(path, root / f'{name}-subtracted.ms', name))
+            predictions.append(values)
+        expected, actual = predictions
+        if scratch:
+            original = expected
+        output['scratch' if scratch else 'virtual'] = compare(actual, expected)
+    return output, original
+
+
+def field_samples(path):
+    return [samples(path, field=field) for field in (0, 1)]
+
+
+def with_telescope(path, name):
+    stored = table()
+    assert stored.open(str(path / 'OBSERVATION'), nomodify=False)
+    stored.putcell('TELESCOPE_NAME', 0, name)
+    assert stored.close()
+
+
+def local_azel_pointings(path):
+    stored = table()
+    assert stored.open(str(path / 'ANTENNA'), nomodify=False)
+    positions = stored.getcol('POSITION')
+    positions[:, 0] += [140_000., -120_000., 100_000.]
+    stored.putcol('POSITION', positions)
+    assert stored.close()
+    measure, quantity = measures(), quanta()
+    assert stored.open(str(path / 'POINTING'), nomodify=False)
+    for row, (antenna, epoch) in enumerate(zip(stored.getcol('ANTENNA_ID'), stored.getcol('TIME'), strict=True)):
+        set_frame(measure, positions[:, antenna], epoch)
+        lon, lat = stored.getcell('DIRECTION', row)[:, 0]
+        azel = measure.measure(casa_direction(measure, lon, lat), 'AZEL')
+        stored.putcell('DIRECTION', row, np.array([[quantity.convert(azel[key], 'rad')['value']]
+                                                   for key in ('m0', 'm1')]))
+    info = stored.getcolkeyword('DIRECTION', 'MEASINFO')
+    info['Ref'] = 'AZEL'
+    stored.putcolkeyword('DIRECTION', 'MEASINFO', info)
+    assert stored.close()
+
+
+def set_frame(measure, position, epoch):
+    assert measure.doframe(measure.position('ITRF', *[f'{coordinate}m' for coordinate in position]))
+    assert measure.doframe(measure.epoch('UTC', f'{epoch}s'))
+
+
+def casa_direction(measure, lon, lat):
+    return measure.direction('J2000', f'{lon}rad', f'{lat}rad')
+
+
+def feed_offset_fixture(root, pointed):
+    observed = copy_ms(pointed, root / 'feed-offset.ms')
+    control = copy_ms(pointed, root / 'shifted-pointing-control.ms')
+    stored = table()
+    assert stored.open(str(observed / 'FEED'), nomodify=False)
+    offsets = stored.getcol('BEAM_OFFSET')
+    x, y = 1.8e-5, -1.6e-5
+    offsets[0, 0, :] = x
+    offsets[1, 0, :] = y
+    stored.putcol('BEAM_OFFSET', offsets)
+    assert stored.close()
+    assert stored.open(str(control / 'ANTENNA'))
+    positions = stored.getcol('POSITION')
+    assert stored.close()
+    assert stored.open(str(control))
+    times, fields = stored.getcol('TIME'), stored.getcol('FIELD_ID')
+    field_times = [np.unique(times[fields == field]) for field in (0, 1)]
+    assert stored.close()
+    assert stored.open(str(control / 'FIELD'))
+    centres = [stored.getcell('PHASE_DIR', field)[:, 0] for field in (0, 1)]
+    assert stored.close()
+    measure, quantity = measures(), quanta()
+    assert stored.open(str(control / 'POINTING'), nomodify=False)
+    for row, (antenna, epoch) in enumerate(zip(stored.getcol('ANTENNA_ID'), stored.getcol('TIME'), strict=True)):
+        set_frame(measure, positions[:, antenna], epoch)
+        field = min((0, 1), key=lambda field: np.min(np.abs(field_times[field] - epoch)))
+        field_dir = casa_direction(measure, *centres[field])
+        zenith = measure.measure(measure.direction('AZEL', '0deg', '90deg'), 'J2000')
+        pa = quantity.convert(measure.posangle(field_dir, zenith), 'rad')['value']
+        dx, dy = -np.cos(pa) * x + np.sin(pa) * y, np.sin(pa) * x + np.cos(pa) * y
+        lon, lat = stored.getcell('DIRECTION', row)[:, 0]
+        shifted = [lon + np.arctan2(np.sin(dx), np.cos(dx) * np.cos(lat + dy)),
+                   np.arcsin(np.cos(dx) * np.sin(lat + dy))]
+        stored.putcell('DIRECTION', row, np.array(shifted).reshape(2, 1))
+    assert stored.close()
+    return observed, control
+
+
+def feed_offset_cases(root, pointed, model, native):
+    # The pinned imager crashes on the direct FEED case. An independent
+    # Measures calculation folds the rotated offset into CASA's POINTING.
+    observed, control = feed_offset_fixture(root, pointed)
+    evidence = {}
+    for scratch in (True, False):
+        native_path = root / f'feed-native-{scratch}.ms'
+        casa_path = root / f'feed-control-{scratch}.ms'
+        predict(observed, native_path, native, model, scratch, False)
+        predict(control, casa_path, imager, model, scratch, False)
+        actual = (field_samples(native_path) if scratch else
+                  consume(native_path, root / 'feed-native-subtracted.ms', 'native'))
+        expected = (field_samples(casa_path) if scratch else
+                    consume(casa_path, root / 'feed-control-subtracted.ms', 'casa'))
+        evidence['scratch' if scratch else 'virtual'] = compare(actual, expected)
+    return evidence
+
+
+def metadata_cases(root, source, pointed, model, native, control):
+    root.mkdir()
+    stale = copy_ms(pointed, root / 'stale.ms')
+    stored = table()
+    assert stored.open(str(stale / 'POINTING'), nomodify=False)
+    stored.putcol('TIME', stored.getcol('TIME') - 86400.)
+    stored.putcol('INTERVAL', np.zeros(stored.nrows()))
+    assert stored.close()
+    stale_evidence, stale_values = paired_case(root / 'stale', stale, model, native)
+    np.testing.assert_array_equal(stale_values, control)
+
+    azel = copy_ms(pointed, root / 'azel.ms')
+    local_azel_pointings(azel)
+    azel_evidence, _ = paired_case(root / 'azel', azel, model, native)
+
+    published = root.parent / 'virtual-casa.ms'
+    changed = copy_ms(published, root / 'changed-dishes.ms')
+    assert stored.open(str(changed / 'ANTENNA'), nomodify=False)
+    stored.putcol('DISH_DIAMETER', np.full(stored.nrows(), 12.))
+    assert stored.close()
+    expected = consume(changed, root / 'changed-dishes-casa.ms', 'casa')
+    actual = consume(changed, root / 'changed-dishes-native.ms', 'native')
+    assert min(relative_rms(a, b) for a, b in zip(expected, control, strict=True)) > 0.005
+
+    atf = copy_ms(source, root / 'ATF.ms')
+    with_telescope(atf, 'ATF')
+    atf_evidence, _ = paired_case(root / 'ATF', atf, model, native)
+    common = copy_ms(source, root / 'NRAO140FT.ms')
+    with_telescope(common, 'NRAO140FT')
+    tool = native()
+    assert tool.open(str(common), usescratch=True) and tool.selectvis(field='0,1')
+    assert tool.defineimage(nx=320, cellx='0.3arcsec', outframe='TOPO')
+    assert tool.setoptions(ftmachine='mosaic') and tool.ft(str(model)) is False and tool.done()
+
+    return {'stale_pointing': stale_evidence, 'antenna_azel': azel_evidence,
+            'feed_offset': feed_offset_cases(root, pointed, model, native),
+            'regenerated_dishes': compare(actual, expected), 'ATF': atf_evidence}
+
+
+def rejected_replacement(root, model, native):
+    target = copy_ms(root / 'virtual-native.ms', root / 'model-replacement.ms')
+    expected = consume(target, root / 'before-replacement.ms', 'native')
+    tool = image()
+    assert tool.open(str(model))
+    coordinates_tool = tool.coordsys()
+    assert tool.done() and coordinates_tool.setreferencepixel(value=[4., 4.], type='direction')
+    small = root / 'invalid-screen.im'
+    pixels = np.zeros((8, 8, 1, 1), np.float32)
+    pixels[4, 4, 0, 0] = 2.
+    assert tool.fromarray(outfile=str(small), pixels=pixels, csys=coordinates_tool.torecord())
+    assert tool.done() and coordinates_tool.done()
+    tool = native()
+    assert tool.open(str(target), usescratch=False) and tool.selectvis(field='0,1')
+    assert tool.defineimage(nx=8, cellx='0.3arcsec', outframe='TOPO')
+    assert tool.setoptions(ftmachine='mosaic') and tool.ft(str(small)) is False and tool.done()
+    actual = consume(target, root / 'after-replacement.ms', 'native')
+    np.testing.assert_array_equal(actual, expected)
+    return sum(field.size for field in actual)
+
+
+def wide_cube(root, source, model, native):
+    path = copy_ms(source, root / 'wide-source.ms')
+    stored = table()
+    assert stored.open(str(path / 'SPECTRAL_WINDOW'), nomodify=False)
+    frequencies = (93. + np.arange(12)) * 1e9
+    stored.putcell('CHAN_FREQ', 0, frequencies)
+    for column in ('CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION'):
+        stored.putcell(column, 0, np.full(12, 1e9))
+    stored.putcell('REF_FREQUENCY', 0, frequencies[0])
+    stored.putcell('TOTAL_BANDWIDTH', 0, 12e9)
+    assert stored.close()
+    tool = image()
+    assert tool.open(str(model))
+    coords = tool.coordsys()
+    assert tool.done() and coords.setreferencepixel(value=[0.], type='spectral')
+    assert coords.setreferencevalue(value='92GHz', type='spectral')
+    assert coords.setincrement(value='4GHz', type='spectral')
+    wide = root / 'wide.im'
+    pixels = np.zeros((320, 320, 1, 5), dtype=np.float32)
+    pixels[191, 144, 0, :] = [1.2, 2., .4, 1.9, .8]
+    assert tool.fromarray(outfile=str(wide), pixels=pixels, csys=coords.torecord())
+    assert tool.setbrightnessunit('Jy/pixel') and tool.done() and coords.done()
+    unselected = np.setdiff1d(np.arange(12), np.arange(2, 9, 2))
+    before = field_samples(path)
+    evidence = {}
+    for method in ('linear', 'cubic', 'spline'):
+        predictions = []
+        for name, factory in (('casa', imager), ('native', native)):
+            destination = copy_ms(path, root / f'wide-{method}-{name}.ms')
+            tool = factory()
+            assert tool.open(str(destination), usescratch=True)
+            assert tool.selectvis(field='0,1', spw='0:2~8^2')
+            assert tool.defineimage(nx=320, cellx='0.3arcsec', celly='0.3arcsec', outframe='TOPO')
+            assert tool.setoptions(ftmachine='mosaic', freqinterp=method, numthreads=1)
+            assert tool.ft(str(wide)) and tool.done()
+            fields = field_samples(destination)
+            for actual, previous in zip(fields, before, strict=True):
+                np.testing.assert_array_equal(actual[:, unselected], previous[:, unselected])
+            predictions.append(fields)
+        expected, actual = predictions
+        evidence[method] = compare(actual, expected)
+    return evidence
 
 
 def main():

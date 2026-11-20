@@ -28,33 +28,12 @@ pub(super) fn planes<'a>(
     machine: &RecordValue,
     beam: &'a RecordValue,
     window: &MosaicWindow,
-    rules: MosaicRules,
 ) -> Result<Option<SavedMosaicPlanes<'a>>, GainSolveError> {
-    let key = if rules == MosaicRules::Simulator {
-        // A legacy cache has no bandwidth in its key. The record captures
-        // the frequencies for the first buffer, which can validate its cell
-        // mapping. For another band the convolution must be regenerated.
-        let matches_buffer = match machine.get("interpvisfreq") {
-            Some(Value::Array(ArrayValue::Float64(saved))) => {
-                saved.len() == window.selected_frequencies_hz.len()
-                    && saved
-                        .iter()
-                        .zip(&window.selected_frequencies_hz)
-                        .all(|(a, b)| (a - b).abs() <= 0.001)
-            }
-            _ => false,
-        };
-        if !matches_buffer {
-            return Ok(None);
-        }
-        format!("0_{}", window.spectral_window)
-    } else {
-        format!(
-            "0_{}_{}",
-            window.spectral_window,
-            window.selected_frequencies_hz.len()
-        )
-    };
+    let key = format!(
+        "0_{}_{}",
+        window.spectral_window,
+        window.selected_frequencies_hz.len()
+    );
     let count = integer(beam, "ndefined")?;
     if count < 0 || count as usize > beam.fields().len() {
         return Err(model_error("invalid virtual mosaic cache count"));

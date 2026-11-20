@@ -3,8 +3,7 @@
 //!
 //! Cf. C++ `MSPointingColumns`.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::BTreeMap;
 
 use casa_types::{ArrayValue, measures::direction::MDirection};
 
@@ -31,50 +30,95 @@ impl MsPointing<'_> {
     /// # Errors
     /// The POINTING metadata or selected direction cell is invalid.
     pub fn legacy_direction(&self, antenna: i32, time: f64) -> MsResult<Option<MDirection>> {
-        self.legacy_directions(&[(antenna, time)])
-            .map(|mut directions| directions.pop().flatten())
+        let mut rows = Vec::new();
+        for row in 0..self.row_count() {
+            if self.i32(row, "ANTENNA_ID")? == antenna {
+                rows.push((row, self.f64(row, "TIME")?, self.f64(row, "INTERVAL")?));
+            }
+        }
+        let nearest_sample = rows
+            .iter()
+            .filter(|(_, _, interval)| *interval <= 0.)
+            .min_by(|a, b| (a.1 - time).abs().total_cmp(&(b.1 - time).abs()));
+        let selected = rows
+            .iter()
+            .enumerate()
+            .find(|&(index, &(_, epoch, interval))| {
+                if interval > 0. {
+                    return (epoch - time).abs() <= interval / 2.;
+                }
+                let neighbor = rows[index + 1..]
+                    .iter()
+                    .chain(rows[..index].iter().rev())
+                    .find(|(_, candidate, _)| *candidate != epoch);
+                neighbor
+                    .is_none_or(|(_, next, _)| (epoch - time).abs() <= (epoch - next).abs() / 2.)
+            })
+            .map(|(_, sample)| sample);
+        let Some(&(row, _, _)) = (match (selected, nearest_sample) {
+            (Some(covering), Some(closest))
+                if (closest.1 - time).abs() <= (covering.1 - time).abs() =>
+            {
+                Some(closest)
+            }
+            (covering, closest) => covering.or(closest),
+        }) else {
+            return Ok(None);
+        };
+        self.read_direction(row, None).map(Some)
     }
 
-    /// Resolve an antenna and epoch for each legacy visibility buffer.
-    /// The POINTING metadata is traversed once and a direction cell is
-    /// opened once for all queries that select that row.
+    /// Resolve the first antenna's directions for successive legacy
+    /// visibility buffers. Each request contains the antenna, its epoch in
+    /// MeasurementSet seconds and the buffer interval passed by VisBuffer
+    /// to `MSPointingColumns::directionMeas` for polynomial directions.
+    /// A missing row leaves that buffer's direction to FIELD.
+    ///
     /// # Errors
     /// The POINTING metadata or a selected direction cell is invalid.
-    pub fn legacy_directions(&self, buffers: &[(i32, f64)]) -> MsResult<Vec<Option<MDirection>>> {
-        if buffers.is_empty() {
+    pub fn legacy_buffer_directions(
+        &self,
+        buffers: &[(i32, f64, f64)],
+    ) -> MsResult<Vec<Option<MDirection>>> {
+        let mut by_antenna: BTreeMap<_, Vec<_>> = buffers
+            .iter()
+            .map(|&(antenna, _, _)| (antenna, Vec::new()))
+            .collect();
+        if by_antenna.is_empty() {
             return Ok(Vec::new());
         }
-        let mut by_antenna = BTreeMap::<_, (Vec<_>, Vec<_>)>::new();
-        for (index, &(antenna, time)) in buffers.iter().enumerate() {
-            by_antenna.entry(antenna).or_default().0.push((index, time));
-        }
         for row in 0..self.row_count() {
-            if let Some((_, samples)) = by_antenna.get_mut(&self.i32(row, "ANTENNA_ID")?) {
+            if let Some(samples) = by_antenna.get_mut(&self.i32(row, "ANTENNA_ID")?) {
                 samples.push((row, self.f64(row, "TIME")?, self.f64(row, "INTERVAL")?));
             }
         }
-        let mut selected = vec![None; buffers.len()];
-        for (queries, samples) in by_antenna.into_values() {
-            select_legacy_rows(queries, &samples, &mut selected);
+        for samples in by_antenna.values_mut() {
+            infer_buffer_half_intervals(samples);
         }
+        let mut last = 0;
         let mut directions = BTreeMap::new();
-        selected
-            .into_iter()
-            .map(|row| {
+        buffers
+            .iter()
+            .map(|&(antenna, time, interval)| {
+                let row = select_buffer_pointing(&by_antenna[&antenna], last, time);
+                last = row.unwrap_or(0);
                 let Some(row) = row else {
                     return Ok(None);
                 };
-                if let Some(direction) = directions.get(&row) {
+                let order = self.i32(row, "NUM_POLY")?;
+                let key = (row, if order == 0 { 0 } else { interval.to_bits() });
+                if let Some(direction) = directions.get(&key) {
                     return Ok(Some(MDirection::clone(direction)));
                 }
-                let direction = self.read_legacy_direction(row)?;
-                directions.insert(row, direction.clone());
+                let polynomial = (order != 0).then_some((order, interval));
+                let direction = self.read_direction(row, polynomial)?;
+                directions.insert(key, direction.clone());
                 Ok(Some(direction))
             })
             .collect()
     }
 
-    fn read_legacy_direction(&self, row: usize) -> MsResult<MDirection> {
+    fn read_direction(&self, row: usize, polynomial: Option<(i32, f64)>) -> MsResult<MDirection> {
         let ArrayValue::Float64(values) = self.array(row, "DIRECTION")? else {
             return Err(MsError::InvalidInput(
                 "POINTING DIRECTION must be double".into(),
@@ -88,110 +132,76 @@ impl MsPointing<'_> {
                 "invalid POINTING DIRECTION shape".into(),
             ));
         };
+        let [lon, lat] = if let Some((order, time)) = polynomial {
+            let order = usize::try_from(order)
+                .map_err(|_| MsError::InvalidInput("negative POINTING polynomial order".into()))?;
+            if values.shape()[1] <= order {
+                return Err(MsError::InvalidInput(
+                    "invalid POINTING polynomial shape".into(),
+                ));
+            }
+            let epoch = self.f64(row, "TIME")?;
+            let delta = if time == 0. { 0. } else { time - epoch };
+            std::array::from_fn(|axis| {
+                (0..=order).rev().fold(0., |value, coefficient| {
+                    value * delta + values[ndarray::IxDyn(&[axis, coefficient])]
+                })
+            })
+        } else {
+            [lon, lat]
+        };
         let reference = resolve_direction_reference(self.table(), "POINTING", "DIRECTION", row)?;
         Ok(MDirection::from_angles(lon, lat, reference))
     }
 }
 
-fn select_legacy_rows(
-    mut queries: Vec<(usize, f64)>,
-    samples: &[(usize, f64, f64)],
-    selected: &mut [Option<usize>],
-) {
-    let mut spans = Vec::with_capacity(samples.len());
-    let mut point_samples = Vec::new();
-    // Equal adjacent epochs share the next distinct sample even when the
-    // original POINTING rows are unsorted or include duplicate epochs.
-    let groups = samples.chunk_by(|left, right| left.1 == right.1);
-    let mut groups = groups.peekable();
+fn infer_buffer_half_intervals(samples: &mut [(usize, f64, f64)]) {
+    let mut groups = samples
+        .chunk_by_mut(|left, right| left.1 == right.1)
+        .peekable();
     let mut previous = None;
     while let Some(group) = groups.next() {
         let epoch = group[0].1;
         let neighbor = groups.peek().map(|group| group[0].1).or(previous);
-        for &(row, _, interval) in group {
-            let radius = if interval > 0. {
-                interval / 2.
+        for (_, _, interval) in group {
+            *interval = if *interval == 0. {
+                neighbor.map_or(0., |time| (epoch - time).abs() / 2.)
             } else {
-                if interval <= 0. {
-                    point_samples.push((row, epoch));
-                }
-                neighbor.map_or(f64::INFINITY, |time| (epoch - time).abs() / 2.)
+                *interval / 2.
             };
-            spans.push((row, epoch, epoch - radius, epoch + radius));
         }
         previous = Some(epoch);
     }
-    let mut by_start: Vec<_> = (0..spans.len())
-        .filter(|&index| !spans[index].2.is_nan())
-        .collect();
-    by_start.sort_unstable_by(|&a, &b| spans[a].2.total_cmp(&spans[b].2));
-    point_samples.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-    point_samples.dedup_by(|a, b| a.1 == b.1);
-    queries.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
-    let mut active = BinaryHeap::new();
-    let mut next = 0;
-    for (output, time) in queries {
-        while next < by_start.len() && spans[by_start[next]].2 <= time {
-            active.push(Reverse(by_start[next]));
-            next += 1;
-        }
-        while active
-            .peek()
-            .is_some_and(|&Reverse(index)| spans[index].3 < time)
-        {
-            active.pop();
-        }
-        let covering = active
-            .peek()
-            .map(|&Reverse(index)| (spans[index].0, spans[index].1));
-        let split = point_samples.partition_point(|sample| sample.1 < time);
-        let nearest = point_samples
-            .get(split)
-            .into_iter()
-            .chain(
-                split
-                    .checked_sub(1)
-                    .and_then(|index| point_samples.get(index)),
-            )
-            .min_by(|a, b| {
-                (a.1 - time)
-                    .abs()
-                    .total_cmp(&(b.1 - time).abs())
-                    .then(a.0.cmp(&b.0))
-            })
-            .copied();
-        selected[output] = match (covering, nearest) {
-            (Some(covering), Some(nearest))
-                if (nearest.1 - time).abs() <= (covering.1 - time).abs() =>
-            {
-                Some(nearest.0)
+}
+
+fn select_buffer_pointing(samples: &[(usize, f64, f64)], start: usize, time: f64) -> Option<usize> {
+    let split = samples.partition_point(|sample| sample.0 < start);
+    samples[split..]
+        .iter()
+        .chain(&samples[..split])
+        .find(|&&(_, epoch, half)| {
+            if half > 0. {
+                epoch >= time - half && epoch <= time + half
+            } else {
+                true
             }
-            (covering, nearest) => covering.or(nearest).map(|sample| sample.0),
-        };
-    }
+        })
+        .map(|sample| sample.0)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::select_legacy_rows;
+    use super::{infer_buffer_half_intervals, select_buffer_pointing};
 
     #[test]
-    fn legacy_queries_keep_row_order_for_overlaps_and_duplicate_epochs() {
-        let samples = [
-            (10, 10., 6.),
-            (11, 14., 10.),
-            (12, 25., 0.),
-            (13, 25., 0.),
-            (14, 33., -1.),
-            (15, 30., 6.),
-        ];
-        let queries = [30., 10., 13., 14., 0., 20., 25., 29., 33.];
-        let mut selected = [None; 9];
-        select_legacy_rows(
-            queries.into_iter().enumerate().collect(),
-            &samples,
-            &mut selected,
-        );
-        assert_eq!(selected, [15, 10, 10, 11, 12, 12, 12, 12, 14].map(Some));
+    fn legacy_buffer_pointing_wraps_and_leaves_stale_intervals_unmatched() {
+        let mut samples = [(4, 10., 0.), (6, 20., 0.), (8, 22., 6.)];
+        infer_buffer_half_intervals(&mut samples);
+        assert_eq!(select_buffer_pointing(&samples, 8, 10.), Some(4));
+        assert_eq!(select_buffer_pointing(&samples, 6, 21.), Some(6));
+        assert_eq!(select_buffer_pointing(&samples, 8, 21.), Some(8));
+        assert_eq!(select_buffer_pointing(&samples, 8, 30.), None);
+        samples[1].2 = -1.;
+        assert_eq!(select_buffer_pointing(&samples, 8, 30.), Some(6));
     }
 }

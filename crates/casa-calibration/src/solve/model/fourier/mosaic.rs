@@ -6,13 +6,14 @@ mod saved;
 
 use casa_coordinates::DirectionCoordinate;
 use casa_imaging_operator::{
-    AiryDish, ConvolutionFunctionSet, GridGeometry, MosaicPb, MosaicRules, MosaicWindow,
-    PolarizationRouting, SavedMosaicPlanes,
+    AiryDish, ConvolutionFunctionSet, GridGeometry, MosaicBufferBand, MosaicPb, MosaicRules,
+    MosaicWindow, PolarizationRouting, SavedMosaicPlanes,
 };
 use casa_ms::{convert_frequency_to_frame, voltage_pattern};
 use casa_numerics::PrimaryBeam;
+use casa_types::measures::direction::MDirection;
 use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{Complex32, RecordValue, Value};
+use casa_types::{ArrayValue, Complex32, RecordValue, Value};
 
 use super::{FourierRow, GainSolveError, model_error, record_text};
 
@@ -30,6 +31,8 @@ pub(super) struct MosaicLayout {
     increment: [f64; 2],
     antenna_classes: Vec<u8>,
     legacy: bool,
+    vla_image: bool,
+    converted_pointing: Option<(usize, MDirection)>,
     pub(super) autocorrelations: bool,
 }
 
@@ -37,7 +40,7 @@ impl MosaicLayout {
     pub(super) fn load(
         record: &RecordValue,
         row: &FourierRow<'_>,
-        direction: &DirectionCoordinate,
+        (direction, vla_image): (&DirectionCoordinate, bool),
         geometry: &GridGeometry,
         polarization: &PolarizationRouting,
         reference_hz: f64,
@@ -58,15 +61,24 @@ impl MosaicLayout {
             .string(row.row.observation_id as usize, "TELESCOPE_NAME")
             .map_err(model_error)?;
         let rules = saved::rules(record, beam);
-        let (window, complete_window) = beam_window(row, convert_frequencies)?;
-        let mut loaded = saved::planes(record, beam, &window, rules)?;
+        let legacy = rules == MosaicRules::Simulator;
+        let (window, complete_window) =
+            beam_window(row, convert_frequencies, legacy.then_some(record))?;
+        // HetArrayConvFunc::fromRecord clears its remembered MS. On the
+        // first buffer of that MS it regenerates the legacy convolution
+        // with the current antenna metadata.
+        let mut loaded = if legacy {
+            None
+        } else {
+            saved::planes(record, beam, &window)?
+        };
         if loaded.is_none()
             && let Some(complete) = complete_window
             && window
                 .shares_beam_frequencies(&complete, rules)
                 .map_err(model_error)?
         {
-            loaded = saved::planes(record, beam, &complete, rules)?;
+            loaded = saved::planes(record, beam, &complete)?;
         }
         let class = saved::integer(beam, "pbclass")?;
         let (kernels, antenna_classes) = if class == 8 {
@@ -111,6 +123,8 @@ impl MosaicLayout {
                 increment: grid.increment_rad,
                 antenna_classes,
                 legacy: rules == MosaicRules::Simulator,
+                vla_image,
+                converted_pointing: None,
                 autocorrelations: rules == MosaicRules::Simulator
                     && matches!(
                         record.get("usezero"),
@@ -121,19 +135,43 @@ impl MosaicLayout {
     }
 
     pub(super) fn pointing_offset(
-        &self,
+        &mut self,
         row: &FourierRow<'_>,
         shift: [f64; 2],
     ) -> Result<[f64; 2], GainSolveError> {
         // Legacy MosaicFT takes the first antenna direction from the
         // buffer. The newer saved grids reopen without their POINTING
         // selector and use the field direction.
-        let pointing = row
-            .legacy_mosaic_pointing
-            .filter(|_| self.legacy)
-            .unwrap_or(row.field)
-            .convert_to(self.direction.conversion_direction_ref(), row.frame)
-            .map_err(model_error)?;
+        let reference = self.direction.conversion_direction_ref();
+        let pointing = if let Some(pointing) = row.legacy_mosaic_pointing.filter(|_| self.legacy) {
+            if let Some((buffer, direction)) = &self.converted_pointing
+                && *buffer == pointing.buffer
+            {
+                direction.clone()
+            } else {
+                let direction = if pointing.direction.refer() == reference {
+                    pointing.direction.clone()
+                } else {
+                    let frame = if self.vla_image {
+                        row.engine
+                            .spectral_frame_observatory_direction(pointing.epoch, row.field.clone())
+                    } else {
+                        row.engine.antenna_frame(pointing.epoch, pointing.antenna)
+                    }
+                    .map_err(model_error)?;
+                    pointing
+                        .direction
+                        .convert_to(reference, &frame)
+                        .map_err(model_error)?
+                };
+                self.converted_pointing = Some((pointing.buffer, direction.clone()));
+                direction
+            }
+        } else {
+            row.field
+                .convert_to(reference, row.frame)
+                .map_err(model_error)?
+        };
         let (longitude, latitude) = pointing.as_angles();
         let pixel = self
             .direction
@@ -218,6 +256,7 @@ fn image_kernels(
 fn beam_window(
     row: &FourierRow<'_>,
     convert_frequencies: bool,
+    legacy: Option<&RecordValue>,
 ) -> Result<(MosaicWindow, Option<MosaicWindow>), GainSolveError> {
     let spw = row.row.data_spw_id as usize;
     let windows = row.ms.spectral_window().map_err(model_error)?;
@@ -253,6 +292,48 @@ fn beam_window(
             .collect(),
         buffer_band: None,
     };
+    if let Some(record) = legacy {
+        let selected = if let Some([_, start, count, stride]) = row.scratch_channels {
+            full.selected_frequencies_hz
+                .iter()
+                .copied()
+                .skip(start as usize)
+                .step_by((stride as usize).max(1))
+                .take(count as usize)
+                .collect()
+        } else if let Some(selection) = &row.row.channel_selection {
+            selection
+                .indices(row.frequencies.len())
+                .map_err(model_error)?
+                .into_iter()
+                .map(|index| full.selected_frequencies_hz[index])
+                .collect()
+        } else {
+            full.selected_frequencies_hz.clone()
+        };
+        let image_frequencies = match record.get("casars_live_image_frequency") {
+            Some(Value::Array(ArrayValue::Float64(frequencies))) if selected.len() > 1 => {
+                Some(frequencies.iter().copied().collect())
+            }
+            _ => None,
+        };
+        let mut window = full;
+        if let Some(frequencies) = image_frequencies {
+            window.buffer_band = Some(MosaicBufferBand {
+                channels: selected.len(),
+                lowest_topocentric_hz: selected.iter().copied().fold(f64::INFINITY, f64::min),
+            });
+            window.selected_frequencies_hz = frequencies;
+        } else {
+            // In the nearest/bypass path getInterpolateArrays uses the
+            // iterator's native frequencies before any frame conversion.
+            window.selected_frequencies_hz = selected
+                .into_iter()
+                .map(|frequency| frequency / ratio)
+                .collect();
+        }
+        return Ok((window, None));
+    }
     if let Some(selection) = &row.row.channel_selection {
         let selected = selection
             .indices(row.frequencies.len())

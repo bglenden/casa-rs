@@ -24,7 +24,6 @@ use casa_ms::{
     MeasurementSet, MsResult, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
     convert_frequency_to_frame_with_frame, virtual_model_image_path,
 };
-use casa_numerics::PrimaryBeam;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, Complex32, Correlation, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD, IxDyn, ShapeBuilder};
@@ -757,17 +756,7 @@ impl ImageTransform {
         }
         if let Some(stokes) = &self.mosaic_stokes {
             let telescope = ms.observation()?.string(0, "TELESCOPE_NAME")?;
-            let beam_class = if telescope == "EVLA" {
-                1
-            } else if matches!(telescope.as_str(), "ALMA" | "ACA" | "OVRO")
-                || PrimaryBeam::for_telescope(&telescope, spectral.ref_frequency(window)?).is_none()
-            {
-                2
-            } else {
-                return Err(invalid(
-                    "legacy mosaic common primary-beam convolution is pending in #1520",
-                ));
-            };
+            let beam_class = legacy_mosaic_beam_class(&telescope)?;
             legacy_mosaic(&mut record, stokes, beam_class, MOSAIC_OVERSAMPLING);
         }
         record.upsert(
@@ -776,6 +765,22 @@ impl ImageTransform {
         );
         record_selection(&mut record, ms, selected, axis, self.frequencies.len())?;
         Ok(record)
+    }
+}
+
+fn legacy_mosaic_beam_class(telescope: &str) -> MsResult<i32> {
+    // CASA enumerates these names before selecting SimplePBConvFunc.
+    match telescope {
+        "EVLA" => Ok(1),
+        "DEFAULT" | "ATCA_L1" | "ATCA_L2" | "ATCA_L3" | "ATCA_16" | "ATCA_S" | "ATCA_C"
+        | "ATCA_C_RI" | "ATCA" | "ATCA_X" | "ATCA_K" | "ATCA_Q" | "ATCA_W" | "HATCREEK"
+        | "BIMA" | "NGVLA" | "VLA" | "VLA_INVERSE" | "VLA_NVSS" | "VLA_2NULL" | "VLA_4"
+        | "VLA_P" | "VLA_L" | "VLA_C" | "VLA_X" | "VLA_U" | "VLA_K" | "VLA_Q" | "WSRT"
+        | "WSRT_LOW" | "GBT" | "GMRT" | "NRAO12M" | "IRAMPDB" | "IRAM30M" | "NRAO140FT"
+        | "ALMASD" | "SMA" | "ATA" | "NONE" => Err(invalid(
+            "legacy mosaic common primary-beam convolution is pending in #1520",
+        )),
+        _ => Ok(2),
     }
 }
 

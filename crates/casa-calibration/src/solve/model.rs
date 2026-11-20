@@ -2,6 +2,7 @@
 //! CASA's precedence for scratch and virtual model visibilities.
 
 mod fourier;
+mod mosaic_pointing;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -24,6 +25,7 @@ use num_complex::Complex64;
 use super::grouping::{BucketedRow, SelectedSolveRow, VisibilityBuffer};
 use super::{GainSolveCombine, GainSolveError, GainSolveModelSource, get_i32};
 use fourier::{FourierMerge, FourierModel, FourierRow};
+use mosaic_pointing::{FeedOffsets, MosaicPointing};
 
 pub(super) struct ModelInputs {
     read_column: bool,
@@ -39,7 +41,7 @@ pub(super) struct ModelInputs {
 struct ModelBuffer {
     selection: [i32; 4],
     focus_rows: Vec<FocusSample>,
-    legacy_mosaic_pointing: Option<MDirection>,
+    legacy_mosaic_pointing: Option<MosaicPointing>,
 }
 
 struct FocusSample {
@@ -262,15 +264,20 @@ impl ModelInputs {
                     .values()
                     .map(|rows| rows[0])
                     .filter(|row| mosaic_fields.contains(&row.field_id))
-                    .map(|row| (row.antenna1, row.time_seconds))
+                    .map(|row| (row.antenna1, row.time_seconds, row.interval_seconds))
                     .collect();
                 ms.pointing()
-                    .and_then(|pointing| pointing.legacy_directions(&queries))
+                    .and_then(|pointing| pointing.legacy_buffer_directions(&queries))
                     .map_err(|source| read_error(ms, source))?
             } else {
                 Vec::new()
             }
             .into_iter();
+        let feeds = if mosaic_fields.is_empty() {
+            FeedOffsets::default()
+        } else {
+            FeedOffsets::load(ms).map_err(|source| read_error(ms, source))?
+        };
         for rows in buffers.into_values() {
             let first = rows[0];
             let state = get_i32(ms.main_table(), first.row_index, "STATE_ID")?;
@@ -289,7 +296,12 @@ impl ModelInputs {
                 selection,
                 focus_rows,
                 legacy_mosaic_pointing: if mosaic_fields.contains(&first.field_id) {
-                    pointings.next().flatten()
+                    Some(feeds.direction(
+                        ms,
+                        self.geometry.as_ref().expect("mosaic has geometry"),
+                        first,
+                        pointings.next().flatten(),
+                    )?)
                 } else {
                     None
                 },
