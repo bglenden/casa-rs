@@ -227,26 +227,47 @@ fn b1950_vla_uses_casas_fits_equinox() {
     assert_eq!(exported.get_string("RADESYS"), Some("FK4"));
     assert_eq!(exported.get_float("EQUINOX"), Some(1979.9));
 
-    for (card, system, expected) in [
-        (Some("RADESYS"), "FK4", DirectionRef::B1950Vla),
-        (Some("RADESYS"), "FK4-NO-E", DirectionRef::B1950Vla),
-        (Some("RADECSYS"), "FK4", DirectionRef::B1950Vla),
-        (None, "", DirectionRef::B1950Vla),
-        (Some("RADESYS"), "FK5", DirectionRef::J2000),
+    for (card, system, epoch_card, supported) in [
+        (Some("RADESYS"), "FK4", "EQUINOX", true),
+        (Some("RADESYS"), "FK4-NO-E", "EQUINOX", true),
+        (Some("RADECSYS"), "FK4", "EPOCH", true),
+        (None, "", "EPOCH", true),
+        (Some("RADESYS"), "FK5", "EQUINOX", false),
     ] {
         let mut header = FitsHeader::new();
-        for keyword in exported.iter().filter(|keyword| keyword.name != "RADESYS") {
+        for keyword in exported
+            .iter()
+            .filter(|keyword| !matches!(keyword.name.as_str(), "RADESYS" | "EQUINOX"))
+        {
             header.set(&keyword.name, keyword.value.clone());
         }
         if let Some(card) = card {
             header.set(card, FitsValue::String(system.into()));
         }
-        let restored = from_fits_header(&header, &shape).unwrap();
+        header.set(epoch_card, FitsValue::Float(1979.9));
+        if epoch_card == "EQUINOX" {
+            header.set("EPOCH", FitsValue::Float(1950.0));
+        }
+        let restored = from_fits_header(&header, &shape);
+        if !supported {
+            assert!(
+                restored
+                    .unwrap_err()
+                    .to_string()
+                    .contains("FK5 with equinox 1979.9")
+            );
+            continue;
+        }
+        let restored = restored.unwrap();
         let CoordinateModel::Direction(direction) = restored.coordinate(0) else {
             panic!("expected direction coordinate");
         };
-        assert_eq!(direction.direction_ref(), expected);
+        assert_eq!(direction.direction_ref(), DirectionRef::B1950Vla);
     }
+    let mut conflicting = exported;
+    conflicting.set("RADESYS", FitsValue::String("FK4-NO-E".into()));
+    conflicting.set("EQUINOX", FitsValue::Float(1975.0));
+    assert!(from_fits_header(&conflicting, &shape).is_err());
 }
 
 #[test]

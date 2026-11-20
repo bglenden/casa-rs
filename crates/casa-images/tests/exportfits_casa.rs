@@ -801,6 +801,29 @@ fn exportfits_preserves_b1950_vla_in_the_fits_image() {
         panic!("expected direction coordinate");
     };
     assert_eq!(direction.direction_ref(), DirectionRef::B1950Vla);
+
+    // Older casacore writers spell the FITS equinox card EPOCH.
+    let mut bytes = fs::read(temp.path().join("b1950-vla.fits")).unwrap();
+    let card = bytes
+        .as_chunks_mut::<80>()
+        .0
+        .iter_mut()
+        .find(|card| &card[..8] == b"EQUINOX ")
+        .unwrap();
+    card[..8].copy_from_slice(b"EPOCH   ");
+    let legacy = temp.path().join("b1950-vla-legacy.fits");
+    fs::write(&legacy, bytes).unwrap();
+    let converted = temp.path().join("b1950-vla-legacy.im");
+    import_fits(&legacy, &converted, false).unwrap();
+    let image = PagedImage::<f32>::open(converted).unwrap();
+    let index = image
+        .coordinates()
+        .find_coordinate(CoordinateType::Direction)
+        .unwrap();
+    let CoordinateModel::Direction(direction) = image.coordinates().coordinate(index) else {
+        panic!("expected direction coordinate");
+    };
+    assert_eq!(direction.direction_ref(), DirectionRef::B1950Vla);
 }
 
 #[test]

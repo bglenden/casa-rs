@@ -676,22 +676,7 @@ fn parse_direction(
 
     // Direction reference from RADESYS
     let dir_ref = if default_dir_ref == DirectionRef::J2000 {
-        let vla_equinox = h.get_float("EQUINOX").is_some_and(|value| {
-            // FITSCoordinateUtil uses casacore's default Double near tolerance.
-            value.is_finite()
-                && value > 0.0
-                && (value - VLA_BESSELIAN_EQUINOX).abs() <= 1e-13 * value.max(VLA_BESSELIAN_EQUINOX)
-        });
-        let system = h
-            .get_string("RADESYS")
-            .or_else(|| h.get_string("RADECSYS"))
-            .map(str::to_ascii_uppercase);
-        match system.as_deref() {
-            Some("FK4" | "FK4-NO-E") | None if vla_equinox => DirectionRef::B1950Vla,
-            Some("FK4" | "FK4-NO-E") => DirectionRef::B1950,
-            Some("ICRS") => DirectionRef::ICRS,
-            _ => default_dir_ref,
-        }
+        fits_equatorial_frame(h)?
     } else {
         default_dir_ref
     };
@@ -718,6 +703,40 @@ fn parse_direction(
 
 // casacore's FITS encoding for MDirection::B1950_VLA.
 const VLA_BESSELIAN_EQUINOX: f64 = 1979.9;
+
+fn fits_equatorial_frame(header: &FitsHeader) -> Result<DirectionRef, CoordinateError> {
+    let equinox = header
+        .get_float("EQUINOX")
+        .or_else(|| header.get_float("EPOCH"));
+    let near = |standard: f64| {
+        // FITSCoordinateUtil uses casacore's default Double near tolerance.
+        equinox.is_some_and(|value| {
+            value.is_finite()
+                && value > 0.0
+                && (value - standard).abs() <= 1e-13 * value.max(standard)
+        })
+    };
+    let system = header
+        .get_string("RADESYS")
+        .or_else(|| header.get_string("RADECSYS"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_uppercase);
+    Ok(match (system.as_deref(), equinox) {
+        (Some("FK4" | "FK4-NO-E") | None, _) if near(VLA_BESSELIAN_EQUINOX) => {
+            DirectionRef::B1950Vla
+        }
+        (Some("FK4" | "FK4-NO-E"), _) if equinox.is_none() || near(1950.0) => DirectionRef::B1950,
+        (Some("FK5"), _) if equinox.is_none() || near(2000.0) => DirectionRef::J2000,
+        (Some("ICRS"), _) if equinox.is_none() || near(2000.0) => DirectionRef::ICRS,
+        (Some(system @ ("FK4" | "FK4-NO-E" | "FK5" | "ICRS")), Some(equinox)) => {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "FITS direction system {system} with equinox {equinox} is not supported"
+            )));
+        }
+        _ => DirectionRef::J2000,
+    })
+}
 
 /// Reads the 2D linear transform for direction axes.
 ///
