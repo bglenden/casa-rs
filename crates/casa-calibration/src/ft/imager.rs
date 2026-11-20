@@ -10,7 +10,8 @@ use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{ImageInfo, PagedImage};
 use casa_ms::schema::main_table::VisibilityDataColumn::ModelData;
 use casa_ms::{
-    MeasurementSet, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+    MeasurementSet, MsError, MsResult, MsSelection, ResolvedMsSelection, VirtualModelEntry,
+    VirtualModelKind,
 };
 use casa_types::measures::position::MPosition;
 use casa_types::{RecordValue, ScalarValue, Value};
@@ -33,6 +34,8 @@ use super::voltage_pattern::{
     ImagerVoltagePattern, pointing_may_use_local_frame, scratch_voltage_batches,
 };
 use super::{invalid, model_entry, prepare_mosaic_models, write_model_scratch};
+
+const DISABLED_AW_TERMS: &str = "Both, psterm and aterm cannot be set to NoOp.";
 
 /// Geometry installed by the imager before creating a model image.
 pub struct ImagerImageDefinition {
@@ -67,7 +70,7 @@ pub struct ImagerPrediction {
     legacy_pbw: Option<(ImagerLegacyPbWOptions, Option<PathBuf>)>,
     legacy_ep: Option<(Option<PathBuf>, LegacyEpOffsets)>,
     retained_sources: Option<ModelSources>,
-    legacy_aw: Option<ImagerLegacyAwOptions>,
+    legacy_aw: Option<(ImagerLegacyAwOptions, [bool; 2])>,
     single_dish_setup: ImagerSingleDishSetup,
     taylor: (i32, Option<f64>),
     voltage_pattern: Option<ImagerVoltagePattern>,
@@ -246,8 +249,32 @@ impl ImagerPrediction {
         options: ImagerTransformOptions,
         legacy_aw: ImagerLegacyAwOptions,
     ) -> MsResult<()> {
+        self.configure_legacy_aw_terms(options, legacy_aw, [true; 2])
+    }
+
+    /// Select legacy A/W prediction and its `[PS term, A term]` switches.
+    ///
+    /// # Errors
+    /// A previous prediction still has an unfinished publication.
+    pub fn configure_legacy_aw_terms(
+        &mut self,
+        options: ImagerTransformOptions,
+        legacy_aw: ImagerLegacyAwOptions,
+        terms: [bool; 2],
+    ) -> MsResult<()> {
         self.configure_transform(options)?;
-        self.legacy_aw = Some(legacy_aw);
+        self.legacy_aw = Some((legacy_aw, terms));
+        Ok(())
+    }
+
+    fn validate_legacy_aw_terms(&self) -> MsResult<()> {
+        if self
+            .legacy_aw
+            .as_ref()
+            .is_some_and(|(_, terms)| *terms == [false; 2])
+        {
+            return Err(invalid(DISABLED_AW_TERMS));
+        }
         Ok(())
     }
 
@@ -465,6 +492,7 @@ impl ImagerPrediction {
             .paths();
         let result = self.predict_attached(attachments, model, scratch);
         if !matches!(result, Ok(true))
+            && !result.as_ref().is_err_and(Self::retains_prepared_model)
             && self.partial_batch.is_none()
             && self.pending_publication.is_none()
             && let Some(sources) = &mut self.retained_sources
@@ -472,6 +500,15 @@ impl ImagerPrediction {
             sources.retain(&previous.0, previous.1.as_deref());
         }
         result
+    }
+
+    /// The legacy A/W constructor can fail after the sky model has been filled.
+    pub fn retains_prepared_model(error: &AttachmentError) -> bool {
+        matches!(
+            error,
+            AttachmentError::PredictionPreparation(MsError::InvalidInput(message))
+                if message == DISABLED_AW_TERMS
+        )
     }
 
     /// Drop model inputs when a legacy sky equation is rebuilt.
@@ -531,9 +568,11 @@ impl ImagerPrediction {
                 previous.publication.publish([(ms, lock)].into_iter())?;
                 return Ok(true);
             }
-            if selection.selected_rows.is_empty()
-                || (model.images.is_empty() && model.components.is_none())
-            {
+            if selection.selected_rows.is_empty() {
+                return Ok(true);
+            }
+            if model.images.is_empty() && model.components.is_none() {
+                self.validate_legacy_aw_terms().map_err(AttachmentError::PredictionPreparation)?;
                 return Ok(true);
             }
             if scratch && !has_column(ms, ModelData) {
@@ -801,6 +840,7 @@ impl ImagerPrediction {
                 )?);
             }
         }
+        self.validate_legacy_aw_terms()?;
         if mosaic {
             // setvp rebuilds the sky equation. The Fourier machine retains
             // its beam until setoptions or selectvis invalidates it.
@@ -1011,7 +1051,7 @@ impl ImagerPrediction {
                     keep_zero,
                     scratch,
                 )?);
-            } else if let Some(legacy_aw) = legacy_aw {
+            } else if let Some((legacy_aw, _)) = legacy_aw {
                 images.extend(super::legacy_aw::prepare_model(
                     ms, selected, image, &geometry, legacy_aw, keep_zero, scratch,
                 )?);
