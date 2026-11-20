@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_coordinates::CoordinateSystem;
+use casa_coordinates::{CoordinateModel, CoordinateSystem};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Dimension;
@@ -509,22 +509,20 @@ fn wc_box_corner(
     origin: usize,
     low: bool,
 ) -> Result<Vec<usize>, ImageError> {
-    let mut world = (0..coords.n_coordinates())
+    let reference = (0..coords.n_coordinates())
         .flat_map(|i| coords.coordinate(i).reference_value())
         .collect::<Vec<_>>();
+    let mut world = reference.clone();
     let reference_pixels = (0..coords.n_coordinates())
         .flat_map(|i| coords.coordinate(i).reference_pixel())
         .collect::<Vec<_>>();
     let units = (0..coords.n_coordinates())
         .flat_map(|i| coords.coordinate(i).axis_units())
         .collect::<Vec<_>>();
-    for ((&axis, quantity), &mode) in axes.iter().zip(quantities).zip(modes) {
+    let mut has_world_bounds = false;
+    for (&axis, quantity) in axes.iter().zip(quantities) {
         if !matches!(quantity.unit().name(), "pix" | "frac" | "default") {
-            if mode != 1.0 {
-                return Err(ImageError::InvalidMetadata(
-                    "relative WCBox world bounds are unsupported".into(),
-                ));
-            }
+            has_world_bounds = true;
             let unit = Unit::new(&units[axis])
                 .map_err(|err| ImageError::InvalidMetadata(err.to_string()))?;
             world[axis] = quantity
@@ -532,12 +530,16 @@ fn wc_box_corner(
                 .map_err(|err| ImageError::InvalidMetadata(err.to_string()))?;
         }
     }
+    if has_world_bounds && modes.iter().any(|&mode| mode != 1.0) {
+        make_wc_box_world_absolute(coords, shape, modes, &reference, &mut world)?;
+    }
     let converted = coords.to_pixel(&world)?;
     let mut result = shape
         .iter()
         .map(|len| if low { 0 } else { len - 1 })
         .collect::<Vec<_>>();
-    for ((&axis, quantity), &mode) in axes.iter().zip(quantities).zip(modes) {
+    for (position, ((&axis, quantity), &mode)) in axes.iter().zip(quantities).zip(modes).enumerate()
+    {
         let unit = quantity.unit().name();
         if unit == "default" {
             continue;
@@ -545,7 +547,8 @@ fn wc_box_corner(
         let limit = (shape[axis] - 1) as f64;
         let relative = match mode {
             1.0 => 0.0,
-            2.0 => reference_pixels[axis],
+            // WCBox looks up the reference pixel by the quantity's position.
+            2.0 => reference_pixels[position],
             3.0 => shape[axis] as f64 * 0.5,
             _ => return Err(ImageError::InvalidMetadata("invalid WCBox absrel".into())),
         };
@@ -554,9 +557,99 @@ fn wc_box_corner(
             "frac" => quantity.value() * shape[axis] as f64 + relative - f64::from(!low),
             _ => converted[axis],
         };
-        result[axis] = pixel.round().clamp(0.0, limit) as usize;
+        // LCBox rounds both corners, then clips only the lower side of BLC
+        // and the upper side of TRC. A disjoint box must stay disjoint.
+        let pixel = (pixel + 0.5).trunc();
+        if !pixel.is_finite() || (low && pixel > limit) || (!low && pixel < 0.0) {
+            return Err(ImageError::CasaSelection(format!(
+                "saved WCBox does not intersect the image on axis {axis}"
+            )));
+        }
+        result[axis] = pixel.clamp(0.0, limit) as usize;
     }
     Ok(result)
+}
+
+fn make_wc_box_world_absolute(
+    coords: &CoordinateSystem,
+    shape: &[usize],
+    modes: &[f64],
+    reference: &[f64],
+    world: &mut [f64],
+) -> Result<(), ImageError> {
+    // WCBox maps the quantities to the target world axes, then passes the modes
+    // to WCRegion as stored. The mode positions are not remapped with the axes.
+    let offsets = world
+        .iter()
+        .enumerate()
+        .map(|(axis, &value)| match modes.get(axis) {
+            Some(2.0 | 3.0) => value,
+            _ => 0.0,
+        })
+        .collect::<Vec<_>>();
+    // WCRegion evaluates the image center even for reference-relative bounds.
+    let center_pixel = shape
+        .iter()
+        .map(|&length| (length - 1) as f64 * 0.5)
+        .collect::<Vec<_>>();
+    let center = coords.to_world(&center_pixel)?;
+    for (mode, anchor) in [(2.0, reference), (3.0, center.as_slice())] {
+        if !modes.contains(&mode) {
+            continue;
+        }
+        let mut start = 0;
+        for i in 0..coords.n_coordinates() {
+            let coord = coords.coordinate(i);
+            let axes = start..start + coord.n_world_axes();
+            start = axes.end;
+            if !axes.clone().any(|axis| modes.get(axis) == Some(&mode)) {
+                continue;
+            }
+            let direction = if matches!(coord, CoordinateModel::Direction(_)) {
+                let [lon, lat] = offsets[axes.clone()] else {
+                    return Err(ImageError::InvalidMetadata(
+                        "relative WCBox requires both direction axes in the image".into(),
+                    ));
+                };
+                Some(offset_direction(
+                    [anchor[axes.start], anchor[axes.start + 1]],
+                    [lon, lat],
+                ))
+            } else {
+                None
+            };
+            for (local_axis, axis) in axes.enumerate() {
+                if modes.get(axis) == Some(&mode) {
+                    world[axis] = match direction {
+                        Some(values) => values[local_axis],
+                        // makeWorldAbsolute is a no-op for Stokes at the reference.
+                        None if mode == 2.0 && matches!(coord, CoordinateModel::Stokes(_)) => {
+                            offsets[axis]
+                        }
+                        None => anchor[axis] + offsets[axis],
+                    };
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn offset_direction(anchor: [f64; 2], offsets: [f64; 2]) -> [f64; 2] {
+    // DirectionCoordinate::makeWorldAbsolute rotates the offset from the
+    // equator to the anchor latitude. Relative longitude is scaled by cos(lat).
+    let (sin_lat, cos_lat) = offsets[1].sin_cos();
+    let (sin_lon, cos_lon) = (offsets[0] / cos_lat).sin_cos();
+    let (sin_anchor, cos_anchor) = anchor[1].sin_cos();
+    let x = cos_lat * cos_lon;
+    let y = cos_lat * sin_lon;
+    let equatorial = cos_anchor * x - sin_anchor * sin_lat;
+    let polar = sin_anchor * x + cos_anchor * sin_lat;
+    let longitude = anchor[0] + y.atan2(equatorial);
+    [
+        longitude.sin().atan2(longitude.cos()),
+        polar.atan2(equatorial.hypot(y)),
+    ]
 }
 
 fn read_quantum_list(val: Option<&Value>) -> Result<Vec<Quantity>, ImageError> {
