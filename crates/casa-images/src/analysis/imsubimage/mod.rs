@@ -4,6 +4,7 @@
 //! degenerate axis dropping (`dropdeg`/`keepaxes`).
 
 pub(super) mod coords;
+mod pixel_edit;
 pub(super) mod region;
 mod replace_masked;
 
@@ -11,6 +12,8 @@ pub use replace_masked::{
     MaskReplacementOptions, MaskReplacementOutcome, replace_masked_complex_pixels,
     replace_masked_real_pixels,
 };
+
+pub use pixel_edit::ImagePixelSelection;
 
 use std::collections::BTreeSet;
 use std::fs;

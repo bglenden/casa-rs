@@ -7924,6 +7924,7 @@ pixels, the same call can terminate the process.
 
 casa-rs averages valid pixels over the requested axes and retains all
 other axes, for every supported image pixel type (#1627).
+
 ## Image statistics can report an extremum outside the sampled pixels
 
 In CASA 6.7.6.14, `ia.statistics(region=...)` on a box starting at
@@ -7942,3 +7943,10 @@ process. casa-rs raises an error for the duplicate axis.
 
 The pinned biweight algorithm can also terminate when every selected
 pixel is masked. casa-rs returns a recoverable error for the empty sample.
+
+## Setting the pixels of a complex image can terminate CASA
+
+On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
+type="c")` followed by `image.set(pixels=2)` terminates Python with SIGSEGV.
+casa-rs raises `RuntimeError` and preserves the complex image. See
+[#1625](https://github.com/bglenden/casa-rs/issues/1625).
