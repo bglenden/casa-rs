@@ -644,7 +644,7 @@ mod tests {
                 None,
             ),
             (
-                &["msexplore", "plotms"][..],
+                &["msexplore"][..],
                 "output",
                 "measurementset.summary.output",
                 Some("msexplore"),
@@ -718,6 +718,7 @@ mod tests {
             [
                 "data.input.vis",
                 "data.output.vis",
+                "plotms.vis",
                 "simulation.analysis.vis"
             ]
             .into_iter()
@@ -741,6 +742,7 @@ mod tests {
                 "imager.width",
                 "impv.width",
                 "ms.transform.width",
+                "plotms.width",
                 "regridms.width",
                 "single_dish.width"
             ]
@@ -779,7 +781,13 @@ mod tests {
         assert_eq!(role("data.output.vis"), ParameterRole::OutputData);
         assert_eq!(role("image.input.imagename"), ParameterRole::InputData);
         assert_eq!(role("image.output.imagename"), ParameterRole::OutputData);
-        for id in concept_ids("width").into_iter().chain(concept_ids("mode")) {
+        assert_eq!(role("plotms.vis"), ParameterRole::InputData);
+        assert_eq!(role("plotms.width"), ParameterRole::Presentation);
+        for id in concept_ids("width")
+            .into_iter()
+            .chain(concept_ids("mode"))
+            .filter(|id| id != "plotms.width")
+        {
             assert_eq!(role(&id), ParameterRole::Algorithm);
         }
     }
@@ -837,7 +845,12 @@ mod tests {
                         decoded,
                         matches!(
                             surface.id(),
-                            "tclean" | "simobserve" | "simanalyze" | "simalma" | "tsdimaging"
+                            "tclean"
+                                | "simobserve"
+                                | "simanalyze"
+                                | "simalma"
+                                | "tsdimaging"
+                                | "plotms"
                         ),
                         "{} product sources",
                         surface.id()

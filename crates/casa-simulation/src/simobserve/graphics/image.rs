@@ -100,7 +100,7 @@ fn prepare_image(
             position[0] = x;
             let valid = mask.as_ref().is_none_or(|mask| mask[IxDyn(&position)]);
             let value = if valid { pixels[IxDyn(&position)] } else { 0.0 };
-            payload.f32(value)?;
+            payload.f32(value).map_err(failure)?;
         }
     }
     output.layers.push(layer(

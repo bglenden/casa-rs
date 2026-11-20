@@ -42,14 +42,19 @@ pub fn ephemeris_plot(
     request: &EphemerisPlotRequest<'_>,
     payload_path: &Path,
 ) -> Result<PlotDocument, SimobserveError> {
-    let mut payload = Payload::open(payload_path)?;
+    let mut payload =
+        Payload::open(payload_path).map_err(|error| SimobserveError::raised(error.to_string()))?;
     let mut panel = crate::simobserve::graphics::ephemeris::panel_for(request, &mut payload)?;
     // The task starts a new panel; the public helper draws on caller axes
     // and, like CASA, preserves their existing aspect and adjustable mode.
     panel.aspect = None;
     let document = document::document("ephemeris", vec![panel], 1);
     document
-        .validate_payload(payload.finish()?)
+        .validate_payload(
+            payload
+                .finish()
+                .map_err(|error| SimobserveError::raised(error.to_string()))?,
+        )
         .map_err(|e| SimobserveError::raised(e.to_string()))?;
     Ok(document)
 }
@@ -90,7 +95,8 @@ pub fn image_plot(
 ) -> Result<(PlotDocument, [f64; 2], super::analysis::ImageStatistics), SimobserveError> {
     casa_imaging_runtime::charge_process_caches(resources.host(), resources.policy())
         .map_err(|error| SimobserveError::raised(error.to_string()))?;
-    let mut payload = Payload::open(payload_path)?;
+    let mut payload =
+        Payload::open(payload_path).map_err(|error| SimobserveError::raised(error.to_string()))?;
     let (mut panel, stats) = image::image_panel_for_simutil(path, &mut payload, resources)?;
     let mut limits = [0.0; 2];
     for layer in &mut panel.layers {
@@ -127,7 +133,11 @@ pub fn image_plot(
     let mut document = document::document("statim", vec![panel], 1);
     document.layout.as_mut().expect("image layout").font_size = None;
     document
-        .validate_payload(payload.finish()?)
+        .validate_payload(
+            payload
+                .finish()
+                .map_err(|error| SimobserveError::raised(error.to_string()))?,
+        )
         .map_err(|e| SimobserveError::raised(e.to_string()))?;
     Ok((document, limits, stats))
 }
@@ -153,13 +163,18 @@ pub fn antenna_plot(
             "plotants requires matching finite antenna positions, diameters and names",
         ));
     }
-    let mut payload = Payload::open(payload_path)?;
+    let mut payload =
+        Payload::open(payload_path).map_err(|error| SimobserveError::raised(error.to_string()))?;
     let mut panel = observation::antenna_panel(positions, diameters, names, &mut payload)?;
     panel.axes.clear();
     let mut document = document::document("plotants", vec![panel], 1);
     document.layout = None;
     document
-        .validate_payload(payload.finish()?)
+        .validate_payload(
+            payload
+                .finish()
+                .map_err(|error| SimobserveError::raised(error.to_string()))?,
+        )
         .map_err(|e| SimobserveError::raised(e.to_string()))?;
     Ok(document)
 }

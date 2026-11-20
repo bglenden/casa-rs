@@ -7171,6 +7171,14 @@ casa-rs evaluates the check at integer channel indices. In the fixture,
 a step at channel 32 produces a platforming report at the 10 percent
 threshold and a clean result at the 100 percent threshold (#1526).
 
+## PlotMS disabling selection calls the selection setter with a missing argument
+
+The installed CASA PlotMS wrapper raises `Exception("updateImmediately must
+be a boolean")` for `selectdata=False`. The wrapper's no-selection call omits
+a selector argument before the update flag. casa-rs applies the requested
+unfiltered selection and leaves the caller's selector expressions inactive
+(#1526).
+
 ## plotbandpass references an undefined name when WEATHER is absent
 
 An atmospheric overlay on the paired bandpass with no associated WEATHER

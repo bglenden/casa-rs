@@ -18621,51 +18621,31 @@
     {
       "kind": "task",
       "id": "plotms",
-      "contract_version": 7,
+      "contract_version": 8,
       "display_name": "PlotMS",
       "category": "Plotting",
-      "summary": "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
+      "summary": "Plot selected MeasurementSet or calibration table data.",
       "provider_family": "msexplore",
       "execution": {
         "invocation_name": "msexplore",
         "fixed_args": [],
-        "managed_output": null,
+        "managed_output": {
+          "decoder": "plotms-run-v1",
+          "stdout_format": "json",
+          "raw_stdout_available": true,
+          "raw_stderr_available": true
+        },
         "products": {
           "kind": "declared",
           "products": [
             {
-              "id": "output",
+              "id": "plotfile",
               "role": "primary",
               "resource_kind": "file",
               "source": {
-                "kind": "parameter",
-                "parameter": "output"
+                "kind": "decoded_artifacts"
               },
-              "cardinality": "one",
-              "optional": true,
-              "probe_supported": false
-            },
-            {
-              "id": "plot_output",
-              "role": "auxiliary",
-              "resource_kind": "file",
-              "source": {
-                "kind": "parameter",
-                "parameter": "plot_output"
-              },
-              "cardinality": "one",
-              "optional": true,
-              "probe_supported": false
-            },
-            {
-              "id": "flag_output",
-              "role": "auxiliary",
-              "resource_kind": "file",
-              "source": {
-                "kind": "parameter",
-                "parameter": "flag_output"
-              },
-              "cardinality": "one",
+              "cardinality": "many",
               "optional": true,
               "probe_supported": false
             }
@@ -18676,56 +18656,54 @@
         {
           "name": "vis",
           "concept": {
-            "id": "data.input.vis",
+            "id": "plotms.vis",
             "semantic_revision": 1
           },
           "order": 0,
           "default": {
-            "kind": "required"
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
           },
           "required_when": {
-            "kind": "always"
+            "kind": "never"
           },
           "active_when": {
             "kind": "always"
           },
-          "refinements": [
-            {
-              "kind": "length",
-              "min": 0,
-              "max": 1
-            }
-          ],
+          "refinements": [],
           "context_role": "input_dataset",
-          "surface_note": "Canonical vis maps to provider field ms_path.",
           "projections": {
             "cli": {
               "positional": 0,
-              "flags": [],
-              "false_flags": [],
-              "metavar": "ms-path"
+              "flags": [
+                "--vis"
+              ],
+              "metavar": "TABLE"
             },
             "provider": {
-              "field": "ms_path",
+              "field": "vis",
               "adapter": "identity"
             },
             "python": {
-              "name": "vis",
-              "type_hint": null
+              "name": "vis"
             },
             "presentation": {
-              "label": "MeasurementSet Path",
-              "group": "Input",
-              "advanced": false,
-              "hidden": false
+              "label": "vis",
+              "group": "Input"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "format",
+          "name": "caltable",
           "concept": {
-            "id": "parameter.format",
+            "id": "parameter.caltable",
             "semantic_revision": 1
           },
           "order": 1,
@@ -18733,7 +18711,48 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "text"
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "input_dataset",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--caltable"
+              ]
+            },
+            "provider": {
+              "field": "caltable",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "caltable"
+            },
+            "presentation": {
+              "label": "caltable",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "gridrows",
+          "concept": {
+            "id": "plotms.gridrows",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
             }
           },
           "required_when": {
@@ -18744,95 +18763,41 @@
           },
           "refinements": [],
           "context_role": "presentation",
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--format"
-              ],
-              "false_flags": [],
-              "metavar": "FORMAT"
+                "--gridrows"
+              ]
             },
             "provider": {
-              "field": "format",
+              "field": "gridrows",
               "adapter": "identity"
             },
             "python": {
-              "name": "format",
-              "type_hint": null
+              "name": "gridrows"
             },
             "presentation": {
-              "label": "Output Format",
-              "group": "Output",
-              "advanced": false,
-              "hidden": false
+              "label": "gridrows",
+              "group": "Presentation"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "output",
+          "name": "gridcols",
           "concept": {
-            "id": "measurementset.summary.output",
-            "semantic_revision": 1
-          },
-          "order": 2,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "-o",
-                "--output"
-              ],
-              "false_flags": [],
-              "metavar": "PATH"
-            },
-            "provider": {
-              "field": "output",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "output",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Output Path",
-              "group": "Output",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "overwrite",
-          "concept": {
-            "id": "output.overwrite",
+            "id": "plotms.gridcols",
             "semantic_revision": 1
           },
           "order": 3,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": false
+              "kind": "integer",
+              "value": 1
             }
           },
           "required_when": {
@@ -18842,46 +18807,43 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--overwrite"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--gridcols"
+              ]
             },
             "provider": {
-              "field": "overwrite",
+              "field": "gridcols",
               "adapter": "identity"
             },
             "python": {
-              "name": "overwrite",
-              "type_hint": null
+              "name": "gridcols"
             },
             "presentation": {
-              "label": "Overwrite Output",
-              "group": "Output",
-              "advanced": true,
-              "hidden": false
+              "label": "gridcols",
+              "group": "Presentation"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "selectdata",
+          "name": "rowindex",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "parameter.selectdata",
+            "id": "plotms.rowindex",
             "semantic_revision": 1
           },
           "order": 4,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": true
+              "kind": "integer",
+              "value": 0
             }
           },
           "required_when": {
@@ -18891,48 +18853,39 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--selectdata"
-              ],
-              "false_flags": [
-                "--no-selectdata"
-              ],
-              "metavar": null
+                "--rowindex"
+              ]
             },
             "provider": {
-              "field": "selectdata",
+              "field": "rowindex",
               "adapter": "identity"
             },
             "python": {
-              "name": "selectdata",
-              "type_hint": null
+              "name": "rowindex"
             },
             "presentation": {
-              "label": "Apply Selection",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "rowindex",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "field",
+          "name": "colindex",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "ms.selection.field",
+            "id": "plotms.colindex",
             "semantic_revision": 1
           },
           "order": 5,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "integer",
+              "value": 0
             }
           },
           "required_when": {
@@ -18942,92 +18895,72 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "field_selection",
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--field"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--colindex"
+              ]
             },
             "provider": {
-              "field": "field",
-              "adapter": "omit_none"
+              "field": "colindex",
+              "adapter": "identity"
             },
             "python": {
-              "name": "field",
-              "type_hint": null
+              "name": "colindex"
             },
             "presentation": {
-              "label": "Field",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "colindex",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "spw",
+          "name": "plotindex",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "ms.selection.spw",
+            "id": "plotms.plotindex",
             "semantic_revision": 1
           },
           "order": 6,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "integer",
+              "value": 0
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
-          "context_role": "spectral_window_selection",
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--spw"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--plotindex"
+              ]
             },
             "provider": {
-              "field": "spw",
-              "adapter": "omit_none"
+              "field": "plotindex",
+              "adapter": "identity"
             },
             "python": {
-              "name": "spw",
-              "type_hint": null
+              "name": "plotindex"
             },
             "presentation": {
-              "label": "Spectral Window",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "plotindex",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "timerange",
+          "name": "xaxis",
           "concept": {
-            "id": "ms.selection.timerange",
+            "id": "plotms.xaxis",
             "semantic_revision": 1
           },
           "order": 7,
@@ -19035,53 +18968,44 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--timerange"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--xaxis"
+              ]
             },
             "provider": {
-              "field": "timerange",
-              "adapter": "omit_none"
+              "field": "xaxis",
+              "adapter": "identity"
             },
             "python": {
-              "name": "timerange",
-              "type_hint": null
+              "name": "xaxis"
             },
             "presentation": {
-              "label": "Time Range",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "xaxis",
+              "group": "Axes"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "PlotMS admits visibility and calibration coordinates, while PlotBandpass accepts its spectral channel and frequency axes."
+          }
         },
         {
-          "name": "uvrange",
+          "name": "xdatacolumn",
           "concept": {
-            "id": "ms.selection.uvrange",
+            "id": "plotms.xdatacolumn",
             "semantic_revision": 1
           },
           "order": 8,
@@ -19089,53 +19013,41 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--uvrange"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--xdatacolumn"
+              ]
             },
             "provider": {
-              "field": "uvrange",
-              "adapter": "omit_none"
+              "field": "xdatacolumn",
+              "adapter": "identity"
             },
             "python": {
-              "name": "uvrange",
-              "type_hint": null
+              "name": "xdatacolumn"
             },
             "presentation": {
-              "label": "UV Range",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "xdatacolumn",
+              "group": "Axes"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "antenna",
+          "name": "xframe",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "ms.selection.antenna",
+            "id": "plotms.xframe",
             "semantic_revision": 1
           },
           "order": 9,
@@ -19143,53 +19055,41 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--antenna"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--xframe"
+              ]
             },
             "provider": {
-              "field": "antenna",
-              "adapter": "omit_none"
+              "field": "xframe",
+              "adapter": "identity"
             },
             "python": {
-              "name": "antenna",
-              "type_hint": null
+              "name": "xframe"
             },
             "presentation": {
-              "label": "Antenna",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "xframe",
+              "group": "Axes"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "scan",
+          "name": "xinterp",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "ms.selection.scan",
+            "id": "plotms.xinterp",
             "semantic_revision": 1
           },
           "order": 10,
@@ -19197,53 +19097,40 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--scan"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--xinterp"
+              ]
             },
             "provider": {
-              "field": "scan",
-              "adapter": "omit_none"
+              "field": "xinterp",
+              "adapter": "identity"
             },
             "python": {
-              "name": "scan",
-              "type_hint": null
+              "name": "xinterp"
             },
             "presentation": {
-              "label": "Scan",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "xinterp",
+              "group": "Axes"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "correlation",
+          "name": "yaxis",
           "concept": {
-            "id": "ms.selection.correlation",
+            "id": "plotms.yaxis",
             "semantic_revision": 1
           },
           "order": 11,
@@ -19251,53 +19138,45 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--correlation"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--yaxis"
+              ]
             },
             "provider": {
-              "field": "correlation",
-              "adapter": "omit_none"
+              "field": "yaxis",
+              "adapter": "identity"
             },
             "python": {
-              "name": "correlation",
-              "type_hint": null
+              "name": "yaxis",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Correlation",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "yaxis",
+              "group": "Axes"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1526",
+            "reason": "PlotMS permits a list of simultaneous coordinate axes, while PlotBandpass selects a single spectral display mode."
+          }
         },
         {
-          "name": "observation",
+          "name": "ydatacolumn",
           "concept": {
-            "id": "ms.selection.observation",
+            "id": "plotms.ydatacolumn",
             "semantic_revision": 1
           },
           "order": 12,
@@ -19305,53 +19184,42 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--observation"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--ydatacolumn"
+              ]
             },
             "provider": {
-              "field": "observation",
-              "adapter": "omit_none"
+              "field": "ydatacolumn",
+              "adapter": "identity"
             },
             "python": {
-              "name": "observation",
-              "type_hint": null
+              "name": "ydatacolumn",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Observation",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "ydatacolumn",
+              "group": "Axes"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "array",
+          "name": "yframe",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "ms.selection.array",
+            "id": "plotms.yframe",
             "semantic_revision": 1
           },
           "order": 13,
@@ -19359,53 +19227,42 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--array"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--yframe"
+              ]
             },
             "provider": {
-              "field": "array",
-              "adapter": "omit_none"
+              "field": "yframe",
+              "adapter": "identity"
             },
             "python": {
-              "name": "array",
-              "type_hint": null
+              "name": "yframe",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Array",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "yframe",
+              "group": "Axes"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "intent",
+          "name": "yinterp",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "ms.selection.intent",
+            "id": "plotms.yinterp",
             "semantic_revision": 1
           },
           "order": 14,
@@ -19413,53 +19270,41 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--intent"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--yinterp"
+              ]
             },
             "provider": {
-              "field": "intent",
-              "adapter": "omit_none"
+              "field": "yinterp",
+              "adapter": "identity"
             },
             "python": {
-              "name": "intent",
-              "type_hint": null
+              "name": "yinterp",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Intent",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
+              "label": "yinterp",
+              "group": "Axes"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "feed",
+          "name": "yaxislocation",
           "concept": {
-            "id": "ms.selection.feed",
+            "id": "plotms.yaxislocation",
             "semantic_revision": 1
           },
           "order": 15,
@@ -19467,115 +19312,97 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--feed"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
+                "--yaxislocation"
+              ]
             },
             "provider": {
-              "field": "feed",
-              "adapter": "omit_none"
+              "field": "yaxislocation",
+              "adapter": "identity"
             },
             "python": {
-              "name": "feed",
-              "type_hint": null
+              "name": "yaxislocation",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Feed",
-              "group": "Selection",
-              "advanced": true,
-              "hidden": false
+              "label": "yaxislocation",
+              "group": "Axes"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "msselect",
+          "name": "selectdata",
           "concept": {
-            "id": "ms.selection.msselect",
+            "id": "plotms.selectdata",
             "semantic_revision": 1
           },
           "order": 16,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "bool",
+              "value": true
             }
           },
           "required_when": {
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
+            "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--msselect"
+                "--selectdata"
               ],
-              "false_flags": [],
-              "metavar": "EXPR"
+              "false_flags": [
+                "--no-selectdata"
+              ]
             },
             "provider": {
-              "field": "msselect",
-              "adapter": "omit_none"
+              "field": "selectdata",
+              "adapter": "identity"
             },
             "python": {
-              "name": "msselect",
-              "type_hint": null
+              "name": "selectdata"
             },
             "presentation": {
-              "label": "MSSelect",
-              "group": "Selection",
-              "advanced": true,
-              "hidden": false
+              "label": "selectdata",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "page_spec",
+          "name": "field",
           "concept": {
-            "id": "parameter.page_spec",
-            "semantic_revision": 1
+            "id": "ms.selection.field",
+            "semantic_revision": 4
           },
           "order": 17,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -19585,46 +19412,38 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--page-spec"
-              ],
-              "false_flags": [],
-              "metavar": "PATH"
+                "--field"
+              ]
             },
             "provider": {
-              "field": "page_spec",
-              "adapter": "omit_none"
+              "field": "field",
+              "adapter": "identity"
             },
             "python": {
-              "name": "page_spec",
-              "type_hint": null
+              "name": "field"
             },
             "presentation": {
-              "label": "Page Spec",
-              "group": "Plot",
-              "advanced": false,
-              "hidden": false
+              "label": "field",
+              "group": "Selection"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "preset",
+          "name": "spw",
           "concept": {
-            "id": "parameter.preset",
-            "semantic_revision": 1
+            "id": "ms.selection.spw",
+            "semantic_revision": 3
           },
           "order": 18,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -19633,72 +19452,31 @@
           "active_when": {
             "kind": "always"
           },
-          "refinements": [
-            {
-              "kind": "allowed_values",
-              "values": [
-                "amplitude_phase_vs_time_stacked",
-                "amplitude_vs_channel",
-                "amplitude_vs_frequency",
-                "amplitude_vs_time",
-                "amplitude_vs_uv_distance",
-                "amplitude_vs_velocity",
-                "antenna_layout",
-                "azimuth_vs_elevation",
-                "azimuth_vs_time",
-                "elevation_vs_time",
-                "flag_vs_time",
-                "flagrow_vs_time",
-                "hour_angle_vs_time",
-                "none",
-                "parallactic_angle_vs_time",
-                "phase_vs_channel",
-                "phase_vs_frequency",
-                "phase_vs_time",
-                "phase_vs_velocity",
-                "real_vs_imaginary",
-                "scan_timeline",
-                "sigma_spectrum_vs_time",
-                "sigma_vs_time",
-                "spectral_window_coverage",
-                "uv_coverage",
-                "weight_spectrum_vs_time",
-                "weight_vs_time"
-              ]
-            }
-          ],
-          "context_role": null,
-          "surface_note": null,
+          "refinements": [],
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--preset"
-              ],
-              "false_flags": [],
-              "metavar": "PRESET"
+                "--spw"
+              ]
             },
             "provider": {
-              "field": "preset",
-              "adapter": "omit_none"
+              "field": "spw",
+              "adapter": "identity"
             },
             "python": {
-              "name": "preset",
-              "type_hint": null
+              "name": "spw"
             },
             "presentation": {
-              "label": "Preset",
-              "group": "Plot",
-              "advanced": false,
-              "hidden": false
+              "label": "spw",
+              "group": "Selection"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "x_axis",
+          "name": "timerange",
           "concept": {
-            "id": "parameter.x_axis",
+            "id": "plotms.timerange",
             "semantic_revision": 1
           },
           "order": 19,
@@ -19706,7 +19484,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -19716,38 +19494,34 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--xaxis"
-              ],
-              "false_flags": [],
-              "metavar": "AXIS"
+                "--timerange"
+              ]
             },
             "provider": {
-              "field": "x_axis",
-              "adapter": "omit_none"
+              "field": "timerange",
+              "adapter": "identity"
             },
             "python": {
-              "name": "x_axis",
-              "type_hint": null
+              "name": "timerange"
             },
             "presentation": {
-              "label": "X Axis",
-              "group": "Plot",
-              "advanced": false,
-              "hidden": false
+              "label": "timerange",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "y_axis",
+          "name": "uvrange",
           "concept": {
-            "id": "parameter.y_axis",
+            "id": "plotms.uvrange",
             "semantic_revision": 1
           },
           "order": 20,
@@ -19755,7 +19529,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -19765,38 +19539,34 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--yaxis"
-              ],
-              "false_flags": [],
-              "metavar": "AXIS"
+                "--uvrange"
+              ]
             },
             "provider": {
-              "field": "y_axis",
-              "adapter": "omit_none"
+              "field": "uvrange",
+              "adapter": "identity"
             },
             "python": {
-              "name": "y_axis",
-              "type_hint": null
+              "name": "uvrange"
             },
             "presentation": {
-              "label": "Y Axis",
-              "group": "Plot",
-              "advanced": false,
-              "hidden": false
+              "label": "uvrange",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "y_axis2",
+          "name": "antenna",
           "concept": {
-            "id": "parameter.y_axis2",
+            "id": "plotms.antenna",
             "semantic_revision": 1
           },
           "order": 21,
@@ -19804,7 +19574,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -19814,38 +19584,34 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--yaxis2"
-              ],
-              "false_flags": [],
-              "metavar": "AXIS"
+                "--antenna"
+              ]
             },
             "provider": {
-              "field": "y_axis2",
-              "adapter": "omit_none"
+              "field": "antenna",
+              "adapter": "identity"
             },
             "python": {
-              "name": "y_axis2",
-              "type_hint": null
+              "name": "antenna"
             },
             "presentation": {
-              "label": "Second Y Axis",
-              "group": "Plot",
-              "advanced": false,
-              "hidden": false
+              "label": "antenna",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "datacolumn",
+          "name": "scan",
           "concept": {
-            "id": "parameter.datacolumn",
+            "id": "plotms.scan",
             "semantic_revision": 1
           },
           "order": 22,
@@ -19853,7 +19619,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "data"
+              "value": ""
             }
           },
           "required_when": {
@@ -19863,38 +19629,34 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": "Canonical datacolumn maps to provider field data_column.",
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--data-column"
-              ],
-              "false_flags": [],
-              "metavar": "COLUMN"
+                "--scan"
+              ]
             },
             "provider": {
-              "field": "data_column",
+              "field": "scan",
               "adapter": "identity"
             },
             "python": {
-              "name": "datacolumn",
-              "type_hint": null
+              "name": "scan"
             },
             "presentation": {
-              "label": "Data Column",
-              "group": "Plot",
-              "advanced": false,
-              "hidden": false
+              "label": "scan",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "color_by",
+          "name": "correlation",
           "concept": {
-            "id": "parameter.color_by",
+            "id": "plotms.correlation",
             "semantic_revision": 1
           },
           "order": 23,
@@ -19902,7 +19664,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "field"
+              "value": ""
             }
           },
           "required_when": {
@@ -19912,38 +19674,34 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--color-by"
-              ],
-              "false_flags": [],
-              "metavar": "AXIS"
+                "--correlation"
+              ]
             },
             "provider": {
-              "field": "color_by",
+              "field": "correlation",
               "adapter": "identity"
             },
             "python": {
-              "name": "color_by",
-              "type_hint": null
+              "name": "correlation"
             },
             "presentation": {
-              "label": "Color By",
-              "group": "Plot",
-              "advanced": false,
-              "hidden": false
+              "label": "correlation",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "avgchannel",
+          "name": "polarization",
           "concept": {
-            "id": "parameter.avgchannel",
+            "id": "plotms.polarization",
             "semantic_revision": 1
           },
           "order": 24,
@@ -19951,7 +19709,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -19961,38 +19719,30 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--avgchannel"
-              ],
-              "false_flags": [],
-              "metavar": "N"
+                "--polarization"
+              ]
             },
             "provider": {
-              "field": "avgchannel",
-              "adapter": "omit_none"
+              "field": "polarization",
+              "adapter": "identity"
             },
             "python": {
-              "name": "avgchannel",
-              "type_hint": null
+              "name": "polarization"
             },
             "presentation": {
-              "label": "Average Channels",
-              "group": "Averaging",
-              "advanced": false,
-              "hidden": false
+              "label": "polarization",
+              "group": "Selection"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "avgtime",
+          "name": "antpos",
           "concept": {
-            "id": "parameter.avgtime",
+            "id": "plotms.antpos",
             "semantic_revision": 1
           },
           "order": 25,
@@ -20000,7 +19750,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -20010,46 +19760,38 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--avgtime"
-              ],
-              "false_flags": [],
-              "metavar": "SECONDS"
+                "--antpos"
+              ]
             },
             "provider": {
-              "field": "avgtime",
-              "adapter": "omit_none"
+              "field": "antpos",
+              "adapter": "identity"
             },
             "python": {
-              "name": "avgtime",
-              "type_hint": null
+              "name": "antpos"
             },
             "presentation": {
-              "label": "Average Time",
-              "group": "Averaging",
-              "advanced": false,
-              "hidden": false
+              "label": "antpos",
+              "group": "Selection"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "avgscan",
+          "name": "array",
           "concept": {
-            "id": "parameter.avgscan",
+            "id": "plotms.array",
             "semantic_revision": 1
           },
           "order": 26,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": false
+              "kind": "string",
+              "value": ""
             }
           },
           "required_when": {
@@ -20059,46 +19801,42 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--avgscan"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--array"
+              ]
             },
             "provider": {
-              "field": "avgscan",
+              "field": "array",
               "adapter": "identity"
             },
             "python": {
-              "name": "avgscan",
-              "type_hint": null
+              "name": "array"
             },
             "presentation": {
-              "label": "Average Scans",
-              "group": "Averaging",
-              "advanced": false,
-              "hidden": false
+              "label": "array",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "avgfield",
+          "name": "observation",
           "concept": {
-            "id": "parameter.avgfield",
+            "id": "plotms.observation",
             "semantic_revision": 1
           },
           "order": 27,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": false
+              "kind": "string",
+              "value": ""
             }
           },
           "required_when": {
@@ -20108,46 +19846,42 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--avgfield"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--observation"
+              ]
             },
             "provider": {
-              "field": "avgfield",
+              "field": "observation",
               "adapter": "identity"
             },
             "python": {
-              "name": "avgfield",
-              "type_hint": null
+              "name": "observation"
             },
             "presentation": {
-              "label": "Average Fields",
-              "group": "Averaging",
-              "advanced": false,
-              "hidden": false
+              "label": "observation",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "avgbaseline",
+          "name": "intent",
           "concept": {
-            "id": "parameter.avgbaseline",
+            "id": "plotms.intent",
             "semantic_revision": 1
           },
           "order": 28,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": false
+              "kind": "string",
+              "value": ""
             }
           },
           "required_when": {
@@ -20157,46 +19891,42 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--avgbaseline"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--intent"
+              ]
             },
             "provider": {
-              "field": "avgbaseline",
+              "field": "intent",
               "adapter": "identity"
             },
             "python": {
-              "name": "avgbaseline",
-              "type_hint": null
+              "name": "intent"
             },
             "presentation": {
-              "label": "Average Baselines",
-              "group": "Averaging",
-              "advanced": false,
-              "hidden": false
+              "label": "intent",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "avgantenna",
+          "name": "feed",
           "concept": {
-            "id": "parameter.avgantenna",
+            "id": "plotms.feed",
             "semantic_revision": 1
           },
           "order": 29,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": false
+              "kind": "string",
+              "value": ""
             }
           },
           "required_when": {
@@ -20206,46 +19936,42 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--avgantenna"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--feed"
+              ]
             },
             "provider": {
-              "field": "avgantenna",
+              "field": "feed",
               "adapter": "identity"
             },
             "python": {
-              "name": "avgantenna",
-              "type_hint": null
+              "name": "feed"
             },
             "presentation": {
-              "label": "Average Antennas",
-              "group": "Averaging",
-              "advanced": false,
-              "hidden": false
+              "label": "feed",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "avgspw",
+          "name": "msselect",
           "concept": {
-            "id": "parameter.avgspw",
+            "id": "plotms.msselect",
             "semantic_revision": 1
           },
           "order": 30,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": false
+              "kind": "string",
+              "value": ""
             }
           },
           "required_when": {
@@ -20255,38 +19981,34 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "table_selection",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--avgspw"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--msselect"
+              ]
             },
             "provider": {
-              "field": "avgspw",
+              "field": "msselect",
               "adapter": "identity"
             },
             "python": {
-              "name": "avgspw",
-              "type_hint": null
+              "name": "msselect"
             },
             "presentation": {
-              "label": "Average SPWs",
-              "group": "Averaging",
-              "advanced": false,
-              "hidden": false
+              "label": "msselect",
+              "group": "Selection"
             }
           },
-          "reviewed_homonym": null
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
         },
         {
-          "name": "scalar",
+          "name": "averagedata",
           "concept": {
-            "id": "parameter.scalar",
+            "id": "plotms.averagedata",
             "semantic_revision": 1
           },
           "order": 31,
@@ -20294,6 +20016,140 @@
             "kind": "literal",
             "value": {
               "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--averagedata"
+              ],
+              "false_flags": [
+                "--no-averagedata"
+              ]
+            },
+            "provider": {
+              "field": "averagedata",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "averagedata"
+            },
+            "presentation": {
+              "label": "averagedata",
+              "group": "Averaging"
+            }
+          }
+        },
+        {
+          "name": "avgchannel",
+          "concept": {
+            "id": "plotms.avgchannel",
+            "semantic_revision": 1
+          },
+          "order": 32,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--avgchannel"
+              ]
+            },
+            "provider": {
+              "field": "avgchannel",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "avgchannel"
+            },
+            "presentation": {
+              "label": "avgchannel",
+              "group": "Averaging"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "avgtime",
+          "concept": {
+            "id": "plotms.avgtime",
+            "semantic_revision": 1
+          },
+          "order": 33,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--avgtime"
+              ]
+            },
+            "provider": {
+              "field": "avgtime",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "avgtime"
+            },
+            "presentation": {
+              "label": "avgtime",
+              "group": "Averaging"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "avgscan",
+          "concept": {
+            "id": "parameter.avgscan",
+            "semantic_revision": 1
+          },
+          "order": 34,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
               "value": false
             }
           },
@@ -20305,192 +20161,40 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--scalar"
+                "--avgscan"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-avgscan"
+              ]
             },
             "provider": {
-              "field": "scalar",
+              "field": "avgscan",
               "adapter": "identity"
             },
             "python": {
-              "name": "scalar",
-              "type_hint": null
+              "name": "avgscan"
             },
             "presentation": {
-              "label": "Scalar Average",
-              "group": "Averaging",
-              "advanced": false,
-              "hidden": false
+              "label": "avgscan",
+              "group": "Averaging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "freqframe",
+          "name": "avgfield",
           "concept": {
-            "id": "parameter.freqframe",
-            "semantic_revision": 1
-          },
-          "order": 32,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--freqframe"
-              ],
-              "false_flags": [],
-              "metavar": "FRAME"
-            },
-            "provider": {
-              "field": "freqframe",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "freqframe",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Frequency Frame",
-              "group": "Transforms",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "restfreq",
-          "concept": {
-            "id": "parameter.restfreq",
-            "semantic_revision": 1
-          },
-          "order": 33,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--restfreq"
-              ],
-              "false_flags": [],
-              "metavar": "FREQ"
-            },
-            "provider": {
-              "field": "restfreq",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "restfreq",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Rest Frequency",
-              "group": "Transforms",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "veldef",
-          "concept": {
-            "id": "parameter.veldef",
-            "semantic_revision": 1
-          },
-          "order": 34,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "RADIO"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--veldef"
-              ],
-              "false_flags": [],
-              "metavar": "DEF"
-            },
-            "provider": {
-              "field": "veldef",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "veldef",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Velocity Definition",
-              "group": "Transforms",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "iteraxis",
-          "concept": {
-            "id": "parameter.iteraxis",
+            "id": "parameter.avgfield",
             "semantic_revision": 1
           },
           "order": 35,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -20501,45 +20205,40 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--iteraxis"
+                "--avgfield"
               ],
-              "false_flags": [],
-              "metavar": "AXIS"
+              "false_flags": [
+                "--no-avgfield"
+              ]
             },
             "provider": {
-              "field": "iteraxis",
-              "adapter": "omit_none"
+              "field": "avgfield",
+              "adapter": "identity"
             },
             "python": {
-              "name": "iteraxis",
-              "type_hint": null
+              "name": "avgfield"
             },
             "presentation": {
-              "label": "Iterate By",
-              "group": "Layout",
-              "advanced": false,
-              "hidden": false
+              "label": "avgfield",
+              "group": "Averaging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "gridrows",
+          "name": "avgbaseline",
           "concept": {
-            "id": "parameter.gridrows",
+            "id": "parameter.avgbaseline",
             "semantic_revision": 1
           },
           "order": 36,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "integer",
-              "value": 1
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -20549,46 +20248,41 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
+          "context_role": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--gridrows"
+                "--avgbaseline"
               ],
-              "false_flags": [],
-              "metavar": "N"
+              "false_flags": [
+                "--no-avgbaseline"
+              ]
             },
             "provider": {
-              "field": "gridrows",
+              "field": "avgbaseline",
               "adapter": "identity"
             },
             "python": {
-              "name": "gridrows",
-              "type_hint": null
+              "name": "avgbaseline"
             },
             "presentation": {
-              "label": "Grid Rows",
-              "group": "Layout",
-              "advanced": false,
-              "hidden": false
+              "label": "avgbaseline",
+              "group": "Averaging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "gridcols",
+          "name": "avgantenna",
           "concept": {
-            "id": "parameter.gridcols",
+            "id": "parameter.avgantenna",
             "semantic_revision": 1
           },
           "order": 37,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "integer",
-              "value": 1
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -20598,38 +20292,33 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
+          "context_role": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--gridcols"
+                "--avgantenna"
               ],
-              "false_flags": [],
-              "metavar": "N"
+              "false_flags": [
+                "--no-avgantenna"
+              ]
             },
             "provider": {
-              "field": "gridcols",
+              "field": "avgantenna",
               "adapter": "identity"
             },
             "python": {
-              "name": "gridcols",
-              "type_hint": null
+              "name": "avgantenna"
             },
             "presentation": {
-              "label": "Grid Columns",
-              "group": "Layout",
-              "advanced": false,
-              "hidden": false
+              "label": "avgantenna",
+              "group": "Averaging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "xselfscale",
+          "name": "avgspw",
           "concept": {
-            "id": "parameter.xselfscale",
+            "id": "parameter.avgspw",
             "semantic_revision": 1
           },
           "order": 38,
@@ -20647,38 +20336,33 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
+          "context_role": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--xselfscale"
+                "--avgspw"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-avgspw"
+              ]
             },
             "provider": {
-              "field": "xselfscale",
+              "field": "avgspw",
               "adapter": "identity"
             },
             "python": {
-              "name": "xselfscale",
-              "type_hint": null
+              "name": "avgspw"
             },
             "presentation": {
-              "label": "X Self Scale",
-              "group": "Layout",
-              "advanced": false,
-              "hidden": false
+              "label": "avgspw",
+              "group": "Averaging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "yselfscale",
+          "name": "scalar",
           "concept": {
-            "id": "parameter.yselfscale",
+            "id": "parameter.scalar",
             "semantic_revision": 1
           },
           "order": 39,
@@ -20696,38 +20380,33 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
+          "context_role": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--yselfscale"
+                "--scalar"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-scalar"
+              ]
             },
             "provider": {
-              "field": "yselfscale",
+              "field": "scalar",
               "adapter": "identity"
             },
             "python": {
-              "name": "yselfscale",
-              "type_hint": null
+              "name": "scalar"
             },
             "presentation": {
-              "label": "Y Self Scale",
-              "group": "Layout",
-              "advanced": false,
-              "hidden": false
+              "label": "scalar",
+              "group": "Averaging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "xsharedaxis",
+          "name": "transform",
           "concept": {
-            "id": "parameter.xsharedaxis",
+            "id": "plotms.transform",
             "semantic_revision": 1
           },
           "order": 40,
@@ -20735,7 +20414,7 @@
             "kind": "literal",
             "value": {
               "kind": "bool",
-              "value": false
+              "value": true
             }
           },
           "required_when": {
@@ -20745,41 +20424,218 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
+          "context_role": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--xsharedaxis"
+                "--transform"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-transform"
+              ]
             },
             "provider": {
-              "field": "xsharedaxis",
+              "field": "transform",
               "adapter": "identity"
             },
             "python": {
-              "name": "xsharedaxis",
-              "type_hint": null
+              "name": "transform"
             },
             "presentation": {
-              "label": "Share X Axis",
-              "group": "Layout",
-              "advanced": false,
-              "hidden": false
+              "label": "transform",
+              "group": "Transforms"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "ysharedaxis",
+          "name": "freqframe",
           "concept": {
-            "id": "parameter.ysharedaxis",
+            "id": "plotms.freqframe",
             "semantic_revision": 1
           },
           "order": 41,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--freqframe"
+              ]
+            },
+            "provider": {
+              "field": "freqframe",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "freqframe"
+            },
+            "presentation": {
+              "label": "freqframe",
+              "group": "Transforms"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "restfreq",
+          "concept": {
+            "id": "plotms.restfreq",
+            "semantic_revision": 1
+          },
+          "order": 42,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--restfreq"
+              ]
+            },
+            "provider": {
+              "field": "restfreq",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "restfreq"
+            },
+            "presentation": {
+              "label": "restfreq",
+              "group": "Transforms"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "veldef",
+          "concept": {
+            "id": "plotms.veldef",
+            "semantic_revision": 1
+          },
+          "order": 43,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "RADIO"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--veldef"
+              ]
+            },
+            "provider": {
+              "field": "veldef",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "veldef"
+            },
+            "presentation": {
+              "label": "veldef",
+              "group": "Transforms"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "phasecenter",
+          "unimplemented": {"issue": 1032},
+          "concept": {
+            "id": "plotms.phasecenter",
+            "semantic_revision": 1
+          },
+          "order": 44,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--phasecenter"
+              ]
+            },
+            "provider": {
+              "field": "phasecenter",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "phasecenter"
+            },
+            "presentation": {
+              "label": "phasecenter",
+              "group": "Transforms"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "extendflag",
+          "unimplemented": {"issue": 1032},
+          "concept": {
+            "id": "plotms.extendflag",
+            "semantic_revision": 1
+          },
+          "order": 45,
           "default": {
             "kind": "literal",
             "value": {
@@ -20794,235 +20650,34 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
+          "context_role": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--ysharedaxis"
+                "--extendflag"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-extendflag"
+              ]
             },
             "provider": {
-              "field": "ysharedaxis",
+              "field": "extendflag",
               "adapter": "identity"
             },
             "python": {
-              "name": "ysharedaxis",
-              "type_hint": null
+              "name": "extendflag"
             },
             "presentation": {
-              "label": "Share Y Axis",
-              "group": "Layout",
-              "advanced": false,
-              "hidden": false
+              "label": "extendflag",
+              "group": "Flagging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "title",
+          "name": "extcorr",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "parameter.title",
-            "semantic_revision": 1
-          },
-          "order": 42,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--title"
-              ],
-              "false_flags": [],
-              "metavar": "TEXT"
-            },
-            "provider": {
-              "field": "title",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "title",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Title",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "xlabel",
-          "concept": {
-            "id": "parameter.xlabel",
-            "semantic_revision": 1
-          },
-          "order": 43,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--xlabel"
-              ],
-              "false_flags": [],
-              "metavar": "TEXT"
-            },
-            "provider": {
-              "field": "xlabel",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "xlabel",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "X Label",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "ylabel",
-          "concept": {
-            "id": "parameter.ylabel",
-            "semantic_revision": 1
-          },
-          "order": 44,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--ylabel"
-              ],
-              "false_flags": [],
-              "metavar": "TEXT"
-            },
-            "provider": {
-              "field": "ylabel",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "ylabel",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Y Label",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "symbol_size",
-          "concept": {
-            "id": "parameter.symbol_size",
-            "semantic_revision": 1
-          },
-          "order": 45,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--symbolsize",
-                "--marker-size"
-              ],
-              "false_flags": [],
-              "metavar": "PIXELS"
-            },
-            "provider": {
-              "field": "symbol_size",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "symbol_size",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Symbol Size",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "showlegend",
-          "concept": {
-            "id": "parameter.showlegend",
+            "id": "plotms.extcorr",
             "semantic_revision": 1
           },
           "order": 46,
@@ -21040,90 +20695,37 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
+          "context_role": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--showlegend"
+                "--extcorr"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-extcorr"
+              ]
             },
             "provider": {
-              "field": "showlegend",
+              "field": "extcorr",
               "adapter": "identity"
             },
             "python": {
-              "name": "showlegend",
-              "type_hint": null
+              "name": "extcorr"
             },
             "presentation": {
-              "label": "Show Legend",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
+              "label": "extcorr",
+              "group": "Flagging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "legendposition",
+          "name": "extchannel",
+          "unimplemented": {"issue": 1032},
           "concept": {
-            "id": "parameter.legendposition",
+            "id": "plotms.extchannel",
             "semantic_revision": 1
           },
           "order": 47,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "upperRight"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--legendposition"
-              ],
-              "false_flags": [],
-              "metavar": "POSITION"
-            },
-            "provider": {
-              "field": "legendposition",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "legendposition",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Legend Position",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "reviewed_homonym": null
-        },
-        {
-          "name": "showmajorgrid",
-          "concept": {
-            "id": "parameter.showmajorgrid",
-            "semantic_revision": 1
-          },
-          "order": 48,
           "default": {
             "kind": "literal",
             "value": {
@@ -21138,38 +20740,78 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
+          "context_role": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--showmajorgrid"
+                "--extchannel"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-extchannel"
+              ]
             },
             "provider": {
-              "field": "showmajorgrid",
+              "field": "extchannel",
               "adapter": "identity"
             },
             "python": {
-              "name": "showmajorgrid",
-              "type_hint": null
+              "name": "extchannel"
             },
             "presentation": {
-              "label": "Major Grid",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
+              "label": "extchannel",
+              "group": "Flagging"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "showminorgrid",
+          "name": "iteraxis",
           "concept": {
-            "id": "parameter.showminorgrid",
+            "id": "plotms.iteraxis",
+            "semantic_revision": 1
+          },
+          "order": 48,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--iteraxis"
+              ]
+            },
+            "provider": {
+              "field": "iteraxis",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "iteraxis"
+            },
+            "presentation": {
+              "label": "iteraxis",
+              "group": "Presentation"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "xselfscale",
+          "concept": {
+            "id": "parameter.xselfscale",
             "semantic_revision": 1
           },
           "order": 49,
@@ -21188,45 +20830,40 @@
           },
           "refinements": [],
           "context_role": "presentation",
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--showminorgrid"
+                "--xselfscale"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-xselfscale"
+              ]
             },
             "provider": {
-              "field": "showminorgrid",
+              "field": "xselfscale",
               "adapter": "identity"
             },
             "python": {
-              "name": "showminorgrid",
-              "type_hint": null
+              "name": "xselfscale"
             },
             "presentation": {
-              "label": "Minor Grid",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
+              "label": "xselfscale",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "headeritems",
+          "name": "yselfscale",
           "concept": {
-            "id": "parameter.headeritems",
+            "id": "parameter.yselfscale",
             "semantic_revision": 1
           },
           "order": 50,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -21237,45 +20874,40 @@
           },
           "refinements": [],
           "context_role": "presentation",
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--headeritems"
+                "--yselfscale"
               ],
-              "false_flags": [],
-              "metavar": "ITEMS"
+              "false_flags": [
+                "--no-yselfscale"
+              ]
             },
             "provider": {
-              "field": "headeritems",
-              "adapter": "omit_none"
+              "field": "yselfscale",
+              "adapter": "identity"
             },
             "python": {
-              "name": "headeritems",
-              "type_hint": null
+              "name": "yselfscale"
             },
             "presentation": {
-              "label": "Header Items",
-              "group": "Style",
-              "advanced": true,
-              "hidden": false
+              "label": "yselfscale",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "max_points",
+          "name": "xsharedaxis",
           "concept": {
-            "id": "parameter.max_points",
+            "id": "parameter.xsharedaxis",
             "semantic_revision": 1
           },
           "order": 51,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "integer",
-              "value": 10000000
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -21285,46 +20917,41 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--max-points"
+                "--xsharedaxis"
               ],
-              "false_flags": [],
-              "metavar": "N"
+              "false_flags": [
+                "--no-xsharedaxis"
+              ]
             },
             "provider": {
-              "field": "max_points",
+              "field": "xsharedaxis",
               "adapter": "identity"
             },
             "python": {
-              "name": "max_points",
-              "type_hint": null
+              "name": "xsharedaxis"
             },
             "presentation": {
-              "label": "Max Plot Points",
-              "group": "Export",
-              "advanced": true,
-              "hidden": false
+              "label": "xsharedaxis",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "plot_output",
+          "name": "ysharedaxis",
           "concept": {
-            "id": "parameter.plot_output",
+            "id": "parameter.ysharedaxis",
             "semantic_revision": 1
           },
           "order": 52,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -21334,46 +20961,41 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--plot-output"
+                "--ysharedaxis"
               ],
-              "false_flags": [],
-              "metavar": "PATH"
+              "false_flags": [
+                "--no-ysharedaxis"
+              ]
             },
             "provider": {
-              "field": "plot_output",
-              "adapter": "omit_none"
+              "field": "ysharedaxis",
+              "adapter": "identity"
             },
             "python": {
-              "name": "plot_output",
-              "type_hint": null
+              "name": "ysharedaxis"
             },
             "presentation": {
-              "label": "Plot Output",
-              "group": "Export",
-              "advanced": false,
-              "hidden": false
+              "label": "ysharedaxis",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "plot_format",
+          "name": "customsymbol",
           "concept": {
-            "id": "parameter.plot_format",
-            "semantic_revision": 2
+            "id": "plotms.customsymbol",
+            "semantic_revision": 1
           },
           "order": 53,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "txt"
+              "kind": "array",
+              "value": []
             }
           },
           "required_when": {
@@ -21383,38 +21005,115 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--plot-format"
-              ],
-              "false_flags": [],
-              "metavar": "FORMAT"
+                "--customsymbol"
+              ]
             },
             "provider": {
-              "field": "plot_format",
+              "field": "customsymbol",
               "adapter": "identity"
             },
             "python": {
-              "name": "plot_format",
-              "type_hint": null
+              "name": "customsymbol",
+              "type_hint": "bool | list[bool] | tuple[bool, ...]"
             },
             "presentation": {
-              "label": "Plot Format",
-              "group": "Export",
-              "advanced": false,
-              "hidden": false
+              "label": "customsymbol",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_action",
+          "name": "symbolshape",
           "concept": {
-            "id": "parameter.flag_action",
+            "id": "plotms.symbolshape",
+            "semantic_revision": 1
+          },
+          "order": 54,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "autoscaling"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--symbolshape"
+              ]
+            },
+            "provider": {
+              "field": "symbolshape",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "symbolshape",
+              "type_hint": "str | list[str] | tuple[str, ...]"
+            },
+            "presentation": {
+              "label": "symbolshape",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "symbolsize",
+          "concept": {
+            "id": "plotms.symbolsize",
+            "semantic_revision": 1
+          },
+          "order": 55,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 2
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--symbolsize"
+              ]
+            },
+            "provider": {
+              "field": "symbolsize",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "symbolsize",
+              "type_hint": "int | list[int] | tuple[int, ...]"
+            },
+            "presentation": {
+              "label": "symbolsize",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "symbolcolor",
+          "concept": {
+            "id": "plotms.symbolcolor",
             "semantic_revision": 1
           },
           "order": 56,
@@ -21422,7 +21121,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": "0000ff"
             }
           },
           "required_when": {
@@ -21432,38 +21131,31 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-action"
-              ],
-              "false_flags": [],
-              "metavar": "ACTION"
+                "--symbolcolor"
+              ]
             },
             "provider": {
-              "field": "flag_action",
-              "adapter": "omit_none"
+              "field": "symbolcolor",
+              "adapter": "identity"
             },
             "python": {
-              "name": "flag_action",
-              "type_hint": null
+              "name": "symbolcolor",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Flag Action",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "symbolcolor",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_xmin",
+          "name": "symbolfill",
           "concept": {
-            "id": "parameter.flag_xmin",
+            "id": "plotms.symbolfill",
             "semantic_revision": 1
           },
           "order": 57,
@@ -21471,7 +21163,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": "fill"
             }
           },
           "required_when": {
@@ -21481,46 +21173,39 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-xmin"
-              ],
-              "false_flags": [],
-              "metavar": "VALUE"
+                "--symbolfill"
+              ]
             },
             "provider": {
-              "field": "flag_xmin",
-              "adapter": "omit_none"
+              "field": "symbolfill",
+              "adapter": "identity"
             },
             "python": {
-              "name": "flag_xmin",
-              "type_hint": null
+              "name": "symbolfill",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Flag X Min",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "symbolfill",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_xmax",
+          "name": "symboloutline",
           "concept": {
-            "id": "parameter.flag_xmax",
+            "id": "plotms.symboloutline",
             "semantic_revision": 1
           },
           "order": 58,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -21530,38 +21215,31 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-xmax"
-              ],
-              "false_flags": [],
-              "metavar": "VALUE"
+                "--symboloutline"
+              ]
             },
             "provider": {
-              "field": "flag_xmax",
-              "adapter": "omit_none"
+              "field": "symboloutline",
+              "adapter": "identity"
             },
             "python": {
-              "name": "flag_xmax",
-              "type_hint": null
+              "name": "symboloutline",
+              "type_hint": "bool | list[bool] | tuple[bool, ...]"
             },
             "presentation": {
-              "label": "Flag X Max",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "symboloutline",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_ymin",
+          "name": "coloraxis",
           "concept": {
-            "id": "parameter.flag_ymin",
+            "id": "plotms.coloraxis",
             "semantic_revision": 1
           },
           "order": 59,
@@ -21569,7 +21247,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": ""
             }
           },
           "required_when": {
@@ -21579,46 +21257,38 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-ymin"
-              ],
-              "false_flags": [],
-              "metavar": "VALUE"
+                "--coloraxis"
+              ]
             },
             "provider": {
-              "field": "flag_ymin",
-              "adapter": "omit_none"
+              "field": "coloraxis",
+              "adapter": "identity"
             },
             "python": {
-              "name": "flag_ymin",
-              "type_hint": null
+              "name": "coloraxis"
             },
             "presentation": {
-              "label": "Flag Y Min",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "coloraxis",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_ymax",
+          "name": "customflaggedsymbol",
           "concept": {
-            "id": "parameter.flag_ymax",
+            "id": "plotms.customflaggedsymbol",
             "semantic_revision": 1
           },
           "order": 60,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -21628,38 +21298,31 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-ymax"
-              ],
-              "false_flags": [],
-              "metavar": "VALUE"
+                "--customflaggedsymbol"
+              ]
             },
             "provider": {
-              "field": "flag_ymax",
-              "adapter": "omit_none"
+              "field": "customflaggedsymbol",
+              "adapter": "identity"
             },
             "python": {
-              "name": "flag_ymax",
-              "type_hint": null
+              "name": "customflaggedsymbol",
+              "type_hint": "bool | list[bool] | tuple[bool, ...]"
             },
             "presentation": {
-              "label": "Flag Y Max",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "customflaggedsymbol",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_plotindex",
+          "name": "flaggedsymbolshape",
           "concept": {
-            "id": "parameter.flag_plotindex",
+            "id": "plotms.flaggedsymbolshape",
             "semantic_revision": 1
           },
           "order": 61,
@@ -21667,7 +21330,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "none"
+              "value": "circle"
             }
           },
           "required_when": {
@@ -21677,46 +21340,39 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-plotindex"
-              ],
-              "false_flags": [],
-              "metavar": "INDEX"
+                "--flaggedsymbolshape"
+              ]
             },
             "provider": {
-              "field": "flag_plotindex",
-              "adapter": "omit_none"
+              "field": "flaggedsymbolshape",
+              "adapter": "identity"
             },
             "python": {
-              "name": "flag_plotindex",
-              "type_hint": null
+              "name": "flaggedsymbolshape",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Flag Plot Index",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "flaggedsymbolshape",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_panel",
+          "name": "flaggedsymbolsize",
           "concept": {
-            "id": "parameter.flag_panel",
-            "semantic_revision": 2
+            "id": "plotms.flaggedsymbolsize",
+            "semantic_revision": 1
           },
           "order": 62,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "integer",
+              "value": 2
             }
           },
           "required_when": {
@@ -21726,46 +21382,39 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-panel"
-              ],
-              "false_flags": [],
-              "metavar": "KEY"
+                "--flaggedsymbolsize"
+              ]
             },
             "provider": {
-              "field": "flag_panel",
-              "adapter": "omit_none"
+              "field": "flaggedsymbolsize",
+              "adapter": "identity"
             },
             "python": {
-              "name": "flag_panel",
-              "type_hint": null
+              "name": "flaggedsymbolsize",
+              "type_hint": "int | list[int] | tuple[int, ...]"
             },
             "presentation": {
-              "label": "Flag Panel",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "flaggedsymbolsize",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_extcorr",
+          "name": "flaggedsymbolcolor",
           "concept": {
-            "id": "parameter.flag_extcorr",
+            "id": "plotms.flaggedsymbolcolor",
             "semantic_revision": 1
           },
           "order": 63,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": false
+              "kind": "string",
+              "value": "ff0000"
             }
           },
           "required_when": {
@@ -21775,46 +21424,39 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-extcorr"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--flaggedsymbolcolor"
+              ]
             },
             "provider": {
-              "field": "flag_extcorr",
+              "field": "flaggedsymbolcolor",
               "adapter": "identity"
             },
             "python": {
-              "name": "flag_extcorr",
-              "type_hint": null
+              "name": "flaggedsymbolcolor",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Extend Correlation",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "flaggedsymbolcolor",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_extchannel",
+          "name": "flaggedsymbolfill",
           "concept": {
-            "id": "parameter.flag_extchannel",
+            "id": "plotms.flaggedsymbolfill",
             "semantic_revision": 1
           },
           "order": 64,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "bool",
-              "value": false
+              "kind": "string",
+              "value": "fill"
             }
           },
           "required_when": {
@@ -21824,38 +21466,31 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-extchannel"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--flaggedsymbolfill"
+              ]
             },
             "provider": {
-              "field": "flag_extchannel",
+              "field": "flaggedsymbolfill",
               "adapter": "identity"
             },
             "python": {
-              "name": "flag_extchannel",
-              "type_hint": null
+              "name": "flaggedsymbolfill",
+              "type_hint": "str | list[str] | tuple[str, ...]"
             },
             "presentation": {
-              "label": "Extend Channel",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "flaggedsymbolfill",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_selected",
+          "name": "flaggedsymboloutline",
           "concept": {
-            "id": "parameter.flag_selected",
+            "id": "plotms.flaggedsymboloutline",
             "semantic_revision": 1
           },
           "order": 65,
@@ -21873,41 +21508,1412 @@
             "kind": "always"
           },
           "refinements": [],
-          "context_role": null,
-          "surface_note": null,
+          "context_role": "presentation",
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-selected"
-              ],
-              "false_flags": [],
-              "metavar": null
+                "--flaggedsymboloutline"
+              ]
             },
             "provider": {
-              "field": "flag_selected",
+              "field": "flaggedsymboloutline",
               "adapter": "identity"
             },
             "python": {
-              "name": "flag_selected",
-              "type_hint": null
+              "name": "flaggedsymboloutline",
+              "type_hint": "bool | list[bool] | tuple[bool, ...]"
             },
             "presentation": {
-              "label": "Flag Selected Rows",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "flaggedsymboloutline",
+              "group": "Presentation"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_apply",
+          "name": "xconnector",
           "concept": {
-            "id": "parameter.flag_apply",
+            "id": "plotms.xconnector",
             "semantic_revision": 1
           },
           "order": 66,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--xconnector"
+              ]
+            },
+            "provider": {
+              "field": "xconnector",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "xconnector"
+            },
+            "presentation": {
+              "label": "xconnector",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "timeconnector",
+          "concept": {
+            "id": "plotms.timeconnector",
+            "semantic_revision": 1
+          },
+          "order": 67,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timeconnector"
+              ],
+              "false_flags": [
+                "--no-timeconnector"
+              ]
+            },
+            "provider": {
+              "field": "timeconnector",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "timeconnector"
+            },
+            "presentation": {
+              "label": "timeconnector",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "plotrange",
+          "concept": {
+            "id": "plotbandpass.plotrange",
+            "semantic_revision": 1
+          },
+          "order": 68,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--plotrange"
+              ]
+            },
+            "provider": {
+              "field": "plotrange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "plotrange"
+            },
+            "presentation": {
+              "label": "plotrange",
+              "group": "Axes"
+            }
+          }
+        },
+        {
+          "name": "title",
+          "concept": {
+            "id": "plotms.title",
+            "semantic_revision": 1
+          },
+          "order": 69,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--title"
+              ]
+            },
+            "provider": {
+              "field": "title",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "title"
+            },
+            "presentation": {
+              "label": "title",
+              "group": "Presentation"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "titlefont",
+          "concept": {
+            "id": "plotms.titlefont",
+            "semantic_revision": 1
+          },
+          "order": 70,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--titlefont"
+              ]
+            },
+            "provider": {
+              "field": "titlefont",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "titlefont"
+            },
+            "presentation": {
+              "label": "titlefont",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "xlabel",
+          "concept": {
+            "id": "plotms.xlabel",
+            "semantic_revision": 1
+          },
+          "order": 71,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--xlabel"
+              ]
+            },
+            "provider": {
+              "field": "xlabel",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "xlabel"
+            },
+            "presentation": {
+              "label": "xlabel",
+              "group": "Presentation"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "xaxisfont",
+          "concept": {
+            "id": "plotms.xaxisfont",
+            "semantic_revision": 1
+          },
+          "order": 72,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--xaxisfont"
+              ]
+            },
+            "provider": {
+              "field": "xaxisfont",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "xaxisfont"
+            },
+            "presentation": {
+              "label": "xaxisfont",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "ylabel",
+          "concept": {
+            "id": "plotms.ylabel",
+            "semantic_revision": 1
+          },
+          "order": 73,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--ylabel"
+              ]
+            },
+            "provider": {
+              "field": "ylabel",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "ylabel"
+            },
+            "presentation": {
+              "label": "ylabel",
+              "group": "Presentation"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "yaxisfont",
+          "concept": {
+            "id": "plotms.yaxisfont",
+            "semantic_revision": 1
+          },
+          "order": 74,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--yaxisfont"
+              ]
+            },
+            "provider": {
+              "field": "yaxisfont",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "yaxisfont"
+            },
+            "presentation": {
+              "label": "yaxisfont",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "showmajorgrid",
+          "concept": {
+            "id": "parameter.showmajorgrid",
+            "semantic_revision": 1
+          },
+          "order": 75,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showmajorgrid"
+              ],
+              "false_flags": [
+                "--no-showmajorgrid"
+              ]
+            },
+            "provider": {
+              "field": "showmajorgrid",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showmajorgrid"
+            },
+            "presentation": {
+              "label": "showmajorgrid",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "majorwidth",
+          "concept": {
+            "id": "plotms.majorwidth",
+            "semantic_revision": 1
+          },
+          "order": 76,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--majorwidth"
+              ]
+            },
+            "provider": {
+              "field": "majorwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "majorwidth"
+            },
+            "presentation": {
+              "label": "majorwidth",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "majorstyle",
+          "concept": {
+            "id": "plotms.majorstyle",
+            "semantic_revision": 1
+          },
+          "order": 77,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--majorstyle"
+              ]
+            },
+            "provider": {
+              "field": "majorstyle",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "majorstyle"
+            },
+            "presentation": {
+              "label": "majorstyle",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "majorcolor",
+          "concept": {
+            "id": "plotms.majorcolor",
+            "semantic_revision": 1
+          },
+          "order": 78,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "B0B0B0"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--majorcolor"
+              ]
+            },
+            "provider": {
+              "field": "majorcolor",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "majorcolor"
+            },
+            "presentation": {
+              "label": "majorcolor",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "showminorgrid",
+          "concept": {
+            "id": "parameter.showminorgrid",
+            "semantic_revision": 1
+          },
+          "order": 79,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showminorgrid"
+              ],
+              "false_flags": [
+                "--no-showminorgrid"
+              ]
+            },
+            "provider": {
+              "field": "showminorgrid",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showminorgrid"
+            },
+            "presentation": {
+              "label": "showminorgrid",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "minorwidth",
+          "concept": {
+            "id": "plotms.minorwidth",
+            "semantic_revision": 1
+          },
+          "order": 80,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minorwidth"
+              ]
+            },
+            "provider": {
+              "field": "minorwidth",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minorwidth"
+            },
+            "presentation": {
+              "label": "minorwidth",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "minorstyle",
+          "concept": {
+            "id": "plotms.minorstyle",
+            "semantic_revision": 1
+          },
+          "order": 81,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minorstyle"
+              ]
+            },
+            "provider": {
+              "field": "minorstyle",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minorstyle"
+            },
+            "presentation": {
+              "label": "minorstyle",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "minorcolor",
+          "concept": {
+            "id": "plotms.minorcolor",
+            "semantic_revision": 1
+          },
+          "order": 82,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "D0D0D0"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--minorcolor"
+              ]
+            },
+            "provider": {
+              "field": "minorcolor",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "minorcolor"
+            },
+            "presentation": {
+              "label": "minorcolor",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "showlegend",
+          "concept": {
+            "id": "parameter.showlegend",
+            "semantic_revision": 1
+          },
+          "order": 83,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showlegend"
+              ],
+              "false_flags": [
+                "--no-showlegend"
+              ]
+            },
+            "provider": {
+              "field": "showlegend",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showlegend"
+            },
+            "presentation": {
+              "label": "showlegend",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "legendposition",
+          "concept": {
+            "id": "plotms.legendposition",
+            "semantic_revision": 1
+          },
+          "order": 84,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--legendposition"
+              ]
+            },
+            "provider": {
+              "field": "legendposition",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "legendposition"
+            },
+            "presentation": {
+              "label": "legendposition",
+              "group": "Presentation"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "plotfile",
+          "concept": {
+            "id": "plotms.plotfile",
+            "semantic_revision": 1
+          },
+          "order": 85,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "output_product",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--plotfile"
+              ]
+            },
+            "provider": {
+              "field": "plotfile",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "plotfile"
+            },
+            "presentation": {
+              "label": "plotfile",
+              "group": "Export"
+            }
+          }
+        },
+        {
+          "name": "expformat",
+          "concept": {
+            "id": "plotms.expformat",
+            "semantic_revision": 1
+          },
+          "order": 86,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--expformat"
+              ]
+            },
+            "provider": {
+              "field": "expformat",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "expformat"
+            },
+            "presentation": {
+              "label": "expformat",
+              "group": "Export"
+            }
+          }
+        },
+        {
+          "name": "verbose",
+          "concept": {
+            "id": "plotms.verbose",
+            "semantic_revision": 1
+          },
+          "order": 87,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--verbose"
+              ],
+              "false_flags": [
+                "--no-verbose"
+              ]
+            },
+            "provider": {
+              "field": "verbose",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "verbose"
+            },
+            "presentation": {
+              "label": "verbose",
+              "group": "Export"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "exprange",
+          "concept": {
+            "id": "plotms.exprange",
+            "semantic_revision": 1
+          },
+          "order": 88,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--exprange"
+              ]
+            },
+            "provider": {
+              "field": "exprange",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "exprange"
+            },
+            "presentation": {
+              "label": "exprange",
+              "group": "Export"
+            }
+          }
+        },
+        {
+          "name": "highres",
+          "concept": {
+            "id": "plotms.highres",
+            "semantic_revision": 1
+          },
+          "order": 89,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--highres"
+              ],
+              "false_flags": [
+                "--no-highres"
+              ]
+            },
+            "provider": {
+              "field": "highres",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "highres"
+            },
+            "presentation": {
+              "label": "highres",
+              "group": "Export"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "dpi",
+          "concept": {
+            "id": "plotms.dpi",
+            "semantic_revision": 1
+          },
+          "order": 90,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--dpi"
+              ]
+            },
+            "provider": {
+              "field": "dpi",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "dpi"
+            },
+            "presentation": {
+              "label": "dpi",
+              "group": "Export"
+            }
+          }
+        },
+        {
+          "name": "width",
+          "concept": {
+            "id": "plotms.width",
+            "semantic_revision": 1
+          },
+          "order": 91,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--width"
+              ]
+            },
+            "provider": {
+              "field": "width",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "width"
+            },
+            "presentation": {
+              "label": "width",
+              "group": "Export"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "height",
+          "concept": {
+            "id": "plotms.height",
+            "semantic_revision": 1
+          },
+          "order": 92,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": -1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--height"
+              ]
+            },
+            "provider": {
+              "field": "height",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "height"
+            },
+            "presentation": {
+              "label": "height",
+              "group": "Export"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 93,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ],
+              "false_flags": [
+                "--no-overwrite"
+              ]
+            },
+            "provider": {
+              "field": "overwrite",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "overwrite",
+              "group": "Export"
+            }
+          }
+        },
+        {
+          "name": "showgui",
+          "concept": {
+            "id": "plotms.showgui",
+            "semantic_revision": 1
+          },
+          "order": 94,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showgui"
+              ],
+              "false_flags": [
+                "--no-showgui"
+              ]
+            },
+            "provider": {
+              "field": "showgui",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showgui"
+            },
+            "presentation": {
+              "label": "showgui",
+              "group": "Export"
+            }
+          }
+        },
+        {
+          "name": "clearplots",
+          "unimplemented": {"issue": 1032},
+          "concept": {
+            "id": "plotms.clearplots",
+            "semantic_revision": 1
+          },
+          "order": 95,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": true
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--clearplots"
+              ],
+              "false_flags": [
+                "--no-clearplots"
+              ]
+            },
+            "provider": {
+              "field": "clearplots",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "clearplots"
+            },
+            "presentation": {
+              "label": "clearplots",
+              "group": "Presentation"
+            }
+          }
+        },
+        {
+          "name": "callib",
+          "unimplemented": {"issue": 1526},
+          "concept": {
+            "id": "plotms.callib",
+            "semantic_revision": 1
+          },
+          "order": 96,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "array",
+              "value": []
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--callib"
+              ]
+            },
+            "provider": {
+              "field": "callib",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "callib"
+            },
+            "presentation": {
+              "label": "callib",
+              "group": "Calibration"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "headeritems",
+          "concept": {
+            "id": "plotms.headeritems",
+            "semantic_revision": 1
+          },
+          "order": 97,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": "presentation",
+          "projections": {
+            "cli": {
+              "flags": [
+                "--headeritems"
+              ]
+            },
+            "provider": {
+              "field": "headeritems",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "headeritems"
+            },
+            "presentation": {
+              "label": "headeritems",
+              "group": "Presentation"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#1032",
+            "reason": "PlotMS uses the pinned value domain while the other task retains its own parameter semantics."
+          }
+        },
+        {
+          "name": "showatm",
+          "unimplemented": {"issue": 1526},
+          "concept": {
+            "id": "plotbandpass.showatm",
+            "semantic_revision": 1
+          },
+          "order": 98,
           "default": {
             "kind": "literal",
             "value": {
@@ -21923,45 +22929,41 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-apply"
+                "--showatm"
               ],
-              "false_flags": [],
-              "metavar": null
+              "false_flags": [
+                "--no-showatm"
+              ]
             },
             "provider": {
-              "field": "flag_apply",
+              "field": "showatm",
               "adapter": "identity"
             },
             "python": {
-              "name": "flag_apply",
-              "type_hint": null
+              "name": "showatm"
             },
             "presentation": {
-              "label": "Apply Flag Edit",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "showatm",
+              "group": "Atmosphere"
             }
-          },
-          "reviewed_homonym": null
+          }
         },
         {
-          "name": "flag_output",
+          "name": "showtsky",
+          "unimplemented": {"issue": 1526},
           "concept": {
-            "id": "parameter.flag_output",
+            "id": "plotbandpass.showtsky",
             "semantic_revision": 1
           },
-          "order": 67,
+          "order": 99,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "string",
-              "value": "none"
+              "kind": "bool",
+              "value": false
             }
           },
           "required_when": {
@@ -21972,34 +22974,120 @@
           },
           "refinements": [],
           "context_role": null,
-          "surface_note": null,
           "projections": {
             "cli": {
-              "positional": null,
               "flags": [
-                "--flag-output"
+                "--showtsky"
               ],
-              "false_flags": [],
-              "metavar": "PATH"
+              "false_flags": [
+                "--no-showtsky"
+              ]
             },
             "provider": {
-              "field": "flag_output",
-              "adapter": "omit_none"
+              "field": "showtsky",
+              "adapter": "identity"
             },
             "python": {
-              "name": "flag_output",
-              "type_hint": null
+              "name": "showtsky"
             },
             "presentation": {
-              "label": "Flag Preview Output",
-              "group": "Flag Editing",
-              "advanced": true,
-              "hidden": false
+              "label": "showtsky",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "showimage",
+          "unimplemented": {"issue": 1526},
+          "concept": {
+            "id": "plotbandpass.showimage",
+            "semantic_revision": 1
+          },
+          "order": 100,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
             }
           },
-          "reviewed_homonym": null
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--showimage"
+              ],
+              "false_flags": [
+                "--no-showimage"
+              ]
+            },
+            "provider": {
+              "field": "showimage",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "showimage"
+            },
+            "presentation": {
+              "label": "showimage",
+              "group": "Atmosphere"
+            }
+          }
+        },
+        {
+          "name": "colorizeoverlay",
+          "unimplemented": {"issue": 1526},
+          "concept": {
+            "id": "plotms.colorizeoverlay",
+            "semantic_revision": 1
+          },
+          "order": 101,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "projections": {
+            "cli": {
+              "flags": [
+                "--colorizeoverlay"
+              ],
+              "false_flags": [
+                "--no-colorizeoverlay"
+              ]
+            },
+            "provider": {
+              "field": "colorizeoverlay",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "colorizeoverlay"
+            },
+            "presentation": {
+              "label": "colorizeoverlay",
+              "group": "Atmosphere"
+            }
+          }
         }
-      ]
+      ],
+      "casa_task": "plotms"
     },
     {
       "kind": "task",

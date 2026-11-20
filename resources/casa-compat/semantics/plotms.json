@@ -1,0 +1,1130 @@
+{
+  "schema_version": 1,
+  "task": "plotms",
+  "casa_version": "6.7.6.14",
+  "audit_revision": "e775bd07a6e5b9ebfbb4b812844564b063dc78e9",
+  "parameters": {
+    "vis": {
+      "scope": "Input MS or CalTable (blank for none)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "table"
+      ],
+      "status": "Partial"
+    },
+    "caltable": {
+      "scope": "Input CalTable (blank for none)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "table"
+      ],
+      "status": "Partial"
+    },
+    "gridrows": {
+      "scope": "Number of subplot rows",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "pages"
+      ],
+      "status": "Implemented"
+    },
+    "gridcols": {
+      "scope": "Number of subplot columns",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "pages"
+      ],
+      "status": "Implemented"
+    },
+    "rowindex": {
+      "scope": "Row location of the plot (0-based)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "pages"
+      ]
+    },
+    "colindex": {
+      "scope": "Column location of the plot (0-based)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "pages"
+      ]
+    },
+    "plotindex": {
+      "scope": "Index to address a subplot (0-based)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "pages"
+      ]
+    },
+    "xaxis": {
+      "scope": "Plot x-axis (blank for default/current)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "coordinates"
+      ],
+      "status": "Partial"
+    },
+    "xdatacolumn": {
+      "scope": "Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "coordinates"
+      ],
+      "status": "Partial"
+    },
+    "xframe": {
+      "scope": "Coordinate frame to use for x-axis",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "coordinates"
+      ]
+    },
+    "xinterp": {
+      "scope": "Interpolation method for x-axis",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "coordinates"
+      ]
+    },
+    "yaxis": {
+      "scope": "Plot y-axis (blank for default/current)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "coordinates"
+      ],
+      "status": "Partial"
+    },
+    "ydatacolumn": {
+      "scope": "Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "coordinates"
+      ],
+      "status": "Partial"
+    },
+    "yframe": {
+      "scope": "Coordinate frame to use for y-axis",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "coordinates"
+      ]
+    },
+    "yinterp": {
+      "scope": "Interpolation method for y-axis",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "coordinates"
+      ]
+    },
+    "yaxislocation": {
+      "scope": "Location of the y-axis (blank for default: left)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "coordinates"
+      ],
+      "status": "Partial"
+    },
+    "selectdata": {
+      "scope": "Enable data selection parameters",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Partial"
+    },
+    "field": {
+      "scope": "Field names or ids (blank for all)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Implemented"
+    },
+    "spw": {
+      "scope": "Spectral windows:channels (blank for all)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Implemented"
+    },
+    "timerange": {
+      "scope": "Time range (blank for all)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Implemented"
+    },
+    "uvrange": {
+      "scope": "UV range (blank for all)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Not implemented"
+    },
+    "antenna": {
+      "scope": "Baseline/antenna names or ids (blank for all)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Implemented"
+    },
+    "scan": {
+      "scope": "Scan numbers (blank for all)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Implemented"
+    },
+    "correlation": {
+      "scope": "Correlations/polarizations (blank for all)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Implemented"
+    },
+    "polarization": {
+      "scope": "Polarizations (blank for all)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Implemented"
+    },
+    "antpos": {
+      "scope": "Antenna positions (blank for all)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Not implemented"
+    },
+    "array": {
+      "scope": "(Sub)array numbers (blank for all)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Not implemented"
+    },
+    "observation": {
+      "scope": "Observation IDs (blank for all)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Implemented"
+    },
+    "intent": {
+      "scope": "Observing intent (blank for all)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Not implemented"
+    },
+    "feed": {
+      "scope": "Feed numbers (blank for all)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Not implemented"
+    },
+    "msselect": {
+      "scope": "MSSelection TaQL string (blank for none)",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "selection"
+      ],
+      "status": "Not implemented"
+    },
+    "averagedata": {
+      "scope": "Enable data averaging parameters",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "avgchannel": {
+      "scope": "Average over channel (blank = False, otherwise value in channels)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "avgtime": {
+      "scope": "Average over time (blank = False, otherwise value in seconds)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "avgscan": {
+      "scope": "Average over scans. Only valid with time averaging",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "avgfield": {
+      "scope": "Average over fields. Only valid with time averaging",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "avgbaseline": {
+      "scope": "Average over all baselines (mutually exclusive with avgantenna)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "avgantenna": {
+      "scope": "Average per antenna (mutually exclusive with avgbaseline)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "avgspw": {
+      "scope": "Average over all spectral windows",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "scalar": {
+      "scope": "Scalar averaging (False=vector averaging)",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "averaging"
+      ],
+      "status": "Implemented"
+    },
+    "transform": {
+      "scope": "Enable data transformations",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ],
+      "status": "Not implemented"
+    },
+    "freqframe": {
+      "scope": "The frame in which to render frequency and velocity axes",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ],
+      "status": "Not implemented"
+    },
+    "restfreq": {
+      "scope": "Rest frequency to use for velocity conversions",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ],
+      "status": "Not implemented"
+    },
+    "veldef": {
+      "scope": "The definition in which to render velocity",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ],
+      "status": "Not implemented"
+    },
+    "phasecenter": {
+      "scope": "The direction coordinates of the desired center",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    },
+    "extendflag": {
+      "scope": "Extend flagging to other data points not plotted",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    },
+    "extcorr": {
+      "scope": "Extend flags based on correlation",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    },
+    "extchannel": {
+      "scope": "Extend flags based on channel",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    },
+    "iteraxis": {
+      "scope": "The axis over which to iterate",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "pages"
+      ],
+      "status": "Implemented"
+    },
+    "xselfscale": {
+      "scope": "When True, iterated plots have a common x-axis range (scale).",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "pages"
+      ],
+      "status": "Partial"
+    },
+    "yselfscale": {
+      "scope": "When True, iterated plots have a common y-axis range (scale).",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "pages"
+      ],
+      "status": "Partial"
+    },
+    "xsharedaxis": {
+      "scope": "Iterated plots on a grid share a common external x-axis per column. Must also set xselfscale=True and gridrows>1.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "pages"
+      ],
+      "status": "Partial"
+    },
+    "ysharedaxis": {
+      "scope": "Iterated plots on a grid share a common external y-axis per row. Must also set yselfscale=True and gridcols>1.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "pages"
+      ],
+      "status": "Partial"
+    },
+    "customsymbol": {
+      "scope": "Enable custom symbol(s) for unflagged points",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "symbolshape": {
+      "scope": "Shape of plotted unflagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "symbolsize": {
+      "scope": "Size of plotted unflagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "symbolcolor": {
+      "scope": "Color (name or hex code) of plotted unflagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "symbolfill": {
+      "scope": "Fill type of plotted unflagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "symboloutline": {
+      "scope": "Outline plotted unflagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "coloraxis": {
+      "scope": "Selects data axis for colorizing",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "customflaggedsymbol": {
+      "scope": "Enable custom symbol(s) for flagged points",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "flaggedsymbolshape": {
+      "scope": "Shape of plotted flagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "flaggedsymbolsize": {
+      "scope": "Size of plotted flagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "flaggedsymbolcolor": {
+      "scope": "Color (name or hex code) of plotted flagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "flaggedsymbolfill": {
+      "scope": "Fill type of plotted flagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "flaggedsymboloutline": {
+      "scope": "Outline plotted flagged symbols",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "xconnector": {
+      "scope": "Set connector for data points (blank=\"none\"; \"line\",\"step\")",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "timeconnector": {
+      "scope": "Connect points by time rather than x-axis",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "plotrange": {
+      "scope": "Plot limits in `xmin`, `xmax`, `ymin`, `ymax` order.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "coordinates"
+      ],
+      "status": "Partial"
+    },
+    "title": {
+      "scope": "Title at top of plot",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "titlefont": {
+      "scope": "Font size for plot title",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "xlabel": {
+      "scope": "Text for horizontal x-axis. Blank for default.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "xaxisfont": {
+      "scope": "Font size for x-axis label",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "ylabel": {
+      "scope": "Text for vertical y-axis. Blank for default.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "yaxisfont": {
+      "scope": "Font size for y-axis label",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "showmajorgrid": {
+      "scope": "Show major grid lines",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "majorwidth": {
+      "scope": "Line width in pixels of major grid lines",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "majorstyle": {
+      "scope": "Major grid line style",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "majorcolor": {
+      "scope": "Color (name or hex code) of major grid lines",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "showminorgrid": {
+      "scope": "Show minor grid lines",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "minorwidth": {
+      "scope": "Line width in pixels of minor grid lines",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "minorstyle": {
+      "scope": "Minor grid line style",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "minorcolor": {
+      "scope": "Color (name or hex code) of minor grid lines",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "showlegend": {
+      "scope": "Show a legend on the plot.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "legendposition": {
+      "scope": "Legend position, default upperRight.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "plotfile": {
+      "scope": "Name of plot file to save automatically",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "export"
+      ],
+      "status": "Partial"
+    },
+    "expformat": {
+      "scope": "Export format type. If not provided, plotfile extension will be used to determine type.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "export"
+      ],
+      "status": "Partial"
+    },
+    "verbose": {
+      "scope": "Include metadata in text export",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "export"
+      ],
+      "status": "Implemented"
+    },
+    "exprange": {
+      "scope": "Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported.",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "pages"
+      ],
+      "status": "Implemented"
+    },
+    "highres": {
+      "scope": "Use high resolution",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "dpi": {
+      "scope": "DPI of exported plot",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "width": {
+      "scope": "Width in pixels of exported plot",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "height": {
+      "scope": "Height in pixels of exported plot",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Partial"
+    },
+    "overwrite": {
+      "scope": "Overwrite plot file if it already exists",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "export"
+      ],
+      "status": "Implemented"
+    },
+    "showgui": {
+      "scope": "Show GUI",
+      "evidence": [
+        "paired"
+      ],
+      "behaviors": [
+        "export"
+      ],
+      "status": "Partial"
+    },
+    "clearplots": {
+      "scope": "Remove any existing plots so new ones can replace them.",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "pages"
+      ]
+    },
+    "callib": {
+      "scope": "Calibration library string or filename for on-the-fly calibration.",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    },
+    "headeritems": {
+      "scope": "Comma-separated list of pre-defined page header items.",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "presentation"
+      ],
+      "status": "Not implemented"
+    },
+    "showatm": {
+      "scope": "Compute and overlay the atmospheric transmission curve",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    },
+    "showtsky": {
+      "scope": "Compute and overlay the sky temperature curve",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    },
+    "showimage": {
+      "scope": "Compute and overlay the image sideband curve",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    },
+    "colorizeoverlay": {
+      "scope": "Colorize the curve overlay using coloraxis",
+      "evidence": [
+        "remaining"
+      ],
+      "behaviors": [
+        "advanced"
+      ]
+    }
+  },
+  "behaviors": [
+    {
+      "id": "table",
+      "title": "Read current-format calibrations",
+      "status": "Partial",
+      "scope": "Open a current casacore calibration table through vis or caltable, preserving the public None return and input-path checks.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Legacy BPOLY and GSPLINE table loading and the remaining MS plotting paths are open."
+    },
+    {
+      "id": "selection",
+      "title": "Select solution samples",
+      "status": "Partial",
+      "scope": "Apply metadata selections for field, channel and window, time, antenna, scan, observation and polarization, including receptor ratios.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": "TaQL and the remaining calibration selection expressions are open."
+    },
+    {
+      "id": "coordinates",
+      "title": "Project axes and flags",
+      "status": "Partial",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Pointing-coordinate axes and advanced per-axis MS data columns are open."
+    },
+    {
+      "id": "averaging",
+      "title": "Average solution points",
+      "status": "Implemented",
+      "scope": "Apply weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": ""
+    },
+    {
+      "id": "pages",
+      "title": "Lay out and export calibration pages",
+      "status": "Partial",
+      "scope": "Partition selected series across a grid. Text reports the current page. Image export provides current and all-page ranges and names the physical outputs in successful completions.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Explicit plot placement, persistent pages and additional presentation modes are open."
+    },
+    {
+      "id": "presentation",
+      "title": "Render the shared plot document",
+      "status": "Partial",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend and export sizing.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": "Renderer-specific marker fill patterns, page headers and interactive editing remain open."
+    },
+    {
+      "id": "export",
+      "title": "Save and publish selected plot products",
+      "status": "Partial",
+      "scope": "Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false.",
+      "evidence": [
+        "paired"
+      ],
+      "gap": "More export, multi-plot state and interactive display forms remain open."
+    },
+    {
+      "id": "advanced",
+      "title": "Advanced calibration plotting controls",
+      "status": "Not implemented",
+      "scope": "Track calibration library, atmosphere, transformations and interactive flag controls.",
+      "evidence": [
+        "remaining"
+      ],
+      "gap": "The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215."
+    }
+  ],
+  "decisions": [
+    {
+      "id": "disable-selection",
+      "state": "Proposed",
+      "inputs": "A PlotMS request with selectdata=False and supplied selection text.",
+      "casa": "Raises Exception with message updateImmediately must be a boolean.",
+      "ours": "Displays and exports all available solution points without applying the selector text.",
+      "rationale": "Make the documented selection switch work when it is false.",
+      "impact": "The native request produces all 160 available points in the paired fixture.",
+      "record": "PlotMS disabling selection calls the selection setter with a missing argument",
+      "evidence": [
+        "paired"
+      ]
+    }
+  ],
+  "evidence": {
+    "paired": {
+      "kind": "Same-input public PlotMS comparison",
+      "state": "passed",
+      "scope": "CASA 6.7.6.14 and casaplotms 2.9.1 public calls on identical current-format calibration tables.",
+      "result": "38 text exports, 1,200 points, 14 exact errors, 32 rendered coordinates and scan, baseline and time page filenames matched.",
+      "casa_version": "6.7.6.14",
+      "revision": "e775bd07a6e5b9ebfbb4b812844564b063dc78e9",
+      "command": "casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-calibration-20261119.json",
+      "links": [
+        "tools/casa-compat/plotms_calibration_oracle.py"
+      ]
+    },
+    "remaining": {
+      "kind": "Remaining calibration PlotMS workflow comparisons",
+      "state": "planned",
+      "scope": "Advanced calibration table and MS plotting under #1526, #1032 and #215.",
+      "result": "Requires additional native behavior and paired evidence.",
+      "links": []
+    }
+  }
+}

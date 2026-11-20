@@ -45,7 +45,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | listcal | listcal | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | mstransform | mstransform | yes | 55 | 55 | 0 | 37 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
-| plotms | plotms | pending | 102 | pending | | | | |
+| plotms | plotms | yes | 102 | 102 | 0 | 17 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
@@ -1345,7 +1345,233 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA source: `casaplotms/plotms.py`, 102 parameters
 - Implementation: `casaplotms/private/task_plotms.py`, `plotms` (line 36): 0 return statements, 27 raise statements
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: ERROR: DISPLAY environment variable is not set! Cannot run plotms.
-- casa-rs: plotms waits for its own decision (#931): CASA's is the casaplotms GUI
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- Accepted only at CASA's default until #1032: `rowindex`, `colindex`, `plotindex`, `xframe`, `xinterp`, `yframe`, `yinterp`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
+- Accepted only at CASA's default until #1526: `callib`, `showatm`, `showtsky`, `showimage`, `colorizeoverlay`
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 102, in CASA's order: yes
+- Defaults that differ: none
+
+#### plotms parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`. Status counts: Default only: 17, Implemented: 23, Not implemented: 11, Partial: 51, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `vis` | `''` | `''`; `vis` → `vis` | Partial | Input MS or CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (table) | [paired](#plotms-evidence-paired) |
+| `caltable` | `''` | `''`; `caltable` → `caltable` | Partial | Input CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (calibration_table) | [paired](#plotms-evidence-paired) |
+| `gridrows` | `1` | `1`; `gridrows` → `gridrows` | Implemented | Number of subplot rows [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `gridcols` | `1` | `1`; `gridcols` → `gridcols` | Implemented | Number of subplot columns [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `rowindex` | `0` | `0`; `rowindex` → `rowindex` | Default only | Row location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `colindex` | `0` | `0`; `colindex` → `colindex` | Default only | Column location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `plotindex` | `0` | `0`; `plotindex` → `plotindex` | Default only | Index to address a subplot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `xaxis` | `''` | `''`; `xaxis` → `xaxis` | Partial | Plot x-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `parangle`, `baseline`, `delay`, `antenna position`, `swp`, `u`, `tec`, `ant-parang`, `gamp`, `Antenna1`, `UVdist`, `WeightSpectrum`, `Baseline`, `flag`, `Real`, `switchedpower`, `timeint`, `WtSp`, `Ant-Elevation`, `GainReal`, `time_interval`, `uvdist_l`, `GainAmp`, `ant1`, `flagrow`, `Wt`, `Velocity`, `opac`, `Feed2`, `corr`, `imaginary`, `gainamp`, `Vwave`, `wwave`, `Frequency`, `observation`, `feed1`, `ant-azimuth`, `rate`, `Elevation`, `Intent`, `Row`, `swpower`, `antpos`, `ant-elevation`, `antenna`, `v`, `V`, `interval`, `sigmaspectrum`, `DelayRate`, `tsys`, `gainphase`, `Ant-Parangle`, `imag`, `Radial Velocity`, `UVwave`, `Observation`, `Poln`, `W`, `timeinterval`, `Channel`, `snr`, `SNR`, `frequency`, `Interval`, `uvdistl`, `disp`, `Imag`, `dispdelay`, `Feed1`, `rho`, `Ant-RA`, `delayrate`, `spgain`, `Antenna`, `Uwave`, `SigmaSpectrum`, `Azimuth`, `Scan`, `Tsys`, `polarization`, `intent`, `phase`, `amp`, `ant-parangle`, `SigmaSp`, `freq`, `wt*amp`, `channel`, `uwave`, `Flag`, `correlation`, `FlagRow`, `TEC`, `SwPower`, `GainPhase`, `GainImag`, `ant-parallacticangle`, `real`, `Time`, `weight`, `antenna2`, `gainimag`, `gimag`, `Antenna2`, `spw`, `gphase`, `Opac`, `parang`, `Amp`, `ant-ra`, `Sigma`, `amplitude`, `Ant-DEC`, `HourAngle`, `U`, `row`, `Wt*Amp`, `gainreal`, `chan`, `Field`, `DispDelay`, `hourang`, `vwave`, `radialvelocity`, `sigma`, `Antenna Position`, `Delay`, `uvwave`, `vel`, `uvdist`, `velocity`, `hourangle`, `poln`, `ant2`, `Phase`, `azimuth`, `Corr`, `parallacticangle`, `weightspectrum`, `Ant-Azimuth`, `wtsp`, ``, `Distance`, `opacity`, `antenna1`, `feed2`, `sigmasp`, `time`, `w`, `wt`, `field`, `greal`, `elevation`, `del`, `ant`, `ant-dec`, `Spw`, `scan`, `Wwave`, `ParAngle` | [paired](#plotms-evidence-paired) |
+| `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired) |
+| `xframe` | `''` | `''`; `xframe` → `xframe` | Default only | Coordinate frame to use for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `icrs`, `azelgeo`, `b1950`, `galactic`, ``, `j2000`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `xinterp` | `''` | `''`; `xinterp` → `xinterp` | Default only | Interpolation method for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: ``, `nearest`, `cubic spline`, `spline`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `yaxis` | `''` | `''`; `yaxis` → `yaxis` | Partial | Plot y-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `yframe` | `''` | `''`; `yframe` → `yframe` | Default only | Coordinate frame to use for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `yinterp` | `''` | `''`; `yinterp` → `yinterp` | Default only | Interpolation method for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `yaxislocation` | `''` | `''`; `yaxislocation` → `yaxislocation` | Partial | Location of the y-axis (blank for default: left) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `selectdata` | `True` | `True`; `selectdata` → `selectdata` | Partial | Enable data selection parameters [selection](#plotms-behavior-selection)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `field` | `''` | `''`; `field` → `field` | Implemented | Field names or ids (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `spw` | `''` | `''`; `spw` → `spw` | Implemented | Spectral windows:channels (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `timerange` | `''` | `''`; `timerange` → `timerange` | Implemented | Time range (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `uvrange` | `''` | `''`; `uvrange` → `uvrange` | Not implemented | UV range (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `antenna` | `''` | `''`; `antenna` → `antenna` | Implemented | Baseline/antenna names or ids (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `scan` | `''` | `''`; `scan` → `scan` | Implemented | Scan numbers (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `correlation` | `''` | `''`; `correlation` → `correlation` | Implemented | Correlations/polarizations (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `polarization` | `''` | `''`; `polarization` → `polarization` | Implemented | Polarizations (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `antpos` | `''` | `''`; `antpos` → `antpos` | Not implemented | Antenna positions (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `array` | `''` | `''`; `array` → `array` | Not implemented | (Sub)array numbers (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `observation` | `''` | `''`; `observation` → `observation` | Implemented | Observation IDs (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `intent` | `''` | `''`; `intent` → `intent` | Not implemented | Observing intent (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `feed` | `''` | `''`; `feed` → `feed` | Not implemented | Feed numbers (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `msselect` | `''` | `''`; `msselect` → `msselect` | Not implemented | MSSelection TaQL string (blank for none) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `averagedata` | `True` | `True`; `averagedata` → `averagedata` | Implemented | Enable data averaging parameters [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgchannel` | `''` | `''`; `avgchannel` → `avgchannel` | Implemented | Average over channel (blank = False, otherwise value in channels) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `avgtime` | `''` | `''`; `avgtime` → `avgtime` | Implemented | Average over time (blank = False, otherwise value in seconds) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `avgscan` | `False` | `False`; `avgscan` → `avgscan` | Implemented | Average over scans. Only valid with time averaging [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgfield` | `False` | `False`; `avgfield` → `avgfield` | Implemented | Average over fields. Only valid with time averaging [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgbaseline` | `False` | `False`; `avgbaseline` → `avgbaseline` | Implemented | Average over all baselines (mutually exclusive with avgantenna) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgantenna` | `False` | `False`; `avgantenna` → `avgantenna` | Implemented | Average per antenna (mutually exclusive with avgbaseline) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgspw` | `False` | `False`; `avgspw` → `avgspw` | Implemented | Average over all spectral windows [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `scalar` | `False` | `False`; `scalar` → `scalar` | Implemented | Scalar averaging (False=vector averaging) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `transform` | `True` | `True`; `transform` → `transform` | Not implemented | Enable data transformations [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [remaining](#plotms-evidence-remaining) |
+| `freqframe` | `''` | `''`; `freqframe` → `freqframe` | Not implemented | The frame in which to render frequency and velocity axes [advanced](#plotms-behavior-advanced)<br>Catalog domain: `LSRK`, `CMB`, `GALACTO`, `GEO`, `TOPO`, `LSRD`, `LGROUP`, `BARY`, `` | [remaining](#plotms-evidence-remaining) |
+| `restfreq` | `''` | `''`; `restfreq` → `restfreq` | Not implemented | Rest frequency to use for velocity conversions [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `veldef` | `'RADIO'` | `'RADIO'`; `veldef` → `veldef` | Not implemented | The definition in which to render velocity [advanced](#plotms-behavior-advanced)<br>Catalog domain: `RADIO`, `OPTICAL`, `TRUE` | [remaining](#plotms-evidence-remaining) |
+| `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter` | Default only | The direction coordinates of the desired center [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `extendflag` | `False` | `False`; `extendflag` → `extendflag` | Default only | Extend flagging to other data points not plotted [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `extcorr` | `False` | `False`; `extcorr` → `extcorr` | Default only | Extend flags based on correlation [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `extchannel` | `False` | `False`; `extchannel` → `extchannel` | Default only | Extend flags based on channel [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `iteraxis` | `''` | `''`; `iteraxis` → `iteraxis` | Implemented | The axis over which to iterate [pages](#plotms-behavior-pages)<br>Catalog domain: `baseline`, `Baseline`, `corr`, `antpos`, `antenna`, `Poln`, `AntPos`, `Antenna`, `Scan`, `polarization`, `correlation`, `Time`, `spw`, `Field`, `poln`, `Corr`, ``, `time`, `field`, `Spw`, `scan` | [paired](#plotms-evidence-paired) |
+| `xselfscale` | `False` | `False`; `xselfscale` → `xselfscale` | Partial | When True, iterated plots have a common x-axis range (scale). [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `yselfscale` | `False` | `False`; `yselfscale` → `yselfscale` | Partial | When True, iterated plots have a common y-axis range (scale). [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `xsharedaxis` | `False` | `False`; `xsharedaxis` → `xsharedaxis` | Partial | Iterated plots on a grid share a common external x-axis per column. Must also set xselfscale=True and gridrows>1. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `ysharedaxis` | `False` | `False`; `ysharedaxis` → `ysharedaxis` | Partial | Iterated plots on a grid share a common external y-axis per row. Must also set yselfscale=True and gridcols>1. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `customsymbol` | `[]` | `[]`; `customsymbol` → `customsymbol` | Partial | Enable custom symbol(s) for unflagged points [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolshape` | `'autoscaling'` | `'autoscaling'`; `symbolshape` → `symbolshape` | Partial | Shape of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolsize` | `2` | `2`; `symbolsize` → `symbolsize` | Partial | Size of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolcolor` | `'0000ff'` | `'0000ff'`; `symbolcolor` → `symbolcolor` | Partial | Color (name or hex code) of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolfill` | `'fill'` | `'fill'`; `symbolfill` → `symbolfill` | Partial | Fill type of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symboloutline` | `False` | `False`; `symboloutline` → `symboloutline` | Partial | Outline plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `coloraxis` | `''` | `''`; `coloraxis` → `coloraxis` | Partial | Selects data axis for colorizing [presentation](#plotms-behavior-presentation)<br>Catalog domain: `baseline`, `Antenna1`, `Baseline`, `ant1`, `corr`, `observation`, `Intent`, `antpos`, `Observation`, `Poln`, `Channel`, `AntPos`, `Scan`, `polarization`, `intent`, `channel`, `correlation`, `Time`, `antenna2`, `Antenna2`, `spw`, `chan`, `Field`, `poln`, `ant2`, `Corr`, ``, `antenna1`, `time`, `field`, `Spw`, `scan` | [paired](#plotms-evidence-paired) |
+| `customflaggedsymbol` | `False` | `False`; `customflaggedsymbol` → `customflaggedsymbol` | Partial | Enable custom symbol(s) for flagged points [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymbolshape` | `'circle'` | `'circle'`; `flaggedsymbolshape` → `flaggedsymbolshape` | Partial | Shape of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymbolsize` | `2` | `2`; `flaggedsymbolsize` → `flaggedsymbolsize` | Partial | Size of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymbolcolor` | `'ff0000'` | `'ff0000'`; `flaggedsymbolcolor` → `flaggedsymbolcolor` | Partial | Color (name or hex code) of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymbolfill` | `'fill'` | `'fill'`; `flaggedsymbolfill` → `flaggedsymbolfill` | Partial | Fill type of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `flaggedsymboloutline` | `False` | `False`; `flaggedsymboloutline` → `flaggedsymboloutline` | Partial | Outline plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `xconnector` | `''` | `''`; `xconnector` → `xconnector` | Partial | Set connector for data points (blank="none"; "line","step") [presentation](#plotms-behavior-presentation)<br>Catalog domain: ``, `none`, `line`, `step` | [paired](#plotms-evidence-paired) |
+| `timeconnector` | `False` | `False`; `timeconnector` → `timeconnector` | Partial | Connect points by time rather than x-axis [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `plotrange` | `[]` | `[]`; `plotrange` → `plotrange` | Partial | Plot limits in `xmin`, `xmax`, `ymin`, `ymax` order. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [paired](#plotms-evidence-paired) |
+| `title` | `''` | `''`; `title` → `title` | Partial | Title at top of plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `titlefont` | `0` | `0`; `titlefont` → `titlefont` | Partial | Font size for plot title [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `xlabel` | `''` | `''`; `xlabel` → `xlabel` | Partial | Text for horizontal x-axis. Blank for default. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `xaxisfont` | `0` | `0`; `xaxisfont` → `xaxisfont` | Partial | Font size for x-axis label [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `ylabel` | `''` | `''`; `ylabel` → `ylabel` | Partial | Text for vertical y-axis. Blank for default. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `yaxisfont` | `0` | `0`; `yaxisfont` → `yaxisfont` | Partial | Font size for y-axis label [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `showmajorgrid` | `False` | `False`; `showmajorgrid` → `showmajorgrid` | Partial | Show major grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `majorwidth` | `1` | `1`; `majorwidth` → `majorwidth` | Partial | Line width in pixels of major grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `majorstyle` | `''` | `''`; `majorstyle` → `majorstyle` | Partial | Major grid line style [presentation](#plotms-behavior-presentation)<br>Catalog domain: `none`, `dot`, `solid`, `dash`, `` | [paired](#plotms-evidence-paired) |
+| `majorcolor` | `'B0B0B0'` | `'B0B0B0'`; `majorcolor` → `majorcolor` | Partial | Color (name or hex code) of major grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `showminorgrid` | `False` | `False`; `showminorgrid` → `showminorgrid` | Partial | Show minor grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `minorwidth` | `1` | `1`; `minorwidth` → `minorwidth` | Partial | Line width in pixels of minor grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `minorstyle` | `''` | `''`; `minorstyle` → `minorstyle` | Partial | Minor grid line style [presentation](#plotms-behavior-presentation)<br>Catalog domain: `none`, `dot`, `solid`, `dash`, `` | [paired](#plotms-evidence-paired) |
+| `minorcolor` | `'D0D0D0'` | `'D0D0D0'`; `minorcolor` → `minorcolor` | Partial | Color (name or hex code) of minor grid lines [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
+| `showlegend` | `False` | `False`; `showlegend` → `showlegend` | Partial | Show a legend on the plot. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `legendposition` | `''` | `''`; `legendposition` → `legendposition` | Partial | Legend position, default upperRight. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `exteriorRight`, `lowerRight`, `exteriorTop`, `exteriorLeft`, `lowerLeft`, `upperRight`, `upperLeft`, `exteriorBottom`, `` | [paired](#plotms-evidence-paired) |
+| `plotfile` | `''` | `''`; `plotfile` → `plotfile` | Partial | Name of plot file to save automatically [export](#plotms-behavior-export)<br>Catalog domain: `path` (file) | [paired](#plotms-evidence-paired) |
+| `expformat` | `''` | `''`; `expformat` → `expformat` | Partial | Export format type. If not provided, plotfile extension will be used to determine type. [export](#plotms-behavior-export)<br>Catalog domain: `pdf`, `jpg`, `png`, `txt`, `ps`, `` | [paired](#plotms-evidence-paired) |
+| `verbose` | `True` | `True`; `verbose` → `verbose` | Implemented | Include metadata in text export [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `exprange` | `''` | `''`; `exprange` → `exprange` | Implemented | Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. [pages](#plotms-behavior-pages)<br>Catalog domain: ``, `current`, `all` | [paired](#plotms-evidence-paired) |
+| `highres` | `False` | `False`; `highres` → `highres` | Partial | Use high resolution [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `dpi` | `-1` | `-1`; `dpi` → `dpi` | Partial | DPI of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `width` | `-1` | `-1`; `width` → `width` | Partial | Width in pixels of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `height` | `-1` | `-1`; `height` → `height` | Partial | Height in pixels of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Overwrite plot file if it already exists [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `showgui` | `True` | `True`; `showgui` → `showgui` | Partial | Show GUI [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `clearplots` | `True` | `True`; `clearplots` → `clearplots` | Default only | Remove any existing plots so new ones can replace them. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `callib` | `[]` | `[]`; `callib` → `callib` | Default only | Calibration library string or filename for on-the-fly calibration. [advanced](#plotms-behavior-advanced)<br>Catalog domain: list[`string`], length 0..many; scalar allowed; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+| `headeritems` | `''` | `''`; `headeritems` → `headeritems` | Not implemented | Comma-separated list of pre-defined page header items. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [remaining](#plotms-evidence-remaining) |
+| `showatm` | `False` | `False`; `showatm` → `showatm` | Default only | Compute and overlay the atmospheric transmission curve [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+| `showtsky` | `False` | `False`; `showtsky` → `showtsky` | Default only | Compute and overlay the sky temperature curve [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+| `showimage` | `False` | `False`; `showimage` → `showimage` | Default only | Compute and overlay the image sideband curve [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+| `colorizeoverlay` | `False` | `False`; `colorizeoverlay` → `colorizeoverlay` | Default only | Colorize the curve overlay using coloraxis [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1526) | [remaining](#plotms-evidence-remaining) |
+
+#### plotms interacting modes and task behavior
+
+<a id="plotms-behavior-table"></a>
+##### Read current-format calibrations
+
+**Partial** — Open a current casacore calibration table through vis or caltable, preserving the public None return and input-path checks.
+
+Legacy BPOLY and GSPLINE table loading and the remaining MS plotting paths are open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-selection"></a>
+##### Select solution samples
+
+**Partial** — Apply metadata selections for field, channel and window, time, antenna, scan, observation and polarization, including receptor ratios.
+
+TaQL and the remaining calibration selection expressions are open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-coordinates"></a>
+##### Project axes and flags
+
+**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing.
+
+Pointing-coordinate axes and advanced per-axis MS data columns are open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-averaging"></a>
+##### Average solution points
+
+**Implemented** — Apply weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache.
+
+
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-pages"></a>
+##### Lay out and export calibration pages
+
+**Partial** — Partition selected series across a grid. Text reports the current page. Image export provides current and all-page ranges and names the physical outputs in successful completions.
+
+Explicit plot placement, persistent pages and additional presentation modes are open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-presentation"></a>
+##### Render the shared plot document
+
+**Partial** — Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend and export sizing.
+
+Renderer-specific marker fill patterns, page headers and interactive editing remain open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-export"></a>
+##### Save and publish selected plot products
+
+**Partial** — Write current calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false.
+
+More export, multi-plot state and interactive display forms remain open.
+
+Evidence: [paired](#plotms-evidence-paired).
+
+<a id="plotms-behavior-advanced"></a>
+##### Advanced calibration plotting controls
+
+**Not implemented** — Track calibration library, atmosphere, transformations and interactive flag controls.
+
+The remaining forms are open under #1526 with shared PlotMS work in #1032 and #215.
+
+Evidence: [remaining](#plotms-evidence-remaining).
+
+#### plotms deviations and unfinished work
+
+##### disable-selection: Proposed
+
+- Record: [PlotMS disabling selection calls the selection setter with a missing argument](https://github.com/bglenden/casa-rs/blob/e775bd07a6e5b9ebfbb4b812844564b063dc78e9/docs/CASA%20%28C%2B%2B%29%20bugs.md#plotms-disabling-selection-calls-the-selection-setter-with-a-missing-argument)
+- Inputs: A PlotMS request with selectdata=False and supplied selection text.
+- CASA: Raises Exception with message updateImmediately must be a boolean.
+- casa-rs: Displays and exports all available solution points without applying the selector text.
+- Rationale: Make the documented selection switch work when it is false.
+- User impact: The native request produces all 160 available points in the paired fixture.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [paired](#plotms-evidence-paired).
+
+#### plotms evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="plotms-evidence-paired"></a>
+##### paired
+
+**Same-input public PlotMS comparison — passed.** 38 text exports, 1,200 points, 14 exact errors, 32 rendered coordinates and scan, baseline and time page filenames matched. CASA 6.7.6.14 and casaplotms 2.9.1 public calls on identical current-format calibration tables.
+
+- [tools/casa-compat/plotms_calibration_oracle.py](https://github.com/bglenden/casa-rs/blob/e775bd07a6e5b9ebfbb4b812844564b063dc78e9/tools/casa-compat/plotms_calibration_oracle.py)
+- Revision: `e775bd07a6e5b9ebfbb4b812844564b063dc78e9`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_calibration_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-calibration-20261119.json`.
+
+<a id="plotms-evidence-remaining"></a>
+##### remaining
+
+**Remaining calibration PlotMS workflow comparisons — planned.** Requires additional native behavior and paired evidence. Advanced calibration table and MS plotting under #1526, #1032 and #215.
+
 
 ### plotweather
 

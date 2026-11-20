@@ -57,7 +57,7 @@ pub(super) fn prepare(
             document::document("observe", panels, columns),
         ));
     }
-    let bytes = payload.finish()?;
+    let bytes = payload.finish().map_err(failure)?;
     for plot in &plots {
         plot.document.validate_payload(bytes).map_err(failure)?;
     }
@@ -79,9 +79,9 @@ fn figure(
 }
 
 pub(super) fn open(path: &std::path::Path) -> Result<Payload, SimobserveError> {
-    Payload::open(path)
+    Payload::open(path).map_err(failure)
 }
 
 pub(super) fn open_append(path: &std::path::Path) -> Result<Payload, SimobserveError> {
-    Payload::append(path)
+    Payload::append(path).map_err(failure)
 }

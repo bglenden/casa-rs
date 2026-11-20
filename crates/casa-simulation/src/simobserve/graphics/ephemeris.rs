@@ -126,8 +126,8 @@ pub(crate) fn panel_for(
         ],
         false,
     );
-    let x = payload.values(times)?;
-    let y = payload.values(elevations)?;
+    let x = payload.values(times).map_err(failure)?;
+    let y = payload.values(elevations).map_err(failure)?;
     output.layers.push(layer(
         "elevation",
         PlotLayerKind::Line,
@@ -135,8 +135,8 @@ pub(crate) fn panel_for(
         None,
         None,
     ));
-    let x = payload.values([(peak - day) * 24.0; 2])?;
-    let y = payload.values([0.0, 90.0])?;
+    let x = payload.values([(peak - day) * 24.0; 2]).map_err(failure)?;
+    let y = payload.values([0.0, 90.0]).map_err(failure)?;
     output.layers.push(layer(
         "transit",
         PlotLayerKind::Line,
@@ -173,8 +173,8 @@ pub(crate) fn panel_for(
         None
     };
     if let Some((times, elevation, width)) = observed {
-        let x = payload.values(times)?;
-        let y = payload.values([elevation; 2])?;
+        let x = payload.values(times).map_err(failure)?;
+        let y = payload.values([elevation; 2]).map_err(failure)?;
         let mut observed = layer(
             "observed",
             PlotLayerKind::Line,

@@ -48,8 +48,7 @@ TOOL_MODULES = {"simutil": "casars.simutil"}
 # its own name. calibrate, msconvert and msexplore are casa-rs tasks with no
 # CASA counterpart.
 CASA_RS_ONLY = frozenset({"calibrate", "msconvert", "msexplore"})
-# plotms waits for its own decision (#931): casaplotms is a GUI program.
-PENDING = {"plotms": "plotms waits for its own decision (#931): CASA's is the casaplotms GUI"}
+PENDING: dict[str, str] = {}
 
 
 class InventoryError(RuntimeError):

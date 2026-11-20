@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 727
+- Concepts: 808
 - Surfaces: 45 (45 task, 0 session)
-- Surface bindings: 1053
+- Surface bindings: 1089
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -37,7 +37,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Clear Calibration](#surface-clearcal)<br><code>clearcal</code> | task | 1 | <code>calibration</code> | 5 | Initialize or reset scratch visibility columns. |
 | [Delete Model](#surface-delmod)<br><code>delmod</code> | task | 1 | <code>calibration</code> | 4 | Remove scratch or virtual model visibilities. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 6 | <code>calibration</code> | 18 | Generate a calibration table such as antpos, gceff, or opac. |
-| [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 7 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
+| [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 8 | <code>msexplore</code> | 102 | Plot selected MeasurementSet or calibration table data. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 5 | <code>flagdata</code> | 76 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 5 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
 | [Primary Beam Correction](#surface-impbcor)<br><code>impbcor</code> | task | 5 | <code>image_analysis</code> | 12 | Apply primary-beam correction to a CASA image |
@@ -930,79 +930,115 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## PlotMS (<code>plotms</code>)
 
 - Kind: `task`
-- Contract version: `7`
+- Contract version: `8`
 - Category: Plotting
 - Provider family: `msexplore`
-- Summary: Plot MeasurementSet visibility data with CASA plotms-style selections and axes.
+- Summary: Plot selected MeasurementSet or calibration table data.
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field ms_path. |
-| <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
-| <code>output</code> | <code>measurementset.summary.output@r1</code> | <code>path (product)</code> | <code>"none"</code>; optional | Output | Optional destination for a MeasurementSet summary report. |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
-| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | UV range selector. |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>correlation</code> | <code>ms.selection.correlation@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Correlation selector. |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Intent selector. |
-| <code>feed</code> | <code>ms.selection.feed@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Feed selector. |
-| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
-| <code>page_spec</code> | <code>parameter.page_spec@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Plot | Load a JSON multi-plot page spec instead of the single-plot axis/preset flags |
-| <code>preset</code> | <code>parameter.preset@r1</code> | <code>choice (27 values; surface-narrowed)</code> | <code>"none"</code>; optional | Plot | Use a named common plot preset |
-| <code>x_axis</code> | <code>parameter.x_axis@r1</code> | <code>string</code> | <code>"none"</code>; optional | Plot | Explicit x axis when not using a preset |
-| <code>y_axis</code> | <code>parameter.y_axis@r1</code> | <code>string</code> | <code>"none"</code>; optional | Plot | Explicit y axis when not using a preset |
-| <code>y_axis2</code> | <code>parameter.y_axis2@r1</code> | <code>string</code> | <code>"none"</code>; optional | Plot | Optional second y axis rendered on the right side |
-| <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"data"</code>; optional | Plot | Visibility data column used by the surface.<br><em>Surface:</em> Canonical datacolumn maps to provider field data_column. |
-| <code>color_by</code> | <code>parameter.color_by@r1</code> | <code>choice (6 values)</code> | <code>"field"</code>; optional | Plot | Metadata axis used to group series colors |
-| <code>avgchannel</code> | <code>parameter.avgchannel@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Averaging | Channel bin size for channel/frequency plots |
-| <code>avgtime</code> | <code>parameter.avgtime@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Averaging | Time averaging window in seconds |
+| <code>vis</code> | <code>plotms.vis@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Input | Input MS or CalTable (blank for none) |
+| <code>caltable</code> | <code>parameter.caltable@r1</code> | <code>path (calibration_table)</code> | <code>""</code>; optional | Input | Input calibration table. |
+| <code>gridrows</code> | <code>plotms.gridrows@r1</code> | <code>integer</code> | <code>1</code>; optional | Presentation | Number of subplot rows |
+| <code>gridcols</code> | <code>plotms.gridcols@r1</code> | <code>integer</code> | <code>1</code>; optional | Presentation | Number of subplot columns |
+| <code>rowindex</code> | <code>plotms.rowindex@r1</code> | <code>integer</code> | <code>0</code>; optional | Presentation | Row location of the plot (0-based) |
+| <code>colindex</code> | <code>plotms.colindex@r1</code> | <code>integer</code> | <code>0</code>; optional | Presentation | Column location of the plot (0-based) |
+| <code>plotindex</code> | <code>plotms.plotindex@r1</code> | <code>integer</code> | <code>0</code>; optional | Presentation | Index to address a subplot (0-based) |
+| <code>xaxis</code> | <code>plotms.xaxis@r1</code> | <code>choice (162 values)</code> | <code>""</code>; optional | Axes | Plot x-axis (blank for default/current) |
+| <code>xdatacolumn</code> | <code>plotms.xdatacolumn@r1</code> | <code>choice (18 values)</code> | <code>""</code>; optional | Axes | Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. |
+| <code>xframe</code> | <code>plotms.xframe@r1</code> | <code>choice (6 values)</code> | <code>""</code>; optional | Axes | Coordinate frame to use for x-axis |
+| <code>xinterp</code> | <code>plotms.xinterp@r1</code> | <code>choice (4 values)</code> | <code>""</code>; optional | Axes | Interpolation method for x-axis |
+| <code>yaxis</code> | <code>plotms.yaxis@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Plot y-axis (blank for default/current) |
+| <code>ydatacolumn</code> | <code>plotms.ydatacolumn@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. |
+| <code>yframe</code> | <code>plotms.yframe@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Coordinate frame to use for y-axis |
+| <code>yinterp</code> | <code>plotms.yinterp@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Interpolation method for y-axis |
+| <code>yaxislocation</code> | <code>plotms.yaxislocation@r1</code> | <code>variant</code> | <code>""</code>; optional | Axes | Location of the y-axis (blank for default: left) |
+| <code>selectdata</code> | <code>plotms.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Enable data selection parameters |
+| <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal field selector text. |
+| <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
+| <code>timerange</code> | <code>plotms.timerange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Time range (blank for all) |
+| <code>uvrange</code> | <code>plotms.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | UV range (blank for all) |
+| <code>antenna</code> | <code>plotms.antenna@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Baseline/antenna names or ids (blank for all) |
+| <code>scan</code> | <code>plotms.scan@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Scan numbers (blank for all) |
+| <code>correlation</code> | <code>plotms.correlation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Correlations/polarizations (blank for all) |
+| <code>polarization</code> | <code>plotms.polarization@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Polarizations (blank for all) |
+| <code>antpos</code> | <code>plotms.antpos@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Antenna positions (blank for all) |
+| <code>array</code> | <code>plotms.array@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | (Sub)array numbers (blank for all) |
+| <code>observation</code> | <code>plotms.observation@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Observation IDs (blank for all) |
+| <code>intent</code> | <code>plotms.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Observing intent (blank for all) |
+| <code>feed</code> | <code>plotms.feed@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | Feed numbers (blank for all) |
+| <code>msselect</code> | <code>plotms.msselect@r1</code> | <code>string</code> | <code>""</code>; optional | Selection | MSSelection TaQL string (blank for none) |
+| <code>averagedata</code> | <code>plotms.averagedata@r1</code> | <code>bool</code> | <code>true</code>; optional | Averaging | Enable data averaging parameters |
+| <code>avgchannel</code> | <code>plotms.avgchannel@r1</code> | <code>string</code> | <code>""</code>; optional | Averaging | Average over channel (blank = False, otherwise value in channels) |
+| <code>avgtime</code> | <code>plotms.avgtime@r1</code> | <code>string</code> | <code>""</code>; optional | Averaging | Average over time (blank = False, otherwise value in seconds) |
 | <code>avgscan</code> | <code>parameter.avgscan@r1</code> | <code>bool</code> | <code>false</code>; optional | Averaging | Permit time averaging across scan boundaries |
 | <code>avgfield</code> | <code>parameter.avgfield@r1</code> | <code>bool</code> | <code>false</code>; optional | Averaging | Permit time averaging across field boundaries |
 | <code>avgbaseline</code> | <code>parameter.avgbaseline@r1</code> | <code>bool</code> | <code>false</code>; optional | Averaging | Average across selected baselines |
 | <code>avgantenna</code> | <code>parameter.avgantenna@r1</code> | <code>bool</code> | <code>false</code>; optional | Averaging | Form per-antenna averages across contributing baselines |
 | <code>avgspw</code> | <code>parameter.avgspw@r1</code> | <code>bool</code> | <code>false</code>; optional | Averaging | Average across selected spectral windows |
 | <code>scalar</code> | <code>parameter.scalar@r1</code> | <code>bool</code> | <code>false</code>; optional | Averaging | Use scalar averaging instead of vector averaging |
-| <code>freqframe</code> | <code>parameter.freqframe@r1</code> | <code>choice (9 values)</code> | <code>"none"</code>; optional | Transforms | Render frequency and velocity axes in the requested frame |
-| <code>restfreq</code> | <code>parameter.restfreq@r1</code> | <code>string</code> | <code>"none"</code>; optional | Transforms | Rest frequency used for velocity-style cube axes |
-| <code>veldef</code> | <code>parameter.veldef@r1</code> | <code>choice (3 values)</code> | <code>"RADIO"</code>; optional | Transforms | Velocity definition used for velocity axes |
-| <code>iteraxis</code> | <code>parameter.iteraxis@r1</code> | <code>choice (5 values)</code> | <code>"none"</code>; optional | Layout | Split the plot into one panel per iteraxis value |
-| <code>gridrows</code> | <code>parameter.gridrows@r1</code> | <code>integer</code> | <code>1</code>; optional | Layout | Requested grid row count for iterated plots |
-| <code>gridcols</code> | <code>parameter.gridcols@r1</code> | <code>integer</code> | <code>1</code>; optional | Layout | Requested grid column count for iterated plots |
-| <code>xselfscale</code> | <code>parameter.xselfscale@r1</code> | <code>bool</code> | <code>false</code>; optional | Layout | Use per-panel X bounds on iterated plots |
-| <code>yselfscale</code> | <code>parameter.yselfscale@r1</code> | <code>bool</code> | <code>false</code>; optional | Layout | Use per-panel Y bounds on iterated plots |
-| <code>xsharedaxis</code> | <code>parameter.xsharedaxis@r1</code> | <code>bool</code> | <code>false</code>; optional | Layout | Force a shared X axis across iterated panels |
-| <code>ysharedaxis</code> | <code>parameter.ysharedaxis@r1</code> | <code>bool</code> | <code>false</code>; optional | Layout | Force a shared Y axis across iterated panels |
-| <code>title</code> | <code>parameter.title@r1</code> | <code>string</code> | <code>"none"</code>; optional | Style | Override the plot title |
-| <code>xlabel</code> | <code>parameter.xlabel@r1</code> | <code>string</code> | <code>"none"</code>; optional | Style | Override the x-axis label |
-| <code>ylabel</code> | <code>parameter.ylabel@r1</code> | <code>string</code> | <code>"none"</code>; optional | Style | Override the y-axis label |
-| <code>symbol_size</code> | <code>parameter.symbol_size@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Style | Scatter marker radius in rendered pixels |
-| <code>showlegend</code> | <code>parameter.showlegend@r1</code> | <code>bool</code> | <code>false</code>; optional | Style | Show a legend for grouped series |
-| <code>legendposition</code> | <code>parameter.legendposition@r1</code> | <code>choice (8 values)</code> | <code>"upperRight"</code>; optional | Style | Position the legend inside or outside the plot |
-| <code>showmajorgrid</code> | <code>parameter.showmajorgrid@r1</code> | <code>bool</code> | <code>false</code>; optional | Style | Show major grid lines |
-| <code>showminorgrid</code> | <code>parameter.showminorgrid@r1</code> | <code>bool</code> | <code>false</code>; optional | Style | Show minor grid lines |
-| <code>headeritems</code> | <code>parameter.headeritems@r1</code> | <code>string</code> | <code>"none"</code>; optional | Style | Comma-separated CASA-style page header items |
-| <code>max_points</code> | <code>parameter.max_points@r1</code> | <code>integer</code> | <code>10000000</code>; optional | Export | Hard cap on the total plotted points rendered by one request |
-| <code>plot_output</code> | <code>parameter.plot_output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Export | Write the plot's text point manifest to PATH |
-| <code>plot_format</code> | <code>parameter.plot_format@r2</code> | <code>choice (1 values)</code> | <code>"txt"</code>; optional | Export | Plot point-manifest export format |
-| <code>flag_action</code> | <code>parameter.flag_action@r1</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Flag Editing | Stage a rectangular flag or unflag edit against the plotted scatter points |
-| <code>flag_xmin</code> | <code>parameter.flag_xmin@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Inclusive minimum X value for the staged edit region |
-| <code>flag_xmax</code> | <code>parameter.flag_xmax@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Inclusive maximum X value for the staged edit region |
-| <code>flag_ymin</code> | <code>parameter.flag_ymin@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Inclusive minimum Y value for the staged edit region |
-| <code>flag_ymax</code> | <code>parameter.flag_ymax@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Inclusive maximum Y value for the staged edit region |
-| <code>flag_plotindex</code> | <code>parameter.flag_plotindex@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Multi-plot page child plot index to target for staged edits |
-| <code>flag_panel</code> | <code>parameter.flag_panel@r2</code> | <code>optional&lt;string&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Iterated panel key to target for staged edits, for example scan-1 |
-| <code>flag_extcorr</code> | <code>parameter.flag_extcorr@r1</code> | <code>bool</code> | <code>false</code>; optional | Flag Editing | Extend staged edits across all correlations on matching channels |
-| <code>flag_extchannel</code> | <code>parameter.flag_extchannel@r1</code> | <code>bool</code> | <code>false</code>; optional | Flag Editing | Extend staged edits across all channels on matching correlations |
-| <code>flag_selected</code> | <code>parameter.flag_selected@r1</code> | <code>bool</code> | <code>false</code>; optional | Flag Editing | Apply the flag action to every FLAG sample in the selected MAIN rows |
-| <code>flag_apply</code> | <code>parameter.flag_apply@r1</code> | <code>bool</code> | <code>false</code>; optional | Flag Editing | Apply the staged flag edit to MAIN FLAG / FLAG_ROW; omit for preview-only |
-| <code>flag_output</code> | <code>parameter.flag_output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Flag Editing | Write the staged flag-edit preview JSON to PATH |
+| <code>transform</code> | <code>plotms.transform@r1</code> | <code>bool</code> | <code>true</code>; optional | Transforms | Enable data transformations |
+| <code>freqframe</code> | <code>plotms.freqframe@r1</code> | <code>choice (9 values)</code> | <code>""</code>; optional | Transforms | The frame in which to render frequency and velocity axes |
+| <code>restfreq</code> | <code>plotms.restfreq@r1</code> | <code>string</code> | <code>""</code>; optional | Transforms | Rest frequency to use for velocity conversions |
+| <code>veldef</code> | <code>plotms.veldef@r1</code> | <code>choice (3 values)</code> | <code>"RADIO"</code>; optional | Transforms | The definition in which to render velocity |
+| <code>phasecenter</code> | <code>plotms.phasecenter@r1</code> | <code>string</code> | <code>""</code>; optional | Transforms | The direction coordinates of the desired center |
+| <code>extendflag</code> | <code>plotms.extendflag@r1</code> | <code>bool</code> | <code>false</code>; optional | Flagging | Extend flagging to other data points not plotted |
+| <code>extcorr</code> | <code>plotms.extcorr@r1</code> | <code>bool</code> | <code>false</code>; optional | Flagging | Extend flags based on correlation |
+| <code>extchannel</code> | <code>plotms.extchannel@r1</code> | <code>bool</code> | <code>false</code>; optional | Flagging | Extend flags based on channel |
+| <code>iteraxis</code> | <code>plotms.iteraxis@r1</code> | <code>choice (21 values)</code> | <code>""</code>; optional | Presentation | The axis over which to iterate |
+| <code>xselfscale</code> | <code>parameter.xselfscale@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Use per-panel X bounds on iterated plots |
+| <code>yselfscale</code> | <code>parameter.yselfscale@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Use per-panel Y bounds on iterated plots |
+| <code>xsharedaxis</code> | <code>parameter.xsharedaxis@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Force a shared X axis across iterated panels |
+| <code>ysharedaxis</code> | <code>parameter.ysharedaxis@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Force a shared Y axis across iterated panels |
+| <code>customsymbol</code> | <code>plotms.customsymbol@r1</code> | <code>variant</code> | <code>[]</code>; optional | Presentation | Enable custom symbol(s) for unflagged points |
+| <code>symbolshape</code> | <code>plotms.symbolshape@r1</code> | <code>variant</code> | <code>"autoscaling"</code>; optional | Presentation | Shape of plotted unflagged symbols |
+| <code>symbolsize</code> | <code>plotms.symbolsize@r1</code> | <code>variant</code> | <code>2</code>; optional | Presentation | Size of plotted unflagged symbols |
+| <code>symbolcolor</code> | <code>plotms.symbolcolor@r1</code> | <code>variant</code> | <code>"0000ff"</code>; optional | Presentation | Color (name or hex code) of plotted unflagged symbols |
+| <code>symbolfill</code> | <code>plotms.symbolfill@r1</code> | <code>variant</code> | <code>"fill"</code>; optional | Presentation | Fill type of plotted unflagged symbols |
+| <code>symboloutline</code> | <code>plotms.symboloutline@r1</code> | <code>variant</code> | <code>false</code>; optional | Presentation | Outline plotted unflagged symbols |
+| <code>coloraxis</code> | <code>plotms.coloraxis@r1</code> | <code>choice (32 values)</code> | <code>""</code>; optional | Presentation | Selects data axis for colorizing |
+| <code>customflaggedsymbol</code> | <code>plotms.customflaggedsymbol@r1</code> | <code>variant</code> | <code>false</code>; optional | Presentation | Enable custom symbol(s) for flagged points |
+| <code>flaggedsymbolshape</code> | <code>plotms.flaggedsymbolshape@r1</code> | <code>variant</code> | <code>"circle"</code>; optional | Presentation | Shape of plotted flagged symbols |
+| <code>flaggedsymbolsize</code> | <code>plotms.flaggedsymbolsize@r1</code> | <code>variant</code> | <code>2</code>; optional | Presentation | Size of plotted flagged symbols |
+| <code>flaggedsymbolcolor</code> | <code>plotms.flaggedsymbolcolor@r1</code> | <code>variant</code> | <code>"ff0000"</code>; optional | Presentation | Color (name or hex code) of plotted flagged symbols |
+| <code>flaggedsymbolfill</code> | <code>plotms.flaggedsymbolfill@r1</code> | <code>variant</code> | <code>"fill"</code>; optional | Presentation | Fill type of plotted flagged symbols |
+| <code>flaggedsymboloutline</code> | <code>plotms.flaggedsymboloutline@r1</code> | <code>variant</code> | <code>false</code>; optional | Presentation | Outline plotted flagged symbols |
+| <code>xconnector</code> | <code>plotms.xconnector@r1</code> | <code>choice (4 values)</code> | <code>""</code>; optional | Presentation | Set connector for data points (blank="none"; "line","step") |
+| <code>timeconnector</code> | <code>plotms.timeconnector@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Connect points by time rather than x-axis |
+| <code>plotrange</code> | <code>plotbandpass.plotrange@r1</code> | <code>array&lt;float&gt;</code> | <code>[]</code>; optional | Axes | The axes limits to use [x0,x1,y0,y1]. |
+| <code>title</code> | <code>plotms.title@r1</code> | <code>string</code> | <code>""</code>; optional | Presentation | Title at top of plot |
+| <code>titlefont</code> | <code>plotms.titlefont@r1</code> | <code>integer</code> | <code>0</code>; optional | Presentation | Font size for plot title |
+| <code>xlabel</code> | <code>plotms.xlabel@r1</code> | <code>string</code> | <code>""</code>; optional | Presentation | Text for horizontal x-axis. Blank for default. |
+| <code>xaxisfont</code> | <code>plotms.xaxisfont@r1</code> | <code>integer</code> | <code>0</code>; optional | Presentation | Font size for x-axis label |
+| <code>ylabel</code> | <code>plotms.ylabel@r1</code> | <code>string</code> | <code>""</code>; optional | Presentation | Text for vertical y-axis. Blank for default. |
+| <code>yaxisfont</code> | <code>plotms.yaxisfont@r1</code> | <code>integer</code> | <code>0</code>; optional | Presentation | Font size for y-axis label |
+| <code>showmajorgrid</code> | <code>parameter.showmajorgrid@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Show major grid lines |
+| <code>majorwidth</code> | <code>plotms.majorwidth@r1</code> | <code>integer</code> | <code>1</code>; optional | Presentation | Line width in pixels of major grid lines |
+| <code>majorstyle</code> | <code>plotms.majorstyle@r1</code> | <code>choice (5 values)</code> | <code>""</code>; optional | Presentation | Major grid line style |
+| <code>majorcolor</code> | <code>plotms.majorcolor@r1</code> | <code>string</code> | <code>"B0B0B0"</code>; optional | Presentation | Color (name or hex code) of major grid lines |
+| <code>showminorgrid</code> | <code>parameter.showminorgrid@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Show minor grid lines |
+| <code>minorwidth</code> | <code>plotms.minorwidth@r1</code> | <code>integer</code> | <code>1</code>; optional | Presentation | Line width in pixels of minor grid lines |
+| <code>minorstyle</code> | <code>plotms.minorstyle@r1</code> | <code>choice (5 values)</code> | <code>""</code>; optional | Presentation | Minor grid line style |
+| <code>minorcolor</code> | <code>plotms.minorcolor@r1</code> | <code>string</code> | <code>"D0D0D0"</code>; optional | Presentation | Color (name or hex code) of minor grid lines |
+| <code>showlegend</code> | <code>parameter.showlegend@r1</code> | <code>bool</code> | <code>false</code>; optional | Presentation | Show a legend for grouped series |
+| <code>legendposition</code> | <code>plotms.legendposition@r1</code> | <code>choice (9 values)</code> | <code>""</code>; optional | Presentation | Legend position, default upperRight. |
+| <code>plotfile</code> | <code>plotms.plotfile@r1</code> | <code>path (file)</code> | <code>""</code>; optional | Export | Name of plot file to save automatically |
+| <code>expformat</code> | <code>plotms.expformat@r1</code> | <code>choice (6 values)</code> | <code>""</code>; optional | Export | Export format type. If not provided, plotfile extension will be used to determine type. |
+| <code>verbose</code> | <code>plotms.verbose@r1</code> | <code>bool</code> | <code>true</code>; optional | Export | Include metadata in text export |
+| <code>exprange</code> | <code>plotms.exprange@r1</code> | <code>choice (3 values)</code> | <code>""</code>; optional | Export | Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. |
+| <code>highres</code> | <code>plotms.highres@r1</code> | <code>bool</code> | <code>false</code>; optional | Export | Use high resolution |
+| <code>dpi</code> | <code>plotms.dpi@r1</code> | <code>integer</code> | <code>-1</code>; optional | Export | DPI of exported plot |
+| <code>width</code> | <code>plotms.width@r1</code> | <code>integer</code> | <code>-1</code>; optional | Export | Width in pixels of exported plot |
+| <code>height</code> | <code>plotms.height@r1</code> | <code>integer</code> | <code>-1</code>; optional | Export | Height in pixels of exported plot |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Export | Replace an existing output file |
+| <code>showgui</code> | <code>plotms.showgui@r1</code> | <code>bool</code> | <code>true</code>; optional | Export | Show GUI |
+| <code>clearplots</code> | <code>plotms.clearplots@r1</code> | <code>bool</code> | <code>true</code>; optional | Presentation | Remove any existing plots so new ones can replace them. |
+| <code>callib</code> | <code>plotms.callib@r1</code> | <code>array&lt;string&gt;</code> | <code>[]</code>; optional | Calibration | Calibration library string or filename for on-the-fly calibration. |
+| <code>headeritems</code> | <code>plotms.headeritems@r1</code> | <code>string</code> | <code>""</code>; optional | Presentation | Comma-separated list of pre-defined page header items. |
+| <code>showatm</code> | <code>plotbandpass.showatm@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Compute and overlay the atmospheric transmission curve |
+| <code>showtsky</code> | <code>plotbandpass.showtsky@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Compute and overlay the sky temperature curve instead of transmission |
+| <code>showimage</code> | <code>plotbandpass.showimage@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | also show the atmospheric curve for the image sideband (in black) |
+| <code>colorizeoverlay</code> | <code>plotms.colorizeoverlay@r1</code> | <code>bool</code> | <code>false</code>; optional | Atmosphere | Colorize the curve overlay using coloraxis |
 
 <a id="surface-flagdata"></a>
 

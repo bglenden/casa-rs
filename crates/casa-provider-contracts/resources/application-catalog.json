@@ -264,7 +264,8 @@
         "override_env": "CASARS_MSEXPLORE_BIN"
       },
       "dataset_kinds": [
-        "measurement_set"
+        "measurement_set",
+        "calibration_table"
       ],
       "include_in_suite": true
     },

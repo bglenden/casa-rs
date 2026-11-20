@@ -71,8 +71,12 @@ fn run(
             },
         })
         .collect::<Vec<_>>();
-    let completion = decode_task_completion(session.bundle(), &stdout, workspace, &values)
-        .unwrap_or_else(|error| panic!("{surface} completion: {error}\nstdout: {stdout}"));
+    let TaskReply::Succeeded { result, .. } = &reply else {
+        panic!("{surface}: {reply:?}");
+    };
+    let completion =
+        decode_task_completion(session.bundle(), &result.to_string(), workspace, &values)
+            .unwrap_or_else(|error| panic!("{surface} completion: {error}\nstdout: {stdout}"));
     (reply, completion)
 }
 
@@ -101,103 +105,116 @@ fn is_fixture_summary(summary: &serde_json::Value) -> bool {
 
 #[test]
 fn user_format_decides_the_summary_on_stdout_and_in_output() {
-    for surface in ["msexplore", "plotms"] {
-        let workspace = tempdir().expect("tempdir");
-        let vis_path = create_msexplore_fixture_ms(workspace.path());
-        let vis_arg = vis_path.to_str().unwrap();
-        let vis = text(vis_arg);
+    let surface = "msexplore";
+    let workspace = tempdir().expect("tempdir");
+    let vis_path = create_msexplore_fixture_ms(workspace.path());
+    let vis_arg = vis_path.to_str().unwrap();
+    let vis = text(vis_arg);
 
-        let stdout = command_line(surface, workspace.path(), &[vis_arg]);
-        assert!(
-            !stdout.trim().is_empty() && !is_json(&stdout),
-            "{surface} default format should print the text summary: {stdout}"
-        );
-        let stdout = command_line(surface, workspace.path(), &[vis_arg, "--format", "json"]);
-        let summary: serde_json::Value = serde_json::from_str(&stdout).expect("JSON summary");
-        assert!(is_fixture_summary(&summary), "{surface}: {summary}");
+    let stdout = command_line(surface, workspace.path(), &[vis_arg]);
+    assert!(
+        !stdout.trim().is_empty() && !is_json(&stdout),
+        "{surface} default format should print the text summary: {stdout}"
+    );
+    let stdout = command_line(surface, workspace.path(), &[vis_arg, "--format", "json"]);
+    let summary: serde_json::Value = serde_json::from_str(&stdout).expect("JSON summary");
+    assert!(is_fixture_summary(&summary), "{surface}: {summary}");
 
-        // msexplore returns its summary, as CASA's listobs returns its
-        // record; plotms returns None. The result carries it either way.
-        let (reply, completion) = run(surface, workspace.path(), &[("vis", vis.clone())]);
-        let TaskReply::Succeeded { value, result, .. } = reply else {
-            panic!("{surface}: {reply:?}");
-        };
-        assert_eq!(
-            surface == "msexplore",
-            is_fixture_summary(&value.to_plain_json()),
-            "{surface}"
-        );
-        assert_eq!(
-            surface == "plotms",
-            value == casa_provider_contracts::CasaValue::None,
-            "{surface}"
-        );
-        assert!(
-            is_fixture_summary(&result["summary"]),
-            "{surface}: {result}"
-        );
-        assert_eq!(completion.summary, format!("{surface} completed"));
-        assert!(completion.products.is_empty(), "{surface}");
+    // msexplore returns the summary record and includes it in the task result.
+    let (reply, completion) = run(surface, workspace.path(), &[("vis", vis.clone())]);
+    let TaskReply::Succeeded { value, result, .. } = reply else {
+        panic!("{surface}: {reply:?}");
+    };
+    assert!(is_fixture_summary(&value.to_plain_json()));
+    assert!(
+        is_fixture_summary(&result["summary"]),
+        "{surface}: {result}"
+    );
+    assert_eq!(completion.summary, format!("{surface} completed"));
+    assert!(completion.products.is_empty(), "{surface}");
 
-        for (format, file, json) in [
-            ("text", "summary.txt", false),
-            ("json", "summary.json", true),
-        ] {
-            let (_, completion) = run(
-                surface,
-                workspace.path(),
-                &[
-                    ("vis", vis.clone()),
-                    ("format", text(format)),
-                    ("output", text(file)),
-                ],
-            );
-            let written = fs::read_to_string(workspace.path().join(file)).expect("summary file");
-            assert_eq!(is_json(&written), json, "{surface} {format}: {written}");
-            assert_eq!(completion.products.len(), 1, "{surface} {format}");
-            let product = &completion.products[0];
-            assert_eq!(product.id, "output", "{surface}");
-            assert_eq!(product.resource_kind, RunProductKind::File, "{surface}");
-            assert!(product.exists, "{surface}: {product:?}");
-        }
+    for (format, file, json) in [
+        ("text", "summary.txt", false),
+        ("json", "summary.json", true),
+    ] {
+        let (_, completion) = run(
+            surface,
+            workspace.path(),
+            &[
+                ("vis", vis.clone()),
+                ("format", text(format)),
+                ("output", text(file)),
+            ],
+        );
+        let written = fs::read_to_string(workspace.path().join(file)).expect("summary file");
+        assert_eq!(is_json(&written), json, "{surface} {format}: {written}");
+        assert_eq!(completion.products.len(), 1, "{surface} {format}");
+        let product = &completion.products[0];
+        assert_eq!(product.id, "output", "{surface}");
+        assert_eq!(product.resource_kind, RunProductKind::File, "{surface}");
+        assert!(product.exists, "{surface}: {product:?}");
     }
 }
 
 #[test]
 fn plot_and_flag_preview_products_are_reported_as_files() {
-    for surface in ["msexplore", "plotms"] {
-        let workspace = tempdir().expect("tempdir");
-        let vis = create_msexplore_fixture_ms(workspace.path());
-        let (_, completion) = run(
-            surface,
-            workspace.path(),
-            &[
-                ("vis", text(vis.to_str().unwrap())),
-                ("preset", text("amplitude_vs_time")),
-                ("plot_output", text("amp.txt")),
-                ("flag_action", text("flag")),
-                ("flag_selected", ParameterValue::Bool(true)),
-                ("flag_output", text("preview.json")),
-            ],
-        );
+    let surface = "msexplore";
+    let workspace = tempdir().expect("tempdir");
+    let vis = create_msexplore_fixture_ms(workspace.path());
+    let (_, completion) = run(
+        surface,
+        workspace.path(),
+        &[
+            ("vis", text(vis.to_str().unwrap())),
+            ("preset", text("amplitude_vs_time")),
+            ("plot_output", text("amp.txt")),
+            ("flag_action", text("flag")),
+            ("flag_selected", ParameterValue::Bool(true)),
+            ("flag_output", text("preview.json")),
+        ],
+    );
 
-        let ids = completion
-            .products
-            .iter()
-            .map(|product| product.id.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(ids, ["plot_output", "flag_output"], "{surface}");
-        for product in &completion.products {
-            assert_eq!(product.resource_kind, RunProductKind::File, "{surface}");
-            assert!(product.exists, "{surface}: {product:?}");
-        }
-        let preview: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(workspace.path().join("preview.json")).expect("preview file"),
-        )
-        .expect("flag preview JSON");
-        assert!(
-            preview.get("matched_points").is_some(),
-            "{surface}: {preview}"
-        );
+    let ids = completion
+        .products
+        .iter()
+        .map(|product| product.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["plot_output", "flag_output"], "{surface}");
+    for product in &completion.products {
+        assert_eq!(product.resource_kind, RunProductKind::File, "{surface}");
+        assert!(product.exists, "{surface}: {product:?}");
     }
+    let preview: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(workspace.path().join("preview.json")).expect("preview file"),
+    )
+    .expect("flag preview JSON");
+    assert!(
+        preview.get("matched_points").is_some(),
+        "{surface}: {preview}"
+    );
+}
+
+#[test]
+fn casa_plotms_names_export_existing_measurement_set_plots() {
+    let workspace = tempdir().expect("tempdir");
+    let vis = create_msexplore_fixture_ms(workspace.path());
+    let (reply, completion) = run(
+        "plotms",
+        workspace.path(),
+        &[
+            ("vis", text(vis.to_str().unwrap())),
+            ("xaxis", text("Time")),
+            ("yaxis", text("amp")),
+            ("plotfile", text("plot.txt")),
+            ("showgui", ParameterValue::Bool(false)),
+        ],
+    );
+    let TaskReply::Succeeded { value, result, .. } = reply else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(value, casa_provider_contracts::CasaValue::None);
+    assert!(is_fixture_summary(&result["summary"]));
+    assert_eq!(completion.products.len(), 1);
+    assert_eq!(completion.products[0].id, "plotfile:1");
+    assert!(completion.products[0].exists);
 }

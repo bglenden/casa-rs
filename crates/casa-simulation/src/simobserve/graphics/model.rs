@@ -32,8 +32,12 @@ pub(super) fn prepare(
         "k"
     };
     let offsets = super::super::pointings::relative_offsets(&pointings.pointings, sky)?;
-    let x = payload.values(offsets.iter().map(|p| p[0] * 3600.0))?;
-    let y = payload.values(offsets.iter().map(|p| p[1] * 3600.0))?;
+    let x = payload
+        .values(offsets.iter().map(|p| p[0] * 3600.0))
+        .map_err(failure)?;
+    let y = payload
+        .values(offsets.iter().map(|p| p[1] * 3600.0))
+        .map_err(failure)?;
     let many = offsets.len() > 19 || beam <= 0.0;
     if many {
         output.layers.push(layer(
@@ -45,7 +49,7 @@ pub(super) fn prepare(
         ));
     } else {
         let offset = payload.position();
-        payload.f64(beam / 2.0)?;
+        payload.f64(beam / 2.0).map_err(failure)?;
         let radii = view(
             offset,
             vec![offsets.len() as u64],
@@ -67,9 +71,9 @@ pub(super) fn prepare(
         ));
     }
     if many && beam > 0.0 {
-        let x = payload.values([beam])?;
-        let y = payload.values([beam])?;
-        let radii = payload.values([beam / 2.0])?;
+        let x = payload.values([beam]).map_err(failure)?;
+        let y = payload.values([beam]).map_err(failure)?;
+        let radii = payload.values([beam / 2.0]).map_err(failure)?;
         let mut legend = layer(
             "primary-beam",
             PlotLayerKind::Circles,
@@ -137,8 +141,12 @@ fn component_panel(
         [[-xhalf, xhalf], [-yhalf, yhalf]],
         true,
     );
-    let x = payload.values(points.iter().map(|p| p[0]))?;
-    let y = payload.values(points.iter().map(|p| p[1]))?;
+    let x = payload
+        .values(points.iter().map(|p| p[0]))
+        .map_err(failure)?;
+    let y = payload
+        .values(points.iter().map(|p| p[1]))
+        .map_err(failure)?;
     output.layers.push(layer(
         "components",
         PlotLayerKind::Scatter,

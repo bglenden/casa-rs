@@ -18,8 +18,10 @@
 //! in its reply, and they depend on no binding crate.
 
 mod convert;
+mod payload;
 mod rich;
 
+pub use payload::{PlotPayloadWriter, plot_array_view};
 pub use rich::*;
 
 use std::path::PathBuf;
