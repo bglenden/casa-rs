@@ -12,10 +12,11 @@ use casa_images::{
     image::image_history_rows,
 };
 use casa_types::{RecordValue, quanta::Quantity};
+use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyString, PyTuple};
 
-use crate::convert::{IntList, StringList, Variant, read_quantity};
+use crate::convert::{IntList, Variant, read_quantity};
 
 use super::PyImageTool;
 use super::attachment::read_locked;
@@ -23,11 +24,12 @@ use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::records::string_vector;
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 fn parse_widths(value: Option<&Bound<'_, PyAny>>) -> PyResult<(Option<Vec<Quantity>>, String)> {
     let variant = value
-        .map(|value| value.extract::<Variant>())
+        .map(width_variant)
         .transpose()?
         .unwrap_or(Variant::Empty);
     let history = variant.describe();
@@ -74,6 +76,48 @@ fn parse_widths(value: Option<&Bound<'_, PyAny>>) -> PyResult<(Option<Vec<Quanti
     Ok((Some(quantities), history))
 }
 
+fn width_variant(value: &Bound<'_, PyAny>) -> PyResult<Variant> {
+    let Ok(array) = value.cast::<PyUntypedArray>() else {
+        return value.extract();
+    };
+    let dtype = array.dtype();
+    match (dtype.kind(), dtype.char()) {
+        (b'i' | b'u', _) | (b'f', b'f' | b'd' | b'g') => {
+            let flat = value
+                .call_method1("ravel", ("F",))?
+                .call_method0("tolist")?;
+            let values: Vec<f64> = flat.extract()?;
+            Ok(if values.is_empty() {
+                Variant::Empty
+            } else {
+                Variant::Numbers(values)
+            })
+        }
+        (b'S' | b'U', _) => {
+            if array.ndim() == 0 {
+                return Ok(Variant::Texts(Vec::new()));
+            }
+            if array.shape().iter().filter(|&&length| length > 1).count() > 1 {
+                return Err(raised(
+                    "Cannot read convolution widths from a multidimensional string array",
+                ));
+            }
+            let flat = value
+                .call_method1("ravel", ("F",))?
+                .call_method0("tolist")?;
+            let texts = flat
+                .try_iter()?
+                .map(|item| match item?.extract()? {
+                    Variant::Text(text) => Ok(text),
+                    _ => Err(raised("Convolution width must be a quantity string")),
+                })
+                .collect::<PyResult<_>>()?;
+            Ok(Variant::Texts(texts))
+        }
+        _ => Ok(Variant::Empty),
+    }
+}
+
 fn width_text(text: &str) -> PyResult<Quantity> {
     let text = text.trim();
     if text.is_empty() {
@@ -82,7 +126,7 @@ fn width_text(text: &str) -> PyResult<Quantity> {
     // A string-vector entry contains one quantity. CASA consumes its first
     // numeric value and attached unit even if another quantity follows it.
     let context = " in converting convolution width";
-    if let Some((first, rest)) = text.split_once(char::is_whitespace)
+    if let Some((first, rest)) = text.split_once(|c: char| c.is_whitespace() || c == ',')
         && rest
             .trim_start()
             .starts_with(|c: char| c.is_ascii_digit() || "+-.".contains(c))
@@ -148,13 +192,13 @@ fn make_product(
 impl PyImageTool {
     /// Convolve a selected Float image with one-dimensional kernels.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (outfile="", axes=IntList::of(&[-1]), types=StringList::of(&[""]), widths=None, scale=-1.0, region=RegionArgument::default(), mask=None, overwrite=false, stretch=false), text_signature = "($self, outfile='', axes=[-1], types=[''], widths=[], scale=-1.0, region={}, mask='', overwrite=False, stretch=False)")]
+    #[pyo3(signature = (outfile="", axes=IntList::of(&[-1]), types=None, widths=None, scale=-1.0, region=RegionArgument::default(), mask=None, overwrite=false, stretch=false), text_signature = "($self, outfile='', axes=[-1], types=[''], widths=[], scale=-1.0, region={}, mask='', overwrite=False, stretch=False)")]
     fn sepconvolve(
         &self,
         py: Python<'_>,
         outfile: &str,
         axes: IntList,
-        types: StringList,
+        types: Option<&Bound<'_, PyAny>>,
         widths: Option<&Bound<'_, PyAny>>,
         scale: f64,
         region: RegionArgument,
@@ -162,6 +206,10 @@ impl PyImageTool {
         #[pyo3(from_py_with = require_bool)] overwrite: bool,
         #[pyo3(from_py_with = require_bool)] stretch: bool,
     ) -> PyResult<Py<Self>> {
+        let mut types = string_vector(types, "types")?;
+        if types.is_empty() {
+            types.push(String::new());
+        }
         let widths = parse_widths(widths);
         let mask = mask_argument(mask);
         let attachment = py.detach(|| {
@@ -175,7 +223,7 @@ impl PyImageTool {
             };
             let destination = (!outfile.is_empty()).then(|| Path::new(outfile));
             let options = SepConvolutionOptions {
-                axes: &axes.0, types: &types.0, widths: &widths, scale,
+                axes: &axes.0, types: &types, widths: &widths, scale,
                 region: region.selection(), mask: (!mask.is_empty()).then_some(mask.as_str()),
                 stretch, destination,
             };
@@ -205,7 +253,7 @@ impl PyImageTool {
                     let region = region.history();
                     output.record_history("sepconvolve", format!(
                         "ia.sepconvolve(outfile={outfile:?}, axes={:?}, types={:?}, widths={widths_history}, scale={scale}, region={region}, mask={mask:?}, overwrite={overwrite}, stretch={stretch})",
-                        axes.0, types.0,
+                        axes.0, types,
                     ))?;
                 }
                 output.save().map_err(raised)?;

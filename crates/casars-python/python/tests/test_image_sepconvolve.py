@@ -26,7 +26,8 @@ def _gaussian(coordinates, first, length, width, scale=-1.):
     return peak*np.exp(-.5*((coordinates-first-(n % 2)/2)/sigma)**2)
 
 
-@pytest.mark.parametrize("width", [[2], np.array([2.]), ["2 pix"], "2arcmin", ["2pix 3pix"]])
+@pytest.mark.parametrize("width", [[2], np.array([2.]), np.array(2.), ["2 pix"], "2arcmin",
+                                  ["2pix 3pix"], ["2pix,3pix"]])
 @pytest.mark.parametrize("gain", [-1., 0., 2.])
 def test_sepconvolve_gaussian_admitted_widths_and_normalization(casa, width, gain):
     data = _impulse((13, 15))
@@ -80,7 +81,8 @@ def test_sepconvolve_hanning_uses_the_full_profile(casa, length, scale):
             source.done()
 
 
-@pytest.mark.parametrize("widths", [[2, 4], ["2 arcmin", "4 arcmin"], "2pix,4pix"])
+@pytest.mark.parametrize("widths", [[2, 4], ["2 arcmin", "4 arcmin"], "2pix,4pix",
+                                   np.array([[2.], [4.]])])
 @pytest.mark.parametrize("scale", [-1., 1.2])
 def test_sepconvolve_combines_kernels_in_axis_order(casa, widths, scale):
     data = _impulse((13, 15))
@@ -187,7 +189,9 @@ def test_sepconvolve_invalid_calls_preserve_named_output(casa, tmp_path):
             assert source.fromarray(pixels=data)
             assert prior.fromarray(name, pixels=data+4.)
             prior.done()
-            for width in (None, [], 2., {"value": 2., "unit": "pix"}):
+            for width in (None, [], 2., {"value": 2., "unit": "pix"},
+                          np.array([True]), np.array([2.], dtype=np.float16),
+                          np.array([2], dtype=object)):
                 detached = source.sepconvolve(name, widths=width, overwrite=True)
                 assert not detached.isopen()
                 detached.done()
@@ -205,6 +209,49 @@ def test_sepconvolve_invalid_calls_preserve_named_output(casa, tmp_path):
             np.testing.assert_array_equal(prior.getchunk(), data+4.)
         finally:
             prior.done()
+            source.done()
+
+
+@pytest.mark.parametrize("type_argument,is_boxcar", [
+    (None, False), ([], False), (("boxcar",), False),
+    (np.array(["boxcar"]), False), (["boxcar"], True), ("boxcar", True),
+])
+def test_sepconvolve_kernel_label_containers_follow_casa(casa, type_argument, is_boxcar):
+    data = _impulse((13, 15))
+    expected = .5 if is_boxcar else _gaussian(6, 6, 13, 2)
+    for api in (casa, tools):
+        source = api.image()
+        output = None
+        try:
+            assert source.fromarray(pixels=data)
+            output = source.sepconvolve(widths=[2], types=type_argument)
+            assert output.getchunk()[6, 7] == pytest.approx(expected, abs=2e-7)
+        finally:
+            if output is not None:
+                output.done()
+            source.done()
+
+
+def test_sepconvolve_flattens_numeric_widths_in_casa_axis_order(casa):
+    shape = (11, 13, 7, 9)
+    data = _impulse(shape)
+    widths = np.asarray([[2., 3.], [4., 5.]])
+    expected = 1.
+    for axis, (length, width) in enumerate(zip(shape, widths.ravel(order="F"))):
+        aligned = [1] * len(shape)
+        aligned[axis] = length
+        expected = expected*_gaussian(np.arange(length), length//2, length, width).reshape(aligned)
+    for api in (casa, tools):
+        source = api.image()
+        output = None
+        try:
+            assert source.fromshape(shape=shape, linear=True)
+            assert source.putchunk(data)
+            output = source.sepconvolve(widths=widths)
+            np.testing.assert_allclose(output.getchunk(), expected, atol=3e-7)
+        finally:
+            if output is not None:
+                output.done()
             source.done()
 
 
