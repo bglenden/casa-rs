@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-21",
+  "revision": "1ab256e49c7c7aa43ba9719dc2f58b46fdf25558",
+  "casa_version": "6.7.6.14",
+  "scope": "All 19 Python calibration agentflagger methods on current-format CPARAM and FPARAM tables, with shared task-list regressions and direct raw flag-version interchange.",
+  "command": "casa-python tools/casa-compat/agentflagger_calibration_oracle.py --work <new-dir>",
+  "result": "passed",
+  "live_python_method_signatures": 19,
+  "paired_agent_cases": 114,
+  "paired_global_and_local_selector_cases": 28,
+  "paired_sequencing_cases": 4,
+  "sequential_summary_flag_counts": [
+    16,
+    24,
+    18
+  ],
+  "combined_summary_flag_counts": [
+    10,
+    18,
+    18
+  ],
+  "version_workflows": 8,
+  "cross_engine_version_workflows": 4,
+  "version_snapshot_with_live_casa_writer": true,
+  "read_only_and_non_flag_column_preservation_checked": true,
+  "native_safe_abort_and_unmatched_selector_controls": 4,
+  "calibration_task_command_list_regression_cases": 116,
+  "unsupported_local_array_preserves_antenna_controls": 2
+}
