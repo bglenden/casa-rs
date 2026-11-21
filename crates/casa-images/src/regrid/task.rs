@@ -178,6 +178,11 @@ pub(crate) fn regrid_task<T: RegridPixel>(
                 }
                 CoordinateModel::Direction(theirs.clone())
             }
+            (CoordinateModel::Direction(ours), CoordinateModel::Direction(theirs))
+                if n_axes == 1 && input_lengths == lengths && ours == theirs =>
+            {
+                CoordinateModel::Direction(theirs.clone())
+            }
             (CoordinateModel::Linear(ours), CoordinateModel::Linear(theirs)) => {
                 regrid_linear_coordinate(
                     &mut result,
