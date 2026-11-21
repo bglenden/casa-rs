@@ -1,5 +1,9 @@
 """Public image continuum fits and native line/model publication."""
 
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -92,16 +96,37 @@ def test_native_continuum_pair_mask_units_and_history(casa, tmp_path):
     ([0, 2, 3], [0., np.nan, 0., 0.], [True] * 4),
 ])
 def test_continuum_nonfinite_fit_samples(casa, channels, values, valid):
-    for api in (casa, tools):
-        source = api.image()
-        assert source.fromarray(pixels=np.float32([1., np.nan, 3., 4.]))
-        result = source.continuumsub(outcont="", channels=channels, fitorder=1)
-        try:
-            np.testing.assert_allclose(result.getchunk(), values, atol=5e-6, equal_nan=True)
-            np.testing.assert_array_equal(result.getchunk(getmask=True), valid)
-        finally:
-            result.done()
-            source.done()
+    # Isolate the pinned profile fitter after an invalid fit since its
+    # native cleanup can abort when earlier fits ran in the same process.
+    subprocess.run(
+        [sys.executable, "-c", """
+import sys
+import numpy as np
+from casatools import image
+channels = [int(value) for value in sys.argv[1:]]
+source = image()
+assert source.fromarray(pixels=np.float32([1., np.nan, 3., 4.]))
+result = source.continuumsub(outcont="", channels=channels, fitorder=1)
+if channels:
+    np.testing.assert_allclose(result.getchunk(), [0., np.nan, 0., 0.], atol=5e-6)
+    assert result.getchunk(getmask=True).all()
+else:
+    assert np.isnan(result.getchunk()).all()
+    assert not result.getchunk(getmask=True).any()
+result.done()
+source.done()
+""", *map(str, channels)],
+        env=dict(os.environ, OMP_NUM_THREADS="1"), check=True, capture_output=True,
+    )
+    source = tools.image()
+    assert source.fromarray(pixels=np.float32([1., np.nan, 3., 4.]))
+    result = source.continuumsub(outcont="", channels=channels, fitorder=1)
+    try:
+        np.testing.assert_allclose(result.getchunk(), values, atol=5e-6, equal_nan=True)
+        np.testing.assert_array_equal(result.getchunk(getmask=True), valid)
+    finally:
+        result.done()
+        source.done()
 
 
 def test_continuum_channels_are_relative_to_selected_origin(casa, tmp_path):
