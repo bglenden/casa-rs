@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 mod kernel;
+mod long_profile;
 
 use std::path::Path;
 
@@ -209,6 +210,10 @@ fn convolve_axis(
 ) -> Result<(), ImageError> {
     let shape = image.shape().to_vec();
     let length = shape[axis];
+    let halo = weights.halo();
+    if length > PROFILE_TILE_SAMPLES && halo.iter().sum::<usize>() <= PROFILE_TILE_SAMPLES / 4 {
+        return long_profile::convolve(image, axis, weights, halo, stride);
+    }
     let mut profile_budget = (PROFILE_TILE_SAMPLES / length).max(1);
     let mut cursor = image.nice_cursor_shape();
     cursor[axis] = length;

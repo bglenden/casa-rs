@@ -280,3 +280,28 @@ def test_sepconvolve_nonfinite_samples_poison_only_their_profile(casa, sample):
             if result is not None:
                 result.done()
             source.done()
+
+
+def test_sepconvolve_long_profile_keeps_original_samples_across_chunk_edges():
+    data = np.zeros((262200, 2), dtype=np.float32)
+    locations = [262103, 262112, 262119, 262125, 262139]
+    values = [1., -.5, 3., 2., 5.]
+    data[locations, 0] = values
+    data[-1, 1] = np.nan
+    expected = sum(
+        value*_gaussian(np.arange(data.shape[0]), point, data.shape[0], 2)
+        for point, value in zip(locations, values)
+    )
+    source = tools.image()
+    product = None
+    try:
+        assert source.fromarray(pixels=data)
+        product = source.sepconvolve(widths=[2])
+        pixels = product.getchunk()
+        np.testing.assert_allclose(pixels[:, 0], expected, atol=1e-7, rtol=3e-7)
+        assert np.isnan(pixels[:, 1]).all()
+        assert product.getchunk(getmask=True).all()
+    finally:
+        if product is not None:
+            product.done()
+        source.done()

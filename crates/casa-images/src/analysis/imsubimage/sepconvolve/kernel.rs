@@ -118,6 +118,11 @@ pub(super) struct Weights {
 }
 
 impl Weights {
+    pub(super) fn halo(&self) -> [usize; 2] {
+        let last = self.first_offset + self.data.len() as isize - 1;
+        [last.max(0) as usize, (-self.first_offset).max(0) as usize]
+    }
+
     fn from_support(
         support: std::ops::Range<usize>,
         center: usize,
@@ -158,13 +163,18 @@ impl<'a> LineConvolution<'a> {
 
     pub(super) fn apply(&mut self, mut line: ArrayViewMut1<'_, f32>) -> Result<(), ImageError> {
         let mut finite = true;
+        let mut nonzero = false;
         for (to, &value) in self.input.iter_mut().zip(line.iter()) {
             *to = f64::from(value);
             finite &= value.is_finite();
+            nonzero |= value != 0.0;
         }
         if !finite {
             // The reference FFT spreads a nonfinite input across its profile.
             line.fill(f32::NAN);
+            return Ok(());
+        }
+        if !nonzero {
             return Ok(());
         }
         if let Some(fft) = &mut self.fft {
