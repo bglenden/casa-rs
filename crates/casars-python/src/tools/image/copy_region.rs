@@ -3,7 +3,9 @@
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate, StokesCoordinate,
 };
-use casa_images::analysis::{reduce_subimage_coordinate_record, section_quality_labels};
+use casa_images::analysis::{
+    ImageRegionSection, reduce_subimage_coordinate_record, section_quality_labels,
+};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis};
@@ -23,69 +25,14 @@ pub(super) struct Selection {
 }
 
 impl Selection {
-    pub fn new(image_shape: &[usize], region: &RecordValue, method: &str) -> PyResult<Self> {
-        let rank = image_shape.len();
-        if region.is_empty() {
-            return Ok(Self {
-                start: vec![0; rank],
-                shape: image_shape.to_vec(),
-                stride: vec![1; rank],
-                retained: (0..rank).collect(),
-            });
-        }
-        let supported_name = matches!(region.get("name"), Some(Value::Scalar(ScalarValue::String(name))) if name == "LCSlicer");
-        let absolute = ["arblc", "artrc"].iter().all(|field| {
-            numbers(region, field).is_some_and(|values| values.iter().all(|value| *value == 1.0))
-        });
-        let integral = ["fracblc", "fractrc", "fracinc"].iter().all(|field| {
-            matches!(region.get(field), Some(Value::Array(ArrayValue::Bool(flags))) if flags.iter().all(|flag| !flag))
-        });
-        if !supported_name || !absolute || !integral {
-            return Err(stub(method).unwrap_err());
-        }
-        let offset = usize::from(matches!(
-            region.get("oneRel"),
-            Some(Value::Scalar(ScalarValue::Bool(true)))
-        ));
-        let invalid = || raised("LCSlicer::makeComplete - invalid bounds or stride");
-        let start = numbers(region, "blc").ok_or_else(invalid)?;
-        let stop = numbers(region, "trc").ok_or_else(invalid)?;
-        let stride = numbers(region, "inc").ok_or_else(invalid)?;
-        if [start.len(), stop.len(), stride.len()]
-            .into_iter()
-            .any(|len| len > rank)
-        {
-            return Err(invalid());
-        }
-        let mut selection = Self {
-            start: Vec::with_capacity(rank),
-            shape: Vec::with_capacity(rank),
-            stride: Vec::with_capacity(rank),
+    pub fn new(section: &ImageRegionSection) -> Self {
+        let rank = section.count.len();
+        Self {
+            start: section.start.clone(),
+            shape: section.count.clone(),
+            stride: section.stride.clone(),
             retained: (0..rank).collect(),
-        };
-        let mut lower = Vec::with_capacity(rank);
-        let mut upper = Vec::with_capacity(rank);
-        for (axis, &extent) in image_shape.iter().enumerate() {
-            lower.push(slicer_index(start.get(axis), offset, 0)?.max(0));
-            upper.push(
-                slicer_index(stop.get(axis), offset, extent as i64 - 1)?.min(extent as i64 - 1),
-            );
-            let step = slicer_index(stride.get(axis), 0, 1)?;
-            if step <= 0 {
-                return Err(raised("Slicer: stride must be positive"));
-            }
-            selection.stride.push(step as usize);
         }
-        if lower.iter().zip(&upper).any(|(blc, trc)| blc > trc) {
-            return Err(raised(format!(
-                "LCSlicer::toSlicer - blc {lower:?} must be <= trc {upper:?}"
-            )));
-        }
-        for ((lower, upper), stride) in lower.into_iter().zip(upper).zip(&selection.stride) {
-            selection.start.push(lower as usize);
-            selection.shape.push(1 + (upper - lower) as usize / stride);
-        }
-        Ok(selection)
     }
 
     pub fn drop_degenerate(&mut self) -> PyResult<()> {
@@ -339,15 +286,4 @@ fn numbers(record: &RecordValue, key: &str) -> Option<Vec<f64>> {
         }
         _ => None,
     }
-}
-
-fn slicer_index(input: Option<&f64>, offset: usize, default: i64) -> PyResult<i64> {
-    // Slicer::MimicSource can be rounded by the float-precision record.
-    let Some(&value) = input.filter(|&&v| v >= -2_147_483_636.0 || !v.is_finite()) else {
-        return Ok(default);
-    };
-    if !value.is_finite() || value > i32::MAX as f64 {
-        return Err(raised("LCSlicer::makeComplete - invalid pixel coordinate"));
-    }
-    Ok((value as f32 - offset as f32 + 0.5) as i64)
 }

@@ -2,6 +2,7 @@
 
 use casa_types::ArrayD;
 
+use crate::image_expr::validate_slice_request;
 use crate::{ImageError, ImageInterface, ImagePixel};
 
 use super::{
@@ -19,6 +20,7 @@ pub struct ImageRegionSection {
     pub stride: Vec<usize>,
     /// Membership of the sampled pixels when requested for a nonrectangular region.
     pub membership: Option<ArrayD<bool>>,
+    selection: Option<SubimageSelection>,
 }
 
 impl ImageRegionSection {
@@ -42,6 +44,7 @@ impl ImageRegionSection {
                 count: section.count,
                 stride: section.stride,
                 membership: None,
+                selection: None,
             });
         }
         let section = SubimageSelection::resolve_section(image, None, region, None, None)?;
@@ -51,10 +54,69 @@ impl ImageRegionSection {
         }
         let count = section.packed_shape();
         Ok(Self {
-            start: section.start,
+            start: section.start.clone(),
             count,
-            stride: section.stride.unwrap_or_else(|| vec![1; image.ndim()]),
+            stride: section
+                .stride
+                .clone()
+                .unwrap_or_else(|| vec![1; image.ndim()]),
             membership,
+            selection: section.stride.is_none().then_some(section),
         })
+    }
+
+    /// Compute region membership in a window of the packed section.
+    /// `start` is relative to the selected section's first output pixel.
+    ///
+    /// # Errors
+    /// The window is outside the selected section.
+    pub fn mask_window(
+        &self,
+        start: &[usize],
+        count: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        validate_slice_request(&self.count, start, count, &vec![1; self.count.len()])?;
+        let mut mask = None;
+        if let Some(selection) = &self.selection {
+            let source = self
+                .start
+                .iter()
+                .zip(start)
+                .map(|(&base, &offset)| base + offset)
+                .collect::<Vec<_>>();
+            selection.apply_window_masks(&mut mask, &source, count);
+        }
+        Ok(mask)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ndarray::IxDyn;
+
+    use super::{ImageRegionSection, SubimageRegion};
+    use crate::{TempImage, TempStoragePolicy};
+    use casa_coordinates::{CoordinateSystem, LinearCoordinate};
+
+    #[test]
+    fn membership_windows_use_source_offsets_on_both_spatial_axes() {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(LinearCoordinate::new(2, Vec::new(), Vec::new()));
+        let image =
+            TempImage::<f32>::new(vec![18, 20], coordinates, TempStoragePolicy::Memory).unwrap();
+        let region = SubimageRegion::Text("poly[[4pix,5pix],[10pix,5pix],[4pix,12pix]]");
+        let selection = ImageRegionSection::resolve(&image, Some(region), false).unwrap();
+        assert_eq!(selection.start, [4, 5]);
+        assert_eq!(selection.count, [7, 8]);
+        for (start, count) in [([0, 2], [3, 4]), ([3, 2], [4, 4])] {
+            let expected = ndarray::ArrayD::from_shape_fn(IxDyn(&count), |index| {
+                7 * (start[0] + index[0]) + 6 * (start[1] + index[1]) <= 42
+            });
+            assert_eq!(
+                selection.mask_window(&start, &count).unwrap(),
+                Some(expected)
+            );
+        }
+        assert!(selection.mask_window(&[4, 4], &[4, 4]).is_err());
     }
 }

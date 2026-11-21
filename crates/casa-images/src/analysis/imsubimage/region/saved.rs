@@ -262,10 +262,16 @@ fn decode_lc_slicer(
             ImageError::InvalidMetadata(format!("saved region '{name}' missing numeric {field}"))
         })
     };
-    let one_rel = matches!(
-        rec.get("oneRel"),
-        Some(Value::Scalar(ScalarValue::Bool(true)))
-    );
+    let one_rel = match rec.get("oneRel") {
+        Some(Value::Scalar(ScalarValue::Bool(value))) => *value,
+        Some(Value::Scalar(ScalarValue::Int32(value))) => *value != 0,
+        None => return Err(unknown_record_field("oneRel")),
+        _ => {
+            return Err(ImageError::InvalidMetadata(
+                "RecordInterface::asBool - invalid data type".into(),
+            ));
+        }
+    };
     let refpix = coords.reference_pixel();
     let [lower, upper, step] = [numeric("blc")?, numeric("trc")?, numeric("inc")?];
     let ndim = lower.len().max(upper.len()).max(step.len());
@@ -276,11 +282,16 @@ fn decode_lc_slicer(
         });
     }
     let resolve = |values: &[f64], fraction_key, mode_key, low| {
-        let fractions = read_bool_vec(rec.get(fraction_key), values.len());
+        let fractions = slicer_flags(rec, fraction_key)?;
         let modes = numeric(mode_key)?;
-        if modes.len() != values.len() {
+        if fractions.len() != values.len() || modes.len() != values.len() {
+            let fields = if low {
+                "blc, fracBlc, and absRelBlc"
+            } else {
+                "trc, fracTrc, and absRelTrc"
+            };
             return Err(ImageError::InvalidMetadata(format!(
-                "saved region '{name}' has incorrect {mode_key} length"
+                "LCSlicer::LCSLicer - {fields} have unequal lengths"
             )));
         }
         full_shape
@@ -332,10 +343,15 @@ fn decode_lc_slicer(
     let trc = resolve(&upper, "fractrc", "artrc", false)?;
     if blc.iter().zip(&trc).any(|(lo, hi)| lo > hi) {
         return Err(ImageError::CasaSelection(format!(
-            "saved region '{name}' lower bounds {blc:?} exceed upper bounds {trc:?}"
+            "LCSlicer::toSlicer - blc {blc:?} must be <= trc {trc:?}"
         )));
     }
-    let fractional_step = read_bool_vec(rec.get("fracinc"), step.len());
+    let fractional_step = slicer_flags(rec, "fracinc")?;
+    if fractional_step.len() != step.len() {
+        return Err(ImageError::InvalidMetadata(
+            "LCSlicer::LCSLicer - inc and fracInc have unequal lengths".into(),
+        ));
+    }
     let mut strides = vec![1; full_shape.len()];
     for (axis, (&stored, fractional)) in step.iter().zip(fractional_step).enumerate() {
         let stride = if is_mimic_source(stored) {
@@ -358,6 +374,30 @@ fn decode_lc_slicer(
         upper: as_indices(trc),
         stride: strides,
     })
+}
+
+fn unknown_record_field(field: &str) -> ImageError {
+    ImageError::InvalidMetadata(format!("RecordInterface: field {field} is unknown"))
+}
+
+fn slicer_flags(record: &RecordValue, field: &str) -> Result<Vec<bool>, ImageError> {
+    let flags = match record.get(field) {
+        Some(Value::Array(ArrayValue::Bool(values))) if values.ndim() == 1 => {
+            values.iter().copied().collect()
+        }
+        Some(Value::Array(ArrayValue::Int32(values))) if values.ndim() == 1 => {
+            values.iter().map(|&value| value != 0).collect()
+        }
+        Some(Value::Scalar(ScalarValue::Bool(value))) => vec![*value],
+        Some(Value::Scalar(ScalarValue::Int32(value))) => vec![*value != 0],
+        None => return Err(unknown_record_field(field)),
+        _ => {
+            return Err(ImageError::InvalidMetadata(format!(
+                "TableRecordRep::get_pointer - incorrect data type used for field {field}"
+            )));
+        }
+    };
+    Ok(flags)
 }
 
 fn is_mimic_source(value: f64) -> bool {

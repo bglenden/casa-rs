@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::{ImageRegionSection, evaluate_image_tool_mask_section};
+use casa_images::analysis::{ImageRegionSection, SubimageRegion, evaluate_image_tool_mask_section};
 use casa_types::{ArrayD, RecordValue};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
@@ -70,20 +70,27 @@ pub(super) fn read_region_argument(
     Ok((!record.is_empty()).then_some(Region::Record(record)))
 }
 
-pub(super) fn read_region_section(
+pub(super) fn resolve_region_section(
     image: &ImageHandle,
-    region: Option<&Region>,
+    region: Option<SubimageRegion<'_>>,
     include_membership: bool,
-) -> PyResult<(Chunk, Option<ArrayD<bool>>)> {
-    let region = region.map(Region::as_region);
-    let section = if let ImageHandle::Float(storage) = image {
+) -> PyResult<ImageRegionSection> {
+    if let ImageHandle::Float(storage) = image {
         storage
             .with_float_view(|image| ImageRegionSection::resolve(image, region, include_membership))
     } else {
         with_pixels!(image, storage => with_storage!(storage, image =>
             ImageRegionSection::resolve(image.as_ref(), region, include_membership)))
     }
-    .map_err(raised)?;
+    .map_err(raised)
+}
+
+pub(super) fn read_region_section(
+    image: &ImageHandle,
+    region: Option<SubimageRegion<'_>>,
+    include_membership: bool,
+) -> PyResult<(Chunk, Option<ArrayD<bool>>)> {
+    let section = resolve_region_section(image, region, include_membership)?;
     Ok((
         Chunk {
             start: section.start,
@@ -143,8 +150,9 @@ impl PyImageTool {
                     axes.as_ref().map_or(&[], |arg| arg.0.as_slice()),
                     shape.len(),
                 )?;
+                let region = region.as_ref().map(Region::as_region);
                 let (chunk, membership) =
-                    read_region_section(image, region.as_ref(), getmask || !axes.is_empty())?;
+                    read_region_section(image, region, getmask || !axes.is_empty())?;
                 let expression = if mask.is_empty() {
                     None
                 } else {

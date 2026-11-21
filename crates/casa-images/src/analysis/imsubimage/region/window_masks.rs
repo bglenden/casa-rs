@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_types::ArrayD;
-use ndarray::{Axis, Dimension, IxDyn, Zip};
+use ndarray::{Array2, Axis, Dimension, IxDyn, Zip};
 
 use super::{SavedRegionMask, SubimageSelection, shape_candidate_bounds, shape_contains};
 
@@ -42,18 +42,18 @@ impl SubimageSelection {
     ) {
         let [px, py] = self.plane;
         let box_mask = (!self.spatial_shapes.is_empty()).then(|| {
-            ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                self.spatial_shapes.iter().any(|spatial| {
-                    shape_contains(spatial, start[px] + idx[px], start[py] + idx[py])
-                })
+            spatial_mask(shape, [px, py], |x, y| {
+                self.spatial_shapes
+                    .iter()
+                    .any(|spatial| shape_contains(spatial, start[px] + x, start[py] + y))
             })
         });
         let region_mask = self.saved_mask.as_ref().map(|saved| match saved {
             SavedRegionMask::Polygon {
                 axes: [x, y],
                 plane,
-            } => ArrayD::from_shape_fn(IxDyn(shape), |idx| {
-                plane.contains(start[*x] + idx[*x], start[*y] + idx[*y])
+            } => spatial_mask(shape, [*x, *y], |dx, dy| {
+                plane.contains(start[*x] + dx, start[*y] + dy)
             }),
             SavedRegionMask::Compound(region) => {
                 let mut pixel = start.to_vec();
@@ -71,17 +71,17 @@ impl SubimageSelection {
                 // `box` and `region` combine by spatial union (CASA fromBCS).
                 Zip::from(&mut bm).and(&pm).for_each(|b, &p| *b = *b || p);
                 if !bm.iter().all(|&v| v) {
-                    and_mask(mask, &bm);
+                    and_mask(mask, bm);
                 }
             }
             (Some(bm), None) => {
                 if !bm.iter().all(|&v| v) {
-                    and_mask(mask, &bm);
+                    and_mask(mask, bm);
                 }
             }
             (None, Some(pm)) => {
                 if !pm.iter().all(|&v| v) {
-                    and_mask(mask, &pm);
+                    and_mask(mask, pm);
                 }
             }
             (None, None) => {}
@@ -103,7 +103,7 @@ impl SubimageSelection {
                 })
             });
             if qualified.iter().any(|&value| !value) {
-                and_mask(mask, &qualified);
+                and_mask(mask, qualified);
             }
         }
 
@@ -123,13 +123,34 @@ impl SubimageSelection {
     }
 }
 
-fn and_mask(dst: &mut Option<ArrayD<bool>>, rhs: &ArrayD<bool>) {
+fn spatial_mask(
+    shape: &[usize],
+    [x, y]: [usize; 2],
+    includes: impl Fn(usize, usize) -> bool,
+) -> ArrayD<bool> {
+    let plane = Array2::from_shape_fn((shape[x], shape[y]), |(x, y)| includes(x, y));
+    let plane = if x < y { plane } else { plane.reversed_axes() };
+    let mut mask = plane.into_dyn();
+    for axis in 0..shape.len() {
+        if axis != x && axis != y {
+            mask = mask.insert_axis(Axis(axis));
+        }
+    }
+    if mask.shape() == shape {
+        return mask;
+    }
+    mask.broadcast(IxDyn(shape))
+        .expect("spatial mask matches the window plane")
+        .to_owned()
+}
+
+fn and_mask(dst: &mut Option<ArrayD<bool>>, rhs: ArrayD<bool>) {
     *dst = Some(match dst.take() {
         Some(mut lhs) => {
-            Zip::from(&mut lhs).and(rhs).for_each(|a, &b| *a = *a && b);
+            Zip::from(&mut lhs).and(&rhs).for_each(|a, &b| *a = *a && b);
             lhs
         }
-        None => rhs.clone(),
+        None => rhs,
     });
 }
 
