@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use casa_images::fits_read::FitsToolImport;
@@ -9,6 +10,7 @@ use super::PyImageTool;
 use super::attachment::AttachedImage;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
+use super::lifecycle::input_path;
 
 struct ImportFits<'a> {
     outfile: &'a str,
@@ -32,17 +34,36 @@ impl ImportFits<'_> {
         )
     }
 
-    fn run(&self, history: Option<(&str, String)>) -> PyResult<AttachedImage> {
+    fn run(
+        &self,
+        expanded: PyResult<Cow<'_, str>>,
+        history: Option<(&str, String)>,
+    ) -> PyResult<AttachedImage> {
         let whichrep = usize::try_from(self.whichrep).map_err(|_| {
             raised("Exception: The Coordinate Representation index must be non-negative.")
         })?;
-        let mut source = FitsToolImport::open(Path::new(self.infile), whichrep, self.whichhdu)
-            .map_err(raised)?;
+        let input = expanded?;
+        let input = Path::new(input.as_ref());
+        let mut source =
+            FitsToolImport::open_named(input, Path::new(self.infile), whichrep, self.whichhdu)
+                .map_err(raised)?;
         if source.is_tile_compressed() {
             return Err(raised(format!(
                 "Exception: No image at specified location in file {}.",
                 self.infile
             )));
+        }
+        if self.overwrite
+            && !self.outfile.is_empty()
+            && let Ok(target) = Path::new(self.outfile).canonicalize()
+            && input.ancestors().any(|part| {
+                part.canonicalize()
+                    .is_ok_and(|resolved| resolved.starts_with(&target))
+            })
+        {
+            return Err(raised(
+                "Cannot overwrite an output that contains the source FITS file",
+            ));
         }
         publish_image(self.outfile, self.overwrite, |path| {
             let mut storage = Storage::create(
@@ -108,6 +129,7 @@ impl PyImageTool {
         zeroblanks: bool,
         overwrite: bool,
     ) -> PyResult<bool> {
+        let expanded = input_path(py, infile);
         py.detach(|| {
             let mut state = self.state();
             let request = ImportFits {
@@ -118,8 +140,10 @@ impl PyImageTool {
                 zeroblanks,
                 overwrite,
             };
-            state.image =
-                Some(request.run(state.history.then(|| ("fromfits", request.command())))?);
+            state.image = Some(request.run(
+                expanded,
+                state.history.then(|| ("fromfits", request.command())),
+            )?);
             Ok(true)
         })
     }
@@ -136,6 +160,7 @@ impl PyImageTool {
         zeroblanks: bool,
         overwrite: bool,
     ) -> PyResult<Py<Self>> {
+        let expanded = input_path(py, infile);
         let image = py.detach(|| {
             ImportFits {
                 outfile,
@@ -145,7 +170,7 @@ impl PyImageTool {
                 zeroblanks,
                 overwrite,
             }
-            .run(None)
+            .run(expanded, None)
         })?;
         Py::new(py, Self::attached(image))
     }
@@ -173,7 +198,7 @@ impl PyImageTool {
                     format!("ia.maketestimage(outfile={outfile:?}, overwrite={overwrite})"),
                 )
             });
-            state.image = Some(request.run(history)?);
+            state.image = Some(request.run(Ok(Cow::Borrowed(infile)), history)?);
             Ok(true)
         })
     }

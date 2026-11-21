@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
@@ -23,7 +24,7 @@ use super::beams::{axis_length, image_info, image_info_record, plane_axes, subse
 use super::copy_region::Selection;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
-use super::lifecycle::open_image;
+use super::lifecycle::{input_path, open_image};
 use super::pixels::and_mask;
 use super::region_read::{is_boolean_sequence, resolve_region_section};
 
@@ -361,15 +362,16 @@ impl CopyImage<'_> {
 
     fn run(
         &self,
+        expanded: PyResult<Cow<'_, str>>,
         history: bool,
         attached: Option<&super::attachment::AttachedImage>,
     ) -> PyResult<super::attachment::AttachedImage> {
         let use_attached_coordinates = self.method == "fromimage" || self.infile.is_empty();
         let (original, origin) = if use_attached_coordinates {
             let origin = self.text_origin(attached)?;
-            (open_image(self.infile)?, origin)
+            (open_image(self.infile, expanded?.as_ref())?, origin)
         } else {
-            let original = open_image(self.infile)?;
+            let original = open_image(self.infile, expanded?.as_ref())?;
             if matches!(&self.region, CopyRegion::Text(_))
                 && !matches!(&*original.lock(), ImageHandle::Float(_))
             {
@@ -384,7 +386,12 @@ impl CopyImage<'_> {
             && !self.outfile.is_empty()
             && let Ok(target) = Path::new(self.outfile).canonicalize()
         {
-            let source = Path::new(self.infile).canonicalize().map_err(raised)?;
+            let source = original
+                .lock()
+                .path()
+                .ok_or_else(|| raised("The input image has no file name"))?
+                .canonicalize()
+                .map_err(raised)?;
             if target != source && (target.starts_with(&source) || source.starts_with(&target)) {
                 return Err(raised(
                     "Cannot overwrite an output that contains the source image or is part of it",
@@ -491,6 +498,7 @@ impl PyImageTool {
         let method = "fromimage";
         let (region, region_history) = copy_region_argument(py, region, "[]")?;
         let (mask, mask_history) = mask_argument(mask)?;
+        let expanded = input_path(py, infile);
         let request = CopyImage {
             method,
             infile,
@@ -504,7 +512,7 @@ impl PyImageTool {
         };
         py.detach(|| {
             let mut state = self.state();
-            state.image = Some(request.run(state.history, state.image.as_ref())?);
+            state.image = Some(request.run(expanded, state.history, state.image.as_ref())?);
             Ok(true)
         })
     }
@@ -523,6 +531,7 @@ impl PyImageTool {
         let method = "newimagefromimage";
         let (region, region_history) = copy_region_argument(py, region, "{...}")?;
         let (mask, mask_history) = mask_argument(mask)?;
+        let expanded = input_path(py, infile);
         let request = CopyImage {
             method,
             infile,
@@ -536,7 +545,7 @@ impl PyImageTool {
         };
         let output = py.detach(|| {
             let state = self.state();
-            request.run(state.history, state.image.as_ref())
+            request.run(expanded, state.history, state.image.as_ref())
         })?;
         Py::new(py, Self::attached(output))
     }

@@ -7869,6 +7869,31 @@ methods. They preserve the FITS pixels, blank mask, coordinates, unit, and
 history through CFITSIO. The explicit import methods agree with CASA.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+## A FITS attachment can report a different name after an environment change
+
+In CASA 6.7.6.14, open `$IMAGE_DIR/source.fits` and change `IMAGE_DIR`
+to another directory containing a different `source.fits`. The attached
+image continues reading from the first file. `image.name()` reports the
+second path. casa-rs keeps the attachment name and pixel reads tied to
+the resolved input from the original open. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+## An unbraced environment variable at the end of a path can duplicate the directory
+
+With `IMAGE_FILE=source.fits`, CASA 6.7.6.14 can open `/dir/${IMAGE_FILE}`
+while `/dir/$IMAGE_FILE` fails with a missing-file error. Casacore's path
+expansion can repeat the preceding directory components when it finds the
+unbraced variable in a later component. casa-rs opens the same `source.fits`
+with either spelling. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+## A bracketed FITS attachment can read a different file from the supplied path
+
+Place distinct valid FITS images at `source.fits` and `source.fits[0]`.
+In CASA 6.7.6.14, `image.open("source.fits[0]")` requires the bracketed
+file to exist, then reports and reads `source.fits`. Both explicit import
+methods read the literal bracketed file. casa-rs consistently treats
+brackets as part of the filename and uses `whichhdu` for explicit HDU
+selection. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
 ## FITS import can abort on an empty primary HDU
 
 CASA 6.7.6.14 aborts in `ia.fromfits(infile=path, whichhdu=0)` when the FITS
@@ -7884,11 +7909,11 @@ CASA 6.7.6.14 removes `imagename` as soon as it sees `overwrite=True`. A
 subsequent validation error, such as a beam whose major axis is smaller
 than its minor axis, leaves the old image gone. A beam position angle
 given in time units can fail after publishing the replacement image.
-The task also deletes the output path early when it contains the input
-FITS file.
+The task and both explicit image methods (`fromfits` and `newimagefromfits`)
+also delete the output path early when it contains the input FITS file.
 casa-rs stages the native image and exchanges it only after the new
 product is complete. It refuses output paths containing the FITS input
-and nonempty directories that are not native images (#977).
+and nonempty directories that are not native images (#977, #1625).
 
 ## `exportfits` drops characters when wrapping long `HISTORY` cards
 

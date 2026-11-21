@@ -307,4 +307,4 @@ pub use table::{
     Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
     TableOptions, TableRow, TableRowMut, TableWritePlan, table_cache_name,
 };
-pub use table_path::{add_directory, strip_directory};
+pub use table_path::{add_directory, lexical_absolute, strip_directory};
