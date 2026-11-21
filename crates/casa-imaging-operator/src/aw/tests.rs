@@ -498,6 +498,7 @@ fn an_odd_sampled_aw_cell_imports_both_endpoint_tap_rows() {
         diameter_m: 25.0,
         sky_increment_rad: 1e-4,
         working_size: 32,
+        legacy_vla_band: None,
     };
     write_cell(&path, &plane, 1.5e9, grid, &misc).unwrap();
     let header = read_header(&path).unwrap();
