@@ -306,7 +306,7 @@ fn scientific_paths(
                 r.prior.output_table.clone(),
             ];
             paths.extend(
-                crate::gencal::prior_input_for_report(&r.prior, r.infile())
+                crate::gencal::prior_inputs_for_report(&r.prior, r.infile())
                     .map_err(|error| TaskFailure::validation(error.to_string()).at("vis"))?,
             );
             (paths, &[][..])

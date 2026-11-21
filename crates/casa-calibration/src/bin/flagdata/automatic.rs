@@ -101,7 +101,7 @@ fn validate_ms_automatic_controls(
         ("ntime", 1616),
         ("combinescans", 1616),
     ] {
-        if issue == 1616 && !rflag {
+        if !rflag && matches!(name, "channelavg" | "chanbin" | "ntime" | "combinescans") {
             continue;
         }
         let binding = bundle
