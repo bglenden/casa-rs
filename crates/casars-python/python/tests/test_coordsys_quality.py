@@ -182,3 +182,33 @@ def test_image_section_selects_quality_labels_with_the_pixels(casa, tmp_path):
         finally:
             child.done()
             parent.done()
+
+
+def test_reflection_preserves_quality_labels_with_the_pixels(casa, tmp_path):
+    seed = casa.coordsys().newcoordsys(linear=1, tabular=True)
+    record = seed.torecord()
+    record.pop("tabular1")
+    record["quality1"] = {"axes": ["Quality"], "quality": ["DATA", "ERROR"]}
+    data = np.arange(6, dtype=np.float32).reshape(3, 2)
+    source = tools.image()
+    assert source.fromarray(pixels=data, csys=record)
+    path = str(tmp_path / "reflected.im")
+    try:
+        product = source.transpose(path, order="-10")
+        product.done()
+    finally:
+        source.done()
+    for api in (tools, casa):
+        reader = api.image()
+        assert reader.open(path)
+        try:
+            np.testing.assert_array_equal(reader.getchunk(), data[:, ::-1].T)
+            coords = reader.coordsys()
+            try:
+                assert coords.torecord()["quality1"]["quality"].tolist() == ["ERROR", "DATA"]
+                assert coords.toworld([0, 0])["numeric"].tolist() == [2., 0.]
+                assert coords.toworld([1, 0])["numeric"].tolist() == [1., 0.]
+            finally:
+                coords.done()
+        finally:
+            reader.done()

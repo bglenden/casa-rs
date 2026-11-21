@@ -341,7 +341,11 @@ pub(super) fn section_record_reference_pixels(
     Ok(())
 }
 
-pub(super) fn write_quality_labels(
+/// Replace the plane labels and reference values of a native Quality subrecord.
+///
+/// # Errors
+/// An empty label list cannot describe a Quality coordinate.
+pub fn write_quality_labels(
     record: &mut RecordValue,
     labels: &[QualityType],
 ) -> Result<(), ImageError> {
@@ -350,9 +354,13 @@ pub(super) fn write_quality_labels(
     })?;
     record.upsert(
         "quality",
-        ArrayValue::from_string_vec(labels.iter().map(|kind| kind.name().to_owned()).collect()).into(),
+        ArrayValue::from_string_vec(labels.iter().map(|kind| kind.name().to_owned()).collect())
+            .into(),
     );
-    record.upsert("crval", ArrayValue::from_f64_vec(vec![f64::from(first.code())]).into());
+    record.upsert(
+        "crval",
+        ArrayValue::from_f64_vec(vec![f64::from(first.code())]).into(),
+    );
     record.upsert("crpix", ArrayValue::from_f64_vec(vec![0.0]).into());
     Ok(())
 }
