@@ -899,16 +899,18 @@ def _flagdata_clip_range(
 
 
 def _call_predictcomp(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
-    from numbers import Integral
-    from os.path import expanduser, expandvars
+    from os.path import expanduser
 
+    import numpy as np
+
+    flags = ("showplot", "include0amp", "include0bl", "showbl0flux")
     errors = {}
     for parameter, value in arguments.items():
         if parameter == "nfreqs":
-            valid = isinstance(value, Integral)
+            valid = isinstance(value, (int, np.int32, np.int64))
             expected = "cInt"
-        elif parameter in ("showplot", "include0amp", "include0bl", "showbl0flux"):
-            valid = isinstance(value, bool)
+        elif parameter in flags:
+            valid = isinstance(value, (bool, np.bool_))
             expected = "cBool"
         else:
             valid = isinstance(value, str)
@@ -919,10 +921,28 @@ def _call_predictcomp(values: dict[str, Any], arguments: Mapping[str, Any]) -> A
         raise AssertionError(str(errors))
     if "nfreqs" in values:
         values["nfreqs"] = int(values["nfreqs"])
+    for flag in flags:
+        if flag in values:
+            values[flag] = bool(values[flag])
     if "prefix" in values:
-        values["prefix"] = expandvars(expanduser(values["prefix"]))
+        prefix = values["prefix"]
+        if prefix and not prefix.startswith(("/", "./", "../")):
+            values["prefix"] = expanduser(prefix)
+    # Direct filenames are literal, even when they contain characters
+    # reserved by reusable parameter profiles.
+    literal = {
+        key: values.pop(key)
+        for key in ("prefix", "savefig")
+        if key in values and any(character in values[key] for character in "$`")
+    }
     try:
-        result = run("predictcomp", **values).value
+        if literal:
+            workspace = Path.cwd()
+            resolved = TaskParameters.defaults("predictcomp", workspace=workspace)
+            resolved.set_many(values)
+            result = _execute_task("predictcomp", resolved, workspace, None, argument_text=literal).value
+        else:
+            result = run("predictcomp", **values).value
     except TaskParameterError as error:
         if error.completion.message == "m0" and error.completion.parameter == "epoch":
             raise KeyError("m0") from error
@@ -935,8 +955,6 @@ def _call_predictcomp(values: dict[str, Any], arguments: Mapping[str, Any]) -> A
                 raise AssertionError(str({parameter: [f"unallowed value {arguments[parameter]}"]})) from error
         raise
     if result and arguments["antennalist"]:
-        import numpy as np
-
         zero_flux = result["spectrum"]["bl0flux"]
         zero_flux["value"] = np.float64(zero_flux["value"])
     return result

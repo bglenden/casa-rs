@@ -5,6 +5,7 @@
 from contextlib import chdir
 import inspect
 from pathlib import Path
+from shutil import rmtree
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
@@ -152,18 +153,18 @@ def plot_products(root):
         '0 0 0 25 P0 A0\n100 20 1 25 P1 A1\n-45 165 3 25 P2 A2\n170 110 5 25 P3 A3\n'
     )
     png = root / 'amplitudes.png'
-    svg = root / 'metres.svg'
+    svg = root / '$metres.svg'
     base = dict(objname='Jupiter', standard=JPL12, epoch='2023/02/25/00:00:00',
                 minfreq='90GHz', maxfreq='110GHz', nfreqs=3, antennalist=str(antennas))
     fallback = root / 'casa-no-output.png'
-    reference = casa_task(**base, prefix=str(root / 'casa_'), savefig=str(fallback), showplot=True,
+    reference = casa_task(**base, prefix=str(root / 'casa_'), savefig=str(fallback), showplot=np.bool_(True),
                           symb='x', include0amp=True, include0bl=True, blunit='klambda', showbl0flux=True)
     assert reference['savedfig'] is None and not fallback.exists()
 
     with patch.object(plt, 'show') as show:
         native = tasks.predictcomp(**base, prefix=str(root / 'native_'), savefig=str(png),
-                                   showplot=True, symb='x', include0amp=True, include0bl=True,
-                                   blunit='klambda', showbl0flux=True)
+                                   showplot=np.bool_(True), symb='x', include0amp=np.bool_(True),
+                                   include0bl=np.bool_(True), blunit='klambda', showbl0flux=np.bool_(True))
         show.assert_called_once_with(block=False)
         figure = plt.gcf()
         axis, = figure.axes
@@ -213,6 +214,13 @@ def plot_products(root):
     assert '<svg' in svg.read_text()
     assert native['savedfig'] == str(svg) and native['blunit'] == 'm'
     assert not plt.get_fignums()
+    try:
+        tasks.predictcomp(**base, prefix=str(root / 'bad-marker_'), showplot=True, symb='?')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('invalid symbol must be reported')
+    assert not plt.get_fignums()
 
     without_antenna = base | {'antennalist': '', 'savefig': str(root / 'ignored.png'), 'showplot': True}
     native = tasks.predictcomp(**without_antenna, prefix=str(root / 'noplot_'))
@@ -232,6 +240,7 @@ def errors_and_collision(root):
         for args, error in (({}, ValueError), ({'objname':'3C286'}, ValueError),
                             (base | {'epoch':'invalid'}, KeyError),
                             (base | {'minfreq':1e9}, AssertionError),
+                            (base | {'nfreqs':np.int16(2)}, AssertionError),
                             (base | {'standard':'undefined'}, AssertionError),
                             (base | {'blunit':'m'}, AssertionError)):
             try:
@@ -243,10 +252,54 @@ def errors_and_collision(root):
         assert run(**(base | {'objname':'unrecognized'}), prefix=str(root / 'unknown_')) is None
     output = str(root / 'collision_')
     first = tasks.predictcomp(**base, maxfreq='2GHz', nfreqs=2, prefix=output)
+    live = table()
+    assert live.open(first['clist'], nomodify=False, lockoptions={'option':'user'})
+    assert live.lock(write=True, nattempts=1)
+    try:
+        try:
+            tasks.predictcomp(**base, maxfreq='4GHz', nfreqs=True, prefix=output)
+        except RuntimeError as error:
+            assert 'lock' in str(error).lower(), error
+        else:
+            raise AssertionError('the task replaced an open component list')
+    finally:
+        live.unlock()
+        live.close()
+    np.testing.assert_equal(read_component(READERS[0], first['clist'])['spectrum']['tabFreqVal'],
+                            [1e9, 2e9])
     second = tasks.predictcomp(**base, maxfreq='4GHz', nfreqs=True, prefix=output)
     assert first['clist'] == second['clist']
     np.testing.assert_equal(read_component(READERS[0], second['clist'])['spectrum']['tabFreqVal'],
                             [1e9, 4e9])
+
+
+def output_prefixes(root):
+    for i, run in enumerate((casa_task, tasks.predictcomp)):
+        # Use a fresh nickname containing an exact catalogue alias so the
+        # returned component list in /tmp cannot collide with user files.
+        source = f'3C286-{root.name}-{i}'
+        base = dict(objname=source, standard=PT, minfreq='1GHz', epoch='2017-09-04T00:00:00')
+        expected = Path('/tmp') / f'spw0_{source}_1GHz58000d.cl'
+        assert not expected.exists()
+        result = run(**base, prefix='/tmp')
+        assert Path(result['clist']) == expected
+        assert expected.is_dir()
+        rmtree(expected)
+
+        literal = str(root / '$CASA_RS_MEASURESPATH-')
+        result = run(**base, prefix=literal)
+        assert result['clist'].startswith(literal)
+
+        readonly = root / f'readonly-{i}'
+        readonly.mkdir()
+        readonly.chmod(0o555)
+        try:
+            with chdir(readonly):
+                result = run(**base)
+                assert Path(result['clist']) == expected
+                rmtree(expected)
+        finally:
+            readonly.chmod(0o755)
 
 
 def main():
@@ -259,6 +312,7 @@ def main():
         task_outputs(root)
         plot_products(root)
         errors_and_collision(root)
+        output_prefixes(root)
 
 
 if __name__ == '__main__':

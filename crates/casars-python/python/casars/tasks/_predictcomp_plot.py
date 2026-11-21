@@ -9,6 +9,7 @@ def render_prediction(plot, workspace):
 
     with plt.ioff():
         figure, axis = plt.subplots(layout="constrained")
+        shown = False
         try:
             for frequency, amps in zip(plot["frequencies_ghz"], plot["amplitudes_jy"], strict=True):
                 axis.plot(plot["x"], amps, plot["symbol"], label=f"{frequency:.3g} GHz")
@@ -37,6 +38,7 @@ def render_prediction(plot, workspace):
                 figure.savefig(output)
             if plot["show"]:
                 plt.show(block=False)
+                shown = True
         finally:
-            if not plot["show"]:
+            if not shown:
                 plt.close(figure)

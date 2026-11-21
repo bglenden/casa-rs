@@ -10,6 +10,7 @@ use casa_provider_contracts::{
     CasaFloat, CasaValue, FloatDtype, RunProductKind, casacore_value_to_casa,
 };
 use casa_simulation::predictcomp::{CalibratorBaselines, calibrator_baselines};
+use casa_tables::publication::check_write_access;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::Value;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -53,7 +54,15 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let frequencies = frequency_grid(task)?;
     let epoch_text = task.required_text("epoch")?;
     let epoch = parse_epoch(&epoch_text)?;
-    let prefix = task.required_text("prefix")?;
+    let Some(prefix) = output_prefix(task.workspace(), filename_argument(task, "prefix")?)? else {
+        return TaskSuccess::new(
+            CasaValue::Bool { value: false },
+            &PredictcompReport {
+                artifacts: Vec::new(),
+                plot: None,
+            },
+        );
+    };
     let antenna = task.required_text("antennalist")?;
     let modern = standard == "Butler-JPL-Horizons 2012";
     let workspace = task.workspace();
@@ -94,14 +103,10 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         ("savedfig", CasaValue::None),
     ];
     let show = task.flag("showplot")?;
-    let save = task.required_text("savefig")?;
+    let save = filename_argument(task, "savefig")?;
     let mut artifacts = vec![artifact(&predicted.filename, RunProductKind::CasaTable)];
     let plot = if !antenna.is_empty() && (show || !save.is_empty()) {
-        let roots = MeasuresRuntime::discover_candidates()
-            .map_err(failed)?
-            .into_iter()
-            .map(|candidate| candidate.path)
-            .collect::<Vec<_>>();
+        let roots = data_roots()?;
         let samples =
             calibrator_baselines(workspace, &antenna, component, &epoch, &frequencies, &roots)
                 .map_err(failed)?;
@@ -140,6 +145,48 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         CasaValue::dict(fields),
         &PredictcompReport { artifacts, plot },
     )
+}
+
+fn filename_argument(task: &TaskInvocation<'_>, name: &str) -> Result<String, TaskFailure> {
+    match task.argument_text(name) {
+        Some(literal) => Ok(literal.to_owned()),
+        None => task.required_text(name),
+    }
+}
+
+fn output_prefix(workspace: &Path, mut prefix: String) -> Result<Option<String>, TaskFailure> {
+    if prefix.is_empty() {
+        if check_write_access(workspace).is_ok() {
+            return Ok(Some(prefix));
+        }
+        let fallback = Path::new("/tmp");
+        return Ok(check_write_access(fallback).is_ok().then(|| "/tmp/".into()));
+    }
+    let explicit = prefix.starts_with('/') || prefix.starts_with("./") || prefix.starts_with("../");
+    if !explicit
+        && !workspace.join(&prefix).exists()
+        && let Some(path) = data_roots()?
+            .into_iter()
+            .map(|root| root.join(&prefix))
+            .find(|path| path.exists())
+    {
+        prefix = path.to_string_lossy().into_owned();
+    }
+    if prefix.len() > 1
+        && !prefix.ends_with('/')
+        && Path::new(&prefix).parent() == Some(Path::new("/"))
+    {
+        prefix.push('/');
+    }
+    Ok(Some(prefix))
+}
+
+fn data_roots() -> Result<Vec<PathBuf>, TaskFailure> {
+    Ok(MeasuresRuntime::discover_candidates()
+        .map_err(failed)?
+        .into_iter()
+        .map(|candidate| candidate.path)
+        .collect())
 }
 
 fn artifact(path: &str, kind: RunProductKind) -> SimobserveArtifact {

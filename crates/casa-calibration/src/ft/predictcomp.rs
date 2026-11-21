@@ -5,7 +5,11 @@ use std::path::Path;
 
 use casa_components::{ComponentList, ComponentListError, ComponentShape, SkyComponent};
 use casa_ms::{MsResult, open_measures_runtime};
-use casa_tables::publication::{exchange_directories, rename_without_replacing};
+use casa_tables::publication::{
+    check_write_access, exchange_directories, lock_table_tree_for_replacement,
+    rename_without_replacing,
+};
+use casa_tables::{Table, TableOptions};
 use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
@@ -164,10 +168,14 @@ impl PredictedComponent {
                 if !path
                     .symlink_metadata()
                     .is_ok_and(|metadata| metadata.is_dir())
+                    || !Table::open_metadata_only(TableOptions::new(&path))
+                        .is_ok_and(|table| table.info().table_type == "Component List")
                 {
                     return Err(invalid(ComponentListError::Exists(path)));
                 }
-                ComponentList::read_table(&path).map_err(invalid)?;
+                check_write_access(parent).map_err(invalid)?;
+                check_write_access(&path).map_err(invalid)?;
+                let _locks = lock_table_tree_for_replacement(&path).map_err(invalid)?;
                 exchange_directories(&staged, &path).map_err(invalid)
             }
             Err(error) => Err(invalid(error)),
