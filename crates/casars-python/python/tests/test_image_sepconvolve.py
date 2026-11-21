@@ -117,6 +117,49 @@ def test_sepconvolve_honors_a_single_explicit_axis():
         source.done()
 
 
+@pytest.mark.parametrize("axes", [[1.9, .1], np.array([1., 0.]), [True, False]])
+def test_sepconvolve_accepts_numeric_axis_vectors(casa, axes):
+    data = _impulse((13, 15))
+    expected = np.zeros_like(data)
+    expected[4:8, 6:8] = 1/8
+    for api in (casa, tools):
+        source = api.image()
+        result = None
+        try:
+            assert source.fromarray(pixels=data)
+            result = source.sepconvolve(axes=axes, types=["b", "b"], widths=[2,4])
+            np.testing.assert_allclose(result.getchunk(), expected, atol=3e-7)
+        finally:
+            if result is not None:
+                result.done()
+            source.done()
+
+
+def test_sepconvolve_rejects_a_tuple_axis_argument_before_publication(casa, tmp_path):
+    data = _impulse((13, 15))
+    for api, exception in ((casa, SystemError), (tools, TypeError)):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=data)
+            with pytest.raises(exception):
+                source.sepconvolve(axes=(0,1), widths=[2,4])
+        finally:
+            source.done()
+    source, existing = tools.image(), tools.image()
+    name = str(tmp_path/"prior.im")
+    try:
+        assert source.fromarray(pixels=data)
+        assert existing.fromarray(name, pixels=data+7)
+        existing.done()
+        with pytest.raises(TypeError):
+            source.sepconvolve(name, axes=(0,1), widths=[2,4], overwrite=True)
+        assert existing.open(name)
+        np.testing.assert_array_equal(existing.getchunk(), data+7)
+    finally:
+        source.done()
+        existing.done()
+
+
 def test_sepconvolve_region_raw_mask_values_and_native_interoperability(casa, tmp_path):
     data = np.full((13, 15, 1, 5), 2., dtype=np.float32)
     original_valid = np.ones(data.shape, dtype=bool)

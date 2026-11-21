@@ -24,7 +24,7 @@ use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
-use super::records::string_vector;
+use super::records::{numeric_axis_vector, string_vector};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
 fn parse_widths(value: Option<&Bound<'_, PyAny>>) -> PyResult<(Option<Vec<Quantity>>, String)> {
@@ -197,7 +197,7 @@ impl PyImageTool {
         &self,
         py: Python<'_>,
         outfile: &str,
-        axes: IntList,
+        #[pyo3(from_py_with = numeric_axis_vector)] axes: IntList,
         types: Option<&Bound<'_, PyAny>>,
         widths: Option<&Bound<'_, PyAny>>,
         scale: f64,

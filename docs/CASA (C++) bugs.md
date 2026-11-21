@@ -9277,6 +9277,10 @@ spreads the impulse along pixel axis 0. The parser assigns `-1` while
 checking the sole axis, so the request takes the default branch.
 Casa-rs respects the supplied axis and applies the kernel to axis 1.
 
+The Python wrapper also raises a `SystemError` for tuple-valued axes,
+such as `axes=(0, 1)` with two valid widths. Casa-rs reports a
+`TypeError` before creating or replacing an output.
+
 ### `image.sepconvolve` accepts undefined kernel coefficients
 
 CASA 6.7.6.14 fills the processed profiles with NaN for a zero-pixel
