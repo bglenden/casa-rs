@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read the embedded component records used by CASA's virtual sky model.
 
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::{direction_from_record, frequency_from_record};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -21,6 +23,32 @@ impl ComponentList {
     /// # Errors
     /// Missing fields or component values that CASA's model cannot represent.
     pub fn from_record(record: &RecordValue) -> Result<Self, ComponentError> {
+        Self::decode_record(record, component)
+    }
+
+    /// Decode a supplied component list using the defaults of CASA `cl.fromrecord`.
+    ///
+    /// # Errors
+    /// A supplied component field is malformed or cannot be represented.
+    pub fn from_import_record(record: &RecordValue) -> Result<Self, ComponentError> {
+        let reference =
+            MDirection::from_angles(0., std::f64::consts::FRAC_PI_2, DirectionRef::J2000);
+        let default = SkyComponent::new(
+            Flux::stokes_jy(1., 0., 0., 0.),
+            ComponentShape::point(reference),
+            SpectralModel::new(
+                MFrequency::new(1e9, FrequencyRef::LSRK),
+                SpectralKind::Constant,
+            ),
+        )
+        .to_record()?;
+        Self::decode_record(record, |input| import_component(input, &default))
+    }
+
+    fn decode_record(
+        record: &RecordValue,
+        decode: impl Fn(&RecordValue) -> Result<SkyComponent, ComponentError>,
+    ) -> Result<Self, ComponentError> {
         let count = match record.get("nelements") {
             Some(Value::Scalar(ScalarValue::Int32(count))) => usize::try_from(*count).ok(),
             Some(Value::Scalar(ScalarValue::Int64(count))) => usize::try_from(*count).ok(),
@@ -30,10 +58,92 @@ impl ComponentList {
         .ok_or_else(|| invalid("nelements"))?;
         let mut list = Self::new();
         for index in 0..count {
-            list.push(component(subrecord(record, &format!("component{index}"))?)?);
+            list.push(decode(subrecord(record, &format!("component{index}"))?)?);
         }
         Ok(list)
     }
+}
+
+fn import_component(
+    input: &RecordValue,
+    default: &RecordValue,
+) -> Result<SkyComponent, ComponentError> {
+    let mut record = input.clone();
+    for name in ["flux", "shape", "spectrum"] {
+        if record.get(name).is_none() {
+            record.upsert(
+                name,
+                default.get(name).expect("default component field").clone(),
+            );
+        }
+    }
+    let Some(Value::Record(flux)) = record.get_mut("flux") else {
+        return Err(invalid("flux"));
+    };
+    let basis = match flux.get("polarisation") {
+        Some(_) => Polarisation::parse_casa(string(flux, "polarisation")?)?,
+        None => {
+            flux.upsert(
+                "polarisation",
+                Value::Scalar(ScalarValue::String("Stokes".into())),
+            );
+            Polarisation::Stokes
+        }
+    };
+    let flux_value = flux.get("value").ok_or_else(|| invalid("flux.value"))?;
+    let scalar = match flux_value {
+        Value::Array(ArrayValue::Float64(values)) if values.len() == 1 => {
+            values.iter().next().copied()
+        }
+        _ => number(flux, "value").ok(),
+    };
+    if basis == Polarisation::Stokes
+        && let Some(intensity) = scalar
+    {
+        flux.upsert(
+            "value",
+            Value::Array(ArrayValue::from_f64_vec(vec![intensity, 0., 0., 0.])),
+        );
+    }
+    if let Some(error) = flux.get("error") {
+        let valid_type = matches!(error, Value::Array(ArrayValue::Complex64(_)))
+            || (basis == Polarisation::Stokes
+                && matches!(error, Value::Array(ArrayValue::Float64(_))));
+        if !valid_type || complex_values(Some(error)).is_none() {
+            return Err(invalid("flux.error"));
+        }
+    }
+    let Some(Value::Record(shape)) = record.get_mut("shape") else {
+        return Err(invalid("shape"));
+    };
+    if shape.get("direction").is_none() {
+        shape.upsert(
+            "direction",
+            subrecord(default, "shape")?
+                .get("direction")
+                .expect("default direction")
+                .clone(),
+        );
+    }
+    let Some(Value::Record(spectrum)) = record.get_mut("spectrum") else {
+        return Err(invalid("spectrum"));
+    };
+    if spectrum.get("frequency").is_none() {
+        spectrum.upsert(
+            "frequency",
+            subrecord(default, "spectrum")?
+                .get("frequency")
+                .expect("default frequency")
+                .clone(),
+        );
+    }
+    if SpectralType::parse_casa(string(spectrum, "type")?)? == SpectralType::SpectralIndex {
+        number(spectrum, "index")?;
+    }
+    if record.get("label").is_some() {
+        string(&record, "label")?;
+    }
+    component(&record)
 }
 
 impl SkyComponent {
