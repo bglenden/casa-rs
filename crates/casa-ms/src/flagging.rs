@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use casa_tables::{
@@ -2189,17 +2190,7 @@ fn apply_tfcrop_mask(
 
     // A flag on a bin is written back to each of its selected physical
     // channels. Preview and apply both count flags on that original axis.
-    let channels = |sample: &Sample| {
-        averaged_channels
-            .get(&sample.row)
-            .map_or_else(
-                || std::slice::from_ref(&sample.chan),
-                |average| bin_members(&average.channels, average.width, sample.chan),
-            )
-            .iter()
-            .copied()
-            .map(|chan| (sample.row, sample.corr, chan))
-    };
+    let channels = |sample| tfcrop_flag_coordinates(averaged_channels, sample);
     let mut summary = FlagSummary {
         flagged_samples: 0,
         total_samples: 0,
@@ -2222,6 +2213,20 @@ fn apply_tfcrop_mask(
     };
     write_touched_flag_updates(ms, flags, touched, |_| update_flag_rows, &mut changed)?;
     Ok(changed)
+}
+
+fn tfcrop_flag_coordinates<'a>(
+    averaged_channels: &'a BTreeMap<usize, AveragedChannels>,
+    sample: &'a Sample,
+) -> impl Iterator<Item = (usize, usize, usize)> + 'a {
+    averaged_channels
+        .get(&sample.row)
+        .map_or_else(
+            || std::slice::from_ref(&sample.chan),
+            |average| bin_members(&average.channels, average.width, sample.chan),
+        )
+        .iter()
+        .map(|&chan| (sample.row, sample.corr, chan))
 }
 
 fn stage_flag_mask(
@@ -2518,6 +2523,7 @@ fn load_samples(
     let mut flags_by_row = BTreeMap::new();
     let mut model_roundoff = Vec::new();
     let mut averaged_channels = BTreeMap::new();
+    let mut channel_layouts = HashMap::<(i32, usize), Arc<[usize]>>::new();
     for (row_slot, (&row, flags)) in selected_rows.iter().zip(flag_cells).enumerate() {
         let ddid = ddids[row_slot];
         let spw = if calibration {
@@ -2621,6 +2627,12 @@ fn load_samples(
             }));
         }
         if let Some(width) = bins.map(|bins| bins.width()) {
+            // The selection and effective width are fixed for this window
+            // and input channel count. Reuse the physical axis across rows.
+            let channels = channel_layouts
+                .entry((spw, nchan))
+                .or_insert_with(|| channels.into())
+                .clone();
             averaged_channels.insert(row, AveragedChannels { channels, width });
         }
         flags_by_row.insert(row, flags);
@@ -4507,7 +4519,7 @@ struct LoadedSamples {
 }
 
 struct AveragedChannels {
-    channels: Vec<usize>,
+    channels: Arc<[usize]>,
     width: usize,
 }
 
