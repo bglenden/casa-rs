@@ -4,7 +4,10 @@ use std::path::Path;
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::analysis::{ImageRegionSection, SubimageRegion};
-use casa_images::{ImageInterface, ImagePixel, MutableImageInterface, image::image_history_rows};
+use casa_images::{
+    ImageInterface, ImagePixel, MutableImageInterface, PagedImage, image::image_history_rows,
+};
+use casa_lattices::TiledShape;
 use casa_types::RecordValue;
 use ndarray::{ArrayD, SliceInfoElem, Zip};
 use pyo3::prelude::*;
@@ -103,8 +106,23 @@ impl CopyImage<'_> {
     ) -> PyResult<Storage<T>> {
         let shape = &selection.shape;
         let output_shape = selection.projected(shape);
-        let mut storage =
-            Storage::create(output_shape.clone(), coordinates, path, None).map_err(raised)?;
+        let mut storage = if let Some(path) = path {
+            let tiled = TiledShape::new(output_shape.clone(), T::ELEM_SIZE).map_err(raised)?;
+            let tile = tiled.tile_shape().to_vec();
+            let bytes = 2 * tile.iter().product::<usize>() * T::ELEM_SIZE;
+            Storage::Paged(Box::new(
+                PagedImage::create_with_tile_shape_and_cache(
+                    output_shape,
+                    tile,
+                    coordinates,
+                    path,
+                    bytes,
+                )
+                .map_err(raised)?,
+            ))
+        } else {
+            Storage::create(output_shape, coordinates, None, None).map_err(raised)?
+        };
         let total = shape
             .iter()
             .try_fold(1usize, |size, &axis| size.checked_mul(axis))
