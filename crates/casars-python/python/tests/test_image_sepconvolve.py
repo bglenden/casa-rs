@@ -56,7 +56,10 @@ def test_sepconvolve_hanning_uses_the_full_profile(casa, length, scale):
     middle = (length-1)//2
     radius = (length+1)//2
     phase = (radius-np.abs(np.arange(length)-middle))*2*np.pi/(length+1)
-    expected = (1-np.cos(phase))/(length+1) if scale < 0 else .5*scale*(1-np.cos(phase))
+    normalizer = 1/(length+1) if scale < 0 else .5
+    expected = np.asarray(normalizer*(1-np.cos(phase)), dtype=np.float32)
+    if scale >= 0:
+        expected *= np.float32(scale)
     for api in (casa, tools):
         source = api.image()
         result = None
