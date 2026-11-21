@@ -9,8 +9,9 @@ use casa_images::{
     image::image_history_rows,
 };
 use casa_types::RecordValue;
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyString};
+use pyo3::types::{PyBool, PyDict, PyString};
 
 use super::PyImageTool;
 use super::beam_view::BeamView;
@@ -53,6 +54,13 @@ impl<'a, 'py> FromPyObject<'a, 'py> for PadRegion {
             empty_history,
         })
     }
+}
+
+fn flag(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    value
+        .cast::<PyBool>()
+        .map(|value| value.is_true())
+        .map_err(|_| PyTypeError::new_err("expected bool"))
 }
 
 fn copy(
@@ -116,21 +124,20 @@ impl PyImageTool {
         outfile: &str,
         npixels: i64,
         value: f64,
-        padmask: bool,
-        overwrite: bool,
+        #[pyo3(from_py_with = flag)] padmask: bool,
+        #[pyo3(from_py_with = flag)] overwrite: bool,
         region: PadRegion,
         r#box: &str,
         chans: &str,
         stokes: &str,
         mask: &str,
-        stretch: bool,
-        wantreturn: bool,
+        #[pyo3(from_py_with = flag)] stretch: bool,
+        #[pyo3(from_py_with = flag)] wantreturn: bool,
     ) -> PyResult<Py<Self>> {
         let output = py.detach(|| {
             let state = self.state();
             let Some(attachment) = state.image.as_ref() else { return Ok(None) };
-            let mut input = attachment.lock();
-            if !matches!(&*input, ImageHandle::Float(_)) {
+            if !matches!(&*attachment.lock(), ImageHandle::Float(_)) {
                 return Err(raised("This method only supports Float valued images"));
             }
             let pixels = usize::try_from(npixels).ok().filter(|&count| count > 0)
@@ -145,72 +152,76 @@ impl PyImageTool {
                     ));
                 }
             }
-            if !outfile.is_empty() {
-                for source in input.path().into_iter().chain(attachment.operand_paths().iter().map(|path| path.as_path())) {
-                    ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
-                }
-                if !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
-                    return Err(raised(format!(
-                        "Replaceable flag is false and there is already a file or directory named {outfile} so the output image will not be written"
-                    )));
-                }
+            if !outfile.is_empty() && !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
+                return Err(raised(format!(
+                    "Replaceable flag is false and there is already a file or directory named {outfile} so the output image will not be written"
+                )));
             }
-            attachment.require_pixel_read_lock(&mut input)?;
             let output = publish_image(outfile, overwrite, |path| {
-                let ImageHandle::Float(source) = &*input else {
-                    unreachable!("checked float pixels")
-                };
-                let options = ImagePadOptions {
-                    pixels,
-                    value: value as f32,
-                    padmask,
-                    region: region.value.as_ref().map(Region::as_region),
-                    box_selection: (!r#box.is_empty()).then_some(r#box),
-                    channels: (!chans.is_empty()).then_some(chans),
-                    stokes: (!stokes.is_empty()).then_some(stokes),
-                    mask: (!mask.is_empty()).then_some(mask),
-                    stretch,
-                };
-                let coordinates = input.coordinate_record();
-                let beams = attachment.beam_view().clone();
-                let history = match source {
-                    Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
-                    Storage::Temp { image, .. } => image.history_rows().to_vec(),
-                };
-                let mut output = match source {
-                    Storage::Temp { image, fits: Some(fits), .. } => {
-                        copy(&fits.image_view(image), coordinates, options, &beams, path)
+                let mut input = attachment.lock();
+                if !outfile.is_empty() {
+                    for source in input.path().into_iter().chain(attachment.operand_paths().iter().map(|path| path.as_path())) {
+                        ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
                     }
-                    _ => with_storage!(source, image => copy(image.as_ref(), coordinates, options, &beams, path)),
-                }?;
-                let ImageHandle::Float(dest) = &mut output else {
-                    unreachable!("padding produces float pixels")
-                };
-                with_storage!(dest, image => image.append_history_entries(&history)).map_err(raised)?;
-                if state.history {
-                    let selected = region.value.as_ref().map_or_else(
-                        || region.empty_history.into(), Region::history,
-                    );
-                    let value = if value.is_nan() { "nan".into() } else { format!("{value:.6}") };
-                    output.record_history("pad", format!("ia.pad(outfile={outfile:?}, npixels={npixels}, value={value}, padmask={padmask}, overwrite={overwrite}, region={selected}, box={box:?}, chans={chans:?}, stokes={stokes:?}, mask={mask:?}, stretch={stretch}, wantreturn={wantreturn})", box = r#box))?;
                 }
-                let source_name = input.path().map_or_else(
-                    || "Temporary_Image".into(),
-                    |path| path.display().to_string(),
-                );
-                output.append_history_at(
-                    "::ImagePadder::_reportOldNewImageShapes",
-                    &[
-                        format!("Original {source_name} size => {:?}", input.shape()),
-                        format!("New {outfile} size => {:?}", output.shape()),
-                    ],
-                )?;
-                output.save().map_err(raised)?;
-                Ok(output)
-            });
-            let release = attachment.release_requested_lock(&mut input);
-            let output = output?;
-            release?;
+                attachment.require_pixel_read_lock(&mut input)?;
+                let staged = (|| {
+                    let ImageHandle::Float(source) = &*input else {
+                        unreachable!("checked float pixels")
+                    };
+                    let options = ImagePadOptions {
+                        pixels,
+                        value: value as f32,
+                        padmask,
+                        region: region.value.as_ref().map(Region::as_region),
+                        box_selection: (!r#box.is_empty()).then_some(r#box),
+                        channels: (!chans.is_empty()).then_some(chans),
+                        stokes: (!stokes.is_empty()).then_some(stokes),
+                        mask: (!mask.is_empty()).then_some(mask),
+                        stretch,
+                    };
+                    let coordinates = input.coordinate_record();
+                    let beams = attachment.beam_view().clone();
+                    let history = match source {
+                        Storage::Paged(image) => image_history_rows(image.name().expect("native image path")).map_err(raised)?,
+                        Storage::Temp { image, .. } => image.history_rows().to_vec(),
+                    };
+                    let mut output = match source {
+                        Storage::Temp { image, fits: Some(fits), .. } => {
+                            copy(&fits.image_view(image), coordinates, options, &beams, path)
+                        }
+                        _ => with_storage!(source, image => copy(image.as_ref(), coordinates, options, &beams, path)),
+                    }?;
+                    let ImageHandle::Float(dest) = &mut output else {
+                        unreachable!("padding produces float pixels")
+                    };
+                    with_storage!(dest, image => image.append_history_entries(&history)).map_err(raised)?;
+                    if state.history {
+                        let selected = region.value.as_ref().map_or_else(
+                            || region.empty_history.into(), Region::history,
+                        );
+                        let value = if value.is_nan() { "nan".into() } else { format!("{value:.6}") };
+                        output.record_history("pad", format!("ia.pad(outfile={outfile:?}, npixels={npixels}, value={value}, padmask={padmask}, overwrite={overwrite}, region={selected}, box={box:?}, chans={chans:?}, stokes={stokes:?}, mask={mask:?}, stretch={stretch}, wantreturn={wantreturn})", box = r#box))?;
+                    }
+                    let source_name = input.path().map_or_else(
+                        || "Temporary_Image".into(),
+                        |path| path.display().to_string(),
+                    );
+                    output.append_history_at(
+                        "::ImagePadder::_reportOldNewImageShapes",
+                        &[
+                            format!("Original {source_name} size => {:?}", input.shape()),
+                            format!("New {outfile} size => {:?}", output.shape()),
+                        ],
+                    )?;
+                    output.save().map_err(raised)?;
+                    Ok(output)
+                })();
+                let released = attachment.release_requested_lock(&mut input);
+                let result = staged?;
+                released?;
+                Ok(result)
+            })?;
             Ok::<_, PyErr>(wantreturn.then_some(output))
         })?;
         Py::new(py, output.map_or_else(Self::new, Self::attached))

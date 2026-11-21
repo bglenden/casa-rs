@@ -1,5 +1,8 @@
 """Direction-plane padding, streaming masks, and native ownership."""
 
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -166,6 +169,8 @@ def test_pad_return_and_rejected_edits_preserve_images(casa, tmp_path):
         ):
             with pytest.raises(error, match=message):
                 parent.pad(**options)
+        with pytest.raises(RuntimeError):
+            parent.pad(output, overwrite=True, mask="missing_pad_mask_lattice")
         assert child.open(output)
         np.testing.assert_array_equal(child.getchunk(), kept)
         child.done()
@@ -226,3 +231,62 @@ def test_analytic_temporary_padding_with_a_numpy_width():
     finally:
         product.done()
         source.done()
+
+
+@pytest.mark.parametrize("keyword", ["padmask", "overwrite", "stretch", "wantreturn"])
+def test_padding_flags_require_python_bool(casa, keyword):
+    for api in (tools, casa):
+        source = api.image()
+        assert source.fromshape(shape=[3, 5])
+        try:
+            for raw in (np.bool_(True), np.bool_(False), 1, 0):
+                with pytest.raises(TypeError):
+                    source.pad(**{keyword: raw})
+            for value in (True, False):
+                product = source.pad(**{keyword: value})
+                product.done()
+        finally:
+            source.done()
+
+
+def test_pad_and_alias_rename_share_a_native_source(tmp_path):
+    # Use a child process so a lock-order regression cannot hang the suite.
+    script = """
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import sys
+from threading import Barrier
+
+from casars import tools
+
+scratch = Path(sys.argv[1])
+path = scratch / "source.im"
+parent = tools.image()
+renamer = tools.image()
+assert parent.fromshape(str(path), [96, 96])
+assert renamer.open(str(path))
+other_spelling = str(path / ".." / path.name)
+barrier = Barrier(2)
+
+def pad():
+    for index in range(12):
+        barrier.wait()
+        result = parent.pad(str(scratch / f"output{index}.im"))
+        assert result.shape().tolist() == [98, 98]
+        result.done()
+
+def rename():
+    for _ in range(12):
+        barrier.wait()
+        assert renamer.rename(other_spelling, overwrite=True)
+
+with ThreadPoolExecutor(max_workers=2) as pool:
+    tasks = [pool.submit(pad), pool.submit(rename)]
+    for task in tasks:
+        task.result()
+assert parent.shape().tolist() == [96, 96]
+assert renamer.shape().tolist() == [96, 96]
+renamer.done()
+parent.done()
+"""
+    subprocess.run([sys.executable, "-c", script, str(tmp_path)], check=True, timeout=20)
