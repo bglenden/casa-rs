@@ -153,6 +153,9 @@ def test_findsources_selection_masks_fits_and_early_rows(casa, tmp_path):
         assert source.putregion(pixelmask=valid)
         try:
             selected = source.findsources(region=region, mask=f"'{mask_path}' > 2")
+            text_region = "box[[2pix, 1pix], [21pix, 25pix]]"
+            alternate = source.findsources(region=text_region, mask=f"'{mask_path}' > 2")
+            _compare(_components(alternate), _components(selected))
             fallback = source.findsources(region=region, mask=f"'{mask_path}' > 2", point=False, width=0)
             records.append(_components(selected))
             assert len(records[-1]) == 1
@@ -235,5 +238,21 @@ def test_findsources_refuses_multiple_beams_even_with_plane_selected(casa):
             with pytest.raises(RuntimeError, match="does not support images with multiple beams"):
                 source.findsources(region=region)
             np.testing.assert_array_equal(source.getchunk(), cube)
+        finally:
+            source.done()
+
+
+@pytest.mark.parametrize("center", [1, 2])
+def test_findsources_early_rows_do_not_admit_masked_pixels(casa, center):
+    values = _sources((16, 17), [(8., 7., center, 1.2, 1.2)])
+    valid = np.ones(values.shape, dtype=bool)
+    valid[:, :2] = False
+    for api in (casa, tools):
+        source = api.image()
+        assert source.fromarray(pixels=values)
+        try:
+            assert source.findsources()["nelements"] == 0
+            assert source.putregion(pixelmask=valid)
+            assert source.findsources()["nelements"] == (1 if api is casa else 0)
         finally:
             source.done()

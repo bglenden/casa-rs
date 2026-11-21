@@ -8840,3 +8840,10 @@ before the search still works.
 `nmax=0` crashes CASA because the search accesses an empty result matrix.
 Casa-rs returns an empty component list. A negative count aborts on CASA's
 negative matrix dimension and raises a Python error in casa-rs.
+
+The first two mask rows initialize `inDone` from the mask instead of its
+inverse. On a 16 × 17 Float image with a compact peak centered at row 1 or
+2, CASA finds no source with an all-true mask. When the first two rows are
+masked off, CASA reports the source anyway. Casa-rs preserves the regular
+scan starting at row 3 for both masks, so rows excluded by the mask cannot
+contribute to these detections.
